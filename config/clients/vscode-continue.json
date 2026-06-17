@@ -1,0 +1,47 @@
+{
+  "//": [
+    "VS Code Continue extension config — drop this into ~/.continue/config.json",
+    "Replace <LITELLM_MASTER_KEY> with your actual key from .env",
+    "",
+    "Continue docs: https://docs.continue.dev/customize/model-providers/openai",
+    "",
+    "To get your key:",
+    "  grep LITELLM_MASTER_KEY ~/Documents/Develop\\ Solutions/ailocal/.env"
+  ],
+  "models": [
+    {
+      "title": "qwen3-coder:30b (local)",
+      "provider": "openai",
+      "model": "qwen3-coder:30b",
+      "apiBase": "http://localhost:4000/v1",
+      "apiKey": "<LITELLM_MASTER_KEY>"
+    },
+    {
+      "title": "qwen3:8b — fast (local)",
+      "provider": "openai",
+      "model": "qwen3:8b",
+      "apiBase": "http://localhost:4000/v1",
+      "apiKey": "<LITELLM_MASTER_KEY>"
+    },
+    {
+      "title": "deepseek-r1:32b — reasoning (local)",
+      "provider": "openai",
+      "model": "deepseek-r1:32b",
+      "apiBase": "http://localhost:4000/v1",
+      "apiKey": "<LITELLM_MASTER_KEY>"
+    }
+  ],
+  "tabAutocompleteModel": {
+    "title": "qwen3:8b autocomplete",
+    "provider": "openai",
+    "model": "qwen3:8b",
+    "apiBase": "http://localhost:4000/v1",
+    "apiKey": "<LITELLM_MASTER_KEY>"
+  },
+  "embeddingsProvider": {
+    "provider": "openai",
+    "model": "nomic-embed-text",
+    "apiBase": "http://localhost:4000/v1",
+    "apiKey": "<LITELLM_MASTER_KEY>"
+  }
+}
