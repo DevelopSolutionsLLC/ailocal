@@ -3,12 +3,16 @@
     "Claude Code settings — drop this into ~/.claude/settings.json",
     "Replace <LITELLM_MASTER_KEY> with your actual key from .env",
     "",
-    "With these settings Claude Code routes all requests through LiteLLM.",
-    "It will use claude-sonnet-4-6 by default, which maps to qwen3-coder:30b locally.",
+    "All requests route through LiteLLM using role-based model names.",
+    "Valid roles: router | reasoner | coder | supervisor | embed",
+    "",
+    "The 'model' field below makes Claude Code send 'coder' to LiteLLM.",
+    "Change to 'reasoner' or 'supervisor' as needed for different tasks.",
     "",
     "To get your key:",
     "  grep LITELLM_MASTER_KEY .env | cut -d= -f2"
   ],
+  "model": "coder",
   "env": {
     "ANTHROPIC_BASE_URL": "http://localhost:4000",
     "ANTHROPIC_API_KEY": "<LITELLM_MASTER_KEY>"

@@ -3,6 +3,7 @@
     "VS Code Continue extension config — drop this into ~/.continue/config.json",
     "Replace <LITELLM_MASTER_KEY> with your actual key from .env",
     "",
+    "All model names are role-based. Valid roles: router | reasoner | coder | supervisor | embed",
     "Continue docs: https://docs.continue.dev/customize/model-providers/openai",
     "",
     "To get your key:",
@@ -10,37 +11,44 @@
   ],
   "models": [
     {
-      "title": "qwen3-coder:30b (local)",
+      "title": "Coder (local)",
       "provider": "openai",
-      "model": "qwen3-coder:30b",
+      "model": "coder",
       "apiBase": "http://localhost:4000/v1",
       "apiKey": "<LITELLM_MASTER_KEY>"
     },
     {
-      "title": "qwen3:8b — fast (local)",
+      "title": "Reasoner (local)",
       "provider": "openai",
-      "model": "qwen3:8b",
+      "model": "reasoner",
       "apiBase": "http://localhost:4000/v1",
       "apiKey": "<LITELLM_MASTER_KEY>"
     },
     {
-      "title": "deepseek-r1:32b — reasoning (local)",
+      "title": "Supervisor (local)",
       "provider": "openai",
-      "model": "deepseek-r1:32b",
+      "model": "supervisor",
+      "apiBase": "http://localhost:4000/v1",
+      "apiKey": "<LITELLM_MASTER_KEY>"
+    },
+    {
+      "title": "Router — fast (local)",
+      "provider": "openai",
+      "model": "router",
       "apiBase": "http://localhost:4000/v1",
       "apiKey": "<LITELLM_MASTER_KEY>"
     }
   ],
   "tabAutocompleteModel": {
-    "title": "qwen3:8b autocomplete",
+    "title": "Router — autocomplete",
     "provider": "openai",
-    "model": "qwen3:8b",
+    "model": "router",
     "apiBase": "http://localhost:4000/v1",
     "apiKey": "<LITELLM_MASTER_KEY>"
   },
   "embeddingsProvider": {
     "provider": "openai",
-    "model": "nomic-embed-text",
+    "model": "embed",
     "apiBase": "http://localhost:4000/v1",
     "apiKey": "<LITELLM_MASTER_KEY>"
   }
