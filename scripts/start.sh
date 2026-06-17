@@ -73,7 +73,7 @@ fi
 
 # ── Service URLs and client setup ──────────────────────────────────────────
 
-KEY="\$(grep LITELLM_MASTER_KEY '$ROOT_DIR/.env' | cut -d= -f2)"
+KEY='$(grep LITELLM_MASTER_KEY .env | cut -d= -f2)'
 
 step "ailocal is running"
 echo ""
@@ -84,7 +84,7 @@ echo "  │  Grafana         →  http://localhost:3000               │"
 echo "  └─────────────────────────────────────────────────────────┘"
 echo ""
 echo "  One-time setup — add to ~/.zprofile to make permanent:"
-echo "    source $ROOT_DIR/config/clients/env.sh"
+echo "    source \"$ROOT_DIR/config/clients/env.sh\""
 echo ""
 echo "  ── Claude Code ───────────────────────────────────────────"
 echo "    export ANTHROPIC_BASE_URL=http://localhost:4000"
@@ -97,7 +97,7 @@ echo "    export OPENAI_API_KEY=$KEY"
 echo "    codex"
 echo ""
 echo "  ── VS Code ───────────────────────────────────────────────"
-echo "    source $ROOT_DIR/config/clients/env.sh && code ."
+echo "    source \"$ROOT_DIR/config/clients/env.sh\" && code ."
 echo "    (Continue + Cline pick up env vars automatically)"
 echo ""
 echo "  ── Permanent config files ────────────────────────────────"

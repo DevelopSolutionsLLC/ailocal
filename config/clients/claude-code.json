@@ -7,7 +7,7 @@
     "It will use claude-sonnet-4-6 by default, which maps to qwen3-coder:30b locally.",
     "",
     "To get your key:",
-    "  grep LITELLM_MASTER_KEY ~/Documents/Develop\\ Solutions/ailocal/.env"
+    "  grep LITELLM_MASTER_KEY .env | cut -d= -f2"
   ],
   "env": {
     "ANTHROPIC_BASE_URL": "http://localhost:4000",

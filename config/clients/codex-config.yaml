@@ -1,6 +1,6 @@
 # Codex CLI config — routes to ailocal LiteLLM proxy
 # Copy to: ~/.codex/config.yaml
-# Get your key: grep LITELLM_MASTER_KEY /path/to/ailocal/.env | cut -d= -f2
+# Get your key: grep LITELLM_MASTER_KEY .env | cut -d= -f2
 
 model: gpt-4o
 provider:

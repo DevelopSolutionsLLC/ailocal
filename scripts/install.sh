@@ -49,7 +49,7 @@ fi
 
 # ── CLI tools ──────────────────────────────────────────────────────────────
 step "Checking CLI tools"
-for pkg in git jq yq; do
+for pkg in git jq; do
   if ! has "$pkg"; then
     echo "  Installing $pkg..."
     brew install "$pkg"
@@ -61,12 +61,19 @@ done
 # ── Docker ─────────────────────────────────────────────────────────────────
 step "Checking Docker"
 if ! has docker; then
-  error "Docker not found. Install Docker Desktop for Mac (Apple Silicon):"
-  error "  https://www.docker.com/products/docker-desktop/"
-  exit 1
+  echo "  Docker not found — installing Docker Desktop via Homebrew..."
+  brew install --cask docker 2>/dev/null || {
+    error "Could not install Docker Desktop automatically."
+    echo "  Install manually: https://www.docker.com/products/docker-desktop/" >&2
+    exit 1
+  }
+  echo "  Docker Desktop installed."
+  echo "  ▶ Open Docker Desktop, accept the license, complete first-run setup,"
+  echo "    then re-run this script."
+  exit 0
 fi
 if ! docker ps >/dev/null 2>&1; then
-  error "Docker daemon is not running. Start Docker Desktop and re-run this script."
+  error "Docker daemon is not running. Open Docker Desktop and re-run this script."
   exit 1
 fi
 info "Docker present and running"
@@ -212,14 +219,14 @@ echo "  After starting services, get your LiteLLM key and configure clients:"
 echo
 # Print the retrieval command, not the key itself — avoids leaking into
 # terminal scrollback or shell history. OWASP A02:2021 (Cryptographic Failures).
-echo "  Get your key:  grep LITELLM_MASTER_KEY $ENV_FILE | cut -d= -f2"
+echo "  Get your key:  grep LITELLM_MASTER_KEY .env | cut -d= -f2"
 echo
 echo "  Then:"
 echo "    export ANTHROPIC_BASE_URL=http://localhost:4000"
 echo "    export ANTHROPIC_API_KEY=<key from above>"
 echo
 echo "  Or source the helper for your session:"
-echo "    source $ROOT_DIR/config/clients/env.sh"
+echo "    source \"$ROOT_DIR/config/clients/env.sh\""
 echo
 
 print_next_steps
