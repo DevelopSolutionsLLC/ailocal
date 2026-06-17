@@ -75,7 +75,68 @@ model_list:
       supports_reasoning: true
       max_tokens: 65536
 
-  # embed — semantic retrieval and memory only; NOT a chat model
+  # ── Claude Code compatibility aliases ──────────────────────────────────────
+  # Claude Code's /model picker sends Anthropic model name strings directly.
+  # These aliases map them to the closest local role — no cloud key required.
+  # Opus/Fable → reasoner (deepest thinker), Sonnet → coder, Haiku → router.
+
+  - model_name: claude-opus-4-8
+    litellm_params:
+      model: ollama/deepseek-r1:32b
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 32768
+    model_info:
+      supports_function_calling: true
+      supports_tool_choice: true
+      supports_parallel_function_calling: false
+      supports_system_messages: true
+      supports_native_streaming: true
+      supports_reasoning: true
+      max_tokens: 32768
+
+  - model_name: claude-fable-5
+    litellm_params:
+      model: ollama/deepseek-r1:32b
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 32768
+    model_info:
+      supports_function_calling: true
+      supports_tool_choice: true
+      supports_parallel_function_calling: false
+      supports_system_messages: true
+      supports_native_streaming: true
+      supports_reasoning: true
+      max_tokens: 32768
+
+  - model_name: claude-sonnet-4-6
+    litellm_params:
+      model: ollama/qwen3.6:27b
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 32768
+    model_info:
+      supports_function_calling: true
+      supports_tool_choice: true
+      supports_parallel_function_calling: true
+      supports_system_messages: true
+      supports_native_streaming: true
+      supports_reasoning: true
+      max_tokens: 32768
+
+  - model_name: claude-haiku-4-5-20251001
+    litellm_params:
+      model: ollama/qwen3:8b
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 32768
+    model_info:
+      supports_function_calling: true
+      supports_tool_choice: true
+      supports_parallel_function_calling: true
+      supports_system_messages: true
+      supports_native_streaming: true
+      supports_reasoning: true
+      max_tokens: 32768
+
+  # ── embed — semantic retrieval and memory only; NOT a chat model ────────────
   # nomic-embed-text: embedding-only, 8192 token limit
   - model_name: embed
     litellm_params:
