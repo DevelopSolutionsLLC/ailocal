@@ -1,0 +1,182 @@
+# LiteLLM Proxy Configuration for ailocal
+# Reference: https://docs.litellm.ai/docs/proxy/configs
+#
+# Required env vars (set in .env, passed via docker-compose):
+#   LITELLM_MASTER_KEY  — auth key for the proxy (sk-... format)
+#   DATABASE_URL        — postgres connection string
+#   OLLAMA_URL          — http://host.docker.internal:11434
+#   REDIS_PASSWORD      — redis auth password
+
+model_list:
+
+  # ── Native Ollama model names ───────────────────────────────────────────────
+  # Use these when calling LiteLLM directly and you want explicit model control.
+
+  - model_name: qwen3:8b
+    litellm_params:
+      model: ollama/qwen3:8b
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 32768
+
+  # Fallback when qwen3:8b isn't loaded yet
+  - model_name: qwen2.5:7b
+    litellm_params:
+      model: ollama/qwen2.5:7b
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 32768
+
+  - model_name: qwen3-coder:30b
+    litellm_params:
+      model: ollama/qwen3-coder:30b
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 32768
+
+  - model_name: deepseek-r1:32b
+    litellm_params:
+      model: ollama/deepseek-r1:32b
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 16384
+
+  - model_name: nomic-embed-text
+    litellm_params:
+      model: ollama/nomic-embed-text
+      api_base: os.environ/OLLAMA_URL
+
+  # ── Anthropic / Claude name aliases ────────────────────────────────────────
+  # Claude Code, Cowork, and the Anthropic SDK send these model names by default
+  # when pointed at a custom ANTHROPIC_BASE_URL. Without these entries LiteLLM
+  # returns 404 for every Claude Code / Cowork request.
+  #
+  # Mapping rationale:
+  #   opus   → deepseek-r1:32b   (most capable local reasoning model)
+  #   sonnet → qwen3-coder:30b   (balanced coding/general — the daily driver)
+  #   haiku  → qwen3:8b          (fast, lightweight tasks)
+  #
+  # Date-versioned aliases: the Anthropic SDK and Claude Code send the exact
+  # model string from their internal config, which may include a date suffix
+  # (e.g. claude-sonnet-4-6-20250219). Both the short and date-versioned forms
+  # must be present or LiteLLM returns 404 for those requests.
+
+  - model_name: claude-opus-4-8
+    litellm_params:
+      model: ollama/deepseek-r1:32b
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 16384
+
+  # Date-versioned form sent by some SDK releases
+  - model_name: claude-opus-4-8-20251101
+    litellm_params:
+      model: ollama/deepseek-r1:32b
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 16384
+
+  - model_name: claude-sonnet-4-6
+    litellm_params:
+      model: ollama/qwen3-coder:30b
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 32768
+
+  # Date-versioned form — Claude Code 1.x sends this exact string by default
+  - model_name: claude-sonnet-4-6-20250219
+    litellm_params:
+      model: ollama/qwen3-coder:30b
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 32768
+
+  - model_name: claude-haiku-4-5
+    litellm_params:
+      model: ollama/qwen3:8b
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 32768
+
+  # Full model string used by some SDK versions
+  - model_name: claude-haiku-4-5-20251001
+    litellm_params:
+      model: ollama/qwen3:8b
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 32768
+
+  # ── OpenAI name aliases ─────────────────────────────────────────────────────
+  # Codex CLI, VS Code extensions (Continue, Cline), and OpenAI SDK clients
+  # send these names. Routes to local equivalents without any cloud calls.
+  #
+  # Mapping rationale:
+  #   gpt-4o       → qwen3-coder:30b   (capable, coding-optimised)
+  #   gpt-4o-mini  → qwen3:8b          (fast, good enough for most tasks)
+  #   gpt-3.5-turbo → qwen3:8b         (legacy name, same fast model)
+
+  - model_name: gpt-4o
+    litellm_params:
+      model: ollama/qwen3-coder:30b
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 32768
+
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: ollama/qwen3:8b
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 32768
+
+  - model_name: gpt-3.5-turbo
+    litellm_params:
+      model: ollama/qwen3:8b
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 32768
+
+  # ── Cloud fallbacks (disabled by default) ──────────────────────────────────
+  # To enable: set ENABLE_CLOUD=true in .env, add API key, uncomment below.
+  # These shadow the Anthropic/OpenAI aliases above — remove the local alias
+  # entries above if you want cloud to be the primary for those model names.
+  #
+  # - model_name: claude-sonnet-4-6
+  #   litellm_params:
+  #     model: anthropic/claude-sonnet-4-6
+  #     api_key: os.environ/ANTHROPIC_API_KEY
+  #
+  # - model_name: gpt-4o
+  #   litellm_params:
+  #     model: openai/gpt-4o
+  #     api_key: os.environ/OPENAI_API_KEY
+
+router_settings:
+  routing_strategy: least-busy
+  num_retries: 2
+  # request_timeout: seconds before the router gives up and tries the next model.
+  # A 30B model on M3 can legitimately take 2-3 min on a long generation; 300s
+  # is conservative enough to not cut off real work while still triggering fallback
+  # on a genuinely hung Ollama process.
+  timeout: 300
+  fallbacks:
+    # Fast model fallbacks
+    - {"qwen3:8b": ["qwen2.5:7b"]}
+    - {"gpt-4o-mini": ["qwen2.5:7b"]}
+    - {"gpt-3.5-turbo": ["qwen2.5:7b"]}
+    - {"claude-haiku-4-5": ["qwen2.5:7b"]}
+    - {"claude-haiku-4-5-20251001": ["qwen2.5:7b"]}
+    # Coding/capable model fallbacks — degrade to fast model if 30b is unavailable
+    - {"qwen3-coder:30b": ["qwen3:8b"]}
+    - {"claude-sonnet-4-6": ["qwen3:8b"]}
+    - {"claude-sonnet-4-6-20250219": ["qwen3:8b"]}
+    - {"gpt-4o": ["qwen3:8b"]}
+    # Reasoning model fallbacks — degrade to coder, then fast
+    - {"deepseek-r1:32b": ["qwen3-coder:30b", "qwen3:8b"]}
+    - {"claude-opus-4-8": ["qwen3-coder:30b", "qwen3:8b"]}
+    - {"claude-opus-4-8-20251101": ["qwen3-coder:30b", "qwen3:8b"]}
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+  store_model_in_db: true
+  health_check_interval: 300
+
+litellm_settings:
+  # Strip params Ollama doesn't understand (logprobs, tool_choice details, etc.)
+  drop_params: true
+  set_verbose: false
+  cache: true
+  cache_params:
+    type: redis
+    host: redis
+    port: 6379
+    password: os.environ/REDIS_PASSWORD
+    ttl: 600

@@ -1,0 +1,93 @@
+# Caddyfile — ailocal reverse proxy
+#
+# Caddy runs inside the Docker network. Upstreams are service names, not localhost.
+# Host binding: 127.0.0.1:80 → :80 inside the container (see docker-compose.yml).
+#
+# Routes:
+#   /v1/*      → LiteLLM OpenAI-compatible API
+#   /health*   → LiteLLM health endpoint
+#   /metrics*  → LiteLLM Prometheus metrics (localhost-only — not for browsers)
+#   /ui*       → LiteLLM admin UI (spend dashboard, virtual key management)
+#   /*         → Open WebUI (catch-all)
+
+:80 {
+  encode gzip
+
+  log {
+    output file /var/log/caddy/access.log
+    format json
+  }
+
+  # ── Security headers ───────────────────────────────────────────────────────
+  # Applied to all responses. Provides defence-in-depth even on localhost.
+  # OWASP A05:2021 Security Misconfiguration.
+  header {
+    # Prevent MIME-type sniffing
+    X-Content-Type-Options "nosniff"
+    # Deny embedding in iframes (clickjacking defence)
+    X-Frame-Options "DENY"
+    # Minimal referrer leakage
+    Referrer-Policy "strict-origin-when-cross-origin"
+    # Restrict to local resources only — no CDN, no external scripts
+    Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://localhost:* ws://localhost:*; font-src 'self' data:; frame-ancestors 'none';"
+    # Prevent IE compat mode
+    X-UA-Compatible "IE=edge"
+    # Remove server fingerprint
+    -Server
+  }
+
+  # LiteLLM proxy — OpenAI & Anthropic compatible API
+  # Clients: Claude Code, Codex, any OpenAI SDK pointing at http://localhost/v1
+  handle /v1/* {
+    reverse_proxy litellm:4000
+  }
+
+  handle /health* {
+    reverse_proxy litellm:4000
+  }
+
+  # Prometheus metrics endpoint.
+  # Already localhost-only (127.0.0.1 bind in docker-compose), but also block
+  # browser-initiated cross-origin fetches via CSP above.
+  # If you expose this stack on a LAN, add Caddy basic_auth here.
+  handle /metrics* {
+    reverse_proxy litellm:4000
+  }
+
+  # LiteLLM admin UI — spend dashboard, virtual key management, model list.
+  # Must be explicit: without this, /ui/* falls through to Open WebUI and 404s.
+  handle /ui* {
+    reverse_proxy litellm:4000
+  }
+
+  # Open WebUI — catch-all (must remain last)
+  handle /* {
+    reverse_proxy open-webui:8080
+  }
+}
+
+# ── Optional TLS ──────────────────────────────────────────────────────────────
+# Uncomment to enable HTTPS. Caddy auto-provisions a local CA cert.
+# Run once after enabling: caddy trust   (installs CA into macOS Keychain)
+#
+# localhost {
+#   tls internal
+#
+#   header {
+#     X-Content-Type-Options "nosniff"
+#     X-Frame-Options "DENY"
+#     Referrer-Policy "strict-origin-when-cross-origin"
+#     Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://localhost:* ws://localhost:* wss://localhost:*; font-src 'self' data:; frame-ancestors 'none';"
+#     -Server
+#   }
+#
+#   handle /v1/* {
+#     reverse_proxy litellm:4000
+#   }
+#   handle /ui* {
+#     reverse_proxy litellm:4000
+#   }
+#   handle /* {
+#     reverse_proxy open-webui:8080
+#   }
+# }

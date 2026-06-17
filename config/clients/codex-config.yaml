@@ -1,0 +1,12 @@
+# Codex CLI config — routes to ailocal LiteLLM proxy
+# Copy to: ~/.codex/config.yaml
+# Get your key: grep LITELLM_MASTER_KEY /path/to/ailocal/.env | cut -d= -f2
+
+model: gpt-4o
+provider:
+  type: openai
+  baseURL: http://localhost:4000/v1
+  apiKey: <LITELLM_MASTER_KEY>
+
+# gpt-4o routes to qwen3-coder:30b locally (see config/litellm/config.yaml)
+# Other options: qwen3-coder:30b, qwen3:8b, deepseek-r1:32b

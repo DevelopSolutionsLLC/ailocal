@@ -1,0 +1,40 @@
+# Environment and generated secrets — never commit
+.env
+config/prometheus/.bearer_token
+.env.local
+*.env.local
+
+# Data, logs, and backups — contain runtime state and may contain secrets
+/data/
+/logs/
+/backups/
+
+# Backup archives (defence in depth — /backups/ above already covers the directory)
+*.tar.gz
+*.tar.bz2
+
+# Key and certificate files — should never be committed
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+
+# macOS
+.DS_Store
+*.swp
+*.swo
+*~
+
+# IDEs and AI coding tools
+.vscode/
+.idea/
+*.iml
+.claude/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/

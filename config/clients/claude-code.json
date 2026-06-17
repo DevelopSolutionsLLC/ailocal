@@ -1,0 +1,16 @@
+{
+  "//": [
+    "Claude Code settings — drop this into ~/.claude/settings.json",
+    "Replace <LITELLM_MASTER_KEY> with your actual key from .env",
+    "",
+    "With these settings Claude Code routes all requests through LiteLLM.",
+    "It will use claude-sonnet-4-6 by default, which maps to qwen3-coder:30b locally.",
+    "",
+    "To get your key:",
+    "  grep LITELLM_MASTER_KEY ~/Documents/Develop\\ Solutions/ailocal/.env"
+  ],
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://localhost:4000",
+    "ANTHROPIC_API_KEY": "<LITELLM_MASTER_KEY>"
+  }
+}
