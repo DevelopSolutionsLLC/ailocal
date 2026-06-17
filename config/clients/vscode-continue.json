@@ -6,7 +6,7 @@
     "Continue docs: https://docs.continue.dev/customize/model-providers/openai",
     "",
     "To get your key:",
-    "  grep LITELLM_MASTER_KEY ~/Documents/Develop\\ Solutions/ailocal/.env"
+    "  grep LITELLM_MASTER_KEY .env | cut -d= -f2"
   ],
   "models": [
     {

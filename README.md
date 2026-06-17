@@ -5,9 +5,27 @@ Local AI infrastructure for macOS Apple Silicon. Ollama runs natively for Metal 
 ## Requirements
 
 - macOS 13+ (M1/M2/M3/M4)
-- Docker Desktop (Apple Silicon build)
 - 64 GB RAM recommended — 32 GB minimum with smaller models
 - ~80 GB free disk for the full model set
+
+## Prerequisites
+
+**Install Homebrew** if you don't have it:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+**Install all dependencies in one shot:**
+
+```bash
+brew install git jq
+brew install --cask docker ollama
+```
+
+> After installing Docker Desktop, open it once to accept the license agreement and let it finish its first-run setup. You can then enable "Start at Login" in Docker Desktop → Settings → General.
+
+`curl` and `openssl` are already included with macOS. If you want the GitHub CLI for managing this repo: `brew install gh`.
 
 ## Setup
 
@@ -129,14 +147,7 @@ cp config/clients/vscode-continue.json ~/.continue/config.json
 
 Gives you three models in the Continue panel, tab autocomplete via qwen3:8b, and codebase embeddings via nomic-embed-text.
 
-**Cline extension** — configure in VS Code settings:
-
-- API Provider: `OpenAI Compatible`
-- Base URL: `http://localhost:4000/v1`
-- API Key: your `LITELLM_MASTER_KEY`
-- Model: `qwen3-coder:30b`
-
-**GitHub Copilot** — not redirectable (routes through GitHub's servers directly).
+Any extension that supports a custom OpenAI-compatible endpoint (Cline, Copilot alternatives, etc.) works the same way — point it at `http://localhost:4000/v1` with your `LITELLM_MASTER_KEY`.
 
 ---
 
@@ -211,20 +222,6 @@ To enable for a specific model:
 4. `docker compose restart litellm`
 
 The cloud entry takes over that model name from the local alias — comment out the local entry above it if you want cloud as primary rather than fallback.
-
-## GitHub MCP
-
-The GitHub MCP server is a stdio process — not a Docker container. Configure it directly in your MCP client:
-
-```bash
-# Claude Code
-claude mcp add github -- npx -y @modelcontextprotocol/server-github
-
-# Then set your token in ~/.claude/settings.json or export:
-export GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...
-```
-
-See `config/mcp/mcp-config.yaml` for full setup instructions including Claude Desktop.
 
 ## Troubleshooting
 

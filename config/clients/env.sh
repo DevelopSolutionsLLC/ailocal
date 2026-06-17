@@ -2,7 +2,7 @@
 # env.sh — configure your shell session to use ailocal instead of cloud APIs
 #
 # Usage (add to ~/.zprofile for permanent setup, or run per-session):
-#   source ~/Documents/Develop\ Solutions/ailocal/config/clients/env.sh
+#   source "/path/to/ailocal/config/clients/env.sh"
 #
 # What this does:
 #   Sets ANTHROPIC_BASE_URL and OPENAI_API_BASE to the local LiteLLM proxy.
@@ -38,4 +38,4 @@ echo "✓ ailocal: routing AI requests to http://localhost:4000"
 echo "  Anthropic: ANTHROPIC_BASE_URL + ANTHROPIC_API_KEY set"
 echo "  OpenAI:    OPENAI_BASE_URL + OPENAI_API_KEY set"
 echo ""
-echo "  Verify LiteLLM is running: curl http://localhost:4000/health"
+echo "  Verify LiteLLM is running: curl http://localhost:4000/health/liveliness"
