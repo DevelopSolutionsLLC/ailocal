@@ -2,8 +2,13 @@
 # install-models.sh — pull or update Ollama models for ailocal
 # Usage: ./scripts/install-models.sh
 #
-# Models are pulled with their default quantization (q4_K_M for most).
-# To use a specific quantization, append a tag: e.g. qwen3:8b-q8_0
+# These are the backend models mapped to role-based aliases in LiteLLM:
+#   router     → qwen3:8b           ~5 GB   — fast classification and routing
+#   coder      → qwen3.6:27b        ~17 GB  — implementation and generation
+#   reasoner   → deepseek-r1:32b    ~20 GB  — planning and deep reasoning
+#   supervisor → glm-4.7-flash      ~19 GB  — review and approval gate (requires Ollama 0.14.3+)
+#   embed      → nomic-embed-text   ~300 MB — semantic retrieval only
+#
 # Run this after 'ollama serve' is confirmed running.
 set -euo pipefail
 
@@ -37,27 +42,21 @@ fi
 info "Ollama daemon responding"
 
 # ── Disk space check ───────────────────────────────────────────────────────
-# All 5 models combined ≈ 65 GB. Warn if less than 80 GB free.
+# All 5 models combined ≈ 63 GB. Warn if less than 80 GB free.
 
 FREE_GB=$(df -g "$HOME" 2>/dev/null | awk 'NR==2 {print $4}' || echo 0)
 if [ "$FREE_GB" -lt 80 ]; then
-  warn "Only ${FREE_GB} GB free on disk. Full model set needs ~65 GB."
+  warn "Only ${FREE_GB} GB free on disk. Full model set needs ~45+ GB."
   echo "  Proceeding — skip large models if you run low."
 fi
 
-# ── Model list ─────────────────────────────────────────────────────────────
-# Format: "name|size_hint|description"
-#   qwen3:8b         ~5 GB   — fast inference, lightweight tasks (LiteLLM default)
-#   qwen2.5:7b       ~5 GB   — fallback when qwen3:8b is unavailable
-#   qwen3-coder:30b  ~19 GB  — coding tasks (LiteLLM coding route)
-#   deepseek-r1:32b  ~20 GB  — deep reasoning (LiteLLM reasoning route)
-#   nomic-embed-text ~300 MB — embeddings
+# ── Model list — backend names for Ollama (role mapping in config/litellm/config.yaml) ──
 
 declare -a MODELS=(
   "qwen3:8b"
-  "qwen2.5:7b"
-  "qwen3-coder:30b"
+  "qwen3.6:27b"
   "deepseek-r1:32b"
+  "glm-4.7-flash"
   "nomic-embed-text"
 )
 
