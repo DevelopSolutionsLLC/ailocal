@@ -179,18 +179,5 @@ litellm_settings:
     host: redis
     port: 6379
     password: os.environ/REDIS_PASSWORD
-    ttl: 600
+    ttl: 60
 
-litellm_settings:
-  # Strip params Ollama doesn't understand (logprobs, tool_choice details, etc.)
-  drop_params: true
-  set_verbose: false
-  cache: true
-  cache_params:
-    type: redis
-    host: redis
-    port: 6379
-    password: os.environ/REDIS_PASSWORD
-    ttl: 600
-  # Allow unauthenticated access to metrics endpoint for Prometheus scraping
-  require_auth_for_metrics_endpoint: false
