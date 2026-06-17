@@ -11,39 +11,81 @@
 model_list:
 
   # router — lightweight classifier and fast-response role
+  # qwen3:8b: tools + thinking tags confirmed on Ollama Hub; 40K context window
   - model_name: router
     litellm_params:
       model: ollama/qwen3:8b
       api_base: os.environ/OLLAMA_URL
+      num_ctx: 32768
+    model_info:
+      supports_function_calling: true
+      supports_tool_choice: true
+      supports_system_messages: true
+      supports_native_streaming: true
+      supports_reasoning: true
+      max_tokens: 32768
 
   # reasoner — deep planning and decomposition role
+  # deepseek-r1:32b: tools + thinking tags confirmed on Ollama Hub; 32K context window
   - model_name: reasoner
     litellm_params:
       model: ollama/deepseek-r1:32b
       api_base: os.environ/OLLAMA_URL
+      num_ctx: 32768
+    model_info:
+      supports_function_calling: true
+      supports_tool_choice: true
+      supports_system_messages: true
+      supports_native_streaming: true
+      supports_reasoning: true
+      max_tokens: 32768
 
   # coder — implementation and generation role
+  # qwen3.6:27b: tools + thinking + vision tags; 32K+ context window
   - model_name: coder
     litellm_params:
       model: ollama/qwen3.6:27b
       api_base: os.environ/OLLAMA_URL
+      num_ctx: 32768
+    model_info:
+      supports_function_calling: true
+      supports_tool_choice: true
+      supports_system_messages: true
+      supports_native_streaming: true
+      supports_reasoning: true
+      max_tokens: 32768
 
   # supervisor — review, critique, and approval gate role
+  # glm-4.7-flash: tools + thinking tags confirmed; 198K context window
   - model_name: supervisor
     litellm_params:
       model: ollama/glm-4.7-flash
       api_base: os.environ/OLLAMA_URL
+      num_ctx: 65536
+    model_info:
+      supports_function_calling: true
+      supports_tool_choice: true
+      supports_system_messages: true
+      supports_native_streaming: true
+      supports_reasoning: true
+      max_tokens: 65536
 
-  # embed — semantic retrieval and memory role only
+  # embed — semantic retrieval and memory only; NOT a chat model
+  # nomic-embed-text: embedding-only, 8192 token limit
   - model_name: embed
     litellm_params:
       model: ollama/nomic-embed-text
       api_base: os.environ/OLLAMA_URL
+      num_ctx: 8192
+    model_info:
+      mode: embedding
+      max_tokens: 8192
 
 router_settings:
   routing_strategy: least-busy
   num_retries: 2
   timeout: 300
+  enable_pre_call_checks: true   # validate context window before sending
   fallbacks:
     # Degrade by role capability — never expose backend model names externally
     - {"reasoner": ["coder"]}
