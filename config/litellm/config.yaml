@@ -218,9 +218,11 @@ model_list:
   #   gpt-4o-mini  → router backend (qwen3:8b — fast, good enough)
   #   gpt-3.5-turbo → router backend (legacy name, same fast tier)
 
+  # gpt-4o → router backend (qwen3:8b) not coder — qwen3:8b has a more
+  # hardened Ollama tool template; avoids XML bleed-through in Codex
   - model_name: gpt-4o
     litellm_params:
-      model: ollama/qwen3.6:27b
+      model: ollama/qwen3:8b
       api_base: os.environ/OLLAMA_URL
       num_ctx: 32768
     model_info:
