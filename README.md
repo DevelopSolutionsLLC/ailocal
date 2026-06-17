@@ -4,7 +4,7 @@ Local AI infrastructure for macOS Apple Silicon. Ollama runs natively for Metal 
 
 ## Requirements
 
-- macOS 13+ (M1/M2/M3/M4)
+- macOS 13+ (Apple Silicon M1+)
 - 64 GB RAM recommended — 32 GB minimum with smaller models
 - ~80 GB free disk for the full model set
 
@@ -24,8 +24,6 @@ brew install --cask docker ollama
 ```
 
 > After installing Docker Desktop, open it once to accept the license agreement and let it finish its first-run setup. You can then enable "Start at Login" in Docker Desktop → Settings → General.
-
-`curl` and `openssl` are already included with macOS. If you want the GitHub CLI for managing this repo: `brew install gh`.
 
 ## Setup
 
