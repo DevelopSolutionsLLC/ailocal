@@ -1,17 +1,31 @@
 # LiteLLM Proxy Configuration for ailocal
-# Role-based routing — clients use ONLY these role names: router | reasoner | coder | supervisor | embed
-# All backend model details are hidden behind roles. No direct model names are exposed externally.
+# Reference: https://docs.litellm.ai/docs/proxy/configs
 #
 # Required env vars (set in .env, passed via docker-compose):
 #   LITELLM_MASTER_KEY  — auth key for the proxy (sk-... format)
 #   DATABASE_URL        — postgres connection string
 #   OLLAMA_URL          — http://host.docker.internal:11434
 #   REDIS_PASSWORD      — redis auth password
+#
+# Model name hierarchy:
+#   Layer 1 — Role aliases  (canonical; use these in all client configs)
+#   Layer 2 — Claude aliases (compatibility shims for Claude Code / Anthropic SDK)
+#   Layer 3 — OpenAI aliases (compatibility shims for Codex / VS Code extensions)
+#
+# Backend mapping:
+#   router    → qwen3:8b          (fast, 40K ctx)
+#   coder     → qwen3.6:27b       (coding-optimised, 32K ctx)
+#   reasoner  → deepseek-r1:32b   (deep reasoning, 32K ctx)
+#   supervisor → glm-4.7-flash    (review / approval, 198K ctx)
+#   embed     → nomic-embed-text  (embeddings only)
 
 model_list:
 
+  # ── Layer 1: Role-based hierarchy (canonical interface) ────────────────────
+  # Clients should use these names. Backend model details are hidden here.
+
   # router — lightweight classifier and fast-response role
-  # qwen3:8b: tools + thinking tags confirmed on Ollama Hub; 40K context window
+  # qwen3:8b: tools + thinking confirmed on Ollama Hub; 40K context window
   - model_name: router
     litellm_params:
       model: ollama/qwen3:8b
@@ -27,8 +41,7 @@ model_list:
       max_tokens: 32768
 
   # reasoner — deep planning and decomposition role
-  # deepseek-r1:32b: tools + thinking tags confirmed on Ollama Hub; 32K context window
-  # parallel_function_calling false — reasoning models emit tool calls serially by design
+  # deepseek-r1:32b: tools + thinking confirmed; serial tool use by design
   - model_name: reasoner
     litellm_params:
       model: ollama/deepseek-r1:32b
@@ -44,7 +57,7 @@ model_list:
       max_tokens: 32768
 
   # coder — implementation and generation role
-  # qwen3.6:27b: tools + thinking + vision tags; 32K+ context window
+  # qwen3.6:27b: tools + thinking + vision confirmed; coding-optimised weights
   - model_name: coder
     litellm_params:
       model: ollama/qwen3.6:27b
@@ -60,7 +73,7 @@ model_list:
       max_tokens: 32768
 
   # supervisor — review, critique, and approval gate role
-  # glm-4.7-flash: tools + thinking tags confirmed; 198K context window
+  # glm-4.7-flash: tools + thinking confirmed; 198K context, 30B MoE
   - model_name: supervisor
     litellm_params:
       model: ollama/glm-4.7-flash
@@ -75,10 +88,26 @@ model_list:
       supports_reasoning: true
       max_tokens: 65536
 
-  # ── Claude Code compatibility aliases ──────────────────────────────────────
-  # Claude Code's /model picker sends Anthropic model name strings directly.
-  # These aliases map them to the closest local role — no cloud key required.
-  # Opus/Fable → reasoner (deepest thinker), Sonnet → coder, Haiku → router.
+  # embed — semantic retrieval and memory only; NOT a chat model
+  # nomic-embed-text: embedding-only, 8192 token limit
+  - model_name: embed
+    litellm_params:
+      model: ollama/nomic-embed-text
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 8192
+    model_info:
+      mode: embedding
+      max_tokens: 8192
+
+  # ── Layer 2: Anthropic / Claude model name aliases ─────────────────────────
+  # Claude Code's /model picker and the Anthropic SDK send these exact strings
+  # when pointed at a custom ANTHROPIC_BASE_URL. Both short and date-versioned
+  # forms are required — different SDK releases use different formats.
+  #
+  # Mapping rationale:
+  #   opus / fable  → reasoner backend (deepseek-r1:32b — deepest reasoning)
+  #   sonnet        → coder backend    (qwen3.6:27b — balanced daily driver)
+  #   haiku         → router backend   (qwen3:8b — fast, lightweight)
 
   - model_name: claude-opus-4-8
     litellm_params:
@@ -94,6 +123,21 @@ model_list:
       supports_reasoning: true
       max_tokens: 32768
 
+  - model_name: claude-opus-4-8-20251101
+    litellm_params:
+      model: ollama/deepseek-r1:32b
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 32768
+    model_info:
+      supports_function_calling: true
+      supports_tool_choice: true
+      supports_parallel_function_calling: false
+      supports_system_messages: true
+      supports_native_streaming: true
+      supports_reasoning: true
+      max_tokens: 32768
+
+  # Claude Code defaults to fable-5 on recent installs; maps to reasoner tier
   - model_name: claude-fable-5
     litellm_params:
       model: ollama/deepseek-r1:32b
@@ -122,6 +166,35 @@ model_list:
       supports_reasoning: true
       max_tokens: 32768
 
+  # Date-versioned form — Claude Code 1.x sends this exact string by default
+  - model_name: claude-sonnet-4-6-20250219
+    litellm_params:
+      model: ollama/qwen3.6:27b
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 32768
+    model_info:
+      supports_function_calling: true
+      supports_tool_choice: true
+      supports_parallel_function_calling: true
+      supports_system_messages: true
+      supports_native_streaming: true
+      supports_reasoning: true
+      max_tokens: 32768
+
+  - model_name: claude-haiku-4-5
+    litellm_params:
+      model: ollama/qwen3:8b
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 32768
+    model_info:
+      supports_function_calling: true
+      supports_tool_choice: true
+      supports_parallel_function_calling: true
+      supports_system_messages: true
+      supports_native_streaming: true
+      supports_reasoning: true
+      max_tokens: 32768
+
   - model_name: claude-haiku-4-5-20251001
     litellm_params:
       model: ollama/qwen3:8b
@@ -136,36 +209,115 @@ model_list:
       supports_reasoning: true
       max_tokens: 32768
 
-  # ── embed — semantic retrieval and memory only; NOT a chat model ────────────
-  # nomic-embed-text: embedding-only, 8192 token limit
-  - model_name: embed
+  # ── Layer 3: OpenAI model name aliases ─────────────────────────────────────
+  # Codex CLI, VS Code Continue/Cline, and raw OpenAI SDK clients send these.
+  # Routes to local equivalents with no cloud calls required.
+  #
+  # Mapping rationale:
+  #   gpt-4o       → coder backend  (qwen3.6:27b — capable, coding-optimised)
+  #   gpt-4o-mini  → router backend (qwen3:8b — fast, good enough)
+  #   gpt-3.5-turbo → router backend (legacy name, same fast tier)
+
+  - model_name: gpt-4o
     litellm_params:
-      model: ollama/nomic-embed-text
+      model: ollama/qwen3.6:27b
       api_base: os.environ/OLLAMA_URL
-      num_ctx: 8192
+      num_ctx: 32768
     model_info:
-      mode: embedding
-      max_tokens: 8192
+      supports_function_calling: true
+      supports_tool_choice: true
+      supports_parallel_function_calling: true
+      supports_system_messages: true
+      supports_native_streaming: true
+      supports_reasoning: true
+      max_tokens: 32768
+
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: ollama/qwen3:8b
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 32768
+    model_info:
+      supports_function_calling: true
+      supports_tool_choice: true
+      supports_parallel_function_calling: true
+      supports_system_messages: true
+      supports_native_streaming: true
+      supports_reasoning: true
+      max_tokens: 32768
+
+  - model_name: gpt-3.5-turbo
+    litellm_params:
+      model: ollama/qwen3:8b
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 32768
+    model_info:
+      supports_function_calling: true
+      supports_tool_choice: true
+      supports_parallel_function_calling: true
+      supports_system_messages: true
+      supports_native_streaming: true
+      supports_reasoning: true
+      max_tokens: 32768
+
+  # ── Cloud fallbacks (disabled by default) ──────────────────────────────────
+  # To enable: set API key in .env and uncomment the relevant block.
+  # These shadow the local aliases above — the same model_name can appear twice;
+  # LiteLLM load-balances or falls back between both entries for that name.
+  #
+  # - model_name: reasoner
+  #   litellm_params:
+  #     model: anthropic/claude-opus-4-8
+  #     api_key: os.environ/ANTHROPIC_API_KEY
+  #
+  # - model_name: coder
+  #   litellm_params:
+  #     model: anthropic/claude-sonnet-4-6
+  #     api_key: os.environ/ANTHROPIC_API_KEY
+  #
+  # - model_name: gpt-4o
+  #   litellm_params:
+  #     model: openai/gpt-4o
+  #     api_key: os.environ/OPENAI_API_KEY
+
 
 router_settings:
   routing_strategy: least-busy
   num_retries: 2
   timeout: 300
   enable_pre_call_checks: true      # validate context window before sending
-  allowed_fails: 3                  # cool down a model after 3 failures in 1 min
-  cooldown_time: 30                 # seconds to wait before retrying a cooled-down model
-  redis_host: redis                 # share routing state across restarts via existing Redis
+  allowed_fails: 3                  # cool down a model after 3 failures/min
+  cooldown_time: 30                 # seconds before retrying a cooled-down model
+  redis_host: redis                 # share routing state across restarts
   redis_port: 6379
   redis_password: os.environ/REDIS_PASSWORD
   fallbacks:
-    # Degrade by role capability — never expose backend model names externally
-    - {"reasoner": ["coder"]}
-    - {"supervisor": ["reasoner"]}
-    - {"coder": ["router"]}
+    # Role hierarchy — degrade by capability tier
+    - {"reasoner":  ["coder", "router"]}
+    - {"supervisor": ["reasoner", "coder"]}
+    - {"coder":     ["router"]}
+    # Opus tier — degrade to coder, then router
+    - {"claude-opus-4-8":         ["coder", "router"]}
+    - {"claude-opus-4-8-20251101": ["coder", "router"]}
+    - {"claude-fable-5":           ["coder", "router"]}
+    # Sonnet tier — degrade to router
+    - {"claude-sonnet-4-6":          ["router"]}
+    - {"claude-sonnet-4-6-20250219": ["router"]}
+    - {"gpt-4o":                     ["router"]}
+    # Haiku/mini tier — no further degradation (already at fast tier)
+    - {"claude-haiku-4-5":          ["router"]}
+    - {"claude-haiku-4-5-20251001": ["router"]}
+    - {"gpt-4o-mini":               ["router"]}
+    - {"gpt-3.5-turbo":             ["router"]}
   context_window_fallbacks:
-    # Graceful fallback when a request exceeds a role's declared context window
-    - {"reasoner": ["coder"]}
-    - {"coder": ["router"]}
+    # Graceful fallback when request exceeds a role's declared context window
+    - {"reasoner":            ["coder"]}
+    - {"coder":               ["router"]}
+    - {"claude-opus-4-8":     ["coder"]}
+    - {"claude-fable-5":      ["coder"]}
+    - {"claude-sonnet-4-6":   ["router"]}
+    - {"claude-sonnet-4-6-20250219": ["router"]}
+    - {"gpt-4o":              ["router"]}
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
@@ -173,10 +325,10 @@ general_settings:
   store_model_in_db: true
   background_health_checks: true    # required for health_check_interval to fire
   health_check_interval: 300
-  max_parallel_requests: 1          # Apple Silicon: queue concurrent inference; never split GPU
+  max_parallel_requests: 1          # Apple Silicon: queue inference; never split GPU
 
 litellm_settings:
-  drop_params: true
+  drop_params: true                 # strip params Ollama doesn't understand
   set_verbose: false
   cache: true
   cache_params:
@@ -184,9 +336,9 @@ litellm_settings:
     host: redis
     port: 6379
     password: os.environ/REDIS_PASSWORD
-    ttl: 3600                        # 1hr — embeddings are stable; chat benefits from longer window too
+    ttl: 3600                       # 1hr — stable for both chat and embeddings
     supported_call_types:
       - acompletion
       - completion
       - aembedding
-      - embedding                    # cache embed role calls — same text, same vector
+      - embedding                   # cache embed role calls — same text, same vector
