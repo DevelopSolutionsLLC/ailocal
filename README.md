@@ -94,11 +94,7 @@ export ANTHROPIC_API_KEY=$(grep LITELLM_MASTER_KEY .env | cut -d= -f2)
 claude
 ```
 
-**Permanent** — copy and fill in your key once:
-```bash
-cp config/clients/claude-code.json ~/.claude/settings.json
-# edit ~/.claude/settings.json and replace <LITELLM_MASTER_KEY>
-```
+**Permanent** — add the source line to `~/.zprofile` (done above). If you want to set env vars in `~/.claude/settings.json` instead, see `config/clients/claude-code.json` — merge the `env` block into your existing file rather than overwriting it.
 
 Claude Code defaults to `claude-sonnet-4-6`, which routes to `qwen3-coder:30b` locally.
 
@@ -116,14 +112,10 @@ The Claude Desktop app connects to Anthropic's servers directly — it can't be 
 ```bash
 export OPENAI_BASE_URL=http://localhost:4000/v1
 export OPENAI_API_KEY=$(grep LITELLM_MASTER_KEY .env | cut -d= -f2)
-codex --model gpt-4o "refactor this to use async/await"
+codex
 ```
 
-**Permanent** — copy and fill in your key once:
-```bash
-cp config/clients/codex-config.yaml ~/.codex/config.yaml
-# edit ~/.codex/config.yaml and replace <LITELLM_MASTER_KEY>
-```
+**Permanent** — the `~/.zprofile` source line covers Codex too. If you prefer a config file, see `config/clients/codex-config.yaml` — copy it to `~/.codex/config.yaml` only if that file doesn't already exist.
 
 `gpt-4o` routes to `qwen3-coder:30b`. You can also call local models directly: `codex --model qwen3-coder:30b`.
 
@@ -137,11 +129,7 @@ Launch VS Code with ailocal env vars active so all extensions pick them up:
 source config/clients/env.sh && code .
 ```
 
-**Continue extension** — copy config and fill in your key:
-```bash
-cp config/clients/vscode-continue.json ~/.continue/config.json
-# edit and replace <LITELLM_MASTER_KEY>
-```
+**Continue extension** — if you don't have an existing `~/.continue/config.json`, you can use `config/clients/vscode-continue.json` as a starting point. Replace `<LITELLM_MASTER_KEY>` with your key from `.env`. If you already have a Continue config, add the models from that file manually rather than overwriting.
 
 Gives you three models in the Continue panel, tab autocomplete via qwen3:8b, and codebase embeddings via nomic-embed-text.
 
