@@ -6,7 +6,7 @@
 #   router     → qwen3:8b           ~5 GB   — fast classification and routing
 #   coder      → qwen3.6:27b        ~17 GB  — implementation and generation
 #   reasoner   → deepseek-r1:32b    ~20 GB  — planning and deep reasoning
-#   supervisor → glm-4.7-flash      ~19 GB  — review and approval gate (requires Ollama 0.14.3+)
+#   supervisor → gemma4:31b      ~20 GB  — review and approval gate (Google DeepMind)
 #   embed      → nomic-embed-text   ~300 MB — semantic retrieval only
 #
 # Run this after 'ollama serve' is confirmed running.
@@ -56,7 +56,7 @@ declare -a MODELS=(
   "qwen3:8b"
   "qwen3.6:27b"
   "deepseek-r1:32b"
-  "glm-4.7-flash"
+  "gemma4:31b"
   "nomic-embed-text"
 )
 
