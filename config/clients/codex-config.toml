@@ -18,9 +18,10 @@
 profile        = "coder"
 
 [model_providers.ailocal]
-name     = "ailocal (LiteLLM)"
-base_url = "http://localhost:4000"
-env_key  = "LITELLM_MASTER_KEY"
+name               = "ailocal (LiteLLM)"
+base_url           = "http://localhost:4000"
+env_key            = "LITELLM_MASTER_KEY"
+supports_websockets = false   # LiteLLM uses HTTP, not WebSocket — force HTTP transport
 
 [profiles.coder]
 model_provider              = "ailocal"
