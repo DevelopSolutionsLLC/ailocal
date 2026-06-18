@@ -16,7 +16,7 @@
 #   router    → qwen3:8b          (fast, 40K ctx)
 #   coder     → qwen3.6:27b       (coding-optimised, 32K ctx)
 #   reasoner  → deepseek-r1:32b   (deep reasoning, 32K ctx)
-#   supervisor → glm-4.7-flash    (review / approval, 198K ctx)
+#   supervisor → gemma4:31b       (review / approval, 256K ctx)
 #   embed     → nomic-embed-text  (embeddings only)
 
 model_list:
@@ -73,10 +73,10 @@ model_list:
       max_tokens: 32768
 
   # supervisor — review, critique, and approval gate role
-  # glm-4.7-flash: tools + thinking confirmed; 198K context, 30B MoE
+  # gemma4:31b: Google DeepMind — different architecture from Qwen/DeepSeek stack.
   - model_name: supervisor
     litellm_params:
-      model: ollama/glm-4.7-flash
+      model: ollama/gemma4:31b
       api_base: os.environ/OLLAMA_URL
       num_ctx: 65536
     model_info:
