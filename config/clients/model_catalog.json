@@ -20,14 +20,13 @@
       "support_verbosity": false,
       "apply_patch_tool_type": "freeform",
       "web_search_tool_type": "text",
+      "experimental_supported_tools": [],
       "supported_reasoning_levels": [
         { "effort": "low",    "description": "Fast, lighter reasoning" },
         { "effort": "medium", "description": "Balanced speed and depth" },
         { "effort": "high",   "description": "Deep reasoning for complex problems" }
       ],
-      "service_tiers": [
-        { "id": "default", "name": "Standard", "description": "Standard usage" }
-      ],
+      "service_tiers": [],
       "truncation_policy": { "mode": "tokens", "limit": 10000 }
     },
     {
@@ -50,13 +49,12 @@
       "support_verbosity": false,
       "apply_patch_tool_type": "freeform",
       "web_search_tool_type": "text",
+      "experimental_supported_tools": [],
       "supported_reasoning_levels": [
         { "effort": "medium", "description": "Balanced speed and depth" },
         { "effort": "high",   "description": "Deep reasoning for complex problems" }
       ],
-      "service_tiers": [
-        { "id": "default", "name": "Standard", "description": "Standard usage" }
-      ],
+      "service_tiers": [],
       "truncation_policy": { "mode": "tokens", "limit": 10000 }
     },
     {
@@ -79,13 +77,12 @@
       "support_verbosity": false,
       "apply_patch_tool_type": "freeform",
       "web_search_tool_type": "text",
+      "experimental_supported_tools": [],
       "supported_reasoning_levels": [
         { "effort": "low",    "description": "Fast, lighter reasoning" },
         { "effort": "medium", "description": "Balanced speed and depth" }
       ],
-      "service_tiers": [
-        { "id": "default", "name": "Standard", "description": "Standard usage" }
-      ],
+      "service_tiers": [],
       "truncation_policy": { "mode": "tokens", "limit": 10000 }
     },
     {
@@ -108,13 +105,12 @@
       "support_verbosity": false,
       "apply_patch_tool_type": "freeform",
       "web_search_tool_type": "text",
+      "experimental_supported_tools": [],
       "supported_reasoning_levels": [
         { "effort": "medium", "description": "Balanced speed and depth" },
         { "effort": "high",   "description": "Deep reasoning for complex problems" }
       ],
-      "service_tiers": [
-        { "id": "default", "name": "Standard", "description": "Standard usage" }
-      ],
+      "service_tiers": [],
       "truncation_policy": { "mode": "tokens", "limit": 10000 }
     },
     {
@@ -137,14 +133,13 @@
       "support_verbosity": false,
       "apply_patch_tool_type": "freeform",
       "web_search_tool_type": "text",
+      "experimental_supported_tools": [],
       "supported_reasoning_levels": [
         { "effort": "low",    "description": "Fast, lighter reasoning" },
         { "effort": "medium", "description": "Balanced speed and depth" },
         { "effort": "high",   "description": "Deep reasoning for complex problems" }
       ],
-      "service_tiers": [
-        { "id": "default", "name": "Standard", "description": "Standard usage" }
-      ],
+      "service_tiers": [],
       "truncation_policy": { "mode": "tokens", "limit": 10000 }
     }
   ]
