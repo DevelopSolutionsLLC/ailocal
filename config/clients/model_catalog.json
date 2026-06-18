@@ -1,0 +1,146 @@
+{
+  "models": [
+    {
+      "slug": "coder",
+      "display_name": "Coder (qwen3.6:27b)",
+      "description": "Implementation and generation — qwen3.6:27b, 32K ctx, tools + thinking",
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 10,
+      "context_window": 32768,
+      "max_context_window": 32768,
+      "effective_context_window_percent": 90,
+      "input_modalities": ["text"],
+      "supports_parallel_tool_calls": true,
+      "supports_search_tool": false,
+      "supports_image_detail_original": false,
+      "supports_reasoning_summaries": false,
+      "support_verbosity": false,
+      "apply_patch_tool_type": "freeform",
+      "web_search_tool_type": "text",
+      "supported_reasoning_levels": [
+        { "effort": "low",    "description": "Fast, lighter reasoning" },
+        { "effort": "medium", "description": "Balanced speed and depth" },
+        { "effort": "high",   "description": "Deep reasoning for complex problems" }
+      ],
+      "service_tiers": [
+        { "id": "default", "name": "Standard", "description": "Standard usage" }
+      ],
+      "truncation_policy": { "mode": "tokens", "limit": 10000 }
+    },
+    {
+      "slug": "reasoner",
+      "display_name": "Reasoner (deepseek-r1:32b)",
+      "description": "Deep planning and decomposition — deepseek-r1:32b, 32K ctx",
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 20,
+      "context_window": 32768,
+      "max_context_window": 32768,
+      "effective_context_window_percent": 90,
+      "input_modalities": ["text"],
+      "supports_parallel_tool_calls": false,
+      "supports_search_tool": false,
+      "supports_image_detail_original": false,
+      "supports_reasoning_summaries": false,
+      "support_verbosity": false,
+      "apply_patch_tool_type": "freeform",
+      "web_search_tool_type": "text",
+      "supported_reasoning_levels": [
+        { "effort": "medium", "description": "Balanced speed and depth" },
+        { "effort": "high",   "description": "Deep reasoning for complex problems" }
+      ],
+      "service_tiers": [
+        { "id": "default", "name": "Standard", "description": "Standard usage" }
+      ],
+      "truncation_policy": { "mode": "tokens", "limit": 10000 }
+    },
+    {
+      "slug": "router",
+      "display_name": "Router (qwen3:8b)",
+      "description": "Fast lightweight tasks — qwen3:8b, 32K ctx",
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 30,
+      "context_window": 32768,
+      "max_context_window": 32768,
+      "effective_context_window_percent": 90,
+      "input_modalities": ["text"],
+      "supports_parallel_tool_calls": true,
+      "supports_search_tool": false,
+      "supports_image_detail_original": false,
+      "supports_reasoning_summaries": false,
+      "support_verbosity": false,
+      "apply_patch_tool_type": "freeform",
+      "web_search_tool_type": "text",
+      "supported_reasoning_levels": [
+        { "effort": "low",    "description": "Fast, lighter reasoning" },
+        { "effort": "medium", "description": "Balanced speed and depth" }
+      ],
+      "service_tiers": [
+        { "id": "default", "name": "Standard", "description": "Standard usage" }
+      ],
+      "truncation_policy": { "mode": "tokens", "limit": 10000 }
+    },
+    {
+      "slug": "supervisor",
+      "display_name": "Supervisor (gemma4:31b)",
+      "description": "Review, critique, and approval — gemma4:31b, 64K ctx",
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 40,
+      "context_window": 65536,
+      "max_context_window": 65536,
+      "effective_context_window_percent": 90,
+      "input_modalities": ["text"],
+      "supports_parallel_tool_calls": true,
+      "supports_search_tool": false,
+      "supports_image_detail_original": false,
+      "supports_reasoning_summaries": false,
+      "support_verbosity": false,
+      "apply_patch_tool_type": "freeform",
+      "web_search_tool_type": "text",
+      "supported_reasoning_levels": [
+        { "effort": "medium", "description": "Balanced speed and depth" },
+        { "effort": "high",   "description": "Deep reasoning for complex problems" }
+      ],
+      "service_tiers": [
+        { "id": "default", "name": "Standard", "description": "Standard usage" }
+      ],
+      "truncation_policy": { "mode": "tokens", "limit": 10000 }
+    },
+    {
+      "slug": "gpt-5.5",
+      "display_name": "gpt-5.5 → Coder (qwen3.6:27b)",
+      "description": "OpenAI alias — routes to coder backend locally",
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 50,
+      "context_window": 32768,
+      "max_context_window": 32768,
+      "effective_context_window_percent": 90,
+      "input_modalities": ["text"],
+      "supports_parallel_tool_calls": true,
+      "supports_search_tool": false,
+      "supports_image_detail_original": false,
+      "supports_reasoning_summaries": false,
+      "support_verbosity": false,
+      "apply_patch_tool_type": "freeform",
+      "web_search_tool_type": "text",
+      "supported_reasoning_levels": [
+        { "effort": "low",    "description": "Fast, lighter reasoning" },
+        { "effort": "medium", "description": "Balanced speed and depth" },
+        { "effort": "high",   "description": "Deep reasoning for complex problems" }
+      ],
+      "service_tiers": [
+        { "id": "default", "name": "Standard", "description": "Standard usage" }
+      ],
+      "truncation_policy": { "mode": "tokens", "limit": 10000 }
+    }
+  ]
+}
