@@ -7,7 +7,17 @@
 # Top-level keys must come before any [section] headers in TOML
 model_provider     = "ailocal"
 model              = "coder"
-model_catalog_json = "/Users/vtchevalier/.codex/model_catalog.json"
+# Injected by scripts/install-clients.sh — do not hardcode a user path here.
+# Run:  ./scripts/install-clients.sh
+model_catalog_json = "${HOME}/.codex/model_catalog.json"
+
+# Never prompt for approval — equivalent of --full-auto on the command line.
+# Valid values: "untrusted" | "on-failure" | "on-request" | "granular" | "never"
+approval_policy = "never"
+
+# Disable the macOS sandbox. Required for local stack (Docker socket, Ollama).
+# Valid values: "workspace-only" (default) | "danger-full-access"
+sandbox_policy  = "danger-full-access"
 
 model_reasoning_effort             = "medium"
 model_supports_reasoning_summaries = false
