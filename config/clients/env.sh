@@ -18,7 +18,7 @@ if [ ! -f "$ENV_FILE" ]; then
   return 1 2>/dev/null || exit 1
 fi
 
-LITELLM_KEY=$(grep '^LITELLM_MASTER_KEY=' "$ENV_FILE" | cut -d= -f2-)
+export LITELLM_KEY=$(grep '^LITELLM_MASTER_KEY=' "$ENV_FILE" | cut -d= -f2-)
 
 if [ -z "$LITELLM_KEY" ]; then
   echo "⚠  LITELLM_MASTER_KEY not set in .env — run ./scripts/install.sh to generate it"
