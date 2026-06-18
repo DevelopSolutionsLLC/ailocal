@@ -28,7 +28,7 @@ model_list:
   # qwen3:8b: tools + thinking confirmed on Ollama Hub; 40K context window
   - model_name: router
     litellm_params:
-      model: ollama/qwen3:8b
+      model: ollama_chat/qwen3:8b
       api_base: os.environ/OLLAMA_URL
       num_ctx: 32768
     model_info:
@@ -44,7 +44,7 @@ model_list:
   # deepseek-r1:32b: tools + thinking confirmed; serial tool use by design
   - model_name: reasoner
     litellm_params:
-      model: ollama/deepseek-r1:32b
+      model: ollama_chat/deepseek-r1:32b
       api_base: os.environ/OLLAMA_URL
       num_ctx: 32768
     model_info:
@@ -60,7 +60,7 @@ model_list:
   # qwen3.6:27b: tools + thinking + vision confirmed; coding-optimised weights
   - model_name: coder
     litellm_params:
-      model: ollama/qwen3.6:27b
+      model: ollama_chat/qwen3.6:27b
       api_base: os.environ/OLLAMA_URL
       num_ctx: 32768
     model_info:
@@ -76,7 +76,7 @@ model_list:
   # gemma4:31b: Google DeepMind — different architecture from Qwen/DeepSeek stack.
   - model_name: supervisor
     litellm_params:
-      model: ollama/gemma4:31b
+      model: ollama_chat/gemma4:31b
       api_base: os.environ/OLLAMA_URL
       num_ctx: 65536
     model_info:
@@ -92,7 +92,7 @@ model_list:
   # nomic-embed-text: embedding-only, 8192 token limit
   - model_name: embed
     litellm_params:
-      model: ollama/nomic-embed-text
+      model: ollama_chat/nomic-embed-text
       api_base: os.environ/OLLAMA_URL
       num_ctx: 8192
     model_info:
@@ -111,7 +111,7 @@ model_list:
 
   - model_name: claude-opus-4-8
     litellm_params:
-      model: ollama/deepseek-r1:32b
+      model: ollama_chat/deepseek-r1:32b
       api_base: os.environ/OLLAMA_URL
       num_ctx: 32768
     model_info:
@@ -125,7 +125,7 @@ model_list:
 
   - model_name: claude-opus-4-8-20251101
     litellm_params:
-      model: ollama/deepseek-r1:32b
+      model: ollama_chat/deepseek-r1:32b
       api_base: os.environ/OLLAMA_URL
       num_ctx: 32768
     model_info:
@@ -140,7 +140,7 @@ model_list:
   # Claude Code defaults to fable-5 on recent installs; maps to reasoner tier
   - model_name: claude-fable-5
     litellm_params:
-      model: ollama/deepseek-r1:32b
+      model: ollama_chat/deepseek-r1:32b
       api_base: os.environ/OLLAMA_URL
       num_ctx: 32768
     model_info:
@@ -154,7 +154,7 @@ model_list:
 
   - model_name: claude-sonnet-4-6
     litellm_params:
-      model: ollama/qwen3.6:27b
+      model: ollama_chat/qwen3.6:27b
       api_base: os.environ/OLLAMA_URL
       num_ctx: 32768
     model_info:
@@ -169,7 +169,7 @@ model_list:
   # Date-versioned form — Claude Code 1.x sends this exact string by default
   - model_name: claude-sonnet-4-6-20250219
     litellm_params:
-      model: ollama/qwen3.6:27b
+      model: ollama_chat/qwen3.6:27b
       api_base: os.environ/OLLAMA_URL
       num_ctx: 32768
     model_info:
@@ -183,7 +183,7 @@ model_list:
 
   - model_name: claude-haiku-4-5
     litellm_params:
-      model: ollama/qwen3:8b
+      model: ollama_chat/qwen3:8b
       api_base: os.environ/OLLAMA_URL
       num_ctx: 32768
     model_info:
@@ -197,7 +197,7 @@ model_list:
 
   - model_name: claude-haiku-4-5-20251001
     litellm_params:
-      model: ollama/qwen3:8b
+      model: ollama_chat/qwen3:8b
       api_base: os.environ/OLLAMA_URL
       num_ctx: 32768
     model_info:
@@ -222,7 +222,7 @@ model_list:
   # hardened Ollama tool template; avoids XML bleed-through in Codex
   - model_name: gpt-4o
     litellm_params:
-      model: ollama/qwen3:8b
+      model: ollama_chat/qwen3:8b
       api_base: os.environ/OLLAMA_URL
       num_ctx: 32768
     model_info:
@@ -236,7 +236,7 @@ model_list:
 
   - model_name: gpt-4o-mini
     litellm_params:
-      model: ollama/qwen3:8b
+      model: ollama_chat/qwen3:8b
       api_base: os.environ/OLLAMA_URL
       num_ctx: 32768
     model_info:
@@ -250,7 +250,7 @@ model_list:
 
   - model_name: gpt-3.5-turbo
     litellm_params:
-      model: ollama/qwen3:8b
+      model: ollama_chat/qwen3:8b
       api_base: os.environ/OLLAMA_URL
       num_ctx: 32768
     model_info:
