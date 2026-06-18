@@ -69,7 +69,7 @@ LiteLLM exposes **role names only** — no backend model names are visible to ex
 | `router` | qwen3:8b | Fast classification, trivial tasks, autocomplete |
 | `reasoner` | deepseek-r1:32b | Planning, decomposition, deep reasoning |
 | `coder` | qwen3.6:27b | Implementation, generation, coding tasks |
-| `supervisor` | glm-4.7-flash | Review, critique, approval gate |
+| `supervisor` | gemma4:31b | Review, critique, approval gate |
 | `embed` | nomic-embed-text | Semantic retrieval and memory — not for chat |
 
 **Never use backend model names directly in client configs or scripts.** Use role names only.
