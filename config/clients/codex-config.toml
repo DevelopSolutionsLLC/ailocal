@@ -4,33 +4,48 @@
 #   mkdir -p ~/.codex
 #   cp config/clients/codex-config.toml ~/.codex/config.toml
 #
-# Set your key (Codex reads it from the environment):
-#   export LITELLM_MASTER_KEY=$(grep LITELLM_MASTER_KEY .env | cut -d= -f2)
-#   # Or add to ~/.zshrc / ~/.bash_profile
+# NOTE: The /model picker inside Codex always shows OpenAI's catalog regardless
+# of provider config — this is a known Codex bug (issue #22160, closed "not planned").
+# Use profiles instead: codex -p <profile>
 #
-# Switch roles at runtime:
-#   codex --model coder       # implementation tasks (default)
-#   codex --model reasoner    # deep planning / decomposition
-#   codex --model router      # fast, lightweight tasks
-#   codex --model supervisor  # review and approval
+# Usage:
+#   codex -p coder       # default — qwen3.6:27b, coding tasks
+#   codex -p reasoner    # deepseek-r1:32b, deep planning
+#   codex -p router      # qwen3:8b, fast lightweight tasks
+#   codex -p supervisor  # gemma4:31b, review and approval
 
-model          = "coder"
-model_provider = "ailocal"
-
-# Reasoning effort sent in each Responses API request.
-# medium is the right default for coding tasks (coder/router roles).
-# Override per-session with: codex --reasoning-effort high
-model_reasoning_effort = "medium"
-
-# Our Ollama models emit reasoning inside <think> tags, not as OpenAI-style
-# reasoning summaries. Disable summary parsing to avoid display noise.
-model_supports_reasoning_summaries = false
-model_reasoning_summary = "none"
+# Default profile when launching plain `codex`
+profile        = "coder"
 
 [model_providers.ailocal]
 name     = "ailocal (LiteLLM)"
 base_url = "http://localhost:4000"
 env_key  = "LITELLM_MASTER_KEY"
-# Codex queries GET /v1/models from base_url automatically for OpenAI-compatible
-# providers — no model_catalog_json needed. LiteLLM serves the full model list
-# including all role names and aliases at that endpoint.
+
+[profiles.coder]
+model_provider              = "ailocal"
+model                       = "coder"
+model_reasoning_effort      = "medium"
+model_supports_reasoning_summaries = false
+model_reasoning_summary     = "none"
+
+[profiles.reasoner]
+model_provider              = "ailocal"
+model                       = "reasoner"
+model_reasoning_effort      = "high"
+model_supports_reasoning_summaries = false
+model_reasoning_summary     = "none"
+
+[profiles.router]
+model_provider              = "ailocal"
+model                       = "router"
+model_reasoning_effort      = "low"
+model_supports_reasoning_summaries = false
+model_reasoning_summary     = "none"
+
+[profiles.supervisor]
+model_provider              = "ailocal"
+model                       = "supervisor"
+model_reasoning_effort      = "high"
+model_supports_reasoning_summaries = false
+model_reasoning_summary     = "none"
