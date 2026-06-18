@@ -12,8 +12,9 @@ model_reasoning_effort             = "medium"
 model_supports_reasoning_summaries = false
 model_reasoning_summary            = "none"
 
-[projects."/Users/vtchevalier/Documents/DevelopSolutions/ailocal"]
-trust_level = "trusted"
+# Add your own project trust entry after copying to ~/.codex/config.toml:
+# [projects."/absolute/path/to/your/repo"]
+# trust_level = "trusted"
 
 [tui.model_availability_nux]
 "gpt-5.5" = 1
