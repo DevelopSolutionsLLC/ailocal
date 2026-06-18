@@ -1,52 +1,23 @@
-# Codex CLI configuration — ailocal LiteLLM proxy
-#
-# Install:
-#   mkdir -p ~/.codex
-#   cp config/clients/codex-config.toml ~/.codex/config.toml
-#
-# NOTE: The /model picker inside Codex always shows OpenAI's catalog regardless
-# of provider config — this is a known Codex bug (issue #22160, closed "not planned").
-# Use profiles instead: codex -p <profile>
-#
-# Usage:
-#   codex -p coder       # default — qwen3.6:27b, coding tasks
-#   codex -p reasoner    # deepseek-r1:32b, deep planning
-#   codex -p router      # qwen3:8b, fast lightweight tasks
-#   codex -p supervisor  # gemma4:31b, review and approval
+[projects."/Users/vtchevalier/Documents/DevelopSolutions/ailocal"]
+trust_level = "trusted"
 
-# Default profile when launching plain `codex`
-profile        = "coder"
+[tui.model_availability_nux]
+"gpt-5.5" = 1
+
+# Route all Codex requests through the local LiteLLM proxy.
+# Requires: export LITELLM_MASTER_KEY=<value from .env>
+#
+# Switch model per-session: codex --model reasoner
+# Valid models: coder | reasoner | router | supervisor
+
+model_provider = "ailocal"
+model          = "coder"
+
+model_reasoning_effort             = "medium"
+model_supports_reasoning_summaries = false
+model_reasoning_summary            = "none"
 
 [model_providers.ailocal]
-name               = "ailocal (LiteLLM)"
-base_url           = "http://localhost:4000"
-env_key            = "LITELLM_MASTER_KEY"
-supports_websockets = false   # LiteLLM uses HTTP, not WebSocket — force HTTP transport
-
-[profiles.coder]
-model_provider              = "ailocal"
-model                       = "coder"
-model_reasoning_effort      = "medium"
-model_supports_reasoning_summaries = false
-model_reasoning_summary     = "none"
-
-[profiles.reasoner]
-model_provider              = "ailocal"
-model                       = "reasoner"
-model_reasoning_effort      = "high"
-model_supports_reasoning_summaries = false
-model_reasoning_summary     = "none"
-
-[profiles.router]
-model_provider              = "ailocal"
-model                       = "router"
-model_reasoning_effort      = "low"
-model_supports_reasoning_summaries = false
-model_reasoning_summary     = "none"
-
-[profiles.supervisor]
-model_provider              = "ailocal"
-model                       = "supervisor"
-model_reasoning_effort      = "high"
-model_supports_reasoning_summaries = false
-model_reasoning_summary     = "none"
+name     = "ailocal (LiteLLM)"
+base_url = "http://localhost:4000/v1"
+env_key  = "LITELLM_MASTER_KEY"
