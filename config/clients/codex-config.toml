@@ -5,8 +5,9 @@
 # Valid models: coder | reasoner | router | supervisor
 
 # Top-level keys must come before any [section] headers in TOML
-model_provider = "ailocal"
-model          = "coder"
+model_provider     = "ailocal"
+model              = "coder"
+model_catalog_json = "/Users/vtchevalier/.codex/model_catalog.json"
 
 model_reasoning_effort             = "medium"
 model_supports_reasoning_summaries = false
