@@ -1,0 +1,30 @@
+[
+  {
+    "id": "coder",
+    "object": "model",
+    "created": 1700000000,
+    "owned_by": "ailocal",
+    "description": "qwen3.6:27b — coding-optimised, 32K ctx"
+  },
+  {
+    "id": "router",
+    "object": "model",
+    "created": 1700000000,
+    "owned_by": "ailocal",
+    "description": "qwen3:8b — fast classification, 32K ctx"
+  },
+  {
+    "id": "reasoner",
+    "object": "model",
+    "created": 1700000000,
+    "owned_by": "ailocal",
+    "description": "deepseek-r1:32b — deep reasoning, 32K ctx"
+  },
+  {
+    "id": "supervisor",
+    "object": "model",
+    "created": 1700000000,
+    "owned_by": "ailocal",
+    "description": "gemma4:31b — review and approval, 64K ctx"
+  }
+]

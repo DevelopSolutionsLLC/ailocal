@@ -1,0 +1,27 @@
+# Codex CLI configuration — ailocal LiteLLM proxy
+#
+# Install:
+#   mkdir -p ~/.codex
+#   cp config/clients/codex-config.toml ~/.codex/config.toml
+#
+# Set your key (Codex reads it from the environment):
+#   export LITELLM_MASTER_KEY=$(grep LITELLM_MASTER_KEY .env | cut -d= -f2)
+#   # Or add to ~/.zshrc / ~/.bash_profile
+#
+# Switch roles at runtime:
+#   codex --model coder       # implementation tasks (default)
+#   codex --model reasoner    # deep planning / decomposition
+#   codex --model router      # fast, lightweight tasks
+#   codex --model supervisor  # review and approval
+
+model          = "coder"
+model_provider = "ailocal"
+
+# Optional: path to the model catalog so /model picker shows role names
+# model_catalog_json = "~/.codex/ailocal-models.json"
+
+[model_providers.ailocal]
+name    = "ailocal (LiteLLM)"
+base_url = "http://localhost:4000"
+env_key  = "LITELLM_MASTER_KEY"
+# wire_api defaults to "responses" — LiteLLM proxies /v1/responses → Ollama /api/chat
