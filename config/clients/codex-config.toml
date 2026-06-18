@@ -17,6 +17,16 @@
 model          = "coder"
 model_provider = "ailocal"
 
+# Reasoning effort sent in each Responses API request.
+# medium is the right default for coding tasks (coder/router roles).
+# Override per-session with: codex --reasoning-effort high
+model_reasoning_effort = "medium"
+
+# Our Ollama models emit reasoning inside <think> tags, not as OpenAI-style
+# reasoning summaries. Disable summary parsing to avoid display noise.
+model_supports_reasoning_summaries = false
+model_reasoning_summary = "none"
+
 # Optional: path to the model catalog so /model picker shows role names
 # model_catalog_json = "~/.codex/ailocal-models.json"
 
