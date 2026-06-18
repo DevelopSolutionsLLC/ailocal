@@ -27,11 +27,10 @@ model_reasoning_effort = "medium"
 model_supports_reasoning_summaries = false
 model_reasoning_summary = "none"
 
-# Optional: path to the model catalog so /model picker shows role names
-# model_catalog_json = "~/.codex/ailocal-models.json"
-
 [model_providers.ailocal]
-name    = "ailocal (LiteLLM)"
+name     = "ailocal (LiteLLM)"
 base_url = "http://localhost:4000"
 env_key  = "LITELLM_MASTER_KEY"
-# wire_api defaults to "responses" — LiteLLM proxies /v1/responses → Ollama /api/chat
+# Codex queries GET /v1/models from base_url automatically for OpenAI-compatible
+# providers — no model_catalog_json needed. LiteLLM serves the full model list
+# including all role names and aliases at that endpoint.
