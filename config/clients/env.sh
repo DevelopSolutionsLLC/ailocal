@@ -25,6 +25,9 @@ if [ -z "$LITELLM_KEY" ]; then
   return 1 2>/dev/null || exit 1
 fi
 
+# Enables Ollama's MLX backend on Apple Silicon (32GB+). Also set in ~/.zshrc for ollama serve.
+export OLLAMA_USE_MLX=1
+
 # ── Anthropic SDK (Claude Code, Cowork, anthropic-sdk) ─────────────────────
 export ANTHROPIC_BASE_URL=http://localhost:4000
 export ANTHROPIC_API_KEY="$LITELLM_KEY"
