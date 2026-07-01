@@ -67,10 +67,28 @@ All ports bind to `127.0.0.1` (localhost-only). The stack is designed for single
 | **postgres** | — | LiteLLM's database. Stores API keys, spend logs, and model config. Internal only. |
 | **redis** | — | Response cache for LiteLLM. Identical requests within 10 minutes return instantly from cache instead of hitting Ollama. Internal only. |
 | **caddy** | 80, 443 | Reverse proxy. `http://localhost/v1/*` routes to LiteLLM; everything else to Open WebUI. All services are also accessible directly on their own ports. |
-| **prometheus** | 9090 | Optional observability stack; not currently deployed by the default compose file. |
-| **grafana** | 3000 | Optional dashboard UI for Prometheus; not currently deployed by the default compose file. |
 
 **Ollama** runs on the host at port 11434 — not in Docker. Containerized Ollama on Apple Silicon loses Metal GPU access, so it runs natively and all containers reach it via `host.docker.internal:11434`.
+
+## Docker Desktop resource tuning
+
+By default Docker Desktop allocates as much RAM as the VM needs, which can balloon to 14 GB+. After setup, lock it down:
+
+1. Open **Docker Desktop → Settings → Resources**
+2. Set **CPUs** to `2` — LiteLLM runs a single async worker; the real compute is in Ollama on the host
+3. Set **Memory** to `4 GB` — actual container usage is ~1.7 GB; this gives 2× headroom
+4. Set **Swap** to `2 GB` — safety net for VM overhead
+5. Click **Apply & Restart**
+
+Expected container memory usage after tuning:
+
+| Container | Typical |
+|---|---|
+| litellm | ~800 MiB |
+| open-webui | ~600 MiB |
+| postgres | ~80 MiB |
+| redis | ~12 MiB |
+| caddy | ~16 MiB |
 
 ## Role-based routing
 

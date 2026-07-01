@@ -350,7 +350,7 @@ general_settings:
 litellm_settings:
   drop_params: true                 # strip params Ollama doesn't understand
   set_verbose: false
-  callbacks: ["prometheus"]        # enables GET /metrics for Prometheus scraping
+  callbacks: []
   cache: true
   cache_params:
     type: redis
