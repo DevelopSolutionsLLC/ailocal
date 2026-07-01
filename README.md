@@ -32,6 +32,8 @@ brew install --cask docker ollama
 ollama serve                 # start Ollama (or open Ollama.app)
 ./scripts/install-models.sh  # pull models (~45+ GB, takes a while)
 ./scripts/start.sh           # start Docker services
+./scripts/doctor.sh          # one-command preflight + health summary
+./scripts/smoke-test.sh      # verify a real model request succeeds
 ./scripts/healthcheck.sh     # verify everything is up
 ```
 
@@ -55,8 +57,8 @@ All ports bind to `127.0.0.1` (localhost-only). The stack is designed for single
 | **postgres** | — | LiteLLM's database. Stores API keys, spend logs, and model config. Internal only. |
 | **redis** | — | Response cache for LiteLLM. Identical requests within 10 minutes return instantly from cache instead of hitting Ollama. Internal only. |
 | **caddy** | 80, 443 | Reverse proxy. `http://localhost/v1/*` routes to LiteLLM; everything else to Open WebUI. All services are also accessible directly on their own ports. |
-| **prometheus** | 9090 | Scrapes LiteLLM `/metrics` every 15 seconds — request counts, latency, and token usage per role. |
-| **grafana** | 3000 | Dashboard UI for Prometheus. Prometheus is pre-wired as the default datasource on first boot. |
+| **prometheus** | 9090 | Optional observability stack; not currently deployed by the default compose file. |
+| **grafana** | 3000 | Optional dashboard UI for Prometheus; not currently deployed by the default compose file. |
 
 **Ollama** runs on the host at port 11434 — not in Docker. Containerized Ollama on Apple Silicon loses Metal GPU access, so it runs natively and all containers reach it via `host.docker.internal:11434`.
 
@@ -193,6 +195,8 @@ message = client.messages.create(
 ./scripts/update.sh             # backup → pull new images → restart
 ./scripts/backup.sh             # config + postgres dump to ./backups/
 ./scripts/restore.sh            # restore from most recent backup
+./scripts/doctor.sh            # one-command preflight + health summary
+./scripts/smoke-test.sh        # verify a real model request succeeds
 ./scripts/healthcheck.sh        # check all services and endpoints
 ```
 

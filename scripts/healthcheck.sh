@@ -85,8 +85,16 @@ check_container "ailocal_openwebui" "critical"
 check_container "ailocal_caddy"     "critical"
 
 step "Optional containers"
-check_container "ailocal_prometheus"  "optional"
-check_container "ailocal_grafana"     "optional"
+if docker ps -a --format "{{.Names}}" | grep -q "^ailocal_prometheus$"; then
+  check_container "ailocal_prometheus" "optional"
+else
+  echo "  — Prometheus not deployed (optional)"
+fi
+if docker ps -a --format "{{.Names}}" | grep -q "^ailocal_grafana$"; then
+  check_container "ailocal_grafana" "optional"
+else
+  echo "  — Grafana not deployed (optional)"
+fi
 
 # Catch containers stuck in restart loop (real problem, not just stopped)
 restarting=$(docker ps --filter "status=restarting" --format "{{.Names}}" | head -10)
@@ -103,8 +111,16 @@ fi
 step "HTTP endpoints"
 check_service "LiteLLM API"  "http://localhost:4000/health/liveliness"  10
 check_service "Open WebUI"   "http://localhost:8081/"                    10
-check_service "Prometheus"   "http://localhost:9090/-/ready"              5
-check_service "Grafana"      "http://localhost:3000/api/health"           5
+if docker ps --format "{{.Names}}" | grep -q "^ailocal_prometheus$"; then
+  check_service "Prometheus" "http://localhost:9090/-/ready" 5
+else
+  echo "  — Prometheus endpoint skipped (service not deployed)"
+fi
+if docker ps --format "{{.Names}}" | grep -q "^ailocal_grafana$"; then
+  check_service "Grafana" "http://localhost:3000/api/health" 5
+else
+  echo "  — Grafana endpoint skipped (service not deployed)"
+fi
 
 # ── Summary ────────────────────────────────────────────────────────────────
 

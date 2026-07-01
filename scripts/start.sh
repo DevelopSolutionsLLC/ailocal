@@ -41,6 +41,18 @@ elif ! ollama list >/dev/null 2>&1; then
   echo "  LiteLLM will start but model requests will fail until Ollama is up."
 else
   info "Ollama daemon responding"
+  missing_models=()
+  for model in qwen3:8b qwen3.6:27b deepseek-r1:32b gemma4:31b-mlx nomic-embed-text; do
+    if ! ollama list 2>/dev/null | awk 'NR>1 {print $1}' | grep -Eq "^${model}(:.+)?$"; then
+      missing_models+=("$model")
+    fi
+  done
+  if [ ${#missing_models[@]} -gt 0 ]; then
+    warn "Missing Ollama models: ${missing_models[*]}"
+    echo "  Run ./scripts/install-models.sh to pull the full model set before using the stack."
+  else
+    info "Required Ollama models present"
+  fi
 fi
 
 # ── Start services ─────────────────────────────────────────────────────────
@@ -73,7 +85,7 @@ fi
 
 # ── Service URLs and client setup ──────────────────────────────────────────
 
-KEY='$(grep LITELLM_MASTER_KEY .env | cut -d= -f2)'
+KEY="$(grep '^LITELLM_MASTER_KEY=' .env | cut -d= -f2-)"
 
 step "ailocal is running"
 echo ""
@@ -100,8 +112,7 @@ echo "  ── VS Code ───────────────────
 echo "    source \"$ROOT_DIR/config/clients/env.sh\" && code ."
 echo "    (Continue + Cline pick up env vars automatically)"
 echo ""
-echo "  ── Config file references (merge manually — don't overwrite) ─"
-echo "    config/clients/claude-code.json        → ~/.claude/settings.json"
-echo "    config/clients/codex-config.yaml       → ~/.codex/config.yaml"
-echo "    config/clients/vscode-continue.json    → ~/.continue/config.json"
+echo "  ── First-time client setup ───────────────────────────────────"
+echo "    ./scripts/install-clients.sh"
+echo "    (installs Codex, Claude Code, and VS Code Continue configs)"
 echo ""

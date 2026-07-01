@@ -71,6 +71,20 @@ if [ -f "$RESTORE_SRC/.env" ]; then
   info ".env restored"
 fi
 
+# ── Restore Open WebUI data ───────────────────────────────────────────────
+
+if [ -f "$RESTORE_SRC/openwebui-data.tar.gz" ]; then
+  step "Restoring Open WebUI data"
+  docker compose -f "$ROOT_DIR/docker-compose.yml" up -d open-webui
+  docker run --rm \
+    --volumes-from ailocal_openwebui \
+    -v "$STAGING:/restore" \
+    alpine:3.20 sh -c 'tar xzf /restore/openwebui-data.tar.gz -C /' >/dev/null 2>&1 || warn "Open WebUI data restore failed"
+  info "Open WebUI data restored"
+else
+  warn "No openwebui-data.tar.gz in archive — skipping Open WebUI data restore."
+fi
+
 # ── Restore Postgres ───────────────────────────────────────────────────────
 
 if [ -f "$RESTORE_SRC/postgres.sql" ]; then

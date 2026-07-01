@@ -6,7 +6,7 @@
 #   router     → qwen3:8b           ~5 GB   — fast classification and routing
 #   coder      → qwen3.6:27b        ~17 GB  — implementation and generation
 #   reasoner   → deepseek-r1:32b    ~20 GB  — planning and deep reasoning
-#   supervisor → gemma4:31b      ~20 GB  — review and approval gate (Google DeepMind)
+#   supervisor → gemma4:31b-mlx  ~20 GB  — review and approval gate (MLX-native, 256K ctx)
 #   embed      → nomic-embed-text   ~300 MB — semantic retrieval only
 #
 # Run this after 'ollama serve' is confirmed running.
@@ -42,11 +42,11 @@ fi
 info "Ollama daemon responding"
 
 # ── Disk space check ───────────────────────────────────────────────────────
-# All 5 models combined ≈ 63 GB. Warn if less than 80 GB free.
+# All 5 models combined ≈ 62 GB. Warn if less than 80 GB free.
 
 FREE_GB=$(df -g "$HOME" 2>/dev/null | awk 'NR==2 {print $4}' || echo 0)
 if [ "$FREE_GB" -lt 80 ]; then
-  warn "Only ${FREE_GB} GB free on disk. Full model set needs ~45+ GB."
+  warn "Only ${FREE_GB} GB free on disk. Full model set needs ~62+ GB."
   echo "  Proceeding — skip large models if you run low."
 fi
 
@@ -56,7 +56,7 @@ declare -a MODELS=(
   "qwen3:8b"
   "qwen3.6:27b"
   "deepseek-r1:32b"
-  "gemma4:31b"
+  "gemma4:31b-mlx"
   "nomic-embed-text"
 )
 
