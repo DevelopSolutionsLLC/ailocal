@@ -1,12 +1,22 @@
 # ailocal
 
-Local AI infrastructure for macOS Apple Silicon. Ollama runs natively for Metal GPU acceleration; everything else runs in Docker Compose.
+Run AI coding tools — Claude Code, Codex, VS Code Copilot Chat — against local models on Apple Silicon. No cloud API costs, no data leaving your machine, no code changes to your tools.
+
+**How it works:** Ollama runs your models natively for full Metal/MLX GPU access. LiteLLM sits in front as an OpenAI/Anthropic-compatible proxy, exposing role names (`coder`, `reasoner`, `supervisor`) instead of raw model names. Your tools point at `localhost:4000` instead of Anthropic or OpenAI — everything else stays the same.
+
+**Why this over bare Ollama:**
+- Single endpoint for all tools — configure once, works everywhere
+- Role names decouple your client configs from backend models — swap `gemma4:31b-mlx` for something better without touching a single config file
+- Response caching, usage logging, and fallback chains built in
+- Optional cloud fallback per role — route `reasoner` to Claude Opus when the local model isn't enough
+
+---
 
 ## Requirements
 
 - macOS 13+ (Apple Silicon M1+)
 - 64 GB RAM recommended — 32 GB minimum with smaller models
-- ~60 GB free disk for the full model set
+- ~62 GB free disk for the full model set
 
 ## Prerequisites
 
@@ -28,13 +38,13 @@ brew install --cask docker ollama
 ## Setup
 
 ```bash
-./scripts/install.sh         # install host deps, generate .env
-ollama serve                 # start Ollama (or open Ollama.app)
-./scripts/install-models.sh  # pull models (~62 GB, takes a while)
-./scripts/start.sh           # start Docker services
-./scripts/doctor.sh          # one-command preflight + health summary
-./scripts/smoke-test.sh      # verify a real model request succeeds
-./scripts/healthcheck.sh     # verify everything is up
+./scripts/install.sh          # install host deps, generate .env
+ollama serve                  # start Ollama (or open Ollama.app)
+./scripts/install-models.sh   # pull models (~62 GB, takes a while)
+./scripts/start.sh            # start Docker services
+./scripts/install-clients.sh  # deploy configs to Claude Code, Codex, VS Code
+./scripts/doctor.sh           # one-command preflight + health summary
+./scripts/smoke-test.sh       # verify a real model request succeeds
 ```
 
 ## Security model
@@ -78,7 +88,16 @@ LiteLLM exposes **role names only** — no backend model names are visible to ex
 
 ## Client integration
 
-Source this once to configure your shell for all tools:
+The quickest path is the install script — it deploys configs to all three tools at once, handles merging with existing configs, and backs up before touching anything:
+
+```bash
+./scripts/install-clients.sh              # deploy all three
+./scripts/install-clients.sh vscode       # VS Code only
+./scripts/install-clients.sh codex        # Codex only
+./scripts/install-clients.sh claude       # Claude Code only
+```
+
+For manual setup or per-session use, source the env helper first:
 
 ```bash
 source config/clients/env.sh
@@ -90,51 +109,39 @@ Add that line to `~/.zprofile` to make it permanent.
 
 ### Claude Code
 
-**Per-session:**
+`install-clients.sh claude` writes `~/.claude/settings.json` and `~/.claude/CLAUDE.md`. Claude Code is configured to use the `coder` role by default; use `/model` to switch roles mid-session.
+
+**Manual / per-session:**
 ```bash
 export ANTHROPIC_BASE_URL=http://localhost:4000
 export ANTHROPIC_API_KEY=$(grep LITELLM_MASTER_KEY .env | cut -d= -f2)
 claude
 ```
 
-**Permanent** — add the source line to `~/.zprofile`. To set env vars in `~/.claude/settings.json`, merge the contents of `config/clients/claude-code.json` into your existing file. Claude Code is configured to use the `coder` role by default.
-
----
-
-### Claude Desktop (Cowork)
-
-The Claude Desktop app connects to Anthropic's servers directly — it can't be redirected to a local proxy. However, any subprocess it spawns inherits your shell environment, so adding the env file to `~/.zprofile` means all agent work routes through ailocal automatically.
+> To switch back to real Anthropic: `unset ANTHROPIC_BASE_URL` in your session, or remove the `env.ANTHROPIC_BASE_URL` entry from `~/.claude/settings.json`.
 
 ---
 
 ### Codex CLI
 
-**Per-session:**
+`install-clients.sh codex` merges ailocal provider settings into `~/.codex/config.toml` without overwriting existing computer-use, plugin, or MCP entries. It also copies `model_catalog.json` so Codex's model picker shows the role names.
+
+**Manual / per-session:**
 ```bash
 export OPENAI_BASE_URL=http://localhost:4000/v1
 export OPENAI_API_KEY=$(grep LITELLM_MASTER_KEY .env | cut -d= -f2)
 codex
 ```
 
-**Permanent** — the `~/.zprofile` source line covers Codex too. To use a config file, see `config/clients/codex-config.yaml` — copy it to `~/.codex/config.yaml` only if that file doesn't already exist.
-
-Codex is configured to use the `coder` role by default.
+**Config file:** `config/clients/codex-config.toml` is the source template — do not copy it directly to `~/.codex/config.toml` if you already have one there; use `install-clients.sh` instead to merge safely.
 
 ---
 
-### VS Code
+### VS Code (Copilot Chat)
 
-Launch VS Code with ailocal env vars active so all extensions pick them up:
+`install-clients.sh vscode` deploys the four role-based models to VS Code's Copilot Chat model picker via `chatLanguageModels.json`. After install, reload VS Code (`Cmd+Shift+P` → **Developer: Reload Window**) and select a role from the model picker in the Copilot Chat panel.
 
-```bash
-source config/clients/env.sh && code .
-```
-
-**Continue extension** — if you don't have an existing `~/.continue/config.json`, use `config/clients/vscode-continue.json` as a starting point. Replace `<LITELLM_MASTER_KEY>` with your key from `.env`. If you already have a Continue config, add the role entries manually rather than overwriting.
-
-Gives you four roles in the Continue panel (`coder`, `reasoner`, `supervisor`, `router`), tab autocomplete via `router`, and codebase embeddings via `embed`.
-
-Any extension that supports a custom OpenAI-compatible endpoint (Cline, etc.) works the same way — point it at `http://localhost:4000/v1` with your `LITELLM_MASTER_KEY` and use a role name as the model.
+Any extension that supports a custom OpenAI-compatible endpoint (Cline, Continue, etc.) also works — point it at `http://localhost:4000/v1` with your `LITELLM_MASTER_KEY` and use a role name as the model.
 
 ---
 
@@ -187,17 +194,17 @@ message = client.messages.create(
 ## Operations
 
 ```bash
-./scripts/start.sh              # start services
-./scripts/stop.sh               # stop (preserves volumes)
-./scripts/stop.sh --volumes     # stop and wipe all volume data
-./scripts/teardown.sh           # full removal of containers, volumes, network
-./scripts/teardown.sh --images  # also remove pulled Docker images
-./scripts/update.sh             # backup → pull new images → restart
-./scripts/backup.sh             # config + postgres dump to ./backups/
-./scripts/restore.sh            # restore from most recent backup
+./scripts/start.sh             # start services
+./scripts/stop.sh              # stop (preserves volumes)
+./scripts/stop.sh --volumes    # stop and wipe all volume data
+./scripts/teardown.sh          # full removal of containers, volumes, network
+./scripts/teardown.sh --images # also remove pulled Docker images
+./scripts/update.sh            # backup → pull new images → restart
+./scripts/backup.sh            # config + postgres dump to ./backups/
+./scripts/restore.sh           # restore from most recent backup
 ./scripts/doctor.sh            # one-command preflight + health summary
 ./scripts/smoke-test.sh        # verify a real model request succeeds
-./scripts/healthcheck.sh        # check all services and endpoints
+./scripts/healthcheck.sh       # check all services and endpoints
 ```
 
 ## Cloud fallback
