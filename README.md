@@ -30,7 +30,7 @@ brew install --cask docker ollama
 ```bash
 ./scripts/install.sh         # install host deps, generate .env
 ollama serve                 # start Ollama (or open Ollama.app)
-./scripts/install-models.sh  # pull models (~45+ GB, takes a while)
+./scripts/install-models.sh  # pull models (~62 GB, takes a while)
 ./scripts/start.sh           # start Docker services
 ./scripts/doctor.sh          # one-command preflight + health summary
 ./scripts/smoke-test.sh      # verify a real model request succeeds
@@ -71,7 +71,7 @@ LiteLLM exposes **role names only** — no backend model names are visible to ex
 | `router` | qwen3:8b | Fast classification, trivial tasks, autocomplete |
 | `reasoner` | deepseek-r1:32b | Planning, decomposition, deep reasoning |
 | `coder` | qwen3.6:27b | Implementation, generation, coding tasks |
-| `supervisor` | gemma4:31b | Review, critique, approval gate |
+| `supervisor` | gemma4:31b-mlx | Review, critique, approval gate |
 | `embed` | nomic-embed-text | Semantic retrieval and memory — not for chat |
 
 **Never use backend model names directly in client configs or scripts.** Use role names only.
