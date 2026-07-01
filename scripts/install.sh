@@ -108,9 +108,7 @@ mkdir -p \
   "$ROOT_DIR/logs/caddy" \
   "$ROOT_DIR/config/litellm" \
   "$ROOT_DIR/config/mcp" \
-  "$ROOT_DIR/config/caddy" \
-  "$ROOT_DIR/config/prometheus" \
-  "$ROOT_DIR/config/grafana"
+  "$ROOT_DIR/config/caddy"
 # backups/ holds archives that include .env — lock it down.
 chmod 700 "$ROOT_DIR/backups"
 info "Directories ready"
@@ -137,14 +135,6 @@ if [ -f "$ENV_FILE" ]; then
   read -r -p "  Re-generate it? Existing values will be overwritten. [y/N]: " REGEN
   if [[ ! "${REGEN:-}" =~ ^[Yy]$ ]]; then
     echo "  Keeping existing .env."
-    # Still write the Prometheus bearer token in case it's missing
-    EXISTING_KEY=$(grep '^LITELLM_MASTER_KEY=' "$ENV_FILE" | cut -d= -f2)
-    if [ -n "$EXISTING_KEY" ]; then
-      BEARER_TOKEN_FILE="$ROOT_DIR/config/prometheus/.bearer_token"
-      echo -n "$EXISTING_KEY" > "$BEARER_TOKEN_FILE"
-      chmod 600 "$BEARER_TOKEN_FILE"
-      info "Prometheus bearer token refreshed"
-    fi
     print_next_steps
     exit 0
   fi
@@ -169,8 +159,6 @@ cat > "$ENV_FILE" <<EOF
 # ── General ────────────────────────────────────────────────────────────────
 AILOCAL_ENV=local
 HOST_HTTP_PORT=8080
-HOST_PROMETHEUS_PORT=9090
-HOST_GRAFANA_PORT=3000
 
 # ── Ollama ─────────────────────────────────────────────────────────────────
 OLLAMA_URL=http://host.docker.internal:11434
@@ -206,13 +194,6 @@ EOF
 
 chmod 600 "$ENV_FILE"
 info ".env written with secure random secrets (chmod 600)"
-
-# Write Prometheus bearer token file — Prometheus reads this to auth against LiteLLM /metrics.
-# Kept separate from prometheus.yml so that file stays static and committable.
-BEARER_TOKEN_FILE="$ROOT_DIR/config/prometheus/.bearer_token"
-echo -n "$LITELLM_MASTER_KEY" > "$BEARER_TOKEN_FILE"
-chmod 600 "$BEARER_TOKEN_FILE"
-info "Prometheus bearer token written (chmod 600)"
 
 echo
 echo "  ── Client tool setup ─────────────────────────────────────────────────"

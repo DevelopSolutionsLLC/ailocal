@@ -20,6 +20,8 @@ services:
     # Do not override user here — the entrypoint drops privileges itself.
     security_opt:
       - no-new-privileges:true
+    command: postgres -c shared_buffers=32MB -c work_mem=4MB -c max_connections=20
+    mem_limit: 256m
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -39,6 +41,7 @@ services:
     image: redis:7.4-alpine
     container_name: ailocal_redis
     restart: unless-stopped
+    mem_limit: 64m
     # redis:alpine creates uid 999 (redis); drop all capabilities.
     user: "999:999"
     security_opt:
@@ -65,6 +68,7 @@ services:
     image: ghcr.io/berriai/litellm:main-stable
     container_name: ailocal_litellm
     restart: unless-stopped
+    mem_limit: 2g
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -72,7 +76,7 @@ services:
     command: >
       --config /app/config/config.yaml
       --port 4000
-      --num_workers 8
+      --num_workers 1
     networks:
       - ailocal_net
     environment:
@@ -113,6 +117,7 @@ services:
     image: ghcr.io/open-webui/open-webui:v0.5.20
     container_name: ailocal_openwebui
     restart: unless-stopped
+    mem_limit: 1g
     security_opt:
       - no-new-privileges:true
     networks:
@@ -147,6 +152,7 @@ services:
     image: caddy:2.9-alpine
     container_name: ailocal_caddy
     restart: unless-stopped
+    mem_limit: 64m
     security_opt:
       - no-new-privileges:true
     cap_drop:
