@@ -11,7 +11,6 @@
 # What is NOT backed up:
 #   Ollama models    — large; re-pull with install-models.sh
 #   Redis cache      — ephemeral; rebuilds automatically
-#   Open WebUI data  — conversation history in Docker volume (not yet included)
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -46,6 +45,19 @@ cp    "$ROOT_DIR/docker-compose.yml" "$STAGING/docker-compose.yml"
 if [ -f "$ROOT_DIR/.env" ]; then
   cp "$ROOT_DIR/.env" "$STAGING/.env"
   chmod 600 "$STAGING/.env"
+fi
+
+# ── Open WebUI data volume ────────────────────────────────────────────────
+
+if docker ps --format "{{.Names}}" | grep -q "^ailocal_openwebui$"; then
+  echo "  Backing up Open WebUI data..."
+  docker run --rm \
+    --volumes-from ailocal_openwebui \
+    -v "$STAGING:/backup" \
+    alpine:3.20 sh -c 'tar czf /backup/openwebui-data.tar.gz /app/backend/data' >/dev/null 2>&1 || warn "Open WebUI data backup failed"
+  info "Open WebUI data backup prepared"
+else
+  warn "ailocal_openwebui is not running — skipping Open WebUI data backup."
 fi
 
 # ── Postgres logical dump ──────────────────────────────────────────────────

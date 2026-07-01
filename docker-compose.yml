@@ -7,8 +7,6 @@ volumes:
   redis_data:
   openwebui_data:
   litellm_data:
-  prometheus_data:
-  grafana_data:
 
 services:
 
@@ -174,62 +172,6 @@ services:
       retries: 3
       start_period: 10s
 
-  # ── Observability ──────────────────────────────────────────────────────────
-
-  prometheus:
-    image: prom/prometheus:v3.2.1
-    container_name: ailocal_prometheus
-    restart: unless-stopped
-    # prometheus image uses uid 65534 (nobody) internally.
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    networks:
-      - ailocal_net
-    ports:
-      - "127.0.0.1:9090:9090"
-    volumes:
-      - prometheus_data:/prometheus
-      - ./config/prometheus:/etc/prometheus:ro
-    depends_on:
-      - litellm
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/ready || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
-
-  grafana:
-    image: grafana/grafana-oss:11.5.2
-    container_name: ailocal_grafana
-    restart: unless-stopped
-    # Grafana image runs as uid 472 (grafana) by default.
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    networks:
-      - ailocal_net
-    environment:
-      # Admin password from .env; grafana.ini must NOT hardcode admin_password.
-      - GF_SECURITY_ADMIN_PASSWORD=${ADMIN_PASSWORD}
-    ports:
-      - "127.0.0.1:3000:3000"
-    volumes:
-      - grafana_data:/var/lib/grafana
-      # Mounts grafana.ini and provisioning/ (datasources auto-configured)
-      - ./config/grafana:/etc/grafana:ro
-    depends_on:
-      - prometheus
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
-
 # ── Architecture Notes ─────────────────────────────────────────────────────
 #
 # Ollama MUST run natively on macOS for Apple Metal (GPU) acceleration.
@@ -241,6 +183,8 @@ services:
 #   mcp-server  — GitHub MCP server is a stdio process, not an HTTP service;
 #                 configure it in Claude Desktop/Code via 'claude mcp add'
 #                 (see config/mcp/mcp-config.yaml for setup instructions)
+#   prometheus  — observability; not needed for local agent use
+#   grafana     — metrics dashboard; removed with prometheus
 #
 # Port binding: all ports use 127.0.0.1 prefix (localhost-only).
 # To expose on LAN, change to 0.0.0.0 and add Caddy auth middleware.
@@ -252,7 +196,6 @@ services:
 #
 # Dependency chain (all condition: service_healthy):
 #   postgres, redis → litellm → open-webui → caddy
-#                             → prometheus → grafana
 #
 # Security hardening applied (OWASP A05:2021):
 #   - no-new-privileges:true on all containers

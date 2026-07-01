@@ -140,8 +140,6 @@ When ailocal is running, these services are available:
 
 - LiteLLM proxy:  `http://localhost:4000` — API endpoint for all local model calls
 - Open WebUI:     `http://localhost:8081` — browser-based chat UI
-- Grafana:        `http://localhost:3000` — metrics dashboards
-- Prometheus:     `http://localhost:9090` — raw metrics
 
 To verify LiteLLM is healthy: `curl http://localhost:4000/health/liveliness`
 

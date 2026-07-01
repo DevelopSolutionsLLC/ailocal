@@ -126,9 +126,10 @@ print_next_steps() {
   echo "  1. Start Ollama:           ollama serve  (or open Ollama.app)"
   echo "  2. Pull models:            ./scripts/install-models.sh"
   echo "  3. Start Docker services:  ./scripts/start.sh"
-  echo "  4. Check health:           ./scripts/healthcheck.sh"
-  echo "  5. Open WebUI:             http://localhost:8081"
-  echo "  6. LiteLLM API:            http://localhost:4000"
+  echo "  4. Install client configs: ./scripts/install-clients.sh"
+  echo "  5. Check health:           ./scripts/healthcheck.sh"
+  echo "  6. Open WebUI:             http://localhost:8081"
+  echo "  7. LiteLLM API:            http://localhost:4000"
 }
 
 if [ -f "$ENV_FILE" ]; then
@@ -214,18 +215,13 @@ chmod 600 "$BEARER_TOKEN_FILE"
 info "Prometheus bearer token written (chmod 600)"
 
 echo
-echo "  ── Claude Code / Codex integration ───────────────────────────────────"
-echo "  After starting services, get your LiteLLM key and configure clients:"
+echo "  ── Client tool setup ─────────────────────────────────────────────────"
+echo "  After starting services, run install-clients.sh to configure Codex,"
+echo "  Claude Code, and VS Code Continue automatically:"
 echo
-# Print the retrieval command, not the key itself — avoids leaking into
-# terminal scrollback or shell history. OWASP A02:2021 (Cryptographic Failures).
-echo "  Get your key:  grep LITELLM_MASTER_KEY .env | cut -d= -f2"
+echo "    ./scripts/install-clients.sh"
 echo
-echo "  Then:"
-echo "    export ANTHROPIC_BASE_URL=http://localhost:4000"
-echo "    export ANTHROPIC_API_KEY=<key from above>"
-echo
-echo "  Or source the helper for your session:"
+echo "  Or source the env helper manually for a quick session:"
 echo "    source \"$ROOT_DIR/config/clients/env.sh\""
 echo
 
