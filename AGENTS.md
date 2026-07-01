@@ -60,7 +60,11 @@ All orchestration uses role names instead of backend model names:
 - `router`: qwen3:8b - Fast classification, trivial tasks, autocomplete
 - `reasoner`: deepseek-r1:32b - Planning, decomposition, deep reasoning  
 - `coder`: qwen3.6:27b - Implementation, generation, coding tasks
-- `supervisor`: gemma4:31b - Review, critique, approval gate
+- `supervisor`: gemma4:31b-mlx - Review, critique, approval gate
 - `embed`: nomic-embed-text - Semantic retrieval and memory
 
 Never reference backend model names directly in client configs or scripts.
+
+## Imported Claude Cowork project instructions
+
+Local AI stack: Ollama models (qwen3, deepseek-r1, gemma4-mlx) behind LiteLLM proxy with role-based routing (router/coder/reasoner/supervisor). See README.md.
