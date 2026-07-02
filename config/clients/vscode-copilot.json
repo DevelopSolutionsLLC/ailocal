@@ -8,7 +8,7 @@
       {
         "id": "coder",
         "name": "Coder — qwen3.6:27b (local)",
-        "url": "http://localhost:4000/v1/chat/completions",
+        "url": "http://localhost:80/v1/chat/completions",
         "toolCalling": true,
         "vision": false,
         "maxInputTokens": 32768,
@@ -17,7 +17,7 @@
       {
         "id": "reasoner",
         "name": "Reasoner — deepseek-r1:32b (local)",
-        "url": "http://localhost:4000/v1/chat/completions",
+        "url": "http://localhost:80/v1/chat/completions",
         "toolCalling": true,
         "vision": false,
         "maxInputTokens": 32768,
@@ -26,7 +26,7 @@
       {
         "id": "supervisor",
         "name": "Supervisor — gemma4:31b-mlx (local)",
-        "url": "http://localhost:4000/v1/chat/completions",
+        "url": "http://localhost:80/v1/chat/completions",
         "toolCalling": true,
         "vision": false,
         "maxInputTokens": 131072,
@@ -35,7 +35,7 @@
       {
         "id": "router",
         "name": "Router — qwen3:8b (local)",
-        "url": "http://localhost:4000/v1/chat/completions",
+        "url": "http://localhost:80/v1/chat/completions",
         "toolCalling": true,
         "vision": false,
         "maxInputTokens": 32768,
