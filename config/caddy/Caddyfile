@@ -38,8 +38,12 @@
 
   # LiteLLM proxy — OpenAI & Anthropic compatible API
   # Clients: Claude Code, Codex, any OpenAI SDK pointing at http://localhost/v1
+  # header_up injects the master key so VS Code Copilot Chat works — it sends
+  # Authorization: Bearer (empty) and cannot supply a key any other way.
   handle /v1/* {
-    reverse_proxy litellm:4000
+    reverse_proxy litellm:4000 {
+      header_up Authorization "Bearer {env.LITELLM_MASTER_KEY}"
+    }
   }
 
   handle /health* {

@@ -2,10 +2,14 @@
 # Reference: https://docs.litellm.ai/docs/proxy/configs
 #
 # Required env vars (set in .env, passed via docker-compose):
-#   LITELLM_MASTER_KEY  — auth key for the proxy (sk-... format)
 #   DATABASE_URL        — postgres connection string
 #   OLLAMA_URL          — http://host.docker.internal:11434
 #   REDIS_PASSWORD      — redis auth password
+#
+# Auth note: master_key is intentionally omitted. The proxy binds to
+# 127.0.0.1:4000 (localhost-only), so no network-level auth is needed.
+# VS Code Copilot Chat sends an empty Bearer token and cannot use a custom
+# apiKey — removing auth is the only way to support it.
 #
 # Model name hierarchy:
 #   Layer 1 — Role aliases  (canonical; use these in all client configs)

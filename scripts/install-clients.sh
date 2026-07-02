@@ -84,9 +84,8 @@ if has_target "vscode"; then
 
   if [ ! -d "$VSCODE_USER" ]; then
     warn "VS Code user directory not found — is VS Code installed?"
-  elif already_has "$COPILOT_CFG" '"name": "ailocal (LiteLLM)"'; then
-    skip "chatLanguageModels.json already has ailocal provider"
   else
+    # Always re-merge so key rotation and template changes are picked up on every run.
     backup "$COPILOT_CFG" || true
     if [ -f "$COPILOT_CFG" ]; then
       # Existing file: merge ailocal provider into the array, replacing direct Ollama entry.
@@ -98,9 +97,9 @@ with open(cfg_path) as f:
     existing = json.load(f)
 with open(tpl_path) as f:
     template = json.load(f)
-# Inject API key
+# Inject API key (template placeholder already includes "Bearer " prefix)
 for provider in template:
-    provider['apiKey'] = api_key
+    provider['apiKey'] = provider['apiKey'].replace('<LITELLM_MASTER_KEY>', api_key)
 # Drop direct Ollama entries (vendor=ollama) and stale ailocal entries, then append ours
 filtered = [p for p in existing
             if p.get('vendor') != 'ollama'
@@ -109,7 +108,7 @@ filtered.extend(template)
 with open(cfg_path, 'w') as f:
     json.dump(filtered, f, indent=2)
 PYEOF
-      info "chatLanguageModels.json merged (direct Ollama entry replaced with ailocal)"
+      info "chatLanguageModels.json merged (ailocal provider updated)"
     else
       # No existing file: write template with key substituted
       sed "s|<LITELLM_MASTER_KEY>|${LITELLM_KEY}|g" "$COPILOT_TPL" > "$COPILOT_CFG"
@@ -223,4 +222,6 @@ has_target "codex"   && echo "    rm ~/.codex/config.toml"
 has_target "claude"  && echo "    rm ~/.claude/settings.json"
 echo "  Then: ./scripts/install-clients.sh [target]"
 echo ""
-echo "  Re-run this script any time you rotate LITELLM_MASTER_KEY."
+echo "  Key rotation: after running install.sh, restart Docker services with:"
+echo "    ./scripts/start.sh"
+echo "  Caddy picks up the new LITELLM_MASTER_KEY automatically — no need to re-run this script."
