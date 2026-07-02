@@ -116,18 +116,24 @@ info "Directories ready"
 # ── .env generation ────────────────────────────────────────────────────────
 step "Configuring environment (.env)"
 
-# Shared next-steps block — printed whether .env is kept or newly written.
-print_next_steps() {
+# Run the service stack, client install, and healthcheck automatically.
+run_next_steps() {
+  echo
+  step "Starting Docker services"
+  bash "$ROOT_DIR/scripts/start.sh"
+
+  echo
+  step "Installing client configs"
+  bash "$ROOT_DIR/scripts/install-clients.sh"
+
+  echo
+  step "Checking health"
+  bash "$ROOT_DIR/scripts/healthcheck.sh" || true
+
   echo
   step "Bootstrap complete"
-  echo "  Next steps:"
-  echo "  1. Start Ollama:           ollama serve  (or open Ollama.app)"
-  echo "  2. Pull models:            ./scripts/install-models.sh"
-  echo "  3. Start Docker services:  ./scripts/start.sh"
-  echo "  4. Install client configs: ./scripts/install-clients.sh"
-  echo "  5. Check health:           ./scripts/healthcheck.sh"
-  echo "  6. Open WebUI:             http://localhost:8081"
-  echo "  7. LiteLLM API:            http://localhost:4000"
+  echo "  Models (~62 GB) are a separate step — run when ready:"
+  echo "    ./scripts/install-models.sh"
 }
 
 if [ -f "$ENV_FILE" ]; then
@@ -135,7 +141,7 @@ if [ -f "$ENV_FILE" ]; then
   read -r -p "  Re-generate it? Existing values will be overwritten. [y/N]: " REGEN
   if [[ ! "${REGEN:-}" =~ ^[Yy]$ ]]; then
     echo "  Keeping existing .env."
-    print_next_steps
+    run_next_steps
     exit 0
   fi
 fi
@@ -195,15 +201,4 @@ EOF
 chmod 600 "$ENV_FILE"
 info ".env written with secure random secrets (chmod 600)"
 
-echo
-echo "  ── Client tool setup ─────────────────────────────────────────────────"
-echo "  After starting services, run install-clients.sh to configure Codex,"
-echo "  Claude Code, and VS Code Continue automatically:"
-echo
-echo "    ./scripts/install-clients.sh"
-echo
-echo "  Or source the env helper manually for a quick session:"
-echo "    source \"$ROOT_DIR/config/clients/env.sh\""
-echo
-
-print_next_steps
+run_next_steps
