@@ -97,7 +97,7 @@ with open(cfg_path) as f:
     existing = json.load(f)
 with open(tpl_path) as f:
     template = json.load(f)
-# Inject API key (template placeholder already includes "Bearer " prefix)
+# Inject API key — Caddy adds "Bearer " prefix when forwarding to LiteLLM
 for provider in template:
     provider['apiKey'] = provider['apiKey'].replace('<LITELLM_MASTER_KEY>', api_key)
 # Drop direct Ollama entries (vendor=ollama) and stale ailocal entries, then append ours
