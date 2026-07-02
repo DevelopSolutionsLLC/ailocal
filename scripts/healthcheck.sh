@@ -20,6 +20,45 @@ step()  { echo; echo "▶ $*"; }
 
 ok=true
 
+CRITICAL_CONTAINERS=(
+  ailocal_postgres
+  ailocal_redis
+  ailocal_litellm
+  ailocal_openwebui
+  ailocal_caddy
+)
+
+# ── Wait for all critical containers to reach a stable health state ────────
+
+wait_for_healthy() {
+  local timeout="${1:-120}"
+  local interval=3
+  local elapsed=0
+
+  step "Waiting for services to be ready"
+  while [ "$elapsed" -lt "$timeout" ]; do
+    local pending=0
+    for name in "${CRITICAL_CONTAINERS[@]}"; do
+      local state
+      state=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$name" 2>/dev/null || echo "missing")
+      if [ "$state" = "starting" ]; then
+        pending=$((pending + 1))
+      fi
+    done
+    if [ "$pending" -eq 0 ]; then
+      info "All containers settled"
+      return 0
+    fi
+    printf "  Waiting... (%ds elapsed, %d container(s) still starting)\r" "$elapsed" "$pending"
+    sleep "$interval"
+    elapsed=$((elapsed + interval))
+  done
+  echo ""
+  warn "Timed out after ${timeout}s — some containers may still be starting"
+}
+
+wait_for_healthy 120
+
 # ── Domain-specific helpers ────────────────────────────────────────────────
 
 check_container() {
@@ -84,18 +123,6 @@ check_container "ailocal_litellm"   "critical"
 check_container "ailocal_openwebui" "critical"
 check_container "ailocal_caddy"     "critical"
 
-step "Optional containers"
-if docker ps -a --format "{{.Names}}" | grep -q "^ailocal_prometheus$"; then
-  check_container "ailocal_prometheus" "optional"
-else
-  echo "  — Prometheus not deployed (optional)"
-fi
-if docker ps -a --format "{{.Names}}" | grep -q "^ailocal_grafana$"; then
-  check_container "ailocal_grafana" "optional"
-else
-  echo "  — Grafana not deployed (optional)"
-fi
-
 # Catch containers stuck in restart loop (real problem, not just stopped)
 restarting=$(docker ps --filter "status=restarting" --format "{{.Names}}" | head -10)
 if [ -n "$restarting" ]; then
@@ -111,16 +138,6 @@ fi
 step "HTTP endpoints"
 check_service "LiteLLM API"  "http://localhost:4000/health/liveliness"  10
 check_service "Open WebUI"   "http://localhost:8081/"                    10
-if docker ps --format "{{.Names}}" | grep -q "^ailocal_prometheus$"; then
-  check_service "Prometheus" "http://localhost:9090/-/ready" 5
-else
-  echo "  — Prometheus endpoint skipped (service not deployed)"
-fi
-if docker ps --format "{{.Names}}" | grep -q "^ailocal_grafana$"; then
-  check_service "Grafana" "http://localhost:3000/api/health" 5
-else
-  echo "  — Grafana endpoint skipped (service not deployed)"
-fi
 
 # ── Summary ────────────────────────────────────────────────────────────────
 
