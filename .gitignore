@@ -36,6 +36,7 @@ config/models.yaml
 .idea/
 *.iml
 .claude/
+AGENTS.md
 
 # Python
 __pycache__/
