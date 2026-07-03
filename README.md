@@ -232,9 +232,8 @@ message = client.messages.create(
 ./scripts/teardown.sh          # full removal of containers, volumes, network
 ./scripts/teardown.sh --images # also remove pulled Docker images
 ./scripts/update.sh            # snapshot .env → pull new image → restart
-./scripts/doctor.sh            # one-command preflight + health summary
+./scripts/doctor.sh            # one-command preflight + health summary (exit 0/2)
 ./scripts/smoke-test.sh        # verify a real model request succeeds
-./scripts/healthcheck.sh       # check all services and endpoints
 ```
 
 ## Cloud fallback

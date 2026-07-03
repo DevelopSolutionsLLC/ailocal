@@ -66,9 +66,15 @@ docker compose restart litellm
 # ── Post-update health check ───────────────────────────────────────────────
 
 step "Validating health post-update"
-sleep 10  # Allow containers time to settle after restart
-if "$ROOT_DIR/scripts/healthcheck.sh"; then
-  step "Update complete — all services healthy."
+# Wait for LiteLLM to accept requests, then run doctor (the single health script).
+attempts=0
+until curl -sSf --max-time 3 http://localhost:4000/health/liveliness >/dev/null 2>&1; do
+  attempts=$((attempts + 1))
+  [ "$attempts" -ge 20 ] && break
+  sleep 3
+done
+if "$ROOT_DIR/scripts/doctor.sh"; then
+  step "Update complete — LiteLLM healthy."
 else
   warn "Health check reported issues after update."
   echo "  Check logs: docker logs ailocal_litellm --tail=50"

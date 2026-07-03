@@ -90,9 +90,21 @@ fi
 
 step "Compose status"
 if docker ps --format '{{.Names}}' | grep -q '^ailocal_litellm$'; then
-  info "LiteLLM container is running"
+  health=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' ailocal_litellm 2>/dev/null)
+  case "$health" in
+    healthy|none) info "LiteLLM container running [$health]" ;;
+    starting)     warn "LiteLLM container still starting" ;;
+    *)            error "LiteLLM container unhealthy [$health]"; ok=false ;;
+  esac
 else
-  warn "LiteLLM container is not running"
+  error "LiteLLM container is not running"
+  ok=false
+fi
+
+# Crash-loop detection (folded in from the old healthcheck.sh).
+if docker ps --filter status=restarting --format '{{.Names}}' | grep -q .; then
+  error "A container is restart-looping — check: docker logs ailocal_litellm"
+  ok=false
 fi
 
 step "Service endpoints"
