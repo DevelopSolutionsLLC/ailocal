@@ -21,11 +21,7 @@ step()  { echo; echo "▶ $*"; }
 ok=true
 
 CRITICAL_CONTAINERS=(
-  ailocal_postgres
-  ailocal_redis
   ailocal_litellm
-  ailocal_openwebui
-  ailocal_caddy
 )
 
 # ── Wait for all critical containers to reach a stable health state ────────
@@ -117,11 +113,7 @@ fi
 # ── Docker containers ──────────────────────────────────────────────────────
 
 step "Critical containers"
-check_container "ailocal_postgres"  "critical"
-check_container "ailocal_redis"     "critical"
 check_container "ailocal_litellm"   "critical"
-check_container "ailocal_openwebui" "critical"
-check_container "ailocal_caddy"     "critical"
 
 # Catch containers stuck in restart loop (real problem, not just stopped)
 restarting=$(docker ps --filter "status=restarting" --format "{{.Names}}" | head -10)
@@ -137,7 +129,6 @@ fi
 
 step "HTTP endpoints"
 check_service "LiteLLM API"  "http://localhost:4000/health/liveliness"  10
-check_service "Open WebUI"   "http://localhost:8081/"                    10
 
 # ── Summary ────────────────────────────────────────────────────────────────
 

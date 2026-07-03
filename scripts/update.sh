@@ -19,13 +19,18 @@ step()  { echo; echo "▶ $*"; }
 SKIP_MODELS=false
 [[ "${1:-}" == "--skip-models" ]] && SKIP_MODELS=true
 
-# ── Backup first ───────────────────────────────────────────────────────────
+# ── Snapshot .env first ─────────────────────────────────────────────────────
+# The only non-git, non-regenerable state is .env (the master key). Config is
+# in git and Ollama models re-pull, so a one-line snapshot is the whole backup.
 
-step "Creating backup before update"
-if ! "$ROOT_DIR/scripts/backup.sh"; then
-  error "Backup failed — aborting update to protect your data."
-  echo "  Fix the backup issue then retry." >&2
-  exit 1
+step "Snapshotting .env before update"
+if [ -f "$ROOT_DIR/.env" ]; then
+  mkdir -p "$ROOT_DIR/backups"
+  SNAP="$ROOT_DIR/backups/.env.$(date -u +%Y%m%dT%H%M%SZ)"
+  cp "$ROOT_DIR/.env" "$SNAP" && chmod 600 "$SNAP"
+  info "Saved $SNAP"
+else
+  warn "No .env found — nothing to snapshot."
 fi
 
 # ── Pull updated images ────────────────────────────────────────────────────
@@ -66,7 +71,7 @@ if "$ROOT_DIR/scripts/healthcheck.sh"; then
   step "Update complete — all services healthy."
 else
   warn "Health check reported issues after update."
-  echo "  Check logs: docker compose logs --tail=50 <service>"
-  echo "  To roll back configs: ./scripts/restore.sh"
+  echo "  Check logs: docker logs ailocal_litellm --tail=50"
+  echo "  To roll back: git checkout the previous config, then docker compose up -d"
   exit 1
 fi
