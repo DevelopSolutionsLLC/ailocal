@@ -104,7 +104,7 @@ $EDITOR config/models.yaml
 docker compose restart litellm     # or ./scripts/start.sh
 ```
 
-`sync-models.sh` regenerates, from `models.yaml`, the canonical role blocks in `config/litellm/config.yaml` (backend, `num_ctx`, and the `model_info` capability flags — tool calling, vision/PDF, reasoning, token budgets), the Codex `model_catalog.json`, and the backend names in this README / `AGENTS.md` / `CLAUDE.md`. **Do not hand-edit those generated files** — capability flags in `config.yaml` and the role table above are produced by the generator. Capabilities per role: tool calling everywhere; parallel tool calls everywhere except `reasoner` (DeepSeek-R1); reasoning everywhere except `supervisor` (Gemma is not a thinking model); vision/PDF on multimodal backends (`coder` except 16 GB, `supervisor` on all tiers), driven by the `vision:` flag.
+`sync-models.sh` regenerates, from `models.yaml`, the canonical role blocks in `config/litellm/config.yaml` (backend, `num_ctx`, and the `model_info` capability flags — tool calling, vision/PDF, reasoning, token budgets), the Codex `model_catalog.json`, and the backend names in this README and the client `CLAUDE.md` template. **Do not hand-edit those generated files** — capability flags in `config.yaml` and the role table above are produced by the generator. Capabilities per role: tool calling everywhere; parallel tool calls everywhere except `reasoner` (DeepSeek-R1); reasoning everywhere except `supervisor` (Gemma is not a thinking model); vision/PDF on multimodal backends (`coder` except 16 GB, `supervisor` on all tiers), driven by the `vision:` flag.
 
 ## Client integration
 
