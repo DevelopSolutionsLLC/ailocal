@@ -7,8 +7,9 @@ Run AI coding tools — Claude Code, Codex, VS Code Copilot Chat — against loc
 **Why this over bare Ollama:**
 - Single endpoint for all tools — configure once, works everywhere
 - Role names decouple your client configs from backend models — swap `gemma4:31b-mxfp8` for something better without touching a single config file
-- Response caching, usage logging, and fallback chains built in
+- Automatic fallback chains — degrade a role to a lighter one when it errors or overflows its context window
 - Optional cloud fallback per role — route `reasoner` to Claude Opus when the local model isn't enough
+- Minimal footprint — one small container (no database, no cache); the only heavy memory user is Ollama on the host
 
 ---
 
@@ -45,46 +46,30 @@ ollama serve                  # start Ollama first (or open Ollama.app)
 
 ## Security model
 
-All ports bind to `127.0.0.1` (localhost-only). The stack is designed for single-user local use.
+LiteLLM binds to `127.0.0.1:4000` (localhost-only) and every client authenticates with the `LITELLM_MASTER_KEY`. The stack is designed for single-user local use.
 
-**If you expose this stack on a LAN** (changing port binds to `0.0.0.0`):
-- Set `WEBUI_AUTH=true` in `docker-compose.yml` for Open WebUI (OWASP A07:2021 — Authentication Failures)
-- Add Caddy `basic_auth` middleware on `/v1/*` in the Caddyfile
-- Rotate `LITELLM_MASTER_KEY` and `ADMIN_PASSWORD` to strong unique values before doing so
-
-`WEBUI_AUTH=false` is intentional for the default local-only setup and is not a vulnerability in that context.
+**If you expose this on a LAN** (changing the bind to `0.0.0.0`): put an authenticating reverse proxy in front of LiteLLM, rotate `LITELLM_MASTER_KEY` to a strong unique value, and never expose port 4000 directly.
 
 ## Services
 
+The stack is a **single container** — everything else (Postgres, Redis, a reverse proxy, a web UI) was removed as unnecessary for local single-user use. See the notes in `docker-compose.yml`.
+
 | Container | Port | What it does |
 |---|---|---|
-| **litellm** | 4000 | AI proxy. Single endpoint for all model requests. Exposes role-based model names only — clients never reference backend models directly. Caches responses in Redis, logs usage to Postgres. Speaks both OpenAI format (`/v1/chat/completions`) and Anthropic format (`/v1/messages`). |
-| **open-webui** | 8081 | Chat interface. Routes through LiteLLM so all requests share caching and routing. Good for testing roles without writing code. |
-| **postgres** | — | LiteLLM's database. Stores API keys, spend logs, and model config. Internal only. |
-| **redis** | — | Response cache for LiteLLM. Identical requests within the cache TTL (1 hour) return instantly from cache instead of hitting Ollama. Internal only. |
-| **caddy** | 80, 443 | Reverse proxy. `http://localhost/v1/*` routes to LiteLLM; everything else to Open WebUI. All services are also accessible directly on their own ports. |
+| **litellm** | 4000 | The only container. Single endpoint for all model requests; exposes role-based model names, speaks both OpenAI (`/v1/chat/completions`) and Anthropic (`/v1/messages`) formats, and routes to Ollama. Runs with **no database and no cache**. |
 
-**Ollama** runs on the host at port 11434 — not in Docker. Containerized Ollama on Apple Silicon loses Metal GPU access, so it runs natively and all containers reach it via `host.docker.internal:11434`.
+**Ollama** runs natively on the host at port 11434 — not in Docker (containerizing it on Apple Silicon loses Metal GPU access). LiteLLM reaches it via `host.docker.internal:11434`. Ollama is the only heavy memory user, sized by your model profile.
 
 ## Docker Desktop resource tuning
 
-By default Docker Desktop allocates as much RAM as the VM needs, which can balloon to 14 GB+. After setup, lock it down:
+With a single small container you can keep Docker's footprint tiny:
 
 1. Open **Docker Desktop → Settings → Resources**
-2. Set **CPUs** to `2` — LiteLLM runs a single async worker; the real compute is in Ollama on the host
-3. Set **Memory** to `4 GB` — actual container usage is ~1.7 GB; this gives 2× headroom
-4. Set **Swap** to `2 GB` — safety net for VM overhead
-5. Click **Apply & Restart**
+2. Set **CPUs** to `2` — LiteLLM is a single async worker; the real compute is Ollama on the host
+3. Set **Memory** to `2 GB` — the LiteLLM container uses well under 1 GB
+4. Click **Apply & Restart**
 
-Expected container memory usage after tuning:
-
-| Container | Typical |
-|---|---|
-| litellm | ~800 MiB |
-| open-webui | ~600 MiB |
-| postgres | ~80 MiB |
-| redis | ~12 MiB |
-| caddy | ~16 MiB |
+The model memory (tens of GB) lives in Ollama on the host, not in Docker.
 
 ## Role-based routing
 
@@ -246,9 +231,7 @@ message = client.messages.create(
 ./scripts/stop.sh --volumes    # stop and wipe all volume data
 ./scripts/teardown.sh          # full removal of containers, volumes, network
 ./scripts/teardown.sh --images # also remove pulled Docker images
-./scripts/update.sh            # backup → pull new images → restart
-./scripts/backup.sh            # config + postgres dump to ./backups/
-./scripts/restore.sh           # restore from most recent backup
+./scripts/update.sh            # snapshot .env → pull new image → restart
 ./scripts/doctor.sh            # one-command preflight + health summary
 ./scripts/smoke-test.sh        # verify a real model request succeeds
 ./scripts/healthcheck.sh       # check all services and endpoints
@@ -271,11 +254,11 @@ LiteLLM will load-balance or fall back between the two entries for that role. Ad
 
 ## Troubleshooting
 
-**LiteLLM won't start** — depends on Postgres being healthy first. Check: `docker logs ailocal_postgres`. Usually a wrong or missing `POSTGRES_PASSWORD` in `.env`.
+**LiteLLM won't start** — check `docker logs ailocal_litellm`. Most often a YAML error in `config/litellm/config.yaml` or a missing `LITELLM_MASTER_KEY` in `.env`.
 
 **404 on role name** — either Ollama isn't running (`ollama serve`), the backend model for that role isn't pulled (`ollama list`), or the role isn't defined in `config/litellm/config.yaml`.
 
-**Open WebUI shows no models** — LiteLLM takes up to 45 seconds on first start (DB migrations). Check: `docker logs ailocal_litellm`.
+**Models unload too fast** — the Ollama macOS app doesn't read `~/.zshrc`; set keep-alive where it can see it with `./scripts/setup-ollama-env.sh`, then restart Ollama. Verify with `ollama ps` (the UNTIL column).
 
 **Containers restart-looping** — `docker logs <container>` is fastest. Most common cause: a required `.env` variable is empty.
 

@@ -6,7 +6,7 @@ This document serves as a contributor guide for the ailocal repository, providin
 
 The repository is organized as follows:
 - `scripts/` - Core setup and management scripts including install.sh, start.sh, stop.sh, and healthcheck.sh
-- `config/` - Configuration files for clients and services (litellm, postgres, redis)
+- `config/` - Configuration: `litellm/` (proxy config), `clients/` (client templates), `profiles/` (per-RAM model presets), `models.yaml` (active profile)
 - `data/` - Data storage directory
 - `logs/` - Log file storage
 - `backups/` - Backup storage directory
@@ -49,10 +49,7 @@ The project relies on manual health checks through:
 
 ## Security & Configuration Tips
 
-The stack is designed for single-user local use with all ports bound to localhost (127.0.0.1). For LAN exposure:
-- Set `WEBUI_AUTH=true` in docker-compose.yml for Open WebUI
-- Add Caddy basic_auth middleware on /v1/* endpoints
-- Rotate LITELLM_MASTER_KEY and ADMIN_PASSWORD to strong unique values
+The stack is a single LiteLLM container bound to localhost (127.0.0.1:4000), authenticated by LITELLM_MASTER_KEY. For LAN exposure: put an authenticating reverse proxy in front, rotate LITELLM_MASTER_KEY to a strong value, and never expose port 4000 directly.
 
 ## Role-based Routing
 

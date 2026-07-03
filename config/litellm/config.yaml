@@ -2,9 +2,8 @@
 # Reference: https://docs.litellm.ai/docs/proxy/configs
 #
 # Required env vars (set in .env, passed via docker-compose):
-#   DATABASE_URL        — postgres connection string
+#   LITELLM_MASTER_KEY  — the single auth key all clients use
 #   OLLAMA_URL          — http://host.docker.internal:11434
-#   REDIS_PASSWORD      — redis auth password
 #
 # Auth note: master_key IS set (general_settings below) and read from
 # LITELLM_MASTER_KEY. Every client authenticates with it. The proxy also binds
@@ -332,9 +331,6 @@ router_settings:
   enable_pre_call_checks: true      # validate context window before sending
   allowed_fails: 2                  # cool down a model after 2 failures/min
   cooldown_time: 30                 # seconds before retrying a cooled-down model
-  redis_host: redis                 # share routing state across restarts
-  redis_port: 6379
-  redis_password: os.environ/REDIS_PASSWORD
   fallbacks:
     # Role hierarchy — degrade by capability tier
     - {"reasoner":  ["coder", "router"]}
@@ -365,25 +361,18 @@ router_settings:
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
-  database_url: os.environ/DATABASE_URL
-  store_model_in_db: true
-  background_health_checks: true    # required for health_check_interval to fire
-  health_check_interval: 300
+  # No database. This is a single-user local proxy: the master key comes from
+  # the environment and models are defined in this file. Spend logs, virtual
+  # keys, and the /ui admin dashboard require a DB and are intentionally unused.
   max_parallel_requests: 1          # Apple Silicon: queue inference; never split GPU
+  # NOTE: background_health_checks are intentionally OFF. They ping every model
+  # on an interval, which reloads each model and thrashes GPU memory + fights
+  # the Ollama keep-alive. Check model health on demand via /health instead.
 
 litellm_settings:
+  telemetry: false                  # no anonymous phone-home
   drop_params: true                 # strip params Ollama doesn't understand
   set_verbose: false
   callbacks: []
-  cache: true
-  cache_params:
-    type: redis
-    host: redis
-    port: 6379
-    password: os.environ/REDIS_PASSWORD
-    ttl: 3600                       # 1hr — stable for both chat and embeddings
-    supported_call_types:
-      - acompletion
-      - completion
-      - aembedding
-      - embedding                   # cache embed role calls — same text, same vector
+  # No response cache. Redis was removed — coding agents almost never send byte
+  # -identical requests, so caching added a service for near-zero hit rate.

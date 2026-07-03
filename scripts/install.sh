@@ -100,21 +100,20 @@ else
   warn "Ollama CLI not found after install attempt — proceed manually."
 fi
 
-# ── Ollama multi-model memory hint ────────────────────────────────────────
-step "Checking Ollama memory settings"
-if [ -z "${OLLAMA_MAX_LOADED_MODELS:-}" ]; then
-  warn "OLLAMA_MAX_LOADED_MODELS is not set — Ollama defaults to 1 model at a time."
-  echo "  Add to ~/.zshrc:  export OLLAMA_MAX_LOADED_MODELS=2"
-  echo "  This lets supervisor + coder stay loaded simultaneously."
+# ── Ollama runtime env (keep-alive + parallel models) ─────────────────────
+# IMPORTANT: the Ollama macOS app is a GUI/launchd process — it does NOT read
+# ~/.zshrc. Env vars must be set via launchctl (persisted with a LaunchAgent).
+# scripts/setup-ollama-env.sh does that. Checking the shell env here would be
+# misleading, so we check launchctl (what the app actually sees).
+step "Configuring Ollama runtime env (launchctl, not ~/.zshrc)"
+CUR_KA=$(launchctl getenv OLLAMA_KEEP_ALIVE 2>/dev/null || true)
+if [ -n "$CUR_KA" ]; then
+  info "OLLAMA_KEEP_ALIVE=$CUR_KA  OLLAMA_MAX_LOADED_MODELS=$(launchctl getenv OLLAMA_MAX_LOADED_MODELS 2>/dev/null || echo '?')"
 else
-  info "OLLAMA_MAX_LOADED_MODELS=${OLLAMA_MAX_LOADED_MODELS}"
-fi
-if [ -z "${OLLAMA_KEEP_ALIVE:-}" ]; then
-  warn "OLLAMA_KEEP_ALIVE not set — models unload after 5 min of idle."
-  echo "  Recommended: add to ~/.zshrc → export OLLAMA_KEEP_ALIVE=2h"
-  echo "  Supervisor stays warm across your session; LRU eviction handles the rest."
-else
-  info "OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE}"
+  warn "Ollama env not set where the app can see it (launchctl) — models would unload after 5 min."
+  bash "$ROOT_DIR/scripts/setup-ollama-env.sh" \
+    || warn "Could not configure Ollama env — run ./scripts/setup-ollama-env.sh manually."
+  echo "  ▶ Restart Ollama (menubar → Quit, then reopen) for it to take effect."
 fi
 
 # ── Hardware profile selection ─────────────────────────────────────────────
@@ -158,10 +157,8 @@ step "Creating directory structure"
 mkdir -p \
   "$ROOT_DIR/data" \
   "$ROOT_DIR/backups" \
-  "$ROOT_DIR/logs/caddy" \
   "$ROOT_DIR/config/litellm" \
-  "$ROOT_DIR/config/mcp" \
-  "$ROOT_DIR/config/caddy"
+  "$ROOT_DIR/config/mcp"
 # backups/ holds archives that include .env — lock it down.
 chmod 700 "$ROOT_DIR/backups"
 info "Directories ready"
@@ -230,7 +227,8 @@ run_next_steps() {
 
   echo
   step "Done"
-  echo "  Stack is ready. Open WebUI: http://localhost:8081"
+  echo "  LiteLLM proxy is ready at http://localhost:4000"
+  echo "  Verify a real request:  ./scripts/smoke-test.sh"
 }
 
 if [ -f "$ENV_FILE" ]; then
@@ -244,12 +242,8 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 echo
-echo "  Generating secure random secrets for database, cache, and auth..."
+echo "  Generating the LiteLLM master key..."
 
-POSTGRES_PASSWORD="$(openssl rand -base64 20 | tr -d '/+=' | head -c 24)"
-REDIS_PASSWORD="$(openssl rand -base64 16 | tr -d '/+=' | head -c 18)"
-JWT_SECRET="$(openssl rand -hex 32)"
-ADMIN_PASSWORD="$(openssl rand -base64 14 | tr -d '/+=' | head -c 16)"
 # LiteLLM master key — must start with sk- for OpenAI SDK compatibility
 LITELLM_MASTER_KEY="sk-$(openssl rand -hex 24)"
 
@@ -261,28 +255,14 @@ cat > "$ENV_FILE" <<EOF
 
 # ── General ────────────────────────────────────────────────────────────────
 AILOCAL_ENV=local
-HOST_HTTP_PORT=8080
 
 # ── Ollama ─────────────────────────────────────────────────────────────────
 OLLAMA_URL=http://host.docker.internal:11434
-OLLAMA_QUANTIZATION=q4_K_M
-
-# ── Database ───────────────────────────────────────────────────────────────
-POSTGRES_USER=ailocal
-POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-POSTGRES_DB=ailocal
-
-# ── Redis ──────────────────────────────────────────────────────────────────
-REDIS_PASSWORD=${REDIS_PASSWORD}
 
 # ── LiteLLM proxy key ──────────────────────────────────────────────────────
 # Use this as your ANTHROPIC_API_KEY / OPENAI_API_KEY when pointing clients
 # at http://localhost:4000 instead of the real cloud APIs.
 LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
-
-# ── Web UI / Admin ─────────────────────────────────────────────────────────
-JWT_SECRET=${JWT_SECRET}
-ADMIN_PASSWORD=${ADMIN_PASSWORD}
 
 # ── Cloud fallbacks (disabled by default) ─────────────────────────────────
 # Set ENABLE_CLOUD=true and uncomment the relevant model block in
@@ -296,6 +276,6 @@ OPENAI_API_KEY=
 EOF
 
 chmod 600 "$ENV_FILE"
-info ".env written with secure random secrets (chmod 600)"
+info ".env written with the LiteLLM master key (chmod 600)"
 
 run_next_steps

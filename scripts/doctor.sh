@@ -95,23 +95,11 @@ else
   warn "LiteLLM container is not running"
 fi
 
-if docker ps --format '{{.Names}}' | grep -q '^ailocal_openwebui$'; then
-  info "Open WebUI container is running"
-else
-  warn "Open WebUI container is not running"
-fi
-
 step "Service endpoints"
 if docker ps --format '{{.Names}}' | grep -q '^ailocal_litellm$'; then
   check_http "LiteLLM" "http://localhost:4000/health/liveliness" 5
 else
   echo "  — LiteLLM endpoint skipped (container not running)"
-fi
-
-if docker ps --format '{{.Names}}' | grep -q '^ailocal_openwebui$'; then
-  check_http "Open WebUI" "http://localhost:8081/" 5
-else
-  echo "  — Open WebUI endpoint skipped (container not running)"
 fi
 
 if [ "$ok" = true ]; then
