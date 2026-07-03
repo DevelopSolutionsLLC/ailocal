@@ -202,7 +202,7 @@ run_next_steps() {
 
   echo
   step "Checking health"
-  bash "$ROOT_DIR/scripts/healthcheck.sh" || true
+  bash "$ROOT_DIR/scripts/doctor.sh" || true
 
   # Client configs are OPT-IN — installing them rewrites/merges existing
   # Claude Code / Codex / VS Code settings, which can disrupt a customized
