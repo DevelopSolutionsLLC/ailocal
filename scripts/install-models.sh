@@ -2,12 +2,8 @@
 # install-models.sh — pull or update Ollama models for ailocal
 # Usage: ./scripts/install-models.sh
 #
-# These are the backend models mapped to role-based aliases in LiteLLM:
-#   router     → qwen3:8b           ~5 GB   — fast classification and routing
-#   coder      → qwen3.6:27b        ~17 GB  — implementation and generation
-#   reasoner   → deepseek-r1:32b    ~20 GB  — planning and deep reasoning
-#   supervisor → gemma4:31b-mlx  ~20 GB  — review and approval gate (MLX-native, 256K ctx)
-#   embed      → nomic-embed-text   ~300 MB — semantic retrieval only
+# Model list is derived automatically from config/litellm/config.yaml — no
+# separate list to maintain here. To add or change a model, update the config.
 #
 # Run this after 'ollama serve' is confirmed running.
 set -euo pipefail
@@ -15,6 +11,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 OLLAMA="${OLLAMA_CLI:-ollama}"
+MODELS_YAML="$ROOT_DIR/config/models.yaml"
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -41,23 +38,28 @@ if ! "$OLLAMA" list >/dev/null 2>&1; then
 fi
 info "Ollama daemon responding"
 
-# ── Disk space check ───────────────────────────────────────────────────────
-# All 5 models combined ≈ 62 GB. Warn if less than 80 GB free.
+if [ ! -f "$MODELS_YAML" ]; then
+  error "Model manifest not found: $MODELS_YAML"
+  exit 1
+fi
+info "Model manifest found"
 
+# ── Disk space check ───────────────────────────────────────────────────────
+# Read expected disk usage from models.yaml (set per hardware profile).
+
+DISK_NEEDED=$(grep '^disk_gb:' "$MODELS_YAML" | awk '{print $2}' || echo 0)
+DISK_WARN=$((DISK_NEEDED + DISK_NEEDED / 4))   # warn at 125% of model size
 FREE_GB=$(df -g "$HOME" 2>/dev/null | awk 'NR==2 {print $4}' || echo 0)
-if [ "$FREE_GB" -lt 80 ]; then
-  warn "Only ${FREE_GB} GB free on disk. Full model set needs ~62+ GB."
+if [ "$DISK_NEEDED" -gt 0 ] && [ "$FREE_GB" -lt "$DISK_WARN" ]; then
+  warn "Only ${FREE_GB} GB free. This profile needs ~${DISK_NEEDED} GB."
   echo "  Proceeding — skip large models if you run low."
 fi
 
-# ── Model list — backend names for Ollama (role mapping in config/litellm/config.yaml) ──
+# ── Model list — derived from config/models.yaml ──────────────────────────
 
-declare -a MODELS=(
-  "qwen3:8b"
-  "qwen3.6:27b"
-  "deepseek-r1:32b"
-  "gemma4:31b-mlx"
-  "nomic-embed-text"
+MODELS=()
+while IFS= read -r _m; do MODELS+=("$_m"); done < <(
+  grep '^\s*backend:' "$MODELS_YAML" | sed 's/.*backend:[[:space:]]*//'
 )
 
 # ── Pull models ────────────────────────────────────────────────────────────

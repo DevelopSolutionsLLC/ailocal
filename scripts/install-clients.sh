@@ -9,7 +9,8 @@
 #   ./scripts/install-clients.sh codex claude # multiple targets
 #
 # Destinations:
-#   vscode → ~/Library/Application Support/Code/User/chatLanguageModels.json
+#   vscode → installs the litellm-connector extension + prints one-time setup
+#            (the key lives in VS Code SecretStorage — no file is written)
 #   codex  → ~/.codex/config.toml, ~/.codex/model_catalog.json
 #   claude → ~/.claude/settings.json, ~/.claude/CLAUDE.md
 #
@@ -60,6 +61,9 @@ has_target() { local t; for t in "${TARGETS[@]}"; do [ "$t" = "$1" ] && return 0
 
 echo "Targets: ${TARGETS[*]}"
 
+# ── Sync models.yaml → all derived files before deploying ─────────────────
+python3 "$ROOT_DIR/scripts/sync-models.py"
+
 # ── Validate pre-conditions ────────────────────────────────────────────────
 
 if [ ! -f "$ENV_FILE" ]; then
@@ -76,47 +80,77 @@ fi
 # ── VS Code / Copilot Chat ─────────────────────────────────────────────────
 
 if has_target "vscode"; then
-  step "Installing VS Code Copilot Chat config"
+  step "Configuring VS Code Copilot Chat"
 
+  # VS Code connects through the litellm-connector-copilot extension, which
+  # stores the Base URL + API key in VS Code's encrypted SecretStorage. That is
+  # a security boundary no script/file can write — the key must be entered once
+  # via the extension's UI. The old chatLanguageModels.json (vendor
+  # "customendpoint") approach is a dead end: VS Code ignores its apiKey and
+  # sends an empty Bearer, which LiteLLM rejects ("Ensure Key has Bearer prefix").
+  #
+  # This step therefore (1) removes that stale/broken entry if present,
+  # (2) auto-installs the extension when the `code` CLI is available, and
+  # (3) prints the one-time manual key entry.
+
+  EXT_ID="Gethnet.litellm-connector-copilot"
   VSCODE_USER="$HOME/Library/Application Support/Code/User"
   COPILOT_CFG="$VSCODE_USER/chatLanguageModels.json"
-  COPILOT_TPL="$ROOT_DIR/config/clients/vscode-copilot.json"
 
   if [ ! -d "$VSCODE_USER" ]; then
     warn "VS Code user directory not found — is VS Code installed?"
   else
-    # Always re-merge so key rotation and template changes are picked up on every run.
-    backup "$COPILOT_CFG" || true
-    if [ -f "$COPILOT_CFG" ]; then
-      # Existing file: merge ailocal provider into the array, replacing direct Ollama entry.
-      # Removes the bare {"vendor":"ollama"} entry that bypasses LiteLLM, then appends our provider.
-      python3 - "$COPILOT_CFG" "$COPILOT_TPL" "$LITELLM_KEY" <<'PYEOF'
+    # Clean up the broken customendpoint "ailocal (LiteLLM)" entry (and any
+    # direct Ollama entries) so it stops colliding in the model picker.
+    if [ -f "$COPILOT_CFG" ] && grep -qF '"ailocal (LiteLLM)"' "$COPILOT_CFG" 2>/dev/null; then
+      backup "$COPILOT_CFG" || true
+      python3 - "$COPILOT_CFG" <<'PYEOF'
 import json, sys
-cfg_path, tpl_path, api_key = sys.argv[1], sys.argv[2], sys.argv[3]
-with open(cfg_path) as f:
-    existing = json.load(f)
-with open(tpl_path) as f:
-    template = json.load(f)
-# Inject API key — Caddy adds "Bearer " prefix when forwarding to LiteLLM
-for provider in template:
-    provider['apiKey'] = provider['apiKey'].replace('<LITELLM_MASTER_KEY>', api_key)
-# Drop direct Ollama entries (vendor=ollama) and stale ailocal entries, then append ours
-filtered = [p for p in existing
-            if p.get('vendor') != 'ollama'
-            and p.get('name') != 'ailocal (LiteLLM)']
-filtered.extend(template)
-with open(cfg_path, 'w') as f:
-    json.dump(filtered, f, indent=2)
+cfg = sys.argv[1]
+with open(cfg) as f:
+    data = json.load(f)
+data = [p for p in data
+        if p.get('vendor') != 'ollama'
+        and p.get('name') != 'ailocal (LiteLLM)']
+with open(cfg, 'w') as f:
+    json.dump(data, f, indent=2)
 PYEOF
-      info "chatLanguageModels.json merged (ailocal provider updated)"
+      info "Removed stale customendpoint entry from chatLanguageModels.json"
     else
-      # No existing file: write template with key substituted
-      sed "s|<LITELLM_MASTER_KEY>|${LITELLM_KEY}|g" "$COPILOT_TPL" > "$COPILOT_CFG"
-      info "chatLanguageModels.json written"
+      skip "No stale customendpoint entry to remove"
     fi
-    echo "  → Reload VS Code to see coder/reasoner/supervisor/router in the model picker"
-    echo "    (Cmd+Shift+P → Developer: Reload Window)"
   fi
+
+  # Auto-install the extension if the `code` CLI is on PATH.
+  if has code; then
+    if code --list-extensions 2>/dev/null | grep -qix "$EXT_ID"; then
+      skip "Extension $EXT_ID already installed"
+    else
+      if code --install-extension "$EXT_ID" >/dev/null 2>&1; then
+        info "Installed VS Code extension: $EXT_ID"
+      else
+        warn "Could not auto-install $EXT_ID — install it from the Marketplace"
+      fi
+    fi
+  else
+    warn "'code' CLI not on PATH — install the extension manually: $EXT_ID"
+    echo "     (VS Code → Cmd+Shift+P → 'Shell Command: Install code command in PATH')"
+  fi
+
+  # Put the key on the clipboard so it's a one-paste into the Manage Models dialog.
+  if command -v pbcopy >/dev/null 2>&1; then
+    printf '%s' "$LITELLM_KEY" | pbcopy && KEY_HINT="(copied to clipboard — just paste)" || KEY_HINT=""
+  fi
+
+  echo
+  echo "  Final step — enter the key ONCE (encrypted SecretStorage, unscriptable):"
+  echo "    1. Copilot Chat → model-picker dropdown → \"Manage Models…\""
+  echo "       (or Cmd+Shift+P → \"Chat: Manage Language Models\")"
+  echo "    2. Pick \"LiteLLM Connector\" and enter:"
+  echo "         Base URL:  http://localhost:4000"
+  echo "         API Key:   ${LITELLM_KEY}  ${KEY_HINT:-}"
+  echo "    3. Cmd+Shift+P → \"LiteLLM: Reload Models\""
+  echo "  Models + capabilities (vision/tools/ctx) are auto-discovered from LiteLLM."
 fi
 
 # ── Codex CLI ─────────────────────────────────────────────────────────────
@@ -212,14 +246,14 @@ fi
 
 echo ""
 echo "  ✓ Done. Restart affected tools to pick up changes:"
-has_target "vscode"  && echo "    VS Code:      Cmd+Shift+P → Developer: Reload Window"
+has_target "vscode"  && echo "    VS Code:      Cmd+Shift+P → \"LiteLLM: Reload Models\" (after the one-time key entry above)"
 has_target "codex"   && echo "    Codex:        restart any open Codex sessions"
 has_target "claude"  && echo "    Claude Code:  restart any open claude sessions"
 echo ""
 echo "  To force-update a config that was skipped, delete it and re-run:"
-has_target "vscode"  && echo "    rm \"$HOME/Library/Application Support/Code/User/chatLanguageModels.json\""
 has_target "codex"   && echo "    rm ~/.codex/config.toml"
 has_target "claude"  && echo "    rm ~/.claude/settings.json"
+has_target "vscode"  && echo "    VS Code:  no file to delete — re-enter via \"Chat: Manage Language Models\" (key lives in SecretStorage)"
 echo "  Then: ./scripts/install-clients.sh [target]"
 echo ""
 echo "  Key rotation: after running install.sh, restart Docker services with:"

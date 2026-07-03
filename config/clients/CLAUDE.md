@@ -14,8 +14,8 @@ When you select a model in Claude Code, it maps to a local backend:
 
 | Model name         | Backend                    | Best for                                  |
 |--------------------|----------------------------|-------------------------------------------|
-| `claude-haiku-*`   | router (qwen3:8b)          | Quick lookups, classification, triage     |
-| `claude-sonnet-*`  | coder (qwen3.6:27b)        | Implementation, code edits, daily driving |
+| `claude-haiku-*`   | router (qwen3.5:9b-mlx)    | Quick lookups, classification, triage     |
+| `claude-sonnet-*`  | coder (qwen3.6:35b-mlx)    | Implementation, code edits, daily driving |
 | `claude-opus-*`    | reasoner (deepseek-r1:32b) | Deep analysis, planning, debugging        |
 | `claude-fable-*`   | reasoner (deepseek-r1:32b) | Same as opus tier                         |
 

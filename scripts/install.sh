@@ -100,6 +100,59 @@ else
   warn "Ollama CLI not found after install attempt — proceed manually."
 fi
 
+# ── Ollama multi-model memory hint ────────────────────────────────────────
+step "Checking Ollama memory settings"
+if [ -z "${OLLAMA_MAX_LOADED_MODELS:-}" ]; then
+  warn "OLLAMA_MAX_LOADED_MODELS is not set — Ollama defaults to 1 model at a time."
+  echo "  Add to ~/.zshrc:  export OLLAMA_MAX_LOADED_MODELS=2"
+  echo "  This lets supervisor + coder stay loaded simultaneously."
+else
+  info "OLLAMA_MAX_LOADED_MODELS=${OLLAMA_MAX_LOADED_MODELS}"
+fi
+if [ -z "${OLLAMA_KEEP_ALIVE:-}" ]; then
+  warn "OLLAMA_KEEP_ALIVE not set — models unload after 5 min of idle."
+  echo "  Recommended: add to ~/.zshrc → export OLLAMA_KEEP_ALIVE=2h"
+  echo "  Supervisor stays warm across your session; LRU eviction handles the rest."
+else
+  info "OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE}"
+fi
+
+# ── Hardware profile selection ─────────────────────────────────────────────
+step "Detecting hardware profile"
+
+RAM_BYTES=$(sysctl -n hw.memsize 2>/dev/null || echo 0)
+RAM_GB=$((RAM_BYTES / 1024 / 1024 / 1024))
+
+if   [ "$RAM_GB" -ge 96 ]; then RAM_TIER="128gb"
+elif [ "$RAM_GB" -ge 48 ]; then RAM_TIER="64gb"
+elif [ "$RAM_GB" -ge 24 ]; then RAM_TIER="32gb"
+else                             RAM_TIER="16gb"
+fi
+
+PROFILE_SRC="$ROOT_DIR/config/profiles/${RAM_TIER}.yaml"
+MODELS_YAML="$ROOT_DIR/config/models.yaml"
+
+info "Detected ${RAM_GB} GB RAM → profile: ${RAM_TIER}"
+
+if [ -f "$MODELS_YAML" ]; then
+  ACTIVE=$(grep '^# profile:' "$MODELS_YAML" | awk '{print $3}' || echo "unknown")
+  if [ "$ACTIVE" = "$RAM_TIER" ]; then
+    info "models.yaml already on $RAM_TIER profile — keeping existing"
+  else
+    warn "models.yaml is on '$ACTIVE' profile — switching to $RAM_TIER"
+    read -r -p "  Apply $RAM_TIER profile? This overwrites any custom model changes. [y/N]: " APPLY
+    if [[ "${APPLY:-}" =~ ^[Yy]$ ]]; then
+      cp "$PROFILE_SRC" "$MODELS_YAML"
+      info "models.yaml updated to $RAM_TIER profile"
+    else
+      info "Keeping existing models.yaml"
+    fi
+  fi
+else
+  cp "$PROFILE_SRC" "$MODELS_YAML"
+  info "models.yaml written from $RAM_TIER profile"
+fi
+
 # ── Directory structure ────────────────────────────────────────────────────
 step "Creating directory structure"
 mkdir -p \
@@ -118,22 +171,66 @@ step "Configuring environment (.env)"
 
 # Run the service stack, client install, and healthcheck automatically.
 run_next_steps() {
-  echo
-  step "Starting Docker services"
-  bash "$ROOT_DIR/scripts/start.sh"
+  # Sync models.yaml → litellm config so LiteLLM sees the latest model choices.
+  if has python3 && [ -f "$ROOT_DIR/scripts/sync-models.py" ]; then
+    echo
+    step "Syncing model config"
+    python3 "$ROOT_DIR/scripts/sync-models.py" || true
+  fi
 
   echo
-  step "Installing client configs"
-  bash "$ROOT_DIR/scripts/install-clients.sh"
+  step "Starting Docker services"
+  bash "$ROOT_DIR/scripts/start.sh" --no-wait
+
+  # Always restart LiteLLM so it picks up any config or model changes.
+  echo
+  step "Reloading LiteLLM"
+  docker compose restart litellm
+  attempts=0
+  until curl -sSf --max-time 3 http://localhost:4000/health/liveliness >/dev/null 2>&1; do
+    attempts=$((attempts + 1))
+    if [ $attempts -ge 30 ]; then
+      warn "LiteLLM did not become ready — check: docker logs ailocal_litellm"
+      break
+    fi
+    printf "  Waiting... (%ds)\r" $((attempts * 3))
+    sleep 3
+  done
+  echo ""
+  info "LiteLLM ready"
+
+  echo
+  step "Pulling Ollama models"
+  bash "$ROOT_DIR/scripts/install-models.sh"
 
   echo
   step "Checking health"
   bash "$ROOT_DIR/scripts/healthcheck.sh" || true
 
+  # Client configs are OPT-IN — installing them rewrites/merges existing
+  # Claude Code / Codex / VS Code settings, which can disrupt a customized
+  # setup. Ask instead of doing it automatically.
   echo
-  step "Bootstrap complete"
-  echo "  Models (~62 GB) are a separate step — run when ready:"
-  echo "    ./scripts/install-models.sh"
+  step "Client configs (optional)"
+  echo "  ailocal can point Claude Code, Codex, and VS Code at the local proxy."
+  echo "  ⚠ This backs up, then rewrites/merges existing client configs."
+  echo "    Choose: all | claude | codex | vscode  (space-separated) — or Enter to skip"
+  read -r -p "  Install which client configs? [skip]: " CLIENTS
+  CLIENTS="${CLIENTS:-skip}"
+  case "$CLIENTS" in
+    skip|"")
+      info "Skipped — run later with:  ./scripts/install-clients.sh [all|claude|codex|vscode]" ;;
+    all)
+      bash "$ROOT_DIR/scripts/install-clients.sh" || warn "Client install reported issues." ;;
+    *)
+      # shellcheck disable=SC2086
+      bash "$ROOT_DIR/scripts/install-clients.sh" $CLIENTS \
+        || warn "Client install reported issues — check target names (claude codex vscode)." ;;
+  esac
+
+  echo
+  step "Done"
+  echo "  Stack is ready. Open WebUI: http://localhost:8081"
 }
 
 if [ -f "$ENV_FILE" ]; then

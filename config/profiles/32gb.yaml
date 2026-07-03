@@ -1,0 +1,40 @@
+# profile: 32gb
+# Models sized for 32 GB unified memory.
+# supervisor (17 GB) + router (5.5 GB) = 22.5 GB — can coexist.
+# coder (21 GB) + supervisor (17 GB) = 38 GB — too tight; they hot-swap (OLLAMA_MAX_LOADED_MODELS=1).
+# reasoner (9 GB) can coexist with supervisor (17+9=26 GB).
+# Approximate download: ~54 GB
+# Run ./scripts/sync-models.sh after any manual change.
+
+disk_gb: 54
+
+router:
+  backend: qwen3.5:9b-mlx
+  description: Fast classification, trivial tasks, autocomplete
+  context_window: 32768
+  num_ctx: 32768
+
+coder:
+  backend: qwen3.6:35b-mlx
+  description: Implementation, generation, coding tasks — MoE ~3B active / 35B total, newest Apr 2026
+  context_window: 262144
+  num_ctx: 65536
+  vision: true   # Qwen3.6 multimodal inference
+
+reasoner:
+  backend: deepseek-r1:14b
+  description: Planning, decomposition, deep reasoning — fits alongside supervisor (17+9=26 GB)
+  context_window: 32768
+  num_ctx: 32768
+
+supervisor:
+  backend: gemma4:27b
+  description: Review, critique, approval gate
+  context_window: 131072
+  num_ctx: 65536
+  vision: true   # Gemma multimodal (SigLIP vision encoder)
+
+embed:
+  backend: nomic-embed-text
+  description: Semantic retrieval and memory — not for chat
+  context_window: 8192

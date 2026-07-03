@@ -1,0 +1,37 @@
+# profile: 16gb
+# Models sized for 16 GB unified memory — one model loaded at a time.
+# All MLX-native weights where explicit tags exist; auto-MLX via Ollama 0.19+ for the rest.
+# Approximate download: ~13 GB
+# Run ./scripts/sync-models.sh after any manual change.
+
+disk_gb: 13
+
+router:
+  backend: qwen3.5:2b-mlx
+  description: Fast classification, trivial tasks, autocomplete
+  context_window: 32768
+  num_ctx: 32768
+
+coder:
+  backend: qwen3.5:4b-mlx
+  description: Implementation, generation, coding tasks — MLX-native
+  context_window: 32768
+  num_ctx: 32768
+
+reasoner:
+  backend: deepseek-r1:8b
+  description: Planning, decomposition, deep reasoning — auto-MLX via Ollama 0.19+
+  context_window: 32768
+  num_ctx: 32768
+
+supervisor:
+  backend: gemma4:e4b-mlx
+  description: Review, critique, approval gate — MLX-native efficient 4B
+  context_window: 32768
+  num_ctx: 32768
+  vision: true   # Gemma multimodal (SigLIP vision encoder)
+
+embed:
+  backend: nomic-embed-text
+  description: Semantic retrieval and memory — not for chat
+  context_window: 8192

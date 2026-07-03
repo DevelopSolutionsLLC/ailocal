@@ -18,7 +18,7 @@ The repository is organized as follows:
 Key commands for development:
 - `./scripts/install.sh` - Install host dependencies and generate .env file
 - `ollama serve` - Start Ollama service (required for local AI inference)
-- `./scripts/install-models.sh` - Pull required AI models (~45+ GB)
+- `./scripts/install-models.sh` - Pull required AI models (~85 GB on the 64 GB profile; 13–135 GB by tier)
 - `./scripts/start.sh` - Start all Docker services
 - `./scripts/healthcheck.sh` - Verify all services are running properly
 - `./scripts/stop.sh` - Stop all services (preserves volumes)
@@ -51,20 +51,20 @@ The project relies on manual health checks through:
 
 The stack is designed for single-user local use with all ports bound to localhost (127.0.0.1). For LAN exposure:
 - Set `WEBUI_AUTH=true` in docker-compose.yml for Open WebUI
-- Add Caddy basic_auth middleware on /v1/* and /metrics* endpoints
+- Add Caddy basic_auth middleware on /v1/* endpoints
 - Rotate LITELLM_MASTER_KEY and ADMIN_PASSWORD to strong unique values
 
 ## Role-based Routing
 
 All orchestration uses role names instead of backend model names:
-- `router`: qwen3:8b - Fast classification, trivial tasks, autocomplete
+- `router`: qwen3.5:9b-mlx - Fast classification, trivial tasks, autocomplete
 - `reasoner`: deepseek-r1:32b - Planning, decomposition, deep reasoning  
-- `coder`: qwen3.6:27b - Implementation, generation, coding tasks
-- `supervisor`: gemma4:31b-mlx - Review, critique, approval gate
+- `coder`: qwen3.6:35b-mlx - Implementation, generation, coding tasks
+- `supervisor`: gemma4:31b-mxfp8 - Review, critique, approval gate
 - `embed`: nomic-embed-text - Semantic retrieval and memory
 
 Never reference backend model names directly in client configs or scripts.
 
 ## Imported Claude Cowork project instructions
 
-Local AI stack: Ollama models (qwen3, deepseek-r1, gemma4-mlx) behind LiteLLM proxy with role-based routing (router/coder/reasoner/supervisor). See README.md.
+Local AI stack: Ollama models (qwen3.5-mlx, deepseek-r1, gemma4-mxfp8) behind LiteLLM proxy with role-based routing (router/coder/reasoner/supervisor). See README.md.
