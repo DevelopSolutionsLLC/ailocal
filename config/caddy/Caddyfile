@@ -6,7 +6,6 @@
 # Routes:
 #   /v1/*      → LiteLLM OpenAI-compatible API
 #   /health*   → LiteLLM health endpoint
-#   /metrics*  → LiteLLM Prometheus metrics (localhost-only — not for browsers)
 #   /ui*       → LiteLLM admin UI (spend dashboard, virtual key management)
 #   /*         → Open WebUI (catch-all)
 
@@ -37,26 +36,14 @@
   }
 
   # LiteLLM proxy — OpenAI & Anthropic compatible API
-  # Clients: Claude Code, Codex, any OpenAI SDK pointing at http://localhost/v1
-  # header_up injects the master key so VS Code Copilot Chat works — it sends
-  # Authorization: Bearer (empty) and cannot supply a key any other way.
-  # This override is intentional: only VS Code routes through :80; all other
-  # clients (Claude Code, Codex) talk directly to localhost:4000.
+  # Available on port 80 for convenience, but most clients use port 4000 directly.
+  # The litellm-connector-copilot extension handles auth via VS Code SecretStorage
+  # and should be configured to point at http://localhost:4000, not this port.
   handle /v1/* {
-    reverse_proxy litellm:4000 {
-      header_up Authorization "Bearer {env.LITELLM_MASTER_KEY}"
-    }
-  }
-
-  handle /health* {
     reverse_proxy litellm:4000
   }
 
-  # Prometheus metrics endpoint.
-  # Already localhost-only (127.0.0.1 bind in docker-compose), but also block
-  # browser-initiated cross-origin fetches via CSP above.
-  # If you expose this stack on a LAN, add Caddy basic_auth here.
-  handle /metrics* {
+  handle /health* {
     reverse_proxy litellm:4000
   }
 

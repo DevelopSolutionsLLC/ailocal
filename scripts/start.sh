@@ -42,7 +42,9 @@ elif ! ollama list >/dev/null 2>&1; then
 else
   info "Ollama daemon responding"
   missing_models=()
-  for model in qwen3:8b qwen3.6:27b deepseek-r1:32b gemma4:31b-mlx nomic-embed-text; do
+  _required=()
+  while IFS= read -r _m; do _required+=("$_m"); done < <(grep '^\s*backend:' "$ROOT_DIR/config/models.yaml" | sed 's/.*backend:[[:space:]]*//')
+  for model in "${_required[@]}"; do
     if ! ollama list 2>/dev/null | awk 'NR>1 {print $1}' | grep -Eq "^${model}(:.+)?$"; then
       missing_models+=("$model")
     fi
@@ -108,10 +110,10 @@ echo "    export OPENAI_API_KEY=$KEY"
 echo "    codex"
 echo ""
 echo "  ── VS Code ───────────────────────────────────────────────"
-echo "    source \"$ROOT_DIR/config/clients/env.sh\" && code ."
-echo "    (Continue + Cline pick up env vars automatically)"
+echo "    Uses the litellm-connector extension (key in SecretStorage):"
+echo "    ./scripts/install-clients.sh vscode   # installs extension + prints setup"
 echo ""
 echo "  ── First-time client setup ───────────────────────────────────"
 echo "    ./scripts/install-clients.sh"
-echo "    (installs Codex, Claude Code, and VS Code Continue configs)"
+echo "    (configures Codex, Claude Code, and VS Code Copilot Chat)"
 echo ""

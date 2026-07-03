@@ -70,8 +70,8 @@ else
   ok=false
 fi
 
-# Keep the model list aligned with config/litellm/config.yaml and install-models.sh.
-required_models=(qwen3:8b qwen3.6:27b deepseek-r1:32b gemma4:31b-mlx nomic-embed-text)
+# Derive required models from the model manifest — single source of truth.
+required_models=($(grep '^\s*backend:' "$ROOT_DIR/config/models.yaml" | sed 's/.*backend:[[:space:]]*//'))
 if has ollama && ollama list >/dev/null 2>&1; then
   installed_models=$(ollama list 2>/dev/null | awk 'NR>1 {print $1}')
   missing_models=()

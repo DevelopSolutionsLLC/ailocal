@@ -40,11 +40,23 @@ if [ "$SKIP_MODELS" = false ]; then
   "$ROOT_DIR/scripts/install-models.sh" || warn "Model update had warnings — services will still restart."
 fi
 
+# ── Regenerate model config (single source of truth) ──────────────────────
+# Regenerate config.yaml / model_catalog.json / docs from models.yaml.
+# Client configs are NOT auto-redeployed here — that would rewrite the user's
+# ~/.codex and ~/.claude files on every update. Redeploy explicitly when you
+# want to:  ./scripts/install-clients.sh [claude|codex|vscode]
+
+step "Regenerating model config (sync-models)"
+"$ROOT_DIR/scripts/sync-models.sh"
+
 # ── Rolling restart (dependency order) ────────────────────────────────────
 # Restart infrastructure first, then dependents.
 
 step "Restarting services"
 docker compose up -d --remove-orphans
+# Ensure LiteLLM reloads the regenerated model_info (config-only changes are
+# not picked up by `up -d` when the image is unchanged).
+docker compose restart litellm
 
 # ── Post-update health check ───────────────────────────────────────────────
 

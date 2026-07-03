@@ -6,10 +6,11 @@
 #   OLLAMA_URL          — http://host.docker.internal:11434
 #   REDIS_PASSWORD      — redis auth password
 #
-# Auth note: master_key is intentionally omitted. The proxy binds to
-# 127.0.0.1:4000 (localhost-only), so no network-level auth is needed.
-# VS Code Copilot Chat sends an empty Bearer token and cannot use a custom
-# apiKey — removing auth is the only way to support it.
+# Auth note: master_key IS set (general_settings below) and read from
+# LITELLM_MASTER_KEY. Every client authenticates with it. The proxy also binds
+# to 127.0.0.1:4000 (localhost-only). VS Code Copilot Chat uses the
+# litellm-connector extension, which stores this key in VS Code SecretStorage
+# and sends it as a proper Bearer token.
 #
 # Model name hierarchy:
 #   Layer 1 — Role aliases  (canonical; use these in all client configs)
@@ -17,10 +18,11 @@
 #   Layer 3 — OpenAI aliases (compatibility shims for Codex / VS Code extensions)
 #
 # Backend mapping:
-#   router    → qwen3:8b          (fast, 40K ctx)
-#   coder     → qwen3.6:27b       (coding-optimised, 32K ctx)
-#   reasoner  → deepseek-r1:32b   (deep reasoning, 32K ctx)
-#   supervisor → gemma4:31b-mlx   (review / approval, 256K ctx, MLX-native)
+#   router    → qwen3.5:9b-mlx    (fast, 32K ctx enforced, MLX-native)
+#   coder     → qwen3.6:35b-mlx   (newest Apr 2026, MoE ~3B active / 35B total, explicit MLX weights, agentic coding)
+#   reasoner  → deepseek-r1:32b   (CoT reasoning, 20 GB, fits alongside supervisor on 64 GB)
+#   supervisor → gemma4:31b-mxfp8 (review / approval, 128K ctx enforced, MLX-native, 8-bit)
+# (ctx figures reflect the 64 GB profile's num_ctx; the models' native windows are larger.)
 #   embed     → nomic-embed-text  (embeddings only)
 
 model_list:
@@ -29,10 +31,10 @@ model_list:
   # Clients should use these names. Backend model details are hidden here.
 
   # router — lightweight classifier and fast-response role
-  # qwen3:8b: tools + thinking confirmed on Ollama Hub; 40K context window
+  # qwen3.5:9b-mlx: MLX-native weights; tools + thinking confirmed; 32K ctx enforced (larger native window)
   - model_name: router
     litellm_params:
-      model: ollama_chat/qwen3:8b
+      model: ollama_chat/qwen3.5:9b-mlx
       api_base: os.environ/OLLAMA_URL
       num_ctx: 32768
     model_info:
@@ -42,15 +44,18 @@ model_list:
       supports_system_messages: true
       supports_native_streaming: true
       supports_reasoning: true
-      max_tokens: 32768
+      max_input_tokens: 32768
+      max_output_tokens: 8192
+      input_cost_per_token: 0
+      output_cost_per_token: 0
 
   # reasoner — deep planning and decomposition role
-  # deepseek-r1:32b: tools + thinking confirmed; serial tool use by design
+  # deepseek-r1:32b: chain-of-thought distill; 20 GB — coexists with supervisor on 64 GB (37+20=57 GB)
   - model_name: reasoner
     litellm_params:
       model: ollama_chat/deepseek-r1:32b
       api_base: os.environ/OLLAMA_URL
-      num_ctx: 32768
+      num_ctx: 65536
     model_info:
       supports_function_calling: true
       supports_tool_choice: true
@@ -58,30 +63,16 @@ model_list:
       supports_system_messages: true
       supports_native_streaming: true
       supports_reasoning: true
-      max_tokens: 32768
+      max_input_tokens: 65536
+      max_output_tokens: 16384
+      input_cost_per_token: 0
+      output_cost_per_token: 0
 
   # coder — implementation and generation role
-  # qwen3.6:27b: tools + thinking + vision confirmed; coding-optimised weights
+  # qwen3.6:35b-mlx: newest (Apr 2026), MoE ~3B active / 35B total; explicit MLX weights; agentic coding + multimodal
   - model_name: coder
     litellm_params:
-      model: ollama_chat/qwen3.6:27b
-      api_base: os.environ/OLLAMA_URL
-      num_ctx: 32768
-    model_info:
-      supports_function_calling: true
-      supports_tool_choice: true
-      supports_parallel_function_calling: true
-      supports_system_messages: true
-      supports_native_streaming: true
-      supports_reasoning: true
-      max_tokens: 32768
-
-  # supervisor — review, critique, and approval gate role
-  # gemma4:31b-mlx: MLX-native build; tool calling fixed in Ollama v0.20.2+.
-  # 256K context window; 128K set here as a safe default (safe at 256K on 64GB+).
-  - model_name: supervisor
-    litellm_params:
-      model: ollama_chat/gemma4:31b-mlx
+      model: ollama_chat/qwen3.6:35b-mlx
       api_base: os.environ/OLLAMA_URL
       num_ctx: 131072
     model_info:
@@ -91,7 +82,34 @@ model_list:
       supports_system_messages: true
       supports_native_streaming: true
       supports_reasoning: true
-      max_tokens: 131072
+      supports_vision: true
+      supports_pdf_input: true
+      max_input_tokens: 131072
+      max_output_tokens: 16384
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+
+  # supervisor — review, critique, and approval gate role
+  # gemma4:31b-mxfp8: 8-bit MXFP8 weights, MLX-executed; higher quality than 4-bit mlx tag.
+  # 256K context window; 128K set here as a safe default (safe at 256K on 64GB+).
+  - model_name: supervisor
+    litellm_params:
+      model: ollama_chat/gemma4:31b-mxfp8
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 131072
+    model_info:
+      supports_function_calling: true
+      supports_tool_choice: true
+      supports_parallel_function_calling: true
+      supports_system_messages: true
+      supports_native_streaming: true
+      supports_reasoning: false
+      supports_vision: true
+      supports_pdf_input: true
+      max_input_tokens: 131072
+      max_output_tokens: 16384
+      input_cost_per_token: 0
+      output_cost_per_token: 0
 
   # embed — semantic retrieval and memory only; NOT a chat model
   # nomic-embed-text: embedding-only, 8192 token limit
@@ -103,6 +121,8 @@ model_list:
     model_info:
       mode: embedding
       max_tokens: 8192
+      input_cost_per_token: 0
+      output_cost_per_token: 0
 
   # ── Layer 2: Anthropic / Claude model name aliases ─────────────────────────
   # Claude Code's /model picker and the Anthropic SDK send these exact strings
@@ -110,9 +130,9 @@ model_list:
   # forms are required — different SDK releases use different formats.
   #
   # Mapping rationale:
-  #   opus / fable  → reasoner backend (deepseek-r1:32b — deepest reasoning)
-  #   sonnet        → coder backend    (qwen3.6:27b — balanced daily driver)
-  #   haiku         → router backend   (qwen3:8b — fast, lightweight)
+  #   opus / fable  → reasoner backend (deepseek-r1:32b — CoT reasoning, fits on 64 GB)
+  #   sonnet        → coder backend    (qwen3.6:35b-mlx — newest agentic coder)
+  #   haiku         → router backend   (qwen3.5:9b-mlx — fast, lightweight)
 
   - model_name: claude-opus-4-8
     litellm_params:
@@ -159,7 +179,7 @@ model_list:
 
   - model_name: claude-sonnet-4-6
     litellm_params:
-      model: ollama_chat/qwen3.6:27b
+      model: ollama_chat/qwen3.6:35b-mlx
       api_base: os.environ/OLLAMA_URL
       num_ctx: 32768
     model_info:
@@ -174,7 +194,7 @@ model_list:
   # Date-versioned form — Claude Code 1.x sends this exact string by default
   - model_name: claude-sonnet-4-6-20250219
     litellm_params:
-      model: ollama_chat/qwen3.6:27b
+      model: ollama_chat/qwen3.6:35b-mlx
       api_base: os.environ/OLLAMA_URL
       num_ctx: 32768
     model_info:
@@ -188,7 +208,7 @@ model_list:
 
   - model_name: claude-haiku-4-5
     litellm_params:
-      model: ollama_chat/qwen3:8b
+      model: ollama_chat/qwen3.5:9b-mlx
       api_base: os.environ/OLLAMA_URL
       num_ctx: 32768
     model_info:
@@ -202,7 +222,7 @@ model_list:
 
   - model_name: claude-haiku-4-5-20251001
     litellm_params:
-      model: ollama_chat/qwen3:8b
+      model: ollama_chat/qwen3.5:9b-mlx
       api_base: os.environ/OLLAMA_URL
       num_ctx: 32768
     model_info:
@@ -219,16 +239,16 @@ model_list:
   # Routes to local equivalents with no cloud calls required.
   #
   # Mapping rationale:
-  #   gpt-4o       → coder backend  (qwen3.6:27b — capable, coding-optimised)
-  #   gpt-4o-mini  → router backend (qwen3:8b — fast, good enough)
+  #   gpt-4o       → router backend (qwen3.5:9b-mlx — fast, hardened tool template)
+  #   gpt-4o-mini  → router backend (qwen3.5:9b-mlx — fast, good enough)
   #   gpt-3.5-turbo → router backend (legacy name, same fast tier)
 
-  # gpt-5.5 → coder backend (qwen3.6:27b)
+  # gpt-5.5 → coder backend (qwen3.6:35b-mlx)
   # Codex's built-in model picker is hardcoded to show OpenAI catalog (bug #22160).
   # This alias ensures requests that fall through to gpt-5.5 still route locally.
   - model_name: gpt-5.5
     litellm_params:
-      model: ollama_chat/qwen3.6:27b
+      model: ollama_chat/qwen3.6:35b-mlx
       api_base: os.environ/OLLAMA_URL
       num_ctx: 32768
     model_info:
@@ -240,11 +260,11 @@ model_list:
       supports_reasoning: true
       max_tokens: 32768
 
-  # gpt-4o → router backend (qwen3:8b) not coder — qwen3:8b has a more
+  # gpt-4o → router backend (qwen3.5:9b-mlx) not coder — 9b has a more
   # hardened Ollama tool template; avoids XML bleed-through in Codex
   - model_name: gpt-4o
     litellm_params:
-      model: ollama_chat/qwen3:8b
+      model: ollama_chat/qwen3.5:9b-mlx
       api_base: os.environ/OLLAMA_URL
       num_ctx: 32768
     model_info:
@@ -258,7 +278,7 @@ model_list:
 
   - model_name: gpt-4o-mini
     litellm_params:
-      model: ollama_chat/qwen3:8b
+      model: ollama_chat/qwen3.5:9b-mlx
       api_base: os.environ/OLLAMA_URL
       num_ctx: 32768
     model_info:
@@ -272,7 +292,7 @@ model_list:
 
   - model_name: gpt-3.5-turbo
     litellm_params:
-      model: ollama_chat/qwen3:8b
+      model: ollama_chat/qwen3.5:9b-mlx
       api_base: os.environ/OLLAMA_URL
       num_ctx: 32768
     model_info:
