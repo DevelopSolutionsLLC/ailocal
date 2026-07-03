@@ -21,7 +21,6 @@ Derived files updated by name-swap:
   - config/clients/model_catalog.json
   - config/clients/CLAUDE.md
   - README.md
-  - AGENTS.md
 
 Capability model (per canonical role):
   - Tool calling         : all roles (Qwen3 / DeepSeek-R1 / Gemma all support it)
@@ -50,7 +49,6 @@ CODEX_CATALOG  = ROOT / "config/clients/model_catalog.json"
 # separately by regen_codex_catalog (structured JSON edit + name swap).
 DERIVED_FILES = [
     ROOT / "README.md",
-    ROOT / "AGENTS.md",
     ROOT / "config/clients/CLAUDE.md",
 ]
 
