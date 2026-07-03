@@ -6,7 +6,7 @@ Run AI coding tools — Claude Code, Codex, VS Code Copilot Chat — against loc
 
 **Why this over bare Ollama:**
 - Single endpoint for all tools — configure once, works everywhere
-- Role names decouple your client configs from backend models — swap `gemma4:31b-mlx` for something better without touching a single config file
+- Role names decouple your client configs from backend models — swap `gemma4:31b-mxfp8` for something better without touching a single config file
 - Response caching, usage logging, and fallback chains built in
 - Optional cloud fallback per role — route `reasoner` to Claude Opus when the local model isn't enough
 
@@ -16,7 +16,7 @@ Run AI coding tools — Claude Code, Codex, VS Code Copilot Chat — against loc
 
 - macOS 13+ (Apple Silicon M1+)
 - 64 GB RAM recommended — 32 GB minimum with smaller models
-- ~62 GB free disk for the full model set
+- ~85 GB free disk for the 64 GB profile's model set (varies 13–135 GB by hardware tier)
 
 ## Prerequisites
 
@@ -38,12 +38,8 @@ brew install --cask docker ollama
 ## Setup
 
 ```bash
-./scripts/install.sh          # install host deps, generate .env
-ollama serve                  # start Ollama (or open Ollama.app)
-./scripts/install-models.sh   # pull models (~62 GB, takes a while)
-./scripts/start.sh            # start Docker services
-./scripts/install-clients.sh  # deploy configs to Claude Code, Codex, VS Code
-./scripts/doctor.sh           # one-command preflight + health summary
+ollama serve                  # start Ollama first (or open Ollama.app)
+./scripts/install.sh          # does everything: deps, .env, models (~85 GB on 64 GB tier), services, healthcheck, then prompts for client configs
 ./scripts/smoke-test.sh       # verify a real model request succeeds
 ```
 
@@ -53,7 +49,7 @@ All ports bind to `127.0.0.1` (localhost-only). The stack is designed for single
 
 **If you expose this stack on a LAN** (changing port binds to `0.0.0.0`):
 - Set `WEBUI_AUTH=true` in `docker-compose.yml` for Open WebUI (OWASP A07:2021 — Authentication Failures)
-- Add Caddy `basic_auth` middleware on `/v1/*` and `/metrics*` in the Caddyfile
+- Add Caddy `basic_auth` middleware on `/v1/*` in the Caddyfile
 - Rotate `LITELLM_MASTER_KEY` and `ADMIN_PASSWORD` to strong unique values before doing so
 
 `WEBUI_AUTH=false` is intentional for the default local-only setup and is not a vulnerability in that context.
@@ -65,7 +61,7 @@ All ports bind to `127.0.0.1` (localhost-only). The stack is designed for single
 | **litellm** | 4000 | AI proxy. Single endpoint for all model requests. Exposes role-based model names only — clients never reference backend models directly. Caches responses in Redis, logs usage to Postgres. Speaks both OpenAI format (`/v1/chat/completions`) and Anthropic format (`/v1/messages`). |
 | **open-webui** | 8081 | Chat interface. Routes through LiteLLM so all requests share caching and routing. Good for testing roles without writing code. |
 | **postgres** | — | LiteLLM's database. Stores API keys, spend logs, and model config. Internal only. |
-| **redis** | — | Response cache for LiteLLM. Identical requests within 10 minutes return instantly from cache instead of hitting Ollama. Internal only. |
+| **redis** | — | Response cache for LiteLLM. Identical requests within the cache TTL (1 hour) return instantly from cache instead of hitting Ollama. Internal only. |
 | **caddy** | 80, 443 | Reverse proxy. `http://localhost/v1/*` routes to LiteLLM; everything else to Open WebUI. All services are also accessible directly on their own ports. |
 
 **Ollama** runs on the host at port 11434 — not in Docker. Containerized Ollama on Apple Silicon loses Metal GPU access, so it runs natively and all containers reach it via `host.docker.internal:11434`.
@@ -94,15 +90,36 @@ Expected container memory usage after tuning:
 
 LiteLLM exposes **role names only** — no backend model names are visible to external clients. All orchestration is external.
 
-| Role | Backend model | Purpose |
+The table below shows the **64 GB** profile's backends. The specific backend per role varies by hardware tier — see [Changing models](#changing-models).
+
+| Role | Backend model (64 GB) | Purpose |
 |---|---|---|
-| `router` | qwen3:8b | Fast classification, trivial tasks, autocomplete |
+| `router` | qwen3.5:9b-mlx | Fast classification, trivial tasks, autocomplete |
 | `reasoner` | deepseek-r1:32b | Planning, decomposition, deep reasoning |
-| `coder` | qwen3.6:27b | Implementation, generation, coding tasks |
-| `supervisor` | gemma4:31b-mlx | Review, critique, approval gate |
+| `coder` | qwen3.6:35b-mlx | Implementation, generation, coding tasks |
+| `supervisor` | gemma4:31b-mxfp8 | Review, critique, approval gate |
 | `embed` | nomic-embed-text | Semantic retrieval and memory — not for chat |
 
 **Never use backend model names directly in client configs or scripts.** Use role names only.
+
+### Changing models
+
+Model choices live in **one place**: `config/models.yaml` (the active profile). The per-hardware presets are in `config/profiles/{16,32,64,128}gb.yaml`, and `install.sh` copies the tier matching your RAM into `models.yaml`.
+
+To change a model or a capability:
+
+```bash
+# 1. Edit the role's backend / num_ctx / vision flag
+$EDITOR config/models.yaml
+
+# 2. Propagate to every generated file
+./scripts/sync-models.sh
+
+# 3. Reload the proxy so it serves the new model_info
+docker compose restart litellm     # or ./scripts/start.sh
+```
+
+`sync-models.sh` regenerates, from `models.yaml`, the canonical role blocks in `config/litellm/config.yaml` (backend, `num_ctx`, and the `model_info` capability flags — tool calling, vision/PDF, reasoning, token budgets), the Codex `model_catalog.json`, and the backend names in this README / `AGENTS.md` / `CLAUDE.md`. **Do not hand-edit those generated files** — capability flags in `config.yaml` and the role table above are produced by the generator. Capabilities per role: tool calling everywhere; parallel tool calls everywhere except `reasoner` (DeepSeek-R1); reasoning everywhere except `supervisor` (Gemma is not a thinking model); vision/PDF on multimodal backends (`coder` except 16 GB, `supervisor` on all tiers), driven by the `vision:` flag.
 
 ## Client integration
 
@@ -157,7 +174,19 @@ codex
 
 ### VS Code (Copilot Chat)
 
-`install-clients.sh vscode` deploys the four role-based models to VS Code's Copilot Chat model picker via `chatLanguageModels.json`. After install, reload VS Code (`Cmd+Shift+P` → **Developer: Reload Window**) and select a role from the model picker in the Copilot Chat panel.
+VS Code connects through the **[LiteLLM Connector for Copilot](https://marketplace.visualstudio.com/items?itemName=Gethnet.litellm-connector-copilot)** extension (`Gethnet.litellm-connector-copilot`, requires VS Code 1.120+). The extension stores the Base URL + API key in VS Code's encrypted SecretStorage — a boundary no script can write to — so the key is entered **once**, by hand:
+
+```bash
+code --install-extension Gethnet.litellm-connector-copilot
+```
+
+1. Copilot Chat → model-picker dropdown → **Manage Models…** (or `Cmd+Shift+P` → **Chat: Manage Language Models**)
+2. Pick **LiteLLM Connector**, then enter:
+   - **Base URL:** `http://localhost:4000`
+   - **API Key:** your `LITELLM_MASTER_KEY` (from `.env`)
+3. `Cmd+Shift+P` → **LiteLLM: Reload Models**
+
+Models **and their capabilities** (vision, tool calling, context window) are auto-discovered from LiteLLM's `/v1/model/info` — nothing is listed manually. `install-clients.sh vscode` no longer writes a config file (the old `chatLanguageModels.json` "custom endpoint" ignores the key and sends an empty Bearer); it only clears that stale entry if present and prints these steps.
 
 Any extension that supports a custom OpenAI-compatible endpoint (Cline, Continue, etc.) also works — point it at `http://localhost:4000/v1` with your `LITELLM_MASTER_KEY` and use a role name as the model.
 
