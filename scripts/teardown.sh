@@ -32,7 +32,6 @@ step "ailocal teardown"
 echo ""
 echo "  This will permanently remove:"
 echo "    • All ailocal containers"
-echo "    • All Docker volumes (postgres data, redis cache, webui history)"
 echo "    • The ailocal Docker network"
 [ "$REMOVE_IMAGES" = true ] && echo "    • All pulled Docker images"
 echo ""
@@ -66,12 +65,6 @@ if [ "$REMOVE_IMAGES" = true ]; then
           docker rmi "$img" && info "removed $img" || warn "could not remove $img (may be in use elsewhere)"
         fi
       done
-fi
-
-# ── Clean up empty log files ───────────────────────────────────────────────
-
-if [ -f "$ROOT_DIR/logs/caddy/access.log" ]; then
-  truncate -s 0 "$ROOT_DIR/logs/caddy/access.log" 2>/dev/null || true
 fi
 
 step "Teardown complete."
