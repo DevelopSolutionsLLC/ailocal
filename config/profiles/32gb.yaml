@@ -18,20 +18,20 @@ coder:
   backend: qwen3.6:35b-mlx
   description: Implementation, generation, coding tasks — MoE ~3B active / 35B total, newest Apr 2026
   context_window: 262144
-  num_ctx: 65536
+  num_ctx: 262144
   vision: true   # Qwen3.6 multimodal inference
 
 reasoner:
   backend: deepseek-r1:14b
   description: Planning, decomposition, deep reasoning — fits alongside supervisor (17+9=26 GB)
-  context_window: 32768
-  num_ctx: 32768
+  context_window: 131072
+  num_ctx: 131072
 
 supervisor:
   backend: gemma4:27b
   description: Review, critique, approval gate
   context_window: 131072
-  num_ctx: 65536
+  num_ctx: 131072
   vision: true   # Gemma multimodal (SigLIP vision encoder)
 
 embed:
