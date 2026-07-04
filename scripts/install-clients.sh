@@ -137,6 +137,38 @@ PYEOF
     echo "     (VS Code → Cmd+Shift+P → 'Shell Command: Install code command in PATH')"
   fi
 
+  # Apply recommended connector settings for local models. Non-destructive:
+  # each key is added to settings.json ONLY if absent, so a user's own choices
+  # and comments are preserved. inactivityTimeout=300 matters most (a 35B model
+  # cold-loads ~30 GB with no tokens, which trips the 60s default watchdog);
+  # the other two are just the extension defaults, pinned defensively.
+  SETTINGS="$VSCODE_USER/settings.json"
+  if [ -d "$VSCODE_USER" ]; then
+    backup "$SETTINGS" 2>/dev/null || true
+    python3 - "$SETTINGS" <<'PYEOF'
+import json, sys, os
+path = sys.argv[1]
+recommended = {
+    "litellm-connector.inactivityTimeout": 300,
+    "litellm-connector.enableResponsesApi": False,
+    "litellm-connector.disableCaching": True,
+}
+text = open(path).read() if os.path.exists(path) else "{}"
+missing = {k: v for k, v in recommended.items() if f'"{k}"' not in text}
+if missing:
+    if "{" not in text:
+        text = "{}"
+    i = text.index("{")
+    ins = "".join(f'\n    "{k}": {json.dumps(v)},' for k, v in missing.items())
+    text = text[:i+1] + ins + text[i+1:]
+    open(path, "w").write(text)
+    print("added:", ", ".join(missing))
+else:
+    print("already present")
+PYEOF
+    info "Recommended connector settings ensured (added only if missing)"
+  fi
+
   # Put the key on the clipboard so it's a one-paste into the Manage Models dialog.
   if command -v pbcopy >/dev/null 2>&1; then
     printf '%s' "$LITELLM_KEY" | pbcopy && KEY_HINT="(copied to clipboard — just paste)" || KEY_HINT=""
