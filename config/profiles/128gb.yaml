@@ -25,7 +25,7 @@ reasoner:
   backend: deepseek-r1:70b
   description: Planning, decomposition, deep reasoning — full-size CoT model, 42 GB, fits alongside supervisor
   context_window: 131072
-  num_ctx: 65536
+  num_ctx: 131072
 
 supervisor:
   backend: gemma4:31b-mlx-bf16
