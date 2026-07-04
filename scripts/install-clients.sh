@@ -176,6 +176,15 @@ PYEOF
     info "Recommended connector settings ensured (added only if missing)"
   fi
 
+  # Deploy Copilot instruction files to ~/.copilot/instructions/
+  # These tell Copilot how to handle terminal commands with local models (detach + log pattern)
+  # and provide local stack context. Always overwrite — they are managed files, not user-edited.
+  COPILOT_INSTR="$HOME/.copilot/instructions"
+  mkdir -p "$COPILOT_INSTR"
+  cp "$ROOT_DIR/config/clients/copilot/ailocal.instructions.md" "$COPILOT_INSTR/ailocal.instructions.md"
+  cp "$ROOT_DIR/config/clients/copilot/session-primer.md" "$COPILOT_INSTR/session-primer.md"
+  info "Copilot instruction files deployed to ~/.copilot/instructions/"
+
   # Put the key on the clipboard so it's a one-paste into the Manage Models dialog.
   if command -v pbcopy >/dev/null 2>&1; then
     printf '%s' "$LITELLM_KEY" | pbcopy && KEY_HINT="(copied to clipboard — just paste)" || KEY_HINT=""
