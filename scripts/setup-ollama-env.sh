@@ -15,6 +15,8 @@ set -euo pipefail
 # Desired values (edit here if you want different behavior).
 KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-24h}"    # keep models resident for 24 hours of idle
 MAX_LOADED="${OLLAMA_MAX_LOADED_MODELS:-2}" # allow 2 models resident at once (e.g. coder + supervisor)
+FLASH_ATTN="${OLLAMA_FLASH_ATTENTION:-1}" # faster attention + lower memory, no quality loss
+KV_CACHE="${OLLAMA_KV_CACHE_TYPE:-q8_0}" # quantize KV cache to 8-bit, halves memory at large contexts
 
 info() { echo "  ✓ $*"; }
 step() { echo; echo "▶ $*"; }
@@ -22,8 +24,12 @@ step() { echo; echo "▶ $*"; }
 step "Setting Ollama env vars for the current login session (launchctl)"
 launchctl setenv OLLAMA_KEEP_ALIVE "$KEEP_ALIVE"
 launchctl setenv OLLAMA_MAX_LOADED_MODELS "$MAX_LOADED"
+launchctl setenv OLLAMA_FLASH_ATTENTION "$FLASH_ATTN"
+launchctl setenv OLLAMA_KV_CACHE_TYPE "$KV_CACHE"
 info "OLLAMA_KEEP_ALIVE=$KEEP_ALIVE"
 info "OLLAMA_MAX_LOADED_MODELS=$MAX_LOADED"
+info "OLLAMA_FLASH_ATTENTION=$FLASH_ATTN"
+info "OLLAMA_KV_CACHE_TYPE=$KV_CACHE"
 
 step "Installing a LaunchAgent so these persist across reboots/logins"
 PLIST="$HOME/Library/LaunchAgents/com.ailocal.ollama-env.plist"
