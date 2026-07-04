@@ -136,10 +136,9 @@ Keep the light on the things that matter most. Avoid long-winded explanation. In
 
 # Workspace services
 
-When ailocal is running, these services are available:
+When ailocal is running, the LiteLLM proxy is available:
 
 - LiteLLM proxy:  `http://localhost:4000` — API endpoint for all local model calls
-- Open WebUI:     `http://localhost:8081` — browser-based chat UI
 
 To verify LiteLLM is healthy: `curl http://localhost:4000/health/liveliness`
 
