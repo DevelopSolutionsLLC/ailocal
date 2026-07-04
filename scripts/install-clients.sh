@@ -155,6 +155,9 @@ recommended = {
     "github.copilot.chat.codeGeneration.useInstructionFiles": True,
     "chat.instructionsFilesLocations": {"~/.copilot/instructions": True},
     "chat.editing.autoAcceptDelay": 3000,
+    "github.copilot.agent.autoApprove": True,
+    "github.copilot.chat.agent.runTasks": True,
+    "github.copilot.chat.agent.autoFix": True,
 }
 text = open(path).read() if os.path.exists(path) else "{}"
 missing = {k: v for k, v in recommended.items() if f'"{k}"' not in text}
