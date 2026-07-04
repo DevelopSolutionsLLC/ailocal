@@ -154,12 +154,10 @@ fi
 
 # ── Directory structure ────────────────────────────────────────────────────
 step "Creating directory structure"
-mkdir -p \
-  "$ROOT_DIR/data" \
-  "$ROOT_DIR/backups" \
-  "$ROOT_DIR/config/litellm" \
-  "$ROOT_DIR/config/mcp"
-# backups/ holds archives that include .env — lock it down.
+# Only backups/ needs creating — it holds the .env snapshot from update.sh.
+# config/litellm/ is tracked in the repo; nothing writes to a ./data dir.
+mkdir -p "$ROOT_DIR/backups"
+# backups/ holds .env snapshots — lock it down.
 chmod 700 "$ROOT_DIR/backups"
 info "Directories ready"
 

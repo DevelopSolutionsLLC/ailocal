@@ -40,7 +40,7 @@ brew install --cask docker ollama
 
 ```bash
 ollama serve                  # start Ollama first (or open Ollama.app)
-./scripts/install.sh          # does everything: deps, .env, models (~85 GB on 64 GB tier), services, healthcheck, then prompts for client configs
+./scripts/install.sh          # does everything: deps, .env, models (~85 GB on 64 GB tier), the service, a health check, then prompts for client configs
 ./scripts/smoke-test.sh       # verify a real model request succeeds
 ```
 
