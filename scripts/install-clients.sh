@@ -154,13 +154,15 @@ recommended = {
     "litellm-connector.disableCaching": True,
     "github.copilot.chat.codeGeneration.useInstructionFiles": True,
     "chat.instructionsFilesLocations": {"~/.copilot/instructions": True},
-    "chat.editing.autoAcceptDelay": 3000,
+    "chat.editing.autoAcceptDelay": 0,
     "github.copilot.agent.autoApprove": True,
     "github.copilot.chat.agent.runTasks": True,
     "github.copilot.chat.agent.autoFix": True,
+    "chat.editing.autoAcceptDelay": 0,
     "chat.tools.autoApprove": True,
     "chat.tools.global.autoApprove": True,
-    "chat.tools.terminal.autoApprove": {".*": True},
+    "github.copilot.chat.tools.terminal.autoApprove": True,
+    "chat.tools.terminal.autoApprove": {"/^.*/": True},
 }
 text = open(path).read() if os.path.exists(path) else "{}"
 missing = {k: v for k, v in recommended.items() if f'"{k}"' not in text}
