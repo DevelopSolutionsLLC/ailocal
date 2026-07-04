@@ -152,6 +152,9 @@ recommended = {
     "litellm-connector.inactivityTimeout": 300,
     "litellm-connector.enableResponsesApi": False,
     "litellm-connector.disableCaching": True,
+    "github.copilot.chat.codeGeneration.useInstructionFiles": True,
+    "chat.instructionsFilesLocations": {"~/.copilot/instructions": True},
+    "chat.editing.autoAcceptDelay": 3000,
 }
 text = open(path).read() if os.path.exists(path) else "{}"
 missing = {k: v for k, v in recommended.items() if f'"{k}"' not in text}
