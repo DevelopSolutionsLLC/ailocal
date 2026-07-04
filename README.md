@@ -171,7 +171,7 @@ code --install-extension Gethnet.litellm-connector-copilot
    - **API Key:** your `LITELLM_MASTER_KEY` (from `.env`)
 3. `Cmd+Shift+P` → **LiteLLM: Reload Models**
 
-Models **and their capabilities** (vision, tool calling, context window) are auto-discovered from LiteLLM's `/v1/model/info` — nothing is listed manually. `install-clients.sh vscode` no longer writes a config file (the old `chatLanguageModels.json` "custom endpoint" ignores the key and sends an empty Bearer); it only clears that stale entry if present and prints these steps.
+Models **and their capabilities** (vision, tool calling, context window) are auto-discovered from LiteLLM's `/v1/model/info` — nothing is listed manually. `install-clients.sh vscode` auto-installs the extension (if the `code` CLI is on PATH), applies recommended connector settings for local models (notably `litellm-connector.inactivityTimeout: 300`, so a large model's cold load doesn't trip the 60s idle watchdog — added only if absent, never overwriting your choices), clears the old broken `chatLanguageModels.json` entry if present, and prints these steps. The API key itself still has to be entered by hand (SecretStorage).
 
 Any extension that supports a custom OpenAI-compatible endpoint (Cline, Continue, etc.) also works — point it at `http://localhost:4000/v1` with your `LITELLM_MASTER_KEY` and use a role name as the model.
 
