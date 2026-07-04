@@ -13,7 +13,7 @@
 set -euo pipefail
 
 # Desired values (edit here if you want different behavior).
-KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-2h}"     # keep models resident for 2 hours of idle
+KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-24h}"    # keep models resident for 24 hours of idle
 MAX_LOADED="${OLLAMA_MAX_LOADED_MODELS:-2}" # allow 2 models resident at once (e.g. coder + supervisor)
 
 info() { echo "  ✓ $*"; }
