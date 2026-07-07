@@ -155,14 +155,21 @@ recommended = {
     "github.copilot.chat.codeGeneration.useInstructionFiles": True,
     "chat.instructionsFilesLocations": {"~/.copilot/instructions": True},
     "chat.editing.autoAcceptDelay": 0,
-    "github.copilot.agent.autoApprove": True,
     "github.copilot.chat.agent.runTasks": True,
     "github.copilot.chat.agent.autoFix": True,
-    "chat.editing.autoAcceptDelay": 0,
-    "chat.tools.autoApprove": True,
+    # The ONLY valid global auto-approve key (per the VS Code AI settings
+    # reference). The old chat.tools.autoApprove / github.copilot.agent.autoApprove
+    # / github.copilot.chat.tools.terminal.autoApprove variants are not real
+    # settings — VS Code silently ignores them, so they only added confusion.
     "chat.tools.global.autoApprove": True,
-    "github.copilot.chat.tools.terminal.autoApprove": True,
-    "chat.tools.terminal.autoApprove": {"/^.*/": True},
+    # Terminal: auto-approve everything EXCEPT broad process kills and rm -rf.
+    # pkill/kill of node in the integrated terminal takes down VS Code's own
+    # extension host and the litellm-connector, dropping the model connection.
+    "chat.tools.terminal.autoApprove": {
+        "/^.*/": True,
+        "/\\b(pkill|kill|killall)\\b/": False,
+        "/\\brm\\s+-rf\\b/": False,
+    },
 }
 text = open(path).read() if os.path.exists(path) else "{}"
 missing = {k: v for k, v in recommended.items() if f'"{k}"' not in text}
@@ -189,6 +196,23 @@ PYEOF
   cp "$ROOT_DIR/config/clients/copilot/session-primer.md" "$COPILOT_INSTR/session-primer.md"
   info "Copilot instruction files deployed to ~/.copilot/instructions/"
 
+  # Install the `ailocal-code` launcher — opens VS Code in a dedicated "ailocal"
+  # profile so the YOLO auto-approve settings stay isolated from your other work.
+  # The path is optional: `ailocal-code` opens the current dir; `ailocal-code ~/foo`
+  # opens that path.
+  RC="${ZDOTDIR:-$HOME}/.zshrc"
+  LAUNCHER_MARKER="# ailocal-code launcher"
+  if already_has "$RC" "$LAUNCHER_MARKER"; then
+    skip "ailocal-code launcher already in $(basename "$RC")"
+  else
+    {
+      echo ""
+      echo "$LAUNCHER_MARKER"
+      echo 'ailocal-code() { code --profile ailocal "${1:-.}"; }'
+    } >> "$RC"
+    info "Added ailocal-code launcher to $RC (reload: source $RC)"
+  fi
+
   # Put the key on the clipboard so it's a one-paste into the Manage Models dialog.
   if command -v pbcopy >/dev/null 2>&1; then
     printf '%s' "$LITELLM_KEY" | pbcopy && KEY_HINT="(copied to clipboard — just paste)" || KEY_HINT=""
@@ -203,6 +227,10 @@ PYEOF
   echo "         API Key:   ${LITELLM_KEY}  ${KEY_HINT:-}"
   echo "    3. Cmd+Shift+P → \"LiteLLM: Reload Models\""
   echo "  Models + capabilities (vision/tools/ctx) are auto-discovered from LiteLLM."
+  echo
+  echo "  Launcher: run 'ailocal-code [path]' to open the isolated 'ailocal' profile."
+  echo "  First time only — create that profile from your current one so it inherits"
+  echo "  these settings: Cmd+Shift+P → \"Profiles: Create Profile\" → Copy from Current."
 fi
 
 # ── Codex CLI ─────────────────────────────────────────────────────────────
