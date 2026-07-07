@@ -19,24 +19,29 @@ The proxy speaks both OpenAI (`/v1/chat/completions`) and Anthropic (`/v1/messag
 
 # Terminal Commands
 
-Local models have higher first-token latency than cloud models. To keep the terminal snappy
-and avoid VS Code hanging waiting for command completion, run commands detached:
+VS Code's agent terminal detects when a command finishes on its own (via shell
+integration). Run short commands directly and let the tool wait:
 
-**Standard pattern — background the command, log output, exit immediately:**
 ```bash
-some-command > /tmp/cmd.log 2>&1 & exit 0
+docker ps
+git --no-pager log -3
 ```
 
-**To verify the result afterward**, read the log in a follow-up terminal call:
+**Never append `exit`, `exit 0`, or `& exit 0`.** That closes the integrated terminal
+before VS Code registers completion and freezes the entire turn — it is the number-one
+cause of the agent getting stuck.
+
+**Long-running commands only** (installs, servers, watchers) should be detached with a
+trailing `&` and a log — but never with `exit`:
 ```bash
-cat /tmp/cmd.log
+./scripts/install.sh > /tmp/install.log 2>&1 &
+docker compose up -d > /tmp/compose.log 2>&1 &
+npm install > /tmp/npm.log 2>&1 &
 ```
 
-**Concrete examples:**
+**Verify afterward** by reading the log in a follow-up call:
 ```bash
-./scripts/install.sh > /tmp/install.log 2>&1 & exit 0
-docker compose up -d > /tmp/compose.log 2>&1 & exit 0
-npm install > /tmp/npm.log 2>&1 & exit 0
+cat /tmp/install.log
 ```
 
 **Always use non-interactive flags** so backgrounded commands don't stall waiting for input:
@@ -50,3 +55,8 @@ apt-get install -y package
 - No `tail -f`, `watch`, `ollama run` (interactive REPL), `less`, `man`
 - No commands that prompt for input mid-run without `-y` or equivalent
 - Pipe paged output: `git diff | cat`, `git log | cat`
+
+**Never broadly kill node.** `pkill -f node` / `killall node` in the integrated terminal
+kills VS Code's own extension host and the litellm-connector — it disconnects your model
+and freezes the session. To stop a stuck server, target its port or PID only:
+`lsof -ti tcp:PORT | xargs kill`. Never blanket-match `node`.
