@@ -120,7 +120,11 @@ def gen_model_info(role, info):
     num_ctx = int(info.get("num_ctx") or info.get("context_window") or 32768)
     max_out = min(16384, max(1024, num_ctx // 4))
     vision = truthy(info.get("vision", "false"))
-    reasoning = role != "supervisor"     # Gemma family: no native <think> reasoning
+    # Only the reasoner role streams <think> reasoning. router/coder are
+    # execution roles pinned to reasoning_effort:"none" in config.yaml (a long
+    # reasoning_content burst reads as a hang in OpenAI-format clients like VS
+    # Code Copilot); supervisor (Gemma) is not a thinking model.
+    reasoning = role == "reasoner"
     parallel = role != "reasoner"        # DeepSeek-R1: no reliable parallel tool calls
 
     lines = [

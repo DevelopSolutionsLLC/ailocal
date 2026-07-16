@@ -36,13 +36,17 @@ model_list:
       model: ollama_chat/qwen3.5:9b-mlx
       api_base: os.environ/OLLAMA_URL
       num_ctx: 32768
+      # Execution role: stream answers directly. qwen3 "thinking" emits a long
+      # reasoning_content burst before any content, which OpenAI-format clients
+      # (VS Code Copilot) render as a hang. reasoner/opus/fable keep thinking.
+      reasoning_effort: "none"
     model_info:
       supports_function_calling: true
       supports_tool_choice: true
       supports_parallel_function_calling: true
       supports_system_messages: true
       supports_native_streaming: true
-      supports_reasoning: true
+      supports_reasoning: false
       max_input_tokens: 32768
       max_output_tokens: 8192
       input_cost_per_token: 0
@@ -74,13 +78,16 @@ model_list:
       model: ollama_chat/qwen3.6:35b-mlx
       api_base: os.environ/OLLAMA_URL
       num_ctx: 262144
+      # Execution role: stream answers directly (no reasoning_content firehose
+      # that OpenAI-format clients like VS Code Copilot render as a hang).
+      reasoning_effort: "none"
     model_info:
       supports_function_calling: true
       supports_tool_choice: true
       supports_parallel_function_calling: true
       supports_system_messages: true
       supports_native_streaming: true
-      supports_reasoning: true
+      supports_reasoning: false
       supports_vision: true
       supports_pdf_input: true
       max_input_tokens: 262144
@@ -96,6 +103,9 @@ model_list:
       model: ollama_chat/gemma4:31b-mxfp8
       api_base: os.environ/OLLAMA_URL
       num_ctx: 131072
+      # Execution role: answer directly (no reasoning_content firehose that
+      # OpenAI-format clients like VS Code Copilot render as a hang).
+      reasoning_effort: "none"
     model_info:
       supports_function_calling: true
       supports_tool_choice: true
