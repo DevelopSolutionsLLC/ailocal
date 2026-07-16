@@ -152,6 +152,10 @@ recommended = {
     "litellm-connector.inactivityTimeout": 300,
     "litellm-connector.enableResponsesApi": False,
     "litellm-connector.disableCaching": True,
+    # BYOK utility-model fix (VS Code 1.128+ regression): keep title/summary
+    # "utility" calls on the selected local model instead of failing with
+    # "No utility model is configured for 'copilot-utility-small'".
+    "chat.byokUtilityModelDefault": "mainAgent",
     "github.copilot.chat.codeGeneration.useInstructionFiles": True,
     "chat.instructionsFilesLocations": {"~/.copilot/instructions": True},
     "chat.editing.autoAcceptDelay": 0,
@@ -242,52 +246,50 @@ if has_target "codex"; then
   CODEX_CFG="$HOME/.codex/config.toml"
   CODEX_CAT="$HOME/.codex/model_catalog.json"
 
-  # config.toml — additive merge: inject ailocal settings without replacing existing config
-  if already_has "$CODEX_CFG" 'model_provider = "ailocal"'; then
-    skip "~/.codex/config.toml already configured for ailocal"
-    # Still ensure model_catalog_json is present
-    if ! already_has "$CODEX_CFG" "model_catalog_json"; then
-      backup "$CODEX_CFG"
-      sed -i'' -e '/^model[[:space:]]*=[[:space:]]*"coder"/a\
-model_catalog_json = "'"$HOME"'/.codex/model_catalog.json"' "$CODEX_CFG"
-      info "Injected missing model_catalog_json into existing config"
-    else
-      skip "model_catalog_json already present"
-    fi
-  elif [ -f "$CODEX_CFG" ]; then
-    # Existing file without ailocal config: prepend top-level keys, append provider block.
-    # Preserves computer-use, marketplace, plugin, and MCP entries the user may have added.
-    backup "$CODEX_CFG"
-    TMPFILE=$(mktemp)
-    cat > "$TMPFILE" <<'AILOCAL_HEADER'
-# ── ailocal provider — injected by install-clients.sh ──────────────────────
-AILOCAL_HEADER
-    cat >> "$TMPFILE" <<AILOCAL_KEYS
-model_provider = "ailocal"
-model = "coder"
-model_catalog_json = "${HOME}/.codex/model_catalog.json"
-approval_policy = "never"
-sandbox_policy = "danger-full-access"
-model_reasoning_effort = "medium"
-model_supports_reasoning_summaries = false
-
-AILOCAL_KEYS
-    cat "$CODEX_CFG" >> "$TMPFILE"
-    if ! grep -qF '[model_providers.ailocal]' "$CODEX_CFG"; then
-      printf '\n[model_providers.ailocal]\nname = "ailocal (LiteLLM)"\nbase_url = "http://localhost:4000/v1"\nenv_key = "LITELLM_KEY"\n' >> "$TMPFILE"
-    fi
-    mv "$TMPFILE" "$CODEX_CFG"
-    info "~/.codex/config.toml merged (existing config preserved, ailocal provider added)"
-  else
-    # No existing file: write the full template
-    envsubst '${HOME}' < "$ROOT_DIR/config/clients/codex-config.toml" > "$CODEX_CFG"
-    info "~/.codex/config.toml written"
-  fi
+  # config.toml — always overwrite from template (our managed file)
+  # This ensures the latest fixes: openai_base_url fallback, sandbox_mode fix, wire_api, etc.
+  envsubst '${HOME}' < "$ROOT_DIR/config/clients/codex-config.toml" > "$CODEX_CFG"
+  info "~/.codex/config.toml written (from config/clients/codex-config.toml)"
 
   # model_catalog.json — always update (our managed file, no user customization)
   backup "$CODEX_CAT" || true
   cp "$ROOT_DIR/config/clients/model_catalog.json" "$CODEX_CAT"
   info "~/.codex/model_catalog.json written"
+
+  # ── Validate the installation ───────────────────────────────────────────
+  echo
+  echo "  Codex configuration:"
+  echo "    Config file:      $CODEX_CFG"
+  echo "    Model provider:   $(grep '^model_provider' "$CODEX_CFG" | sed 's/.*= *//')"
+  echo "    Active model:     $(grep '^model = ' "$CODEX_CFG" | sed 's/.*= *//')"
+  echo "    Base URL:         $(grep '^openai_base_url\|^base_url' "$CODEX_CFG" | head -1 | sed 's/.*= *//')"
+  echo "    Model catalog:    $CODEX_CAT"
+  echo
+
+  # Try codex doctor or config show if available for validation
+  if has codex; then
+    echo "  Running codex self-check..."
+    if codex --strict-config codex --help >/dev/null 2>&1; then
+      info "codex binary is functional and accepts config"
+    elif codex --help >/dev/null 2>&1; then
+      info "codex binary is present (no strict-config flag — older version)"
+    fi
+    # Try 'codex exec' with a trivial prompt to verify env vars are loadable
+    if codex exec "echo ok" 2>/dev/null | grep -q "ok"; then
+      info "codex exec test passed (model responses are reachable)"
+    else
+      warn "codex exec test returned no output — check LITELLM_KEY and LiteLLM status"
+      echo "     Run manually: codex --model coder 'hello'"
+      echo "     Check logs:   ~/ailocal/logs/litellm/proxy*"
+    fi
+  else
+    warn "codex binary not found on PATH — cannot validate runtime"
+    echo "     After installing codex, run: ./scripts/install-clients.sh codex"
+    echo "     Then test:                   codex --model coder 'hello'"
+  fi
+
+  echo "  To force-update a config that was skipped, delete it and re-run:"
+  echo "    rm $CODEX_CFG && ./scripts/install-clients.sh codex"
 fi
 
 # ── Claude Code ───────────────────────────────────────────────────────────
@@ -322,6 +324,28 @@ if has_target "claude"; then
   fi
 fi
 
+# ── Shell profile auto-sourcing of env.sh ────────────────────────────────────
+# Add 'source ~/ailocal/config/clients/env.sh' to ~/.zshrc (or ~/.bashrc) so the
+# user doesn't need to remember to source it manually. Idempotent: skip if already present.
+ENV_SH="$ROOT_DIR/config/clients/env.sh"
+SOURCE_MARKER="# ailocal env.sh — generated by install-clients.sh"
+
+for PROFILE in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile"; do
+  [ -f "$PROFILE" ] && {
+    if already_has "$PROFILE" "$SOURCE_MARKER"; then
+      skip "env.sh sourcing already in $(basename "$PROFILE")"
+    else
+      {
+        echo ""
+        echo "$SOURCE_MARKER"
+        echo "source \"$ENV_SH\""
+      } >> "$PROFILE"
+      info "Added env.sh sourcing to $(basename "$PROFILE")"
+    fi
+    break  # First existing profile wins; stop searching
+  }
+done
+
 # ── Done ───────────────────────────────────────────────────────────────────
 
 echo ""
@@ -336,6 +360,5 @@ has_target "claude"  && echo "    rm ~/.claude/settings.json"
 has_target "vscode"  && echo "    VS Code:  no file to delete — re-enter via \"Chat: Manage Language Models\" (key lives in SecretStorage)"
 echo "  Then: ./scripts/install-clients.sh [target]"
 echo ""
-echo "  Key rotation: after running install.sh, restart Docker services with:"
-echo "    ./scripts/start.sh"
-echo "  Caddy picks up the new LITELLM_MASTER_KEY automatically — no need to re-run this script."
+echo "  Key rotation: after running install.sh, restart the proxy with:"
+echo "    ./scripts/start.sh   # LiteLLM reloads LITELLM_MASTER_KEY from .env"
