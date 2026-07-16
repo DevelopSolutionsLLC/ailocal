@@ -50,14 +50,17 @@ LiteLLM exposes **role names only** — no backend model names are visible to cl
 | Role | Backend model (64 GB) | Purpose |
 |---|---|---|
 | `router` | qwen3.5:9b-mlx | Fast classification, trivial tasks, autocomplete |
-| `reasoner` | deepseek-r1:32b | Planning, decomposition, deep reasoning |
+| `reasoner` | deepseek-r1:32b | Planning, decomposition, deep reasoning (separate reasoning stream) |
+| `deep` | deepseek-r1:32b | Same model as `reasoner`, thinking merged into the answer text |
 | `coder` | qwen3.6:35b-mlx | Implementation, generation, coding tasks |
 | `supervisor` | gemma4:31b-mxfp8 | Review, critique, approval gate |
 | `embed` | nomic-embed-text | Semantic retrieval and memory — not for chat |
 
 **Never use backend model names directly in client configs or scripts.** Use role names only.
 
-Only `reasoner` streams chain-of-thought; `router`, `coder`, and `supervisor` are execution roles pinned to `reasoning_effort: "none"` so they answer directly. This keeps them responsive in OpenAI-format clients (VS Code Copilot), which render a long reasoning stream as a hang. Want visible thinking? Select `reasoner`.
+**Reasoning behavior by role.** `router`, `coder`, and `supervisor` are execution roles pinned to `reasoning_effort: "none"` so they answer directly — a long invisible reasoning stream reads as a hang in OpenAI-format clients (VS Code Copilot). For deep thinking, pick by client:
+- **Claude Code / Codex** → `reasoner`: they render the reasoning stream natively as thinking blocks.
+- **VS Code Copilot** → `deep`: same deepseek-r1 model, but the thinking is merged into the answer text (`merge_reasoning_content_in_choices`), so it streams as visible `<think>…</think>` content instead of a silent "Considering…" spinner.
 
 ### Changing models
 
@@ -125,7 +128,7 @@ Disabled by default. `.env` carries `ENABLE_CLOUD`, `ANTHROPIC_API_KEY`, `OPENAI
 
 **VS Code: "No utility model is configured for 'copilot-utility-small'"** — a VS Code 1.128+ regression for BYOK providers. Set `"chat.byokUtilityModelDefault": "mainAgent"` in settings.json (`install-clients.sh vscode` adds it) and reload the window. This keeps utility calls (titles, summaries) on your selected local model.
 
-**VS Code: model spins and never answers** — an execution role was emitting a long reasoning stream before any content, which the connector renders as a hang. Fixed by `reasoning_effort: "none"` on `router`/`coder`/`supervisor` in `config/litellm/config.yaml`; if you still see it, select a role other than `reasoner`, or confirm the fix is applied and `./scripts/start.sh` reloaded the proxy. (A persistent 401 with "Ensure Key has Bearer prefix" instead means the connector's API key isn't entered — re-enter it via **Chat: Manage Language Models**.)
+**VS Code: model spins on "Considering…" and never answers** — you selected a thinking model (`reasoner`) whose reasoning streams invisibly; the connector shows "Considering…" until it finishes, which can be minutes. Use `coder` for direct answers, or `deep` for visible thinking (its reasoning is merged into the answer text). `router` is unusable in agent mode — its 32K context is smaller than Copilot's prompt, giving "Message exceeds token limit"; use `coder`/`deep` (128K–256K). (A persistent 401 with "Ensure Key has Bearer prefix" instead means the connector's API key isn't entered — re-enter it via **Chat: Manage Language Models**.)
 
 **LiteLLM won't start** — `docker logs ailocal_litellm`. Usually a YAML error in `config/litellm/config.yaml` or a missing `LITELLM_MASTER_KEY` in `.env`.
 

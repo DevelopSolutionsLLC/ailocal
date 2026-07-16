@@ -71,6 +71,29 @@ model_list:
       input_cost_per_token: 0
       output_cost_per_token: 0
 
+  # deep — reasoner backend, but with the reasoning stream MERGED into content.
+  # For OpenAI-format clients (VS Code Copilot) that would otherwise sit on a
+  # silent "Considering…" spinner while deepseek-r1 thinks: this streams the
+  # thinking as visible <think> text, then the answer. Claude Code / Codex
+  # should use `reasoner` instead (they render reasoning natively).
+  - model_name: deep
+    litellm_params:
+      model: ollama_chat/deepseek-r1:32b
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 131072
+      merge_reasoning_content_in_choices: true
+    model_info:
+      supports_function_calling: true
+      supports_tool_choice: true
+      supports_parallel_function_calling: false
+      supports_system_messages: true
+      supports_native_streaming: true
+      supports_reasoning: true
+      max_input_tokens: 131072
+      max_output_tokens: 16384
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+
   # coder — implementation and generation role
   # qwen3.6:35b-mlx: newest (Apr 2026), MoE ~3B active / 35B total; explicit MLX weights; agentic coding + multimodal
   - model_name: coder

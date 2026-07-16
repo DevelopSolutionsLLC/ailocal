@@ -18,6 +18,13 @@ proxy and exposes **role names** (`router`, `reasoner`, `coder`, `supervisor`,
 **Use role names only** in client configs and scripts — never backend model tags
 (`qwen3.6:35b-mlx`, etc.). Roles decouple configs from the models behind them.
 
+Reasoning: only `reasoner`/`deep` think. `router`/`coder`/`supervisor` are pinned
+to `reasoning_effort: "none"` (invisible reasoning reads as a hang in VS Code
+Copilot). `reasoner` streams reasoning separately (for Claude Code/Codex, which
+render it); `deep` is the same model with reasoning merged into the answer text
+(`merge_reasoning_content_in_choices`) for VS Code. In VS Code use `coder` (fast)
+or `deep` (visible thinking); `router` is too small for Copilot's agent prompt.
+
 ## Where things live
 
 - `config/models.yaml` — single source of truth for role → backend (gitignored;
