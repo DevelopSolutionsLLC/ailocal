@@ -100,7 +100,7 @@ model_list:
     litellm_params:
       model: ollama_chat/qwen3.6:35b-mlx
       api_base: os.environ/OLLAMA_URL
-      num_ctx: 262144
+      num_ctx: 65536
       # Execution role: stream answers directly (no reasoning_content firehose
       # that OpenAI-format clients like VS Code Copilot render as a hang).
       reasoning_effort: "none"
@@ -113,7 +113,7 @@ model_list:
       supports_reasoning: false
       supports_vision: true
       supports_pdf_input: true
-      max_input_tokens: 262144
+      max_input_tokens: 65536
       max_output_tokens: 16384
       input_cost_per_token: 0
       output_cost_per_token: 0

@@ -14,7 +14,7 @@ set -euo pipefail
 
 # Desired values (edit here if you want different behavior).
 KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-24h}"    # keep models resident for 24 hours of idle
-MAX_LOADED="${OLLAMA_MAX_LOADED_MODELS:-2}" # allow 2 models resident at once (e.g. coder + supervisor)
+MAX_LOADED="${OLLAMA_MAX_LOADED_MODELS:-1}" # 1 = evict cleanly on switch. The 64 GB backends are 21-38 GB each; two big ones don't fit, so 2 caused swap-thrash. Raise to 2 only if you run models that genuinely coexist (e.g. coder + a <=14 GB reasoner).
 FLASH_ATTN="${OLLAMA_FLASH_ATTENTION:-1}" # faster attention + lower memory, no quality loss
 KV_CACHE="${OLLAMA_KV_CACHE_TYPE:-q8_0}" # quantize KV cache to 8-bit, halves memory at large contexts
 
