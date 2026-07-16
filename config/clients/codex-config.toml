@@ -1,36 +1,46 @@
-# Route all Codex requests through the local LiteLLM proxy.
-# Requires: export LITELLM_MASTER_KEY=<value from .env>
+# ── ailocal provider — injected by scripts/install-clients.sh ───────────────
+#
+# Route ALL Codex requests through the local LiteLLM proxy.
+# Requires: export LITELLM_KEY (set by source ~/ailocal/config/clients/env.sh)
 #
 # Switch model per-session: codex --model <name>
 # Valid models: coder | reasoner | router | supervisor
 
-# Top-level keys must come before any [section] headers in TOML
-model_provider     = "ailocal"
-model              = "coder"
-# Injected by scripts/install-clients.sh — do not hardcode a user path here.
-# Run:  ./scripts/install-clients.sh
+# ── Core Model Selection ────────────────────────────────────────────────────
+
+# Primary model used by Codex
+model = "coder"
+
+# Provider id selected from [model_providers] (default: "openai")
+model_provider = "ailocal"
+
+# Optional manual model metadata — loaded from model_catalog.json when present
 model_catalog_json = "${HOME}/.codex/model_catalog.json"
 
-# Never prompt for approval — equivalent of --full-auto on the command line.
-# Valid values: "untrusted" | "on-failure" | "on-request" | "granular" | "never"
+# ── Approval & Sandbox ──────────────────────────────────────────────────────
+
+# Never prompt for approval — equivalent of --full-auto on the command line
 approval_policy = "never"
 
 # Disable the macOS sandbox. Required for local stack (Docker socket, Ollama).
-# Valid values: "workspace-only" (default) | "danger-full-access"
-sandbox_policy  = "danger-full-access"
+sandbox_mode = "danger-full-access"
 
-model_reasoning_effort             = "medium"
+# ── Reasoning & Verbosity ───────────────────────────────────────────────────
+
+model_reasoning_effort = "medium"
 model_supports_reasoning_summaries = false
-model_reasoning_summary            = "none"
+model_reasoning_summary = "none"
 
-# Add your own project trust entry after copying to ~/.codex/config.toml:
-# [projects."/absolute/path/to/your/repo"]
-# trust_level = "trusted"
+# ── Fallback for built-in OpenAI provider ───────────────────────────────────
+# In addition to the custom [model_providers.ailocal] block above, set
+# openai_base_url so any code path that hard-codes model_provider = "openai"
+# still routes through LiteLLM instead of silently falling back to api.openai.com.
+openai_base_url = "http://localhost:4000/v1"
 
-[tui.model_availability_nux]
-"gpt-5.5" = 1
+# ── Model Providers ─────────────────────────────────────────────────────────
 
 [model_providers.ailocal]
-name     = "ailocal (LiteLLM)"
-base_url = "http://localhost:4000/v1"
-env_key  = "LITELLM_KEY"
+name       = "ailocal (LiteLLM)"
+base_url   = "http://localhost:4000/v1"
+env_key    = "LITELLM_KEY"
+wire_api   = "responses"
