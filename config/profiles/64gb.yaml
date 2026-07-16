@@ -1,7 +1,10 @@
 # profile: 64gb
-# Models sized for 64 GB unified memory.
-# supervisor (37 GB) + coder (21 GB) = 58 GB — both stay loaded with OLLAMA_MAX_LOADED_MODELS=2.
-# reasoner (19 GB) loads alongside supervisor (37+19=56 GB) — all three can coexist.
+# Models sized for 64 GB unified memory. These backends are large (coder ~21 GB,
+# reasoner/deepseek ~38 GB, supervisor/gemma ~33 GB) — only ONE big model fits at
+# a time alongside the OS + Docker, so run OLLAMA_MAX_LOADED_MODELS=1 (set by
+# scripts/setup-ollama-env.sh) to evict cleanly instead of swap-thrashing.
+# coder context is capped at 64K (not the model's 256K max) — the KV cache at
+# 256K dominates load time and memory for little practical gain in a coding client.
 # Approximate download: ~85 GB
 # Run ./scripts/sync-models.sh after any manual change.
 
@@ -15,8 +18,8 @@ router:
 coder:
   backend: qwen3.6:35b-mlx
   description: Implementation, generation, coding tasks — MoE ~3B active / 35B total, newest Apr 2026
-  context_window: 262144
-  num_ctx: 262144
+  context_window: 65536
+  num_ctx: 65536
   vision: true   # Qwen3.6 multimodal inference
 
 reasoner:
