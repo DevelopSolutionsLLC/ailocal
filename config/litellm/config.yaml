@@ -94,6 +94,48 @@ model_list:
       input_cost_per_token: 0
       output_cost_per_token: 0
 
+  # deep-8b / deep-14b — EXPERIMENTAL lighter reasoners for VS Code.
+  # Smaller DeepSeek-R1 distills at q8_0 (8-bit, runs on Ollama's Metal/MLX
+  # engine). Small enough to stay resident ALONGSIDE coder so a deep<->coder
+  # switch doesn't evict. Both merge reasoning into content for the connector.
+  # Pull:  ollama pull deepseek-r1:8b-0528-qwen3-q8_0     (8.9 GB)
+  #        ollama pull deepseek-r1:14b-qwen-distill-q8_0  (16 GB)
+  - model_name: deep-8b
+    litellm_params:
+      model: ollama_chat/deepseek-r1:8b-0528-qwen3-q8_0
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 65536
+      merge_reasoning_content_in_choices: true
+    model_info:
+      supports_function_calling: true
+      supports_tool_choice: true
+      supports_parallel_function_calling: false
+      supports_system_messages: true
+      supports_native_streaming: true
+      supports_reasoning: true
+      max_input_tokens: 65536
+      max_output_tokens: 16384
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+
+  - model_name: deep-14b
+    litellm_params:
+      model: ollama_chat/deepseek-r1:14b-qwen-distill-q8_0
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 65536
+      merge_reasoning_content_in_choices: true
+    model_info:
+      supports_function_calling: true
+      supports_tool_choice: true
+      supports_parallel_function_calling: false
+      supports_system_messages: true
+      supports_native_streaming: true
+      supports_reasoning: true
+      max_input_tokens: 65536
+      max_output_tokens: 16384
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+
   # coder — implementation and generation role
   # qwen3.6:35b-mlx: newest (Apr 2026), MoE ~3B active / 35B total; explicit MLX weights; agentic coding + multimodal
   - model_name: coder
