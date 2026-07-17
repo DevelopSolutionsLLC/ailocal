@@ -262,7 +262,12 @@ def main():
 
     def apply_swaps(text):
         for old, new in swaps.items():
-            text = text.replace(old, new)  # full tags, no cross-role collisions
+            # Match WHOLE backend tags only. A plain str.replace would corrupt a
+            # longer tag that begins with a shorter one — e.g. mapping
+            # deepseek-r1:8b -> deepseek-r1:32b would also rewrite the unrelated
+            # tag deepseek-r1:8b-0528-qwen3-q8_0. The negative lookahead requires
+            # the match to end at a tag boundary (not another tag character).
+            text = re.sub(re.escape(old) + r'(?![\w.:-])', new, text)
         return text
 
     step("Updating config/litellm/config.yaml")

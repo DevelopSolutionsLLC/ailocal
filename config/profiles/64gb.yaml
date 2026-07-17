@@ -3,23 +3,29 @@
 # reasoner/deepseek ~38 GB, supervisor/gemma ~33 GB) — only ONE big model fits at
 # a time alongside the OS + Docker, so run OLLAMA_MAX_LOADED_MODELS=1 (set by
 # scripts/setup-ollama-env.sh) to evict cleanly instead of swap-thrashing.
-# coder context is capped at 64K (not the model's 256K max) — the KV cache at
-# 256K dominates load time and memory for little practical gain in a coding client.
+# Context is sized per role's job. With flash-attention + q8 KV cache, Ollama grows
+# the KV cache with the ACTUAL prompt, not the num_ctx ceiling — so a large ceiling
+# is nearly free at idle (coder at 256K loads in ~5s / 21 GB, same as 64K) and only
+# costs memory/time when you genuinely fill it. Keeping MAX_LOADED_MODELS=1 (one big
+# model uncontended) is what fixed the old slowness, NOT shrinking context.
 # Approximate download: ~85 GB
 # Run ./scripts/sync-models.sh after any manual change.
 
 disk_gb: 85
 
+# router: fast/small tier. 64K so it also works in VS Code agent mode (32K was too
+# small — Copilot's agent prompt overflowed it); autocomplete alone needs only ~16K.
 router:
   backend: qwen3.5:9b-mlx
   description: Fast classification, trivial tasks, autocomplete
-  context_window: 32768
+  context_window: 65536
 
+# coder: the driver — maxed to the model's 256K to hold large repos/files.
 coder:
   backend: qwen3.6:35b-mlx
   description: Implementation, generation, coding tasks — MoE ~3B active / 35B total, newest Apr 2026
-  context_window: 65536
-  num_ctx: 65536
+  context_window: 262144
+  num_ctx: 262144
   vision: true   # Qwen3.6 multimodal inference
 
 reasoner:
