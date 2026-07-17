@@ -56,36 +56,40 @@ already_has() {
 ensure_shell_integration() {
   local rc="${ZDOTDIR:-$HOME}/.zshrc"
   [ -f "$rc" ] || { skip "no ~/.zshrc — shell-integration step skipped"; return 0; }
-  local changed=0
-  if grep -q 'p10k-instant-prompt' "$rc" && ! grep -q 'ailocal: p10k instant prompt' "$rc"; then
-    backup "$rc" || true
-    python3 - "$rc" <<'PY'
+  if grep -q 'ailocal: VS Code shell integration' "$rc"; then
+    skip "Shell integration already configured in ~/.zshrc"; return 0
+  fi
+  backup "$rc" || true
+  # Neutralize powerlevel10k INSIDE VS Code. Guarding only instant prompt is not
+  # enough — p10k's normal prompt rewriting also corrupts OSC 633 markers — so we
+  # disable p10k entirely in VS Code (plain prompt in the agent terminal) and keep
+  # it everywhere else, then source VS Code's shell-integration script explicitly.
+  python3 - "$rc" <<'PY'
 import re, sys
 p = sys.argv[1]; s = open(p).read()
-s2 = re.sub(
-    r'if \[\[ -r (.*p10k-instant-prompt.*) \]\]; then',
-    r'# ailocal: p10k instant prompt corrupts VS Code OSC 633 markers; skip in VS Code\n'
-    r'if [[ "$TERM_PROGRAM" != "vscode" && -r \1 ]]; then',
-    s, count=1)
-if s2 != s: open(p, "w").write(s2); print("guarded")
+# 1) instant prompt: skip in VS Code
+s = re.sub(r'(?m)^(if \[\[ -r (?:"?\$\{XDG_CACHE_HOME.*p10k-instant-prompt.*) \]\]; then)$',
+           r'if [[ "$TERM_PROGRAM" != "vscode" && -r \2 ]]; then', s, count=1)
+# 2) ZSH_THEME: plain prompt in VS Code, p10k elsewhere
+s = re.sub(r'(?m)^ZSH_THEME="powerlevel10k/powerlevel10k"$',
+           'if [[ "$TERM_PROGRAM" == "vscode" ]]; then\n'
+           '  ZSH_THEME=""   # ailocal: plain prompt in VS Code (p10k corrupts OSC 633 markers)\n'
+           'else\n  ZSH_THEME="powerlevel10k/powerlevel10k"\nfi', s, count=1)
+# 3) ~/.p10k.zsh: skip in VS Code
+s = re.sub(r'(?m)^\[\[ ! -f ~/\.p10k\.zsh \]\] \|\| source ~/\.p10k\.zsh$',
+           'if [[ "$TERM_PROGRAM" != "vscode" && -f ~/.p10k.zsh ]]; then source ~/.p10k.zsh; fi', s, count=1)
+open(p, "w").write(s)
 PY
-    changed=1
-  fi
-  if ! grep -q 'ailocal: VS Code shell integration' "$rc"; then
-    backup "$rc" || true
-    cat >> "$rc" <<'EOF'
+  cat >> "$rc" <<'EOF'
 
-# ailocal: VS Code shell integration — explicit sourcing keeps OSC 633
-# command-completion markers reliable under a custom prompt. Without it, agent
-# terminal commands finish but the client's spinner never stops.
+# ailocal: VS Code shell integration — source the integration script explicitly
+# so OSC 633 command-completion markers are reliable. Without this, agent terminal
+# commands finish but the client's spinner never stops.
 if [[ "$TERM_PROGRAM" == "vscode" ]] && command -v code >/dev/null 2>&1; then
   . "$(code --locate-shell-integration-path zsh)" 2>/dev/null
 fi
 EOF
-    changed=1
-  fi
-  [ "$changed" = 1 ] && info "Shell integration fixed in ~/.zshrc (p10k VS Code guard + explicit SI sourcing)" \
-                     || skip "Shell integration already configured in ~/.zshrc"
+  info "Shell integration fixed in ~/.zshrc (p10k disabled in VS Code + explicit SI sourcing)"
 }
 
 # ── Target selection ───────────────────────────────────────────────────────
