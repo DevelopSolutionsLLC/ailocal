@@ -46,6 +46,48 @@ already_has() {
   [ -f "$file" ] && grep -qF "$marker" "$file" 2>/dev/null
 }
 
+# Make VS Code shell integration reliable under a heavy zsh prompt (oh-my-zsh +
+# powerlevel10k). ROOT CAUSE of "agent runs a terminal command, it finishes, but
+# the spinner never stops": p10k's *instant prompt* runs at the top of ~/.zshrc
+# and corrupts VS Code's OSC 633 command-completion markers, so the client never
+# sees the command exit. Fix idempotently: (1) skip instant prompt inside VS Code,
+# (2) source the shell-integration script explicitly (more robust than VS Code's
+# automatic injection when a custom prompt is present).
+ensure_shell_integration() {
+  local rc="${ZDOTDIR:-$HOME}/.zshrc"
+  [ -f "$rc" ] || { skip "no ~/.zshrc — shell-integration step skipped"; return 0; }
+  local changed=0
+  if grep -q 'p10k-instant-prompt' "$rc" && ! grep -q 'ailocal: p10k instant prompt' "$rc"; then
+    backup "$rc" || true
+    python3 - "$rc" <<'PY'
+import re, sys
+p = sys.argv[1]; s = open(p).read()
+s2 = re.sub(
+    r'if \[\[ -r (.*p10k-instant-prompt.*) \]\]; then',
+    r'# ailocal: p10k instant prompt corrupts VS Code OSC 633 markers; skip in VS Code\n'
+    r'if [[ "$TERM_PROGRAM" != "vscode" && -r \1 ]]; then',
+    s, count=1)
+if s2 != s: open(p, "w").write(s2); print("guarded")
+PY
+    changed=1
+  fi
+  if ! grep -q 'ailocal: VS Code shell integration' "$rc"; then
+    backup "$rc" || true
+    cat >> "$rc" <<'EOF'
+
+# ailocal: VS Code shell integration — explicit sourcing keeps OSC 633
+# command-completion markers reliable under a custom prompt. Without it, agent
+# terminal commands finish but the client's spinner never stops.
+if [[ "$TERM_PROGRAM" == "vscode" ]] && command -v code >/dev/null 2>&1; then
+  . "$(code --locate-shell-integration-path zsh)" 2>/dev/null
+fi
+EOF
+    changed=1
+  fi
+  [ "$changed" = 1 ] && info "Shell integration fixed in ~/.zshrc (p10k VS Code guard + explicit SI sourcing)" \
+                     || skip "Shell integration already configured in ~/.zshrc"
+}
+
 # ── Target selection ───────────────────────────────────────────────────────
 
 TARGETS=()
@@ -190,6 +232,9 @@ else:
 PYEOF
     info "Recommended connector settings ensured (added only if missing)"
   fi
+
+  # Fix the terminal-command hang (p10k instant prompt vs VS Code OSC 633 markers).
+  ensure_shell_integration
 
   # Deploy Copilot instruction files to ~/.copilot/instructions/
   # These tell Copilot how to handle terminal commands with local models (detach + log pattern)
