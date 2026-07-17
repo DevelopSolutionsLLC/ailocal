@@ -39,15 +39,24 @@ resolve_backend() {
 
 warm() {
   local model="$1"
+  # Health-gate: wait (bounded) for the Ollama API before touching it. Fails
+  # gracefully if Ollama never comes up — no hang, no crash loop.
   step "Warming $model (waiting for Ollama at $OLLAMA_URL)"
-  for _ in $(seq 1 60); do
-    curl -fsS "$OLLAMA_URL/api/version" >/dev/null 2>&1 && break
+  local up=0 i
+  for i in $(seq 1 60); do
+    if curl -fsS -m 3 "$OLLAMA_URL/api/version" >/dev/null 2>&1; then up=1; break; fi
     sleep 2
   done
-  # keep_alive -1 = keep resident until explicitly stopped or Ollama restarts.
-  curl -fsS "$OLLAMA_URL/api/generate" \
-    -d "{\"model\":\"$model\",\"prompt\":\"ok\",\"stream\":false,\"keep_alive\":\"24h\"}" \
-    >/dev/null 2>&1 && info "$model loaded and resident" \
+  [ "$up" = 1 ] || { echo "  ⚠ Ollama not reachable after 120s — skipping preload"; return 1; }
+  # Skip if already resident (avoid a redundant reload).
+  if curl -fsS -m 5 "$OLLAMA_URL/api/ps" 2>/dev/null | grep -q "\"$model\""; then
+    info "$model already resident — nothing to do"; return 0
+  fi
+  # Preload via EMPTY prompt: loads weights into memory WITHOUT running inference
+  # (the documented warm-up call). keep_alive:-1 pins it until Ollama restarts.
+  curl -fsS -m 300 "$OLLAMA_URL/api/generate" \
+    -d "{\"model\":\"$model\",\"keep_alive\":-1}" \
+    >/dev/null 2>&1 && info "$model loaded and pinned (keep_alive=-1)" \
     || echo "  ⚠ could not warm $model — is it pulled? (ollama pull $model)"
 }
 
