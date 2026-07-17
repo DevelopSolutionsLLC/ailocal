@@ -26,6 +26,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 LA_DIR="$HOME/Library/LaunchAgents"
 LOG_DIR="$HOME/Library/Logs/ailocal"
+# Agent-run scripts must live OUTSIDE TCC-protected folders (~/Documents, ~/Desktop,
+# ~/Downloads): launchd gets "Operation not permitted" executing scripts there on
+# modern macOS. Install self-contained wrappers here instead (and bake in any values
+# from the repo at install time, since the repo itself may be under ~/Documents).
+APP_SUPPORT="$HOME/Library/Application Support/ailocal"
 OLLAMA_BIN="/Applications/Ollama.app/Contents/Resources/ollama"
 MODEL_ROLE="coder"
 WITH_LITELLM=0
@@ -34,6 +39,16 @@ UNINSTALL=0
 info() { echo "  ✓ $*"; }
 warn() { echo "  ⚠ $*"; }
 step() { echo; echo "▶ $*"; }
+
+# Resolve a role name to its Ollama backend tag from models.yaml (at install time,
+# from the interactive shell — the agent can't read ~/Documents at runtime).
+resolve_backend() {
+  awk -v role="$1" '
+    $0 ~ "^"role":" { inrole=1; next }
+    inrole && /^[a-z]/ && $0 !~ /^ / { inrole=0 }
+    inrole && $1=="backend:" { print $2; exit }
+  ' "$ROOT_DIR/config/models.yaml" 2>/dev/null
+}
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -59,7 +74,7 @@ if [ "$UNINSTALL" = 1 ]; then
 fi
 
 [ -x "$OLLAMA_BIN" ] || { warn "Ollama not found at $OLLAMA_BIN — install Ollama.app first"; exit 1; }
-mkdir -p "$LA_DIR" "$LOG_DIR"
+mkdir -p "$LA_DIR" "$LOG_DIR" "$APP_SUPPORT"
 
 # ── 1. ollama serve ──────────────────────────────────────────────────────────
 # KEEP_ALIVE=-1 (never unload; -1 is the documented "pin" value). MAX_LOADED=1
@@ -99,18 +114,27 @@ warn "Disable Ollama.app 'launch at login' (menubar → Settings) to avoid a por
 
 # ── 2. preload the primary model (health-gated, one-shot) ────────────────────
 step "Installing com.ailocal.preload ($MODEL_ROLE)"
+BACKEND="$(resolve_backend "$MODEL_ROLE")"
+[ -n "$BACKEND" ] || { warn "could not resolve '$MODEL_ROLE' in models.yaml — using it as a raw tag"; BACKEND="$MODEL_ROLE"; }
+# Self-contained wrapper in a non-protected dir. Health-gate → skip if resident →
+# empty-prompt load (no inference) → pin with keep_alive:-1. Backend tag baked in.
+PRELOAD="$APP_SUPPORT/preload.sh"
+cat > "$PRELOAD" <<WRAP
+#!/bin/sh
+O="http://127.0.0.1:11434"
+for _ in \$(seq 1 60); do curl -fsS -m 3 "\$O/api/version" >/dev/null 2>&1 && break; sleep 2; done
+curl -fsS -m 3 "\$O/api/version" >/dev/null 2>&1 || exit 0   # Ollama never came up — fail gracefully
+curl -fsS -m 5 "\$O/api/ps" 2>/dev/null | grep -q '"$BACKEND"' && exit 0   # already resident
+curl -fsS -m 300 "\$O/api/generate" -d '{"model":"$BACKEND","keep_alive":-1}' >/dev/null 2>&1
+WRAP
+chmod +x "$PRELOAD"
 cat > "$LA_DIR/com.ailocal.preload.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key><string>com.ailocal.preload</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>$ROOT_DIR/scripts/preload-model.sh</string>
-    <string>--now</string>
-    <string>$MODEL_ROLE</string>
-  </array>
+  <key>ProgramArguments</key><array><string>$PRELOAD</string></array>
   <key>RunAtLoad</key><true/>
   <key>StandardOutPath</key><string>$LOG_DIR/preload.log</string>
   <key>StandardErrorPath</key><string>$LOG_DIR/preload.err.log</string>
@@ -118,14 +142,14 @@ cat > "$LA_DIR/com.ailocal.preload.plist" <<PLIST
 </plist>
 PLIST
 load com.ailocal.preload
-info "primary model '$MODEL_ROLE' preloads at login once Ollama is healthy"
+info "primary model '$MODEL_ROLE' ($BACKEND) preloads at login once Ollama is healthy"
 
 # ── 3. LiteLLM (optional native agent; otherwise Docker keeps managing it) ────
 if [ "$WITH_LITELLM" = 1 ]; then
   step "Installing com.ailocal.litellm (native, health-gated)"
   LITELLM_BIN="$(command -v litellm || true)"
   [ -n "$LITELLM_BIN" ] || { warn "litellm not on PATH — install with: uv tool install litellm  (or pipx install 'litellm[proxy]')"; }
-  WRAP="$ROOT_DIR/scripts/.litellm-run.sh"
+  WRAP="$APP_SUPPORT/litellm-run.sh"
   cat > "$WRAP" <<WRAP
 #!/usr/bin/env bash
 set -euo pipefail
