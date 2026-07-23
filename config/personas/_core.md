@@ -26,3 +26,9 @@ always comes before changing anything. Work evidence-first — these are hard ru
 - Be precise and honest: state what you did and didn't do; lead with anything
   unverified, uncertain, or blocked. Never present a guess as fact. Ask one focused
   question when something essential is missing.
+- Be efficient (local models are slow and the context window is small): search
+  narrowly and stop once you have enough evidence — don't recursively scan the tree
+  or read files unlikely to matter. Keep responses concise; don't narrate every tool
+  call or re-explain what's already established. Summarize findings into the scratchpad
+  and reference those summaries instead of repeating them. When editing, explain only
+  the non-obvious choices, tradeoffs, or breaking changes — not every line.

@@ -38,9 +38,13 @@ claude-local() {
   #   Opus  → deep-think-more (deepest reasoning tier)
   #   Sonnet→ coder-main      (primary heavy coder, the daily driver)
   #   Haiku → coder-fast      (fast, for background/summary calls)
+  # CLAUDE_CODE_DISABLE_1M_CONTEXT: local backends cap at num_ctx (64K here), not
+  # 1M — so let Claude Code request the 1M-context beta and it just overflows.
+  # Disabling it keeps sessions inside the window the models actually serve.
   CLAUDE_CONFIG_DIR="$cfg/claude" \
   ANTHROPIC_BASE_URL="$base" ANTHROPIC_API_KEY="$key" \
   CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1 \
+  CLAUDE_CODE_DISABLE_1M_CONTEXT=1 \
   ANTHROPIC_DEFAULT_OPUS_MODEL="deep-think-more" \
   ANTHROPIC_DEFAULT_SONNET_MODEL="coder-main" \
   ANTHROPIC_DEFAULT_HAIKU_MODEL="coder-fast" \
