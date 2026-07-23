@@ -44,6 +44,19 @@ model_reasoning_summary = "none"
 # still routes through LiteLLM instead of silently falling back to api.openai.com.
 openai_base_url = "http://localhost:4000/v1"
 
+# ── SessionStart hook — per-session scratchpad ──────────────────────────────
+# Creates an isolated /tmp/scratchpad/codex-<session_id>/ on session start and
+# injects the path as context (same shared script Claude Code uses). Keeps each
+# session's working notes separate. See config/clients/scratchpad-hook.sh.
+[[hooks.SessionStart]]
+matcher = "startup|resume"
+
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = 'bash "$HOME/.config/ailocal/scratchpad-hook.sh" codex'
+statusMessage = "Preparing session scratchpad"
+timeout = 15
+
 # ── Model Providers ─────────────────────────────────────────────────────────
 
 [model_providers.ailocal]

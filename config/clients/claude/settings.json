@@ -22,5 +22,17 @@
     "",
     "Launch with: claude-local"
   ],
-  "model": "coder-main"
+  "model": "coder-main",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.config/ailocal/scratchpad-hook.sh\" claude"
+          }
+        ]
+      }
+    ]
+  }
 }
