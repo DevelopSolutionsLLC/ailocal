@@ -71,7 +71,7 @@ LiteLLM exposes **role names only** — no backend model names are visible to cl
 
 **Personas & sampling.** Each role gets an "Opus-like" grounded engineering persona injected server-side by the `persona_injector` LiteLLM hook (from `config/personas/<role>.md`) — merged into the client's system message, so it survives even when the client sends its own. Reasoners are the exception: per DeepSeek's official guidance they get **no** persona and run at temperature 0.6 / top-p 0.95. Coders use Qwen's recommended sampling (0.7 / 0.8 / top-k 20), supervisor uses Gemma's (1.0 / 0.95 / top-k 64). All sampling lives in `config/models.yaml`.
 
-**Reasoning behavior by role.** `coder-*` and `supervisor` are execution roles pinned to `reasoning_effort: "none"` so they answer directly — a long invisible reasoning stream reads as a hang in OpenAI-format clients (VS Code Copilot). The `deep-think*` roles are the thinking tiers; their reasoning stream is merged into the answer text (`merge_reasoning_content_in_choices`) so it renders as visible `<think>…</think>` content instead of a silent "Considering…" spinner.
+**Reasoning behavior by role.** `coder-*` and `supervisor` are execution roles that answer directly — a long invisible reasoning stream reads as a hang in OpenAI-format clients (VS Code Copilot). Two settings enforce that, and both are needed: `additional_drop_params: ["thinking", "reasoning_effort"]` (so a client sending `thinking` to a non-thinking backend doesn't 400) and `think: false` (suppresses qwen3.6's default reasoning). The `deep-think*` roles are the thinking tiers; their reasoning stream is merged into the answer text (`merge_reasoning_content_in_choices`) so it renders as visible `<think>…</think>` content instead of a silent "Considering…" spinner.
 
 ### Changing models
 
@@ -94,11 +94,11 @@ docker compose restart litellm     # 3. reload the proxy  (or ./scripts/start.sh
 
 The installer is safe to re-run and backs up before touching anything. Client state lives in `~/.config/ailocal/` (XDG-style) — cloud clients (`~/.claude`, `~/.codex`) are never touched, so cloud and local sessions coexist safely.
 
-**Claude Code** — run `claude-local` to start a Claude Code session pointed at local models (the wrapper sets `CLAUDE_CONFIG_DIR=~/.config/ailocal/claude` + per-invocation env vars). Defaults to the `coder-main` role; use `/model` to switch mid-session. Plain `claude` still connects to Anthropic cloud.
+**Claude Code** — run `claude-local` to start a Claude Code session pointed at local models (the wrapper sets `CLAUDE_CONFIG_DIR=~/.config/ailocal/claude` + per-invocation env vars). Launches on `coder-agent` — the orchestrator — which fans work out to the other roles; use `/model` to switch mid-session. Plain `claude` still connects to Anthropic cloud.
 
 **Codex CLI** — run `codex-local` for local models (sets `CODEX_HOME=~/.config/ailocal/codex` + env vars). The model picker shows role names. Plain `codex` still connects to OpenAI cloud.
 
-**VS Code (Copilot Chat)** — run the `ailocal` profile launcher (`ailocal-code` or VS Code **Remote: Open Local Folder in Codespace** → select "ailocal"). Opens a new VS Code window with ailocal environment vars pre-set. Models and capabilities are auto-discovered from LiteLLM's `/v1/model/info`. 
+**VS Code (Copilot Chat)** — run `ailocal-code [path]` to open the isolated `ailocal` VS Code profile (`code --profile ailocal`), which keeps these extensions and settings out of your normal window. Models and capabilities are auto-discovered from LiteLLM's `/v1/model/info`.
 
 To configure Copilot Chat manually or in an existing window, connect the [LiteLLM Connector for Copilot](https://marketplace.visualstudio.com/items?itemName=Gethnet.litellm-connector-copilot) extension:
 
@@ -107,6 +107,11 @@ To configure Copilot Chat manually or in an existing window, connect the [LiteLL
 3. `Cmd+Shift+P` → **LiteLLM: Reload Models**
 
 The installer handles extension install, recommended settings (`inactivityTimeout: 300`, `chat.byokUtilityModelDefault: mainAgent`), and prints the one-time key entry instructions. Any extension supporting a custom OpenAI-compatible endpoint (Cline, Continue) also works — point it at `http://localhost:4000/v1` with your key and use a role name as the model.
+
+### What the installer deploys beyond endpoints
+
+- **Subagents and commands** (Claude Code): `planner`, `implementer`, `reviewer`, `search`, `tester`, plus `/local-build` and `/analyze-repo`. Each subagent is pinned to the role that suits it, so heavy search doesn't occupy the orchestrator's context. Codex gets the equivalent prompts.
+- **Per-session scratchpad**: a shared `SessionStart` hook gives every session its own `/tmp/scratchpad/<tool>-<session_id>/`, so concurrent Claude/Codex sessions never collide over temp files. Wired identically for Claude Code (`settings.json`) and Codex (`config.toml`).
 
 **For full-shell environment (optional)** — `source ~/.config/ailocal/env` redirects both SDKs (Claude Code, Codex, and any Python/JS SDK) to local models for that shell session only. The wrappers above are the recommended path.
 
