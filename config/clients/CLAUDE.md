@@ -23,6 +23,8 @@ Every gateway role also appears in `/model` (`coder-main`, `coder-agent`, `coder
 
 # Delegation (subagents)
 
+Drive from a coder role — the default is `coder-agent` (qwen3.6), the orchestrator: a strong tool-caller that runs the session and hands work out. **Never drive from `deep-think-more` or `supervisor`** — those are reasoning/review specialists you *call as subagents*, not orchestrators (a DeepSeek reasoner won't reliably spawn subagents). If you're doing straight-line coding rather than orchestration, `/model coder-main` is the faster pure implementer.
+
 Local models are slow and the context window is small (64K), so keep the main session lean by fanning independent work out to subagents — each runs in its own context window and returns only a summary, so exploration noise never fills your session. Available agents (`.claude/agents/`): `search` (haiku→coder-fast) for lookups, `tester` (sonnet→coder-main) for running checks, `planner` (opus→deep-think-more) for decomposition, `implementer` (sonnet→coder-main) for edits, `reviewer` (fable→supervisor) for diff review.
 
 - Delegate the cheap, independent, high-volume work — searching, locating definitions, running tests, inspecting logs, summarizing files — to `search`/`tester`. Reserve the main model (and `deep-think-more`) for synthesis, architecture, and planning.

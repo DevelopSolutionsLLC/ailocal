@@ -12,7 +12,10 @@
     "All requests route through LiteLLM using role-based model names.",
     "Valid roles: coder-main | coder-agent | coder-fast | deep-think | deep-think-more | supervisor | embed",
     "",
-    "The 'model' field below is the LAUNCH default (Claude Code sends 'coder-main').",
+    "The 'model' field below is the LAUNCH default = coder-agent (qwen3.6), the",
+    "orchestrator role: a strong tool-caller that drives the session and delegates",
+    "planning to deep-think-more, edits to coder-main, review to supervisor. Drive",
+    "from a coder role, never from a reasoner/supervisor (those are subagents).",
     "At runtime, /model lists every LiteLLM role — coder-main, coder-agent,",
     "coder-fast, deep-think, deep-think-more, supervisor — because the claude-local",
     "wrapper sets CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1 (Claude Code then",
@@ -22,7 +25,7 @@
     "",
     "Launch with: claude-local"
   ],
-  "model": "coder-main",
+  "model": "coder-agent",
   "hooks": {
     "SessionStart": [
       {
