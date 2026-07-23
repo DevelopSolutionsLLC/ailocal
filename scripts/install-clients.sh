@@ -337,10 +337,10 @@ if has_target "codex"; then
 
   # /local-build prompt + plan/review model profiles — managed, always overwrite.
   mkdir -p "$CODEX_HOME_DIR/prompts"
-  cp "$ROOT_DIR/config/clients/codex/prompts/local-build.md" "$CODEX_HOME_DIR/prompts/"
+  cp "$ROOT_DIR/config/clients/codex/prompts/"*.md "$CODEX_HOME_DIR/prompts/"
   cp "$ROOT_DIR/config/clients/codex/plan.config.toml" \
      "$ROOT_DIR/config/clients/codex/review.config.toml" "$CODEX_HOME_DIR/"
-  info "prompts/local-build.md + plan/review profiles written"
+  info "prompts/ ($(ls "$ROOT_DIR/config/clients/codex/prompts/" | tr '\n' ' ')) + plan/review profiles written"
 
   echo
   echo "  Codex configuration (CODEX_HOME=$CODEX_HOME_DIR):"
