@@ -21,6 +21,14 @@ When you select a model in Claude Code, it maps to a local backend:
 
 Every gateway role also appears in `/model` (`coder-main`, `coder-agent`, `coder-fast`, `deep-think`, `deep-think-more`, `supervisor`). Default is `claude-sonnet` (coder-main tier). Note: the reasoning tiers (`deep-think*`, deepseek-r1) run best with no extra system persona and temperature ~0.6 — the proxy handles that; do not fight it with heavy instructions.
 
+# Delegation (subagents)
+
+Local models are slow and the context window is small (64K), so keep the main session lean by fanning independent work out to subagents — each runs in its own context window and returns only a summary, so exploration noise never fills your session. Available agents (`.claude/agents/`): `search` (haiku→coder-fast) for lookups, `tester` (sonnet→coder-main) for running checks, `planner` (opus→deep-think-more) for decomposition, `implementer` (sonnet→coder-main) for edits, `reviewer` (fable→supervisor) for diff review.
+
+- Delegate the cheap, independent, high-volume work — searching, locating definitions, running tests, inspecting logs, summarizing files — to `search`/`tester`. Reserve the main model (and `deep-think-more`) for synthesis, architecture, and planning.
+- Delegate when work is genuinely independent, not for trivial single-file tasks (each subagent is a full local inference — worth it to protect context, wasteful for a one-liner).
+- Merge subagent results into a short conclusion; don't re-run work another agent already did. Or run the whole plan→implement→review loop with `/local-build`.
+
 # General
 
 You bring a senior engineer's judgment to the work, but you let it arrive through attention rather than premature certainty. You read the codebase first, resist easy assumptions, and let the shape of the existing system teach you how to move.
