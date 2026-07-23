@@ -23,8 +23,10 @@ aliased onto roles via `router_settings.model_group_alias`.
 Reasoning: only `deep-think`/`deep-think-more` think (DeepSeek-R1; served with
 their reasoning stream **merged** into the answer text via
 `merge_reasoning_content_in_choices`, so VS Code shows visible `<think>` instead of
-a silent spinner). `coder-*`/`supervisor` are pinned to `reasoning_effort: "none"`
-(invisible reasoning reads as a hang in OpenAI-format clients). Personas are
+a silent spinner). `coder-*`/`supervisor` carry `additional_drop_params: [thinking, reasoning_effort]`
+(so Claude Code sending `thinking` to a non-thinking backend doesn't 400) plus
+`think: false` (suppresses qwen3.6's default reasoning that otherwise hangs VS Code
+Copilot). Personas are
 injected by the `persona_injector` hook from `config/personas/*.md`; reasoners get
 none (DeepSeek: no system prompt) and run at temp 0.6.
 

@@ -48,7 +48,8 @@ model_list:
       top_p: 0.8
       top_k: 20
       repetition_penalty: 1.05
-      reasoning_effort: "none"
+      additional_drop_params: ["thinking", "reasoning_effort"]
+      think: false
     model_info:
       supports_function_calling: true
       supports_tool_choice: true
@@ -70,7 +71,8 @@ model_list:
       temperature: 0.7
       top_p: 0.8
       top_k: 20
-      reasoning_effort: "none"
+      additional_drop_params: ["thinking", "reasoning_effort"]
+      think: false
     model_info:
       supports_function_calling: true
       supports_tool_choice: true
@@ -95,7 +97,8 @@ model_list:
       top_p: 0.8
       top_k: 20
       repetition_penalty: 1.05
-      reasoning_effort: "none"
+      additional_drop_params: ["thinking", "reasoning_effort"]
+      think: false
     model_info:
       supports_function_calling: true
       supports_tool_choice: true
@@ -159,7 +162,8 @@ model_list:
       temperature: 1.0
       top_p: 0.95
       top_k: 64
-      reasoning_effort: "none"
+      additional_drop_params: ["thinking", "reasoning_effort"]
+      think: false
     model_info:
       supports_function_calling: true
       supports_tool_choice: true

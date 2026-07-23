@@ -131,9 +131,17 @@ def gen_role_block(role, info):
     if merge:
         params.append("      merge_reasoning_content_in_choices: true")
     if not reasoning:
-        # Execution role: stream the answer directly (no reasoning_content
-        # firehose that OpenAI-format clients render as a hang).
-        params.append('      reasoning_effort: "none"')
+        # Execution roles: two independent guards.
+        # (1) Drop client-sent thinking params — a client sending `thinking`/
+        #     `reasoning_effort` (Claude Code does, on its opus/sonnet/haiku slots)
+        #     otherwise 400s in Ollama ("<model> does not support thinking").
+        # (2) think:false — suppress DEFAULT reasoning. Some capable backends
+        #     (qwen3.6) emit reasoning_content unprompted, which OpenAI-format
+        #     clients (VS Code Copilot) render as a silent "Considering…" hang.
+        #     Accepted by all non-reasoner backends (no-op where not applicable).
+        # The deep-think* reasoners omit both — they genuinely think.
+        params.append('      additional_drop_params: ["thinking", "reasoning_effort"]')
+        params.append("      think: false")
 
     mi = [
         f"    model_info:",
