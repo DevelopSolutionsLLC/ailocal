@@ -1,38 +1,61 @@
 # profile: 32gb
 # Models sized for 32 GB unified memory.
-# supervisor (17 GB) + router (5.5 GB) = 22.5 GB — can coexist.
-# coder (21 GB) + supervisor (17 GB) = 38 GB — too tight; they hot-swap (OLLAMA_MAX_LOADED_MODELS=1).
-# reasoner (9 GB) can coexist with supervisor (17+9=26 GB).
-# Approximate download: ~54 GB
+# NOTE: the 6-chat-role split below is sized by analogy to the old 4-role 32gb
+# profile — it is UNVERIFIED on real 32 GB hardware. Confirm backends/ctx before
+# switching to this profile. The 64gb profile is the validated one.
+# coder-main (18 GB) + coder-agent (21 GB) hot-swap (OLLAMA_MAX_LOADED_MODELS).
+# deep-think (5 GB) / deep-think-more (9 GB) can coexist with supervisor (17 GB).
+# Approximate download: ~60 GB
 # Run ./scripts/sync-models.sh after any manual change.
 
-disk_gb: 54
+disk_gb: 60
 
-router:
-  backend: qwen3.5:9b-mlx
-  description: Fast classification, trivial tasks, autocomplete
+coder-main:
+  backend: qwen3-coder:30b
+  description: Primary repository coding — MoE ~3B active / 30B total
+  context_window: 131072
+  num_ctx: 131072
+  persona: true
+
+coder-agent:
+  backend: qwen3.6:35b-mlx
+  description: Multi-step planning and agentic orchestration — MoE, multimodal
+  context_window: 131072
+  num_ctx: 131072
+  vision: true
+  persona: true
+
+coder-fast:
+  backend: qwen2.5-coder:3b
+  description: IDE autocomplete (FIM) and fast chat — small, low-latency
   context_window: 32768
   num_ctx: 32768
 
-coder:
-  backend: qwen3.6:35b-mlx
-  description: Implementation, generation, coding tasks — MoE ~3B active / 35B total, newest Apr 2026
-  context_window: 262144
-  num_ctx: 262144
-  vision: true   # Qwen3.6 multimodal inference
+deep-think:
+  backend: deepseek-r1:8b
+  description: Lighter chain-of-thought reasoning — auto-MLX via Ollama 0.19+
+  context_window: 32768
+  num_ctx: 32768
+  reasoning: true
+  merge: true
+  persona: true
 
-reasoner:
+deep-think-more:
   backend: deepseek-r1:14b
-  description: Planning, decomposition, deep reasoning — fits alongside supervisor (17+9=26 GB)
+  description: Deeper reasoning — fits alongside supervisor (17+9=26 GB)
   context_window: 131072
   num_ctx: 131072
+  reasoning: true
+  merge: true
+  persona: true
 
 supervisor:
   backend: gemma4:27b
-  description: Review, critique, approval gate
+  description: Review, critique, approval gate — multimodal
   context_window: 131072
   num_ctx: 131072
-  vision: true   # Gemma multimodal (SigLIP vision encoder)
+  vision: true
+  persona: true
 
 embed:
   backend: nomic-embed-text

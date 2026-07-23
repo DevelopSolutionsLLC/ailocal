@@ -5,34 +5,32 @@ sync-models.py — propagate config/models.yaml to all derived files.
 Edit config/models.yaml (or switch profiles via install.sh), then run
 ./scripts/sync-models.sh. This script:
 
-  1. Self-heals backend names everywhere. It maps EVERY backend used by a role
-     in any profile to that role's ACTIVE backend, then applies that map to
-     config.yaml + all derived docs/catalogs. Re-running always repairs drift
-     (unlike the old swap-on-diff, which skipped docs when config.yaml already
-     matched models.yaml).
-  2. Regenerates the num_ctx and model_info capability block for each
-     canonical Layer-1 role (router/coder/reasoner/supervisor) directly from
-     models.yaml — so capabilities stay correct when profiles switch.
-  3. Regenerates the Codex model_catalog.json capability fields and keeps its
-     "<n>K ctx" description tokens in sync with num_ctx.
+  1. Regenerates the ENTIRE `model_list:` block of config/litellm/config.yaml
+     deterministically from models.yaml, between the GENERATED markers. Every
+     role becomes exactly one canonical model_name entry; there are no per-model
+     duplicate alias blocks anymore — the Claude/OpenAI compatibility names are
+     handled once by `router_settings.model_group_alias` (hand-maintained tail,
+     which references stable role names, not backend tags). This removes the old
+     global backend-name text-swap and its corruption risk.
+  2. Regenerates config/clients/model_catalog.json capability fields + "<n>K ctx"
+     tokens for the canonical roles Codex exposes.
 
-Derived files updated by name-swap:
-  - config/litellm/config.yaml  (all role + alias layer entries)
-  - config/clients/model_catalog.json
-  - config/clients/CLAUDE.md
-  - README.md
+Per-role flags read from models.yaml:
+  reasoning : model thinks / streams reasoning (deepseek-r1). -> supports_reasoning,
+              no parallel tool calls, no reasoning_effort:none pin.
+  merge     : merge_reasoning_content_in_choices (OpenAI-format clients).
+  persona   : informational only — the persona_injector LiteLLM hook injects
+              config/personas/<role>.md at request time (roles are served on
+              their raw base tags; there are no ailocal-<role> overlay models).
+  vision    : advertise image/PDF input.
 
-Capability model (per canonical role):
-  - Tool calling         : all roles (Qwen3 / DeepSeek-R1 / Gemma all support it)
-  - Parallel tool calls  : all except reasoner (DeepSeek-R1 has no reliable parallel)
-  - Reasoning / thinking : all except supervisor (Gemma family is not a thinking model)
-  - Vision + PDF input   : driven by the `vision:` field in models.yaml
-  - Token budgets        : max_input_tokens = num_ctx; max_output_tokens = min(16384, num_ctx//4)
+Non-reasoning chat roles are pinned to reasoning_effort:"none" (a long
+reasoning_content burst reads as a hang in OpenAI-format clients like VS Code
+Copilot). embed is emitted with its fixed embedding model_info.
 
-Advanced cloud-only capabilities (audio, web_search, url_context, computer_use,
-prompt_caching, response_schema) are intentionally left off — local Ollama
-backends do not support them through the OpenAI-compatible API, and advertising
-them would make clients send payloads the models reject.
+Advanced cloud-only capabilities (audio, web_search, computer_use, prompt_caching,
+response_schema) are intentionally left off — local Ollama backends don't support
+them through the OpenAI-compatible API.
 """
 
 import json
@@ -41,20 +39,12 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-MODELS_YAML   = ROOT / "config/models.yaml"
-PROFILES_DIR  = ROOT / "config/profiles"
+MODELS_YAML    = ROOT / "config/models.yaml"
 LITELLM_CONFIG = ROOT / "config/litellm/config.yaml"
 CODEX_CATALOG  = ROOT / "config/clients/model_catalog.json"
-# Plain backend-name text-swap targets. model_catalog.json is handled
-# separately by regen_codex_catalog (structured JSON edit + name swap).
-DERIVED_FILES = [
-    ROOT / "README.md",
-    ROOT / "config/clients/CLAUDE.md",
-]
 
-# Canonical Layer-1 roles whose capability block is generated from models.yaml.
-# embed is excluded — it is an embedding model with a fixed, special model_info.
-CANONICAL_ROLES = ["router", "coder", "reasoner", "supervisor"]
+GEN_BEGIN = "  # >>> BEGIN GENERATED model_list (sync-models.py) — do not edit <<<"
+GEN_END   = "  # >>> END GENERATED model_list <<<"
 
 
 def step(msg): print(f"\n▶ {msg}")
@@ -67,7 +57,7 @@ def truthy(v):
 
 
 def load_models_yaml():
-    """Return dict: role → {backend, description, context_window, num_ctx, vision, ...}."""
+    """Return ordered dict: role → {backend, num_ctx, reasoning, merge, ...}."""
     models = {}
     current = None
     with open(MODELS_YAML) as f:
@@ -80,148 +70,130 @@ def load_models_yaml():
                 models[current] = {}
             elif current and ":" in s:
                 k, _, v = s.strip().partition(":")
-                # strip trailing inline comments (e.g. "true   # note")
                 v = v.split("#", 1)[0].strip()
                 models[current][k.strip()] = v
+    # drop the scalar disk_gb "role"
+    models.pop("disk_gb", None)
     return models
 
 
-def load_role_backends():
-    """role -> set of every backend tag ever used for it, across ALL profiles
-    plus the active models.yaml.
+def served_tag(role, info):
+    """The Ollama tag LiteLLM calls — always the raw base backend.
 
-    Used to build a *self-healing* swap map: any historical backend for a role
-    is remapped to that role's ACTIVE backend. This is why re-running
-    sync-models.sh repairs drift in derived files even when config.yaml already
-    matches models.yaml (the old swap-on-diff approach could not — it compared
-    config.yaml to models.yaml, found them equal, and skipped the docs).
+    Personas are delivered by the LiteLLM persona_injector hook (from the curated
+    config/personas/<role>.md), NOT by a baked Ollama SYSTEM. So there is no need
+    for ailocal-<role> overlay tags: roles point straight at their base model, and
+    `ollama ps` shows the real model name. The `persona:` flag in models.yaml is
+    now informational only (the hook keys off which <role>.md files exist).
     """
-    role_backends = {}
-    files = sorted(PROFILES_DIR.glob("*.yaml")) + [MODELS_YAML]
-    for f in files:
-        if not f.exists():
-            continue
-        cur = None
-        for line in f.read_text().splitlines():
-            s = line.rstrip()
-            if not s or s.lstrip().startswith("#"):
-                continue
-            if not s.startswith(" ") and s.endswith(":"):
-                cur = s[:-1]
-            elif cur and s.strip().startswith("backend:"):
-                be = s.split("backend:", 1)[1].split("#")[0].strip()
-                if be:
-                    role_backends.setdefault(cur, set()).add(be)
-    return role_backends
+    return info["backend"]
 
 
-def gen_model_info(role, info):
-    """Return (num_ctx, model_info_block_text) for a canonical role."""
+def gen_role_block(role, info):
+    """Return the config.yaml model_list entry text for one chat/embed role."""
     num_ctx = int(info.get("num_ctx") or info.get("context_window") or 32768)
-    max_out = min(16384, max(1024, num_ctx // 4))
-    vision = truthy(info.get("vision", "false"))
-    # Only the reasoner role streams <think> reasoning. router/coder are
-    # execution roles pinned to reasoning_effort:"none" in config.yaml (a long
-    # reasoning_content burst reads as a hang in OpenAI-format clients like VS
-    # Code Copilot); supervisor (Gemma) is not a thinking model.
-    reasoning = role == "reasoner"
-    parallel = role != "reasoner"        # DeepSeek-R1: no reliable parallel tool calls
 
-    lines = [
-        "    model_info:",
-        "      supports_function_calling: true",
-        "      supports_tool_choice: true",
+    if role == "embed":
+        return (
+            f"  - model_name: {role}\n"
+            f"    litellm_params:\n"
+            f"      model: ollama_chat/{info['backend']}\n"
+            f"      api_base: os.environ/OLLAMA_URL\n"
+            f"      num_ctx: {num_ctx}\n"
+            f"    model_info:\n"
+            f"      mode: embedding\n"
+            f"      max_tokens: {num_ctx}\n"
+            f"      input_cost_per_token: 0\n"
+            f"      output_cost_per_token: 0\n"
+        )
+
+    reasoning = truthy(info.get("reasoning", "false"))
+    merge     = truthy(info.get("merge", "false"))
+    vision    = truthy(info.get("vision", "false"))
+    parallel  = not reasoning                 # DeepSeek-R1: no reliable parallel calls
+    max_out   = min(16384, max(1024, num_ctx // 4))
+    desc      = info.get("description", "")
+
+    params = [
+        f"  - model_name: {role}",
+        f"    litellm_params:",
+        f"      model: ollama_chat/{served_tag(role, info)}",
+        f"      api_base: os.environ/OLLAMA_URL",
+        f"      num_ctx: {num_ctx}",
+    ]
+    # Vendor-recommended sampling defaults (from models.yaml). Applied when the
+    # client does not send its own. DeepSeek-R1: temp 0.6 / top_p 0.95, no system
+    # prompt. Qwen coders: temp 0.7 / top_p 0.8 / top_k 20 / rep 1.05. Gemma:
+    # temp 1.0 / top_p 0.95 / top_k 64.
+    for key in ("temperature", "top_p", "top_k", "repetition_penalty"):
+        if info.get(key) not in (None, ""):
+            params.append(f"      {key}: {info[key]}")
+    if merge:
+        params.append("      merge_reasoning_content_in_choices: true")
+    if not reasoning:
+        # Execution role: stream the answer directly (no reasoning_content
+        # firehose that OpenAI-format clients render as a hang).
+        params.append('      reasoning_effort: "none"')
+
+    mi = [
+        f"    model_info:",
+        f"      supports_function_calling: true",
+        f"      supports_tool_choice: true",
         f"      supports_parallel_function_calling: {'true' if parallel else 'false'}",
-        "      supports_system_messages: true",
-        "      supports_native_streaming: true",
+        f"      supports_system_messages: true",
+        f"      supports_native_streaming: true",
         f"      supports_reasoning: {'true' if reasoning else 'false'}",
     ]
     if vision:
-        lines.append("      supports_vision: true")
-        lines.append("      supports_pdf_input: true")
-    lines += [
+        mi += ["      supports_vision: true", "      supports_pdf_input: true"]
+    mi += [
         f"      max_input_tokens: {num_ctx}",
         f"      max_output_tokens: {max_out}",
-        "      input_cost_per_token: 0",
-        "      output_cost_per_token: 0",
+        f"      input_cost_per_token: 0",
+        f"      output_cost_per_token: 0",
     ]
-    return num_ctx, "\n".join(lines) + "\n"
+    header = f"  # {role} — {desc}\n" if desc else ""
+    return header + "\n".join(params) + "\n" + "\n".join(mi) + "\n"
 
 
-def regen_canonical(text, models):
-    """Rewrite num_ctx + model_info for each canonical role in config.yaml text.
-
-    Scoped by exact `model_name: <role>` so the Layer-2/3 alias entries
-    (claude-*, gpt-*) are never touched.
-    """
-    for role in CANONICAL_ROLES:
-        info = models.get(role)
-        if not info:
-            warn(f"{role}: not in models.yaml — capability block left unchanged")
-            continue
-        num_ctx, block = gen_model_info(role, info)
-
-        # 1) num_ctx inside litellm_params
-        text, n1 = re.subn(
-            rf"(- model_name: {re.escape(role)}\n    litellm_params:\n"
-            rf"      model: [^\n]+\n      api_base: [^\n]+\n      num_ctx: )\d+",
-            lambda m: m.group(1) + str(num_ctx),
-            text, count=1)
-
-        # 2) the whole model_info body (all 6-space-indented lines)
-        text, n2 = re.subn(
-            rf"(- model_name: {re.escape(role)}\n    litellm_params:\n"
-            rf"(?:      [^\n]+\n)+)    model_info:\n(?:      [^\n]+\n)+",
-            lambda m: m.group(1) + block,
-            text, count=1)
-
-        if n1 and n2:
-            caps = ["tools"]
-            if role != "reasoner": caps.append("parallel")
-            if role != "supervisor": caps.append("reasoning")
-            if truthy(info.get("vision", "false")): caps += ["vision", "pdf"]
-            ok(f"{role}: num_ctx={num_ctx}, caps=[{', '.join(caps)}]")
-        else:
-            warn(f"{role}: could not locate canonical block (num_ctx match={n1}, model_info match={n2})")
-    return text
+def gen_model_list(models):
+    blocks = [gen_role_block(role, info) for role, info in models.items()]
+    return GEN_BEGIN + "\n\n" + "\n".join(blocks) + "\n" + GEN_END + "\n"
 
 
-def regen_codex_catalog(models, swaps):
-    """Update config/clients/model_catalog.json from models.yaml.
+def splice_generated(text, generated):
+    """Replace everything between the markers (inclusive) with `generated`."""
+    pat = re.compile(re.escape(GEN_BEGIN) + r".*?" + re.escape(GEN_END) + r"\n",
+                     re.DOTALL)
+    if not pat.search(text):
+        warn("GENERATED markers not found in config.yaml — cannot splice")
+        return text, False
+    return pat.sub(lambda _m: generated, text, count=1), True
 
-    Codex (and other model_catalog.json consumers) read capabilities from this
-    file, NOT from LiteLLM's /model/info. This single writer handles both the
-    backend-name swaps (in display strings) and the capability fields
-    (context window, image modality, parallel tools). Returns True if changed.
-    """
+
+def regen_codex_catalog(models):
+    """Update config/clients/model_catalog.json capability fields from models.yaml."""
     if not CODEX_CATALOG.exists():
         return False
-    raw = CODEX_CATALOG.read_text()
-    # Backend-name swaps in any string fields (display_name, description, …).
-    for old, new in swaps.items():
-        raw = raw.replace(old, new)
     try:
-        catalog = json.loads(raw)
+        catalog = json.loads(CODEX_CATALOG.read_text())
     except json.JSONDecodeError as e:
-        warn(f"model_catalog.json is not valid JSON — skipping capability sync ({e})")
+        warn(f"model_catalog.json is not valid JSON — skipping ({e})")
         return False
-
     for entry in catalog.get("models", []):
         role = entry.get("slug")
         info = models.get(role)
-        if role not in CANONICAL_ROLES or not info:
+        if not info or role == "embed":
             continue
         num_ctx = int(info.get("num_ctx") or info.get("context_window") or 32768)
         vision = truthy(info.get("vision", "false"))
         entry["context_window"] = num_ctx
         entry["max_context_window"] = num_ctx
         entry["input_modalities"] = ["text", "image"] if vision else ["text"]
-        entry["supports_parallel_tool_calls"] = role != "reasoner"
-        # Keep the human-written "<n>K ctx" token in the description honest.
+        entry["supports_parallel_tool_calls"] = not truthy(info.get("reasoning", "false"))
         if "description" in entry:
             entry["description"] = re.sub(
                 r"\b\d+K ctx\b", f"{num_ctx // 1024}K ctx", entry["description"])
-
     new_raw = json.dumps(catalog, indent=2, ensure_ascii=False) + "\n"
     if new_raw != CODEX_CATALOG.read_text():
         CODEX_CATALOG.write_text(new_raw)
@@ -238,66 +210,30 @@ def main():
     step("Reading config/models.yaml")
     models = load_models_yaml()
     for role, info in models.items():
-        extra = " +vision" if truthy(info.get("vision", "false")) else ""
-        print(f"  {role}: {info.get('backend', '?')}{extra}")
+        tags = []
+        if truthy(info.get("persona", "false")): tags.append("persona")
+        if truthy(info.get("reasoning", "false")): tags.append("reasoning")
+        if truthy(info.get("merge", "false")): tags.append("merge")
+        if truthy(info.get("vision", "false")): tags.append("vision")
+        suffix = f"  [{', '.join(tags)}]" if tags else ""
+        print(f"  {role}: {info.get('backend', '?')} → served as "
+              f"{served_tag(role, info)}{suffix}")
 
+    step("Regenerating config/litellm/config.yaml model_list")
     litellm_text = LITELLM_CONFIG.read_text()
-
-    step("Building self-healing backend map (every profile's backend → active)")
-    role_backends = load_role_backends()
-    swaps = {}  # any historical backend → the active backend for its role
-    for role, info in models.items():
-        active = info.get("backend")
-        if not active:
-            warn(f"{role}: no backend in models.yaml — skipping")
-            continue
-        for be in role_backends.get(role, set()):
-            if be != active:
-                swaps[be] = active
-    if swaps:
-        for old, new in sorted(swaps.items()):
-            print(f"  {old} → {new}")
-    else:
-        ok("no alternate backends to remap")
-
-    def apply_swaps(text):
-        for old, new in swaps.items():
-            # Match WHOLE backend tags only. A plain str.replace would corrupt a
-            # longer tag that begins with a shorter one — e.g. mapping
-            # deepseek-r1:8b -> deepseek-r1:32b would also rewrite the unrelated
-            # tag deepseek-r1:8b-0528-qwen3-q8_0. The negative lookahead requires
-            # the match to end at a tag boundary (not another tag character).
-            text = re.sub(re.escape(old) + r'(?![\w.:-])', new, text)
-        return text
-
-    step("Updating config/litellm/config.yaml")
-    # Plain-swap fixes backend names everywhere (litellm_params AND comments),
-    # then regenerate the canonical capability blocks from models.yaml.
-    new_text = regen_canonical(apply_swaps(litellm_text), models)
-    if new_text != litellm_text:
+    new_text, spliced = splice_generated(litellm_text, gen_model_list(models))
+    if spliced and new_text != litellm_text:
         LITELLM_CONFIG.write_text(new_text)
-        ok("config.yaml written")
-    else:
+        ok("config.yaml model_list regenerated")
+    elif spliced:
         ok("config.yaml already up to date")
 
-    step("Updating derived docs (self-healing backend names)")
-    for path in DERIVED_FILES:
-        text = path.read_text()
-        new = apply_swaps(text)
-        if new != text:
-            path.write_text(new)
-            ok(str(path.relative_to(ROOT)))
-        else:
-            ok(f"{path.relative_to(ROOT)} already up to date")
-
-    step("Syncing Codex model_catalog.json (capabilities + names)")
-    if regen_codex_catalog(models, swaps):
-        ok("config/clients/model_catalog.json updated")
-    else:
-        ok("model_catalog.json already up to date")
+    step("Syncing Codex model_catalog.json (capabilities + ctx tokens)")
+    ok("model_catalog.json updated" if regen_codex_catalog(models)
+       else "model_catalog.json already up to date")
 
     step("Done — restart LiteLLM (./scripts/start.sh) so it reloads model_info; "
-         "pull any new models with ./scripts/install-models.sh")
+         "pull any new models (./scripts/install-models.sh)")
 
 
 if __name__ == "__main__":

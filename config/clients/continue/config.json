@@ -1,0 +1,38 @@
+{
+  "//": [
+    "ailocal — VS Code Continue config. MANAGED FILE — deployed to ~/.continue/config.json",
+    "by scripts/install-clients.sh (vscode target); __LITELLM_KEY__ is substituted with",
+    "LITELLM_MASTER_KEY from .env at install time. Your previous file is backed up first.",
+    "",
+    "Chat/edit models go through the LiteLLM proxy (localhost:4000); the persona is",
+    "injected server-side by the persona_injector hook, so no per-model systemMessage.",
+    "Tab autocomplete points DIRECTLY at Ollama (localhost:11434) with a small FIM model —",
+    "fill-in-the-middle through the OpenAI-compat proxy is unreliable (continuedev/continue#2907).",
+    "",
+    "Roles: coder-main | coder-agent | deep-think | deep-think-more | supervisor"
+  ],
+  "models": [
+    { "title": "Coder — main (local)", "provider": "openai", "model": "coder-main",
+      "apiBase": "http://localhost:4000/v1", "apiKey": "__LITELLM_KEY__" },
+    { "title": "Coder — agent/planning (local)", "provider": "openai", "model": "coder-agent",
+      "apiBase": "http://localhost:4000/v1", "apiKey": "__LITELLM_KEY__" },
+    { "title": "Deep-think (local)", "provider": "openai", "model": "deep-think",
+      "apiBase": "http://localhost:4000/v1", "apiKey": "__LITELLM_KEY__" },
+    { "title": "Deep-think-more (local)", "provider": "openai", "model": "deep-think-more",
+      "apiBase": "http://localhost:4000/v1", "apiKey": "__LITELLM_KEY__" },
+    { "title": "Supervisor — review (local)", "provider": "openai", "model": "supervisor",
+      "apiBase": "http://localhost:4000/v1", "apiKey": "__LITELLM_KEY__" }
+  ],
+  "tabAutocompleteModel": {
+    "title": "Autocomplete — qwen2.5-coder:3b (FIM, direct Ollama)",
+    "provider": "ollama",
+    "model": "qwen2.5-coder:3b",
+    "apiBase": "http://localhost:11434"
+  },
+  "embeddingsProvider": {
+    "provider": "openai",
+    "model": "embed",
+    "apiBase": "http://localhost:4000/v1",
+    "apiKey": "__LITELLM_KEY__"
+  }
+}

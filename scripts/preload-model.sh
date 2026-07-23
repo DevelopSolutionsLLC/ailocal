@@ -7,8 +7,8 @@
 # With OLLAMA_KEEP_ALIVE set (see setup-ollama-env.sh) it then stays resident.
 #
 # Usage:
-#   ./scripts/preload-model.sh              # preload the default backend (coder)
-#   ./scripts/preload-model.sh reasoner     # preload a different role's backend
+#   ./scripts/preload-model.sh              # preload the default backend (coder-main)
+#   ./scripts/preload-model.sh deep-think    # preload a different role's backend
 #   ./scripts/preload-model.sh --now        # just warm now, don't install the agent
 #   ./scripts/preload-model.sh --uninstall  # remove the LaunchAgent
 #
@@ -25,7 +25,9 @@ PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 info() { echo "  ✓ $*"; }
 step() { echo; echo "▶ $*"; }
 
-# Resolve a role name (or backend tag) to a backend model tag via models.yaml.
+# Resolve a role name (or backend tag) to the raw Ollama backend tag via
+# models.yaml. LiteLLM serves the base model directly (personas are injected by
+# the LiteLLM hook, not baked into an overlay), so the base tag is what runs.
 resolve_backend() {
   local want="$1"
   # If it already looks like a tag (has a colon), use as-is.
@@ -66,12 +68,12 @@ case "${1:-}" in
     rm -f "$PLIST" && info "Removed preload LaunchAgent"
     exit 0 ;;
   --now)
-    BACKEND="$(resolve_backend "${2:-coder}")"
-    [ -n "$BACKEND" ] || { echo "  ✗ could not resolve model for '${2:-coder}'"; exit 1; }
+    BACKEND="$(resolve_backend "${2:-coder-main}")"
+    [ -n "$BACKEND" ] || { echo "  ✗ could not resolve model for '${2:-coder-main}'"; exit 1; }
     warm "$BACKEND"; exit 0 ;;
 esac
 
-ROLE="${1:-coder}"
+ROLE="${1:-coder-main}"
 BACKEND="$(resolve_backend "$ROLE")"
 [ -n "$BACKEND" ] || { echo "  ✗ could not resolve backend for role '$ROLE' in models.yaml"; exit 1; }
 

@@ -32,7 +32,7 @@ LOG_DIR="$HOME/Library/Logs/ailocal"
 # from the repo at install time, since the repo itself may be under ~/Documents).
 APP_SUPPORT="$HOME/Library/Application Support/ailocal"
 OLLAMA_BIN="/Applications/Ollama.app/Contents/Resources/ollama"
-MODEL_ROLE="coder"
+MODEL_ROLE="coder-main"
 WITH_LITELLM=0
 UNINSTALL=0
 
@@ -74,11 +74,13 @@ if [ "$UNINSTALL" = 1 ]; then
 fi
 
 [ -x "$OLLAMA_BIN" ] || { warn "Ollama not found at $OLLAMA_BIN — install Ollama.app first"; exit 1; }
-mkdir -p "$LA_DIR" "$LOG_DIR" "$APP_SUPPORT"
+mkdir -p "$LA_DIR" "$LOG_DIR" "$APP_SUPPORT" /Users/Shared/ollama/models
 
 # ── 1. ollama serve ──────────────────────────────────────────────────────────
-# KEEP_ALIVE=-1 (never unload; -1 is the documented "pin" value). MAX_LOADED=1
-# (64 GB fits one big model). flash-attn + q8 KV cache = the memory/speed tuning.
+# KEEP_ALIVE=-1 (never unload; -1 is the documented "pin" value). MAX_LOADED=2 +
+# NUM_PARALLEL=3 lets a big coder coexist with a small model and serve concurrent
+# requests. OLLAMA_MODELS lives on /Users/Shared (out of any one user's home, and
+# matches the other machines). flash-attn + q8 KV cache = the memory/speed tuning.
 step "Installing com.ailocal.ollama (ollama serve)"
 cat > "$LA_DIR/com.ailocal.ollama.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -94,8 +96,10 @@ cat > "$LA_DIR/com.ailocal.ollama.plist" <<PLIST
   <key>EnvironmentVariables</key>
   <dict>
     <key>OLLAMA_HOST</key><string>127.0.0.1:11434</string>
+    <key>OLLAMA_MODELS</key><string>/Users/Shared/ollama/models</string>
     <key>OLLAMA_KEEP_ALIVE</key><string>-1</string>
-    <key>OLLAMA_MAX_LOADED_MODELS</key><string>1</string>
+    <key>OLLAMA_MAX_LOADED_MODELS</key><string>2</string>
+    <key>OLLAMA_NUM_PARALLEL</key><string>3</string>
     <key>OLLAMA_FLASH_ATTENTION</key><string>1</string>
     <key>OLLAMA_KV_CACHE_TYPE</key><string>q8_0</string>
   </dict>
