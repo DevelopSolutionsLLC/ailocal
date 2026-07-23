@@ -1,0 +1,8 @@
+# ailocal Codex profile: planning session on the reasoner model.
+# Deployed to $CODEX_HOME/plan.config.toml — select with: codex-local --profile plan
+# Overlays the base config.toml (provider/base_url stay ailocal/LiteLLM).
+# Reasoner (deepseek-r1) is unreliable at tool calling: use this profile for
+# read/plan sessions only, never for editing.
+
+model = "deep-think-more"
+model_reasoning_effort = "high"

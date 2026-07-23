@@ -9,10 +9,12 @@ API calls are made. Models are exposed as role names — never use backend model
 
 | Role | Purpose |
 |---|---|
-| `router` | Fast classification, trivial tasks, autocomplete |
-| `coder` | Implementation, code edits, generation (256k context) |
-| `reasoner` | Deep analysis, planning, debugging (128k context, thinking model) |
-| `supervisor` | Review, critique, multimodal (128k context) |
+| `coder-main` | Primary implementation, code edits, generation (64k context) |
+| `coder-agent` | Multi-step planning / agentic orchestration (64k, vision) |
+| `coder-fast` | Fast small tasks; IDE autocomplete (16k context) |
+| `deep-think` | Lighter reasoning, thinking merged into the answer (64k) |
+| `deep-think-more` | Deep reasoning / decomposition (64k) |
+| `supervisor` | Review, critique, approval gate (32k context) |
 | `embed` | Semantic search only — not for chat |
 
 The proxy speaks both OpenAI (`/v1/chat/completions`) and Anthropic (`/v1/messages`) formats.

@@ -31,8 +31,12 @@ services:
       # cloud-backed model block in config/litellm/config.yaml.
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # persona_injector.py reads the baked personas from here (see config/personas).
+      - AILOCAL_PERSONA_DIR=/app/personas
     volumes:
       - ./config/litellm:/app/config:ro
+      # Persona source of truth — read by the persona_injector hook (read-only).
+      - ./config/personas:/app/personas:ro
     ports:
       # Localhost-only per security spec.
       - "127.0.0.1:4000:4000"

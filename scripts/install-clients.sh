@@ -11,14 +11,26 @@
 # Destinations:
 #   vscode → installs the litellm-connector extension + prints one-time setup
 #            (the key lives in VS Code SecretStorage — no file is written)
-#   codex  → ~/.codex/config.toml, ~/.codex/model_catalog.json
-#   claude → ~/.claude/settings.json, ~/.claude/CLAUDE.md
+#   codex  → ~/.config/ailocal/codex/config.toml, model_catalog.json
+#            (CODEX_HOME for the codex-local wrapper — ~/.codex is NEVER touched)
+#   claude → ~/.config/ailocal/claude/settings.json, CLAUDE.md
+#            (CLAUDE_CONFIG_DIR for the claude-local wrapper — ~/.claude is NEVER touched)
+#
+# All targets also (re)install two silent, idempotent lines in ~/.zshrc that
+# source config/clients/{configure,finalize}.zsh — these define the
+# claude-local / codex-local / ailocal-code wrapper functions and fix the
+# VS Code terminal-hang issue. Those two marker-commented lines
+# (# ailocal-configure / # ailocal-finalize) are the ONLY footprint this
+# installer leaves in ~/.zshrc — everything else lives under
+# ~/.config/ailocal/, so uninstalling is just removing those two lines plus
+# that directory (see scripts/teardown.sh --clients).
 #
 # Safe to run multiple times — backs up before touching, skips if already installed.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ENV_FILE="$ROOT_DIR/.env"
+AILOCAL_CFG="${XDG_CONFIG_HOME:-$HOME/.config}/ailocal"
 
 has()  { command -v "$1" >/dev/null 2>&1; }
 info() { echo "  ✓ $*"; }
@@ -46,52 +58,55 @@ already_has() {
   [ -f "$file" ] && grep -qF "$marker" "$file" 2>/dev/null
 }
 
-# Make VS Code shell integration reliable under a heavy zsh prompt (oh-my-zsh +
-# powerlevel10k). ROOT CAUSE of "agent runs a terminal command, it finishes, but
-# the spinner never stops": p10k's *instant prompt* runs at the top of ~/.zshrc
-# and corrupts VS Code's OSC 633 command-completion markers, so the client never
-# sees the command exit. Fix idempotently: (1) skip instant prompt inside VS Code,
-# (2) source the shell-integration script explicitly (more robust than VS Code's
-# automatic injection when a custom prompt is present).
-ensure_shell_integration() {
-  local rc="${ZDOTDIR:-$HOME}/.zshrc"
-  [ -f "$rc" ] || { skip "no ~/.zshrc — shell-integration step skipped"; return 0; }
-  if grep -q 'ailocal: VS Code shell integration' "$rc"; then
-    skip "Shell integration already configured in ~/.zshrc"; return 0
-  fi
-  backup "$rc" || true
-  # oh-my-zsh + p10k rewrite the prompt line, which corrupts VS Code's OSC 633
-  # command markers → agent terminal commands hang. Disable BOTH inside VS Code
-  # (plain, fast prompt in the agent terminal), keep them in every other terminal,
-  # and source VS Code's shell-integration script explicitly. Detect VS Code via
-  # TERM_PROGRAM (local) or VSCODE_INJECTION (devcontainer/SSH remote). Best-effort
-  # per pattern; the explicit SI sourcing is appended regardless.
-  python3 - "$rc" <<'PY'
-import re, sys
-p = sys.argv[1]; s = open(p).read()
-if '_AILOCAL_VSCODE' not in s:
-    s = ('# ailocal: VS Code terminal? TERM_PROGRAM=local, VSCODE_INJECTION=remote/devcontainer.\n'
-         'if [[ "$TERM_PROGRAM" == "vscode" || -n "$VSCODE_INJECTION" ]]; then _AILOCAL_VSCODE=1; fi\n\n') + s
-s = re.sub(r'(?m)^if \[\[ -r (.*p10k-instant-prompt.*) \]\]; then$',
-           r'if [[ -z "$_AILOCAL_VSCODE" && -r \1 ]]; then', s, count=1)
-s = re.sub(r'(?m)^source \$ZSH/oh-my-zsh\.sh$',
-           'if [[ -n "$_AILOCAL_VSCODE" ]]; then\n'
-           "  PROMPT='%~ %# '   # ailocal: plain, fast prompt in VS Code (no prompt rewriting)\n"
-           'else\n  source $ZSH/oh-my-zsh.sh\nfi', s, count=1)
-s = re.sub(r'(?m)^\[\[ ! -f ~/\.p10k\.zsh \]\] \|\| source ~/\.p10k\.zsh$',
-           'if [[ -z "$_AILOCAL_VSCODE" && -f ~/.p10k.zsh ]]; then source ~/.p10k.zsh; fi', s, count=1)
-open(p, "w").write(s)
-PY
-  cat >> "$rc" <<'EOF'
+# ── Shared step: ~/.config/ailocal + the two silent .zshrc source lines ───
+# Creates the XDG-style config home for ailocal client state, writes the
+# env file the claude-local/codex-local wrappers read, deploys the managed
+# configure.zsh/finalize.zsh, and ensures exactly two idempotent lines in
+# ~/.zshrc (configure sourced FIRST — before p10k instant prompt — finalize
+# sourced last). Runs for every target; it's cheap and target-agnostic.
+ensure_ailocal_shell_sourcing() {
+  step "Setting up ~/.config/ailocal"
 
-# ailocal: VS Code shell integration — source the integration script explicitly
-# so OSC 633 command-completion markers are reliable. Without this, agent terminal
-# commands finish but the client's spinner never stops.
-if [[ -n "$_AILOCAL_VSCODE" ]] && command -v code >/dev/null 2>&1; then
-  . "$(code --locate-shell-integration-path zsh)" 2>/dev/null
-fi
+  mkdir -p "$AILOCAL_CFG"
+  chmod 700 "$AILOCAL_CFG"
+
+  local env_path="$AILOCAL_CFG/env"
+  cat > "$env_path" <<EOF
+AILOCAL_BASE_URL=http://localhost:4000
+AILOCAL_API_KEY=${LITELLM_KEY}
 EOF
-  info "Shell integration fixed in ~/.zshrc (oh-my-zsh + p10k off in VS Code + explicit SI sourcing)"
+  chmod 600 "$env_path"
+  info "$env_path written (chmod 600)"
+
+  cp "$ROOT_DIR/config/clients/configure.zsh" "$AILOCAL_CFG/configure.zsh"
+  cp "$ROOT_DIR/config/clients/finalize.zsh" "$AILOCAL_CFG/finalize.zsh"
+  info "configure.zsh / finalize.zsh deployed to $AILOCAL_CFG"
+
+  local rc="${ZDOTDIR:-$HOME}/.zshrc"
+  if [ ! -f "$rc" ]; then
+    skip "no ~/.zshrc — skipping source-line injection (functions still available if you source them manually)"
+    return 0
+  fi
+
+  local configure_line finalize_line
+  configure_line='[[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/ailocal/configure.zsh" ]] && source "${XDG_CONFIG_HOME:-$HOME/.config}/ailocal/configure.zsh"  # ailocal-configure'
+  finalize_line='[[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/ailocal/finalize.zsh" ]] && source "${XDG_CONFIG_HOME:-$HOME/.config}/ailocal/finalize.zsh"    # ailocal-finalize'
+
+  if already_has "$rc" "# ailocal-configure"; then
+    skip "ailocal-configure line already in ~/.zshrc"
+  else
+    backup "$rc" || true
+    printf '%s\n' "$configure_line" | cat - "$rc" > "$rc.tmp" && mv "$rc.tmp" "$rc"
+    info "Inserted ailocal-configure as the first line of ~/.zshrc"
+  fi
+
+  if already_has "$rc" "# ailocal-finalize"; then
+    skip "ailocal-finalize line already in ~/.zshrc"
+  else
+    backup "$rc" || true
+    printf '\n%s\n' "$finalize_line" >> "$rc"
+    info "Appended ailocal-finalize to the end of ~/.zshrc"
+  fi
 }
 
 # ── Target selection ───────────────────────────────────────────────────────
@@ -124,6 +139,10 @@ if [ -z "$LITELLM_KEY" ]; then
   echo "  ✗ LITELLM_MASTER_KEY not set in .env — run ./scripts/install.sh first"
   exit 1
 fi
+
+# ── Shared: install the two silent .zshrc source lines ─────────────────────
+
+ensure_ailocal_shell_sourcing
 
 # ── VS Code / Copilot Chat ─────────────────────────────────────────────────
 
@@ -239,34 +258,32 @@ PYEOF
     info "Recommended connector settings ensured (added only if missing)"
   fi
 
-  # Fix the terminal-command hang (p10k instant prompt vs VS Code OSC 633 markers).
-  ensure_shell_integration
-
   # Deploy Copilot instruction files to ~/.copilot/instructions/
   # These tell Copilot how to handle terminal commands with local models (detach + log pattern)
   # and provide local stack context. Always overwrite — they are managed files, not user-edited.
   COPILOT_INSTR="$HOME/.copilot/instructions"
   mkdir -p "$COPILOT_INSTR"
-  cp "$ROOT_DIR/config/clients/copilot/ailocal.instructions.md" "$COPILOT_INSTR/ailocal.instructions.md"
+  # ailocal.instructions.md gains the shared build checklist at install time
+  # (single source: config/clients/claude/references/build-checklist.md).
+  # Claude-only blocks (subagent guidance) are stripped for non-Claude clients.
+  cat "$ROOT_DIR/config/clients/copilot/ailocal.instructions.md" \
+      <(sed '/<!-- claude-only -->/,/<!-- \/claude-only -->/d' \
+          "$ROOT_DIR/config/clients/claude/references/build-checklist.md") \
+      > "$COPILOT_INSTR/ailocal.instructions.md"
   cp "$ROOT_DIR/config/clients/copilot/session-primer.md" "$COPILOT_INSTR/session-primer.md"
   info "Copilot instruction files deployed to ~/.copilot/instructions/"
 
-  # Install the `ailocal-code` launcher — opens VS Code in a dedicated "ailocal"
-  # profile so the YOLO auto-approve settings stay isolated from your other work.
-  # The path is optional: `ailocal-code` opens the current dir; `ailocal-code ~/foo`
-  # opens that path.
-  RC="${ZDOTDIR:-$HOME}/.zshrc"
-  LAUNCHER_MARKER="# ailocal-code launcher"
-  if already_has "$RC" "$LAUNCHER_MARKER"; then
-    skip "ailocal-code launcher already in $(basename "$RC")"
-  else
-    {
-      echo ""
-      echo "$LAUNCHER_MARKER"
-      echo 'ailocal-code() { code --profile ailocal "${1:-.}"; }'
-    } >> "$RC"
-    info "Added ailocal-code launcher to $RC (reload: source $RC)"
-  fi
+  # ── Continue extension (local autocomplete + chat) ────────────────────────
+  # Continue gives VS Code local tab-autocomplete (FIM) that Copilot can't. Deploy
+  # a managed ~/.continue/config.json: chat/edit through the proxy, autocomplete
+  # DIRECT to Ollama (FIM through the proxy is unreliable — continuedev/continue#2907).
+  # The user's existing file is backed up first.
+  CONTINUE_CFG="$HOME/.continue/config.json"
+  mkdir -p "$HOME/.continue"
+  backup "$CONTINUE_CFG" || true
+  sed "s|__LITELLM_KEY__|${LITELLM_KEY}|g" \
+      "$ROOT_DIR/config/clients/continue/config.json" > "$CONTINUE_CFG"
+  info "Continue config deployed to ~/.continue/config.json (autocomplete: qwen2.5-coder:3b direct to Ollama)"
 
   # Put the key on the clipboard so it's a one-paste into the Manage Models dialog.
   if command -v pbcopy >/dev/null 2>&1; then
@@ -283,7 +300,8 @@ PYEOF
   echo "    3. Cmd+Shift+P → \"LiteLLM: Reload Models\""
   echo "  Models + capabilities (vision/tools/ctx) are auto-discovered from LiteLLM."
   echo
-  echo "  Launcher: run 'ailocal-code [path]' to open the isolated 'ailocal' profile."
+  echo "  Launcher: run 'ailocal-code [path]' to open the isolated 'ailocal' profile"
+  echo "  (defined by configure.zsh — reload your shell first: source ~/.zshrc)."
   echo "  First time only — create that profile from your current one so it inherits"
   echo "  these settings: Cmd+Shift+P → \"Profiles: Create Profile\" → Copy from Current."
 fi
@@ -291,25 +309,41 @@ fi
 # ── Codex CLI ─────────────────────────────────────────────────────────────
 
 if has_target "codex"; then
-  step "Installing Codex config (~/.codex/)"
-  mkdir -p "$HOME/.codex"
+  step "Installing Codex config (~/.config/ailocal/codex/)"
 
-  CODEX_CFG="$HOME/.codex/config.toml"
-  CODEX_CAT="$HOME/.codex/model_catalog.json"
+  CODEX_HOME_DIR="$AILOCAL_CFG/codex"
+  mkdir -p "$CODEX_HOME_DIR"
+
+  CODEX_CFG="$CODEX_HOME_DIR/config.toml"
+  CODEX_CAT="$CODEX_HOME_DIR/model_catalog.json"
 
   # config.toml — always overwrite from template (our managed file)
   # This ensures the latest fixes: openai_base_url fallback, sandbox_mode fix, wire_api, etc.
-  envsubst '${HOME}' < "$ROOT_DIR/config/clients/codex-config.toml" > "$CODEX_CFG"
-  info "~/.codex/config.toml written (from config/clients/codex-config.toml)"
+  CODEX_HOME="$CODEX_HOME_DIR" envsubst '${CODEX_HOME}' < "$ROOT_DIR/config/clients/codex/config.toml" > "$CODEX_CFG"
+  info "$CODEX_CFG written (from config/clients/codex/config.toml)"
 
   # model_catalog.json — always update (our managed file, no user customization)
   backup "$CODEX_CAT" || true
   cp "$ROOT_DIR/config/clients/model_catalog.json" "$CODEX_CAT"
-  info "~/.codex/model_catalog.json written"
+  info "$CODEX_CAT written"
 
-  # ── Validate the installation ───────────────────────────────────────────
+  # AGENTS.md — phase protocol + shared build checklist (single source in
+  # config/clients/claude/references/), concatenated at install time.
+  cat "$ROOT_DIR/config/clients/codex/AGENTS.md" \
+      <(sed '/<!-- claude-only -->/,/<!-- \/claude-only -->/d' \
+          "$ROOT_DIR/config/clients/claude/references/build-checklist.md") \
+      > "$CODEX_HOME_DIR/AGENTS.md"
+  info "$CODEX_HOME_DIR/AGENTS.md written (protocol + build checklist)"
+
+  # /local-build prompt + plan/review model profiles — managed, always overwrite.
+  mkdir -p "$CODEX_HOME_DIR/prompts"
+  cp "$ROOT_DIR/config/clients/codex/prompts/local-build.md" "$CODEX_HOME_DIR/prompts/"
+  cp "$ROOT_DIR/config/clients/codex/plan.config.toml" \
+     "$ROOT_DIR/config/clients/codex/review.config.toml" "$CODEX_HOME_DIR/"
+  info "prompts/local-build.md + plan/review profiles written"
+
   echo
-  echo "  Codex configuration:"
+  echo "  Codex configuration (CODEX_HOME=$CODEX_HOME_DIR):"
   echo "    Config file:      $CODEX_CFG"
   echo "    Model provider:   $(grep '^model_provider' "$CODEX_CFG" | sed 's/.*= *//')"
   echo "    Active model:     $(grep '^model = ' "$CODEX_CFG" | sed 's/.*= *//')"
@@ -317,27 +351,17 @@ if has_target "codex"; then
   echo "    Model catalog:    $CODEX_CAT"
   echo
 
-  # Try codex doctor or config show if available for validation
-  if has codex; then
-    echo "  Running codex self-check..."
-    if codex --strict-config codex --help >/dev/null 2>&1; then
-      info "codex binary is functional and accepts config"
-    elif codex --help >/dev/null 2>&1; then
-      info "codex binary is present (no strict-config flag — older version)"
-    fi
-    # Try 'codex exec' with a trivial prompt to verify env vars are loadable
-    if codex exec "echo ok" 2>/dev/null | grep -q "ok"; then
-      info "codex exec test passed (model responses are reachable)"
-    else
-      warn "codex exec test returned no output — check LITELLM_KEY and LiteLLM status"
-      echo "     Run manually: codex --model coder 'hello'"
-      echo "     Check logs:   ~/ailocal/logs/litellm/proxy*"
-    fi
-  else
-    warn "codex binary not found on PATH — cannot validate runtime"
-    echo "     After installing codex, run: ./scripts/install-clients.sh codex"
-    echo "     Then test:                   codex --model coder 'hello'"
+  if [ -f "$HOME/.codex/config.toml" ]; then
+    warn "~/.codex/config.toml still exists — plain 'codex' will keep using it (cloud, unaffected)."
+    echo "     Remove it manually if you no longer want it: rm ~/.codex/config.toml"
   fi
+
+  if has codex; then
+    info "codex binary found on PATH"
+  else
+    warn "codex binary not found on PATH — install it, then run: codex-local exec 'say ok'"
+  fi
+  echo "  Launch with: codex-local exec 'say ok'   (reload your shell first: source ~/.zshrc)"
 
   echo "  To force-update a config that was skipped, delete it and re-run:"
   echo "    rm $CODEX_CFG && ./scripts/install-clients.sh codex"
@@ -346,70 +370,62 @@ fi
 # ── Claude Code ───────────────────────────────────────────────────────────
 
 if has_target "claude"; then
-  step "Installing Claude Code config (~/.claude/)"
-  mkdir -p "$HOME/.claude"
+  step "Installing Claude Code config (~/.config/ailocal/claude/)"
 
-  CLAUDE_CFG="$HOME/.claude/settings.json"
-  CLAUDE_MD="$HOME/.claude/CLAUDE.md"
+  CLAUDE_HOME_DIR="$AILOCAL_CFG/claude"
+  mkdir -p "$CLAUDE_HOME_DIR"
 
-  # settings.json — skip if already pointing at our proxy
-  if already_has "$CLAUDE_CFG" "localhost:4000"; then
-    skip "~/.claude/settings.json already points at localhost:4000"
+  CLAUDE_CFG="$CLAUDE_HOME_DIR/settings.json"
+  CLAUDE_MD="$CLAUDE_HOME_DIR/CLAUDE.md"
+  CLAUDE_JSON="$CLAUDE_HOME_DIR/.claude.json"
+
+  # settings.json — always overwrite (managed file, no secrets — key comes
+  # from the claude-local wrapper's process-scoped env, never written to disk here).
+  backup "$CLAUDE_CFG" || true
+  cp "$ROOT_DIR/config/clients/claude/settings.json" "$CLAUDE_CFG"
+  info "$CLAUDE_CFG written"
+
+  # CLAUDE.md — managed file, always overwrite.
+  cp "$ROOT_DIR/config/clients/CLAUDE.md" "$CLAUDE_MD"
+  info "$CLAUDE_MD written"
+
+  # Local agent trio + /local-build command + checklist — managed, always overwrite.
+  for d in agents commands references; do
+    rm -rf "${CLAUDE_HOME_DIR:?}/$d"
+    cp -R "$ROOT_DIR/config/clients/claude/$d" "$CLAUDE_HOME_DIR/$d"
+  done
+  info "$CLAUDE_HOME_DIR/{agents,commands,references} written"
+
+  # .claude.json — seed onboarding-complete only if absent, so a real session
+  # under this CLAUDE_CONFIG_DIR never gets clobbered.
+  if [ -f "$CLAUDE_JSON" ]; then
+    skip "$CLAUDE_JSON already exists — left untouched"
   else
-    backup "$CLAUDE_CFG" || true
-    sed "s|<LITELLM_MASTER_KEY>|${LITELLM_KEY}|g" \
-      "$ROOT_DIR/config/clients/claude-code.json" \
-      > "$CLAUDE_CFG"
-    chmod 600 "$CLAUDE_CFG"
-    info "~/.claude/settings.json written (chmod 600)"
+    echo '{"hasCompletedOnboarding": true}' > "$CLAUDE_JSON"
+    info "$CLAUDE_JSON seeded (skips first-run onboarding)"
   fi
 
-  # CLAUDE.md — skip if exists (user may have customized it); back up and write on first install
-  if [ -f "$CLAUDE_MD" ]; then
-    backup "$CLAUDE_MD"
-    skip "~/.claude/CLAUDE.md already exists — backed up, not overwritten"
-    echo "     To update: cp $ROOT_DIR/config/clients/CLAUDE.md $CLAUDE_MD"
-  else
-    cp "$ROOT_DIR/config/clients/CLAUDE.md" "$CLAUDE_MD"
-    info "~/.claude/CLAUDE.md written (first install)"
-  fi
+  echo "  Launch with: claude-local   (reload your shell first: source ~/.zshrc)"
+  echo "  Plain 'claude' in this or any other shell is untouched — still the cloud session."
 fi
-
-# ── Shell profile auto-sourcing of env.sh ────────────────────────────────────
-# Add 'source ~/ailocal/config/clients/env.sh' to ~/.zshrc (or ~/.bashrc) so the
-# user doesn't need to remember to source it manually. Idempotent: skip if already present.
-ENV_SH="$ROOT_DIR/config/clients/env.sh"
-SOURCE_MARKER="# ailocal env.sh — generated by install-clients.sh"
-
-for PROFILE in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile"; do
-  [ -f "$PROFILE" ] && {
-    if already_has "$PROFILE" "$SOURCE_MARKER"; then
-      skip "env.sh sourcing already in $(basename "$PROFILE")"
-    else
-      {
-        echo ""
-        echo "$SOURCE_MARKER"
-        echo "source \"$ENV_SH\""
-      } >> "$PROFILE"
-      info "Added env.sh sourcing to $(basename "$PROFILE")"
-    fi
-    break  # First existing profile wins; stop searching
-  }
-done
 
 # ── Done ───────────────────────────────────────────────────────────────────
 
 echo ""
 echo "  ✓ Done. Restart affected tools to pick up changes:"
 has_target "vscode"  && echo "    VS Code:      Cmd+Shift+P → \"LiteLLM: Reload Models\" (after the one-time key entry above)"
-has_target "codex"   && echo "    Codex:        restart any open Codex sessions"
-has_target "claude"  && echo "    Claude Code:  restart any open claude sessions"
+has_target "codex"   && echo "    Codex:        use 'codex-local' — restart any open codex-local sessions"
+has_target "claude"  && echo "    Claude Code:  use 'claude-local' — restart any open claude-local sessions"
+echo ""
+echo "  New shells pick up claude-local/codex-local/ailocal-code automatically"
+echo "  (sourced from ~/.config/ailocal/configure.zsh). For this shell: source ~/.zshrc"
 echo ""
 echo "  To force-update a config that was skipped, delete it and re-run:"
-has_target "codex"   && echo "    rm ~/.codex/config.toml"
-has_target "claude"  && echo "    rm ~/.claude/settings.json"
+has_target "codex"   && echo "    rm $AILOCAL_CFG/codex/config.toml"
+has_target "claude"  && echo "    rm $AILOCAL_CFG/claude/settings.json"
 has_target "vscode"  && echo "    VS Code:  no file to delete — re-enter via \"Chat: Manage Language Models\" (key lives in SecretStorage)"
 echo "  Then: ./scripts/install-clients.sh [target]"
 echo ""
 echo "  Key rotation: after running install.sh, restart the proxy with:"
 echo "    ./scripts/start.sh   # LiteLLM reloads LITELLM_MASTER_KEY from .env"
+echo "  ...then re-run ./scripts/install-clients.sh to refresh ~/.config/ailocal/env"
