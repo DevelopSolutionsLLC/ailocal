@@ -73,5 +73,6 @@ cat file.txt
 
 ## Model roles (this machine)
 
-`router` (32k) → fast tasks | `coder` (256k) → code | `reasoner` (128k) → planning |
-`supervisor` (128k, vision) → review | `embed` → search only
+`coder-fast` (16k) → fast/small tasks | `coder-main` (64k) → primary coding |
+`coder-agent` (64k, vision) → planning/agentic | `deep-think` / `deep-think-more` (64k) → reasoning |
+`supervisor` (32k) → review | `embed` → search only

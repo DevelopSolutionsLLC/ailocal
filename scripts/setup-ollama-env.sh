@@ -14,22 +14,30 @@ set -euo pipefail
 
 # Desired values (edit here if you want different behavior).
 KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-24h}"    # keep models resident for 24 hours of idle
-MAX_LOADED="${OLLAMA_MAX_LOADED_MODELS:-1}" # 1 = evict cleanly on switch. The 64 GB backends are 21-38 GB each; two big ones don't fit, so 2 caused swap-thrash. Raise to 2 only if you run models that genuinely coexist (e.g. coder + a <=14 GB reasoner).
+MAX_LOADED="${OLLAMA_MAX_LOADED_MODELS:-3}" # 3 = e.g. coder-fast (~2 GB) + one big coder + one reasoner can co-reside. MAX_LOADED caps COUNT, not size — Ollama refuses a model that won't fit, so two big models still never thrash. Bounded by the retuned num_ctx (64K coders / 32K supervisor) so KV stays small enough for 3-way residency on 64 GB.
+NUM_PARALLEL="${OLLAMA_NUM_PARALLEL:-2}"  # concurrent requests per model (GLOBAL — Ollama has no per-model setting). 2 balances snappy multi-request against KV growth (KV = num_ctx x NUM_PARALLEL per loaded model).
 FLASH_ATTN="${OLLAMA_FLASH_ATTENTION:-1}" # faster attention + lower memory, no quality loss
 KV_CACHE="${OLLAMA_KV_CACHE_TYPE:-q8_0}" # quantize KV cache to 8-bit, halves memory at large contexts
+MODELS_DIR="${OLLAMA_MODELS:-/Users/Shared/ollama/models}" # store models outside any one user's home
 
 info() { echo "  ✓ $*"; }
 step() { echo; echo "▶ $*"; }
 
+mkdir -p "$MODELS_DIR"
+
 step "Setting Ollama env vars for the current login session (launchctl)"
 launchctl setenv OLLAMA_KEEP_ALIVE "$KEEP_ALIVE"
 launchctl setenv OLLAMA_MAX_LOADED_MODELS "$MAX_LOADED"
+launchctl setenv OLLAMA_NUM_PARALLEL "$NUM_PARALLEL"
 launchctl setenv OLLAMA_FLASH_ATTENTION "$FLASH_ATTN"
 launchctl setenv OLLAMA_KV_CACHE_TYPE "$KV_CACHE"
+launchctl setenv OLLAMA_MODELS "$MODELS_DIR"
 info "OLLAMA_KEEP_ALIVE=$KEEP_ALIVE"
 info "OLLAMA_MAX_LOADED_MODELS=$MAX_LOADED"
+info "OLLAMA_NUM_PARALLEL=$NUM_PARALLEL"
 info "OLLAMA_FLASH_ATTENTION=$FLASH_ATTN"
 info "OLLAMA_KV_CACHE_TYPE=$KV_CACHE"
+info "OLLAMA_MODELS=$MODELS_DIR"
 
 step "Installing a LaunchAgent so these persist across reboots/logins"
 PLIST="$HOME/Library/LaunchAgents/com.ailocal.ollama-env.plist"
@@ -45,7 +53,7 @@ cat > "$PLIST" <<PLISTEOF
   <array>
     <string>/bin/sh</string>
     <string>-c</string>
-    <string>launchctl setenv OLLAMA_KEEP_ALIVE $KEEP_ALIVE; launchctl setenv OLLAMA_MAX_LOADED_MODELS $MAX_LOADED</string>
+    <string>launchctl setenv OLLAMA_KEEP_ALIVE $KEEP_ALIVE; launchctl setenv OLLAMA_MAX_LOADED_MODELS $MAX_LOADED; launchctl setenv OLLAMA_NUM_PARALLEL $NUM_PARALLEL; launchctl setenv OLLAMA_FLASH_ATTENTION $FLASH_ATTN; launchctl setenv OLLAMA_KV_CACHE_TYPE $KV_CACHE; launchctl setenv OLLAMA_MODELS $MODELS_DIR</string>
   </array>
   <key>RunAtLoad</key>
   <true/>

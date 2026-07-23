@@ -1,35 +1,58 @@
 # profile: 16gb
 # Models sized for 16 GB unified memory — one model loaded at a time.
-# All MLX-native weights where explicit tags exist; auto-MLX via Ollama 0.19+ for the rest.
-# Approximate download: ~13 GB
+# NOTE: the 6-chat-role split below is UNVERIFIED on real 16 GB hardware; at this
+# memory tier the two coder tiers and two reasoning tiers largely overlap. Confirm
+# before switching to this profile. The 64gb profile is the validated one.
+# Approximate download: ~20 GB
 # Run ./scripts/sync-models.sh after any manual change.
 
-disk_gb: 13
+disk_gb: 20
 
-router:
-  backend: qwen3.5:2b-mlx
-  description: Fast classification, trivial tasks, autocomplete
+coder-main:
+  backend: qwen2.5-coder:7b
+  description: Primary repository coding — compact coder that fits in 16 GB
   context_window: 32768
   num_ctx: 32768
+  persona: true
 
-coder:
+coder-agent:
   backend: qwen3.5:4b-mlx
-  description: Implementation, generation, coding tasks — MLX-native
+  description: Multi-step planning and agentic orchestration — MLX-native
+  context_window: 32768
+  num_ctx: 32768
+  persona: true
+
+coder-fast:
+  backend: qwen2.5-coder:1.5b
+  description: IDE autocomplete (FIM) and fast chat — tiny, low-latency
   context_window: 32768
   num_ctx: 32768
 
-reasoner:
+deep-think:
   backend: deepseek-r1:8b
-  description: Planning, decomposition, deep reasoning — auto-MLX via Ollama 0.19+
+  description: Chain-of-thought reasoning — auto-MLX via Ollama 0.19+
   context_window: 32768
   num_ctx: 32768
+  reasoning: true
+  merge: true
+  persona: true
+
+deep-think-more:
+  backend: deepseek-r1:8b
+  description: Deeper reasoning tier (same backend as deep-think at this memory tier)
+  context_window: 32768
+  num_ctx: 32768
+  reasoning: true
+  merge: true
+  persona: true
 
 supervisor:
   backend: gemma4:e4b-mlx
-  description: Review, critique, approval gate — MLX-native efficient 4B
+  description: Review, critique, approval gate — MLX-native efficient 4B, multimodal
   context_window: 32768
   num_ctx: 32768
-  vision: true   # Gemma multimodal (SigLIP vision encoder)
+  vision: true
+  persona: true
 
 embed:
   backend: nomic-embed-text

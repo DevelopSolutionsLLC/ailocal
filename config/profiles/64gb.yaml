@@ -1,46 +1,99 @@
 # profile: 64gb
-# Models sized for 64 GB unified memory. These backends are large (coder ~21 GB,
-# reasoner/deepseek ~38 GB, supervisor/gemma ~33 GB) — only ONE big model fits at
-# a time alongside the OS + Docker, so run OLLAMA_MAX_LOADED_MODELS=1 (set by
-# scripts/setup-ollama-env.sh) to evict cleanly instead of swap-thrashing.
+# Models sized for 64 GB unified memory. Backends are large — only ONE big model
+# fits at a time alongside the OS + Docker. OLLAMA_MAX_LOADED_MODELS=2 (set by
+# scripts/setup-startup.sh / setup-ollama-env.sh) lets a big model coexist with a
+# small one (e.g. coder-main + coder-fast, or deep-think alongside a coder);
+# MAX_LOADED caps model COUNT, not size, and Ollama refuses to load a second model
+# that wouldn't fit — so two big ones never co-reside and swap-thrash.
+# OLLAMA_NUM_PARALLEL=3 allows concurrent requests per model.
 # Context is sized per role's job. With flash-attention + q8 KV cache, Ollama grows
-# the KV cache with the ACTUAL prompt, not the num_ctx ceiling — so a large ceiling
-# is nearly free at idle (coder at 256K loads in ~5s / 21 GB, same as 64K) and only
-# costs memory/time when you genuinely fill it. Keeping MAX_LOADED_MODELS=1 (one big
-# model uncontended) is what fixed the old slowness, NOT shrinking context.
-# Approximate download: ~85 GB
+# the KV cache with the ACTUAL prompt, not the num_ctx ceiling — a large ceiling is
+# nearly free at idle and only costs memory/time when genuinely filled.
+# Approximate download: ~90 GB
 # Run ./scripts/sync-models.sh after any manual change.
+#
+# Per-role flags consumed by sync-models.py:
+#   reasoning: model thinks / emits a reasoning stream (deepseek-r1 family).
+#   merge:     merge the reasoning stream into content (for OpenAI-format clients
+#              like VS Code Copilot/Continue that render a silent spinner otherwise).
+#   persona:   informational only — the persona_injector LiteLLM hook injects
+#              config/personas/<role>.md at request time (roles run on base tags).
+#   vision:    advertise image/PDF input.
 
-disk_gb: 85
+disk_gb: 90
 
-# router: fast/small tier. 64K so it also works in VS Code agent mode (32K was too
-# small — Copilot's agent prompt overflowed it); autocomplete alone needs only ~16K.
-router:
-  backend: qwen3.5:9b-mlx
-  description: Fast classification, trivial tasks, autocomplete
+# coder-main — primary heavy repo coding, logic, syntax. The driver.
+coder-main:
+  backend: qwen3-coder:30b
+  description: Primary repository coding, logic, syntax — MoE ~3B active / 30B total, 64K ctx default
   context_window: 65536
+  num_ctx: 65536
+  temperature: 0.7
+  top_p: 0.8
+  top_k: 20
+  repetition_penalty: 1.05
+  persona: true
 
-# coder: the driver — maxed to the model's 256K to hold large repos/files.
-coder:
+# coder-agent — orchestrate multi-step planning / autonomous agent loops (Cline).
+coder-agent:
   backend: qwen3.6:35b-mlx
-  description: Implementation, generation, coding tasks — MoE ~3B active / 35B total, newest Apr 2026
-  context_window: 262144
-  num_ctx: 262144
-  vision: true   # Qwen3.6 multimodal inference
+  description: Multi-step planning and agentic orchestration — MoE, newest Apr 2026, multimodal
+  context_window: 65536
+  num_ctx: 65536
+  temperature: 0.7
+  top_p: 0.8
+  top_k: 20
+  vision: true
+  persona: true
 
-reasoner:
+# coder-fast — IDE tab-autocomplete (FIM) + snappy chat. Lean, NO persona.
+# qwen2.5-coder ships native FIM tokens (<|fim_prefix|> …); <=3B keeps latency <500ms.
+coder-fast:
+  backend: qwen2.5-coder:3b
+  description: IDE autocomplete (FIM) and fast chat — small, low-latency
+  context_window: 16384
+  num_ctx: 16384
+  temperature: 0.7
+  top_p: 0.8
+  top_k: 20
+  repetition_penalty: 1.05
+
+# deep-think — lighter reasoning tier (VS Code). Merged reasoning stream.
+deep-think:
+  backend: deepseek-r1:14b-qwen-distill-q8_0
+  description: Lighter chain-of-thought reasoning — 8-bit distill, fits alongside a coder
+  context_window: 65536
+  num_ctx: 65536
+  temperature: 0.6
+  top_p: 0.95
+  reasoning: true
+  merge: true
+  persona: false
+
+# deep-think-more — deep reasoning / decomposition tier. Merged reasoning stream.
+deep-think-more:
   backend: deepseek-r1:32b
-  description: Planning, decomposition, deep reasoning — thinking mode, fits alongside supervisor (19 GB)
-  context_window: 131072
-  num_ctx: 131072
+  description: Deep reasoning and decomposition — full 32B CoT distill
+  context_window: 65536
+  num_ctx: 65536
+  temperature: 0.6
+  top_p: 0.95
+  reasoning: true
+  merge: true
+  persona: false
 
+# supervisor — review, critique, approval gate.
 supervisor:
   backend: gemma4:31b-mxfp8
-  description: Review, critique, approval gate
-  context_window: 131072
-  num_ctx: 131072
-  vision: true   # Gemma multimodal (SigLIP vision encoder)
+  description: Review, critique, approval gate — 8-bit MXFP8 (text-only in this build)
+  context_window: 32768
+  num_ctx: 32768
+  temperature: 1.0
+  top_p: 0.95
+  top_k: 64
+  persona: true
 
+# embed — semantic retrieval and memory only; NOT a chat model.
 embed:
   backend: nomic-embed-text
   description: Semantic retrieval and memory — not for chat

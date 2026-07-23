@@ -1,0 +1,5 @@
+# ailocal Codex profile: diff review on the supervisor model (gemma4 critique).
+# Deployed to $CODEX_HOME/review.config.toml — select with: codex-local --profile review
+# Overlays the base config.toml. Review only — verdict + findings, no edits.
+
+model = "supervisor"

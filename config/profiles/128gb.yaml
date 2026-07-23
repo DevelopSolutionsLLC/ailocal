@@ -1,38 +1,61 @@
 # profile: 128gb
 # Models sized for 128 GB unified memory.
-# supervisor bf16 (64 GB) + coder (21 GB) = 85 GB — both stay loaded.
-# reasoner (42 GB) loads alongside supervisor (64+42=106 GB) — fits with OLLAMA_MAX_LOADED_MODELS=2.
-# All context windows at 128K; coder at 256K (enough RAM for large KV caches).
-# Approximate download: ~135 GB
+# NOTE: the 6-chat-role split below is sized by analogy to the old 4-role 128gb
+# profile — it is UNVERIFIED on real 128 GB hardware. Confirm before switching to
+# this profile. The 64gb profile is the validated one.
+# supervisor bf16 (64 GB) + coder-main (18 GB) both stay loaded; deep-think-more
+# 70B (42 GB) loads alongside supervisor with OLLAMA_MAX_LOADED_MODELS=2.
+# Approximate download: ~150 GB
 # Run ./scripts/sync-models.sh after any manual change.
 
-disk_gb: 135
+disk_gb: 150
 
-router:
-  backend: qwen3.5:9b-mlx
-  description: Fast classification, trivial tasks, autocomplete
+coder-main:
+  backend: qwen3-coder:30b
+  description: Primary repository coding — MoE ~3B active / 30B total
+  context_window: 262144
+  num_ctx: 262144
+  persona: true
+
+coder-agent:
+  backend: qwen3.6:35b-mlx
+  description: Multi-step planning and agentic orchestration — MoE, multimodal
+  context_window: 262144
+  num_ctx: 262144
+  vision: true
+  persona: true
+
+coder-fast:
+  backend: qwen2.5-coder:3b
+  description: IDE autocomplete (FIM) and fast chat — small, low-latency
   context_window: 32768
   num_ctx: 32768
 
-coder:
-  backend: qwen3.6:35b-mlx
-  description: Implementation, generation, coding tasks — MoE ~3B active / 35B total, newest Apr 2026
-  context_window: 262144
-  num_ctx: 262144
-  vision: true   # Qwen3.6 multimodal inference
-
-reasoner:
-  backend: deepseek-r1:70b
-  description: Planning, decomposition, deep reasoning — full-size CoT model, 42 GB, fits alongside supervisor
+deep-think:
+  backend: deepseek-r1:32b
+  description: Chain-of-thought reasoning — full 32B distill
   context_window: 131072
   num_ctx: 131072
+  reasoning: true
+  merge: true
+  persona: true
+
+deep-think-more:
+  backend: deepseek-r1:70b
+  description: Deepest reasoning — full-size 70B CoT model, 42 GB
+  context_window: 131072
+  num_ctx: 131072
+  reasoning: true
+  merge: true
+  persona: true
 
 supervisor:
   backend: gemma4:31b-mlx-bf16
-  description: Review, critique, approval gate — full bf16 precision, highest quality
+  description: Review, critique, approval gate — full bf16 precision, multimodal
   context_window: 131072
   num_ctx: 131072
-  vision: true   # Gemma multimodal (SigLIP vision encoder)
+  vision: true
+  persona: true
 
 embed:
   backend: nomic-embed-text

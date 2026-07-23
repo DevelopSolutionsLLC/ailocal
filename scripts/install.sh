@@ -106,14 +106,27 @@ fi
 # scripts/setup-ollama-env.sh does that. Checking the shell env here would be
 # misleading, so we check launchctl (what the app actually sees).
 step "Configuring Ollama runtime env (launchctl, not ~/.zshrc)"
-CUR_KA=$(launchctl getenv OLLAMA_KEEP_ALIVE 2>/dev/null || true)
-if [ -n "$CUR_KA" ]; then
-  info "OLLAMA_KEEP_ALIVE=$CUR_KA  OLLAMA_MAX_LOADED_MODELS=$(launchctl getenv OLLAMA_MAX_LOADED_MODELS 2>/dev/null || echo '?')"
+echo "  Two ways to run Ollama:"
+echo "    [1] Production autostart — a launchd LaunchAgent runs 'ollama serve' at"
+echo "        login (auto-restart, logs, env baked in incl. OLLAMA_MODELS on"
+echo "        /Users/Shared) and preloads the coder-main model. Disables Ollama.app"
+echo "        'launch at login' to avoid a port 11434 conflict. (scripts/setup-startup.sh)"
+echo "    [2] Env-only — keep using Ollama.app; just set runtime env vars via"
+echo "        launchctl so models don't unload. (scripts/setup-ollama-env.sh)"
+read -r -p "  Set up production autostart? [y/N]: " AUTOSTART
+if [[ "${AUTOSTART:-}" =~ ^[Yy]$ ]]; then
+  bash "$ROOT_DIR/scripts/setup-startup.sh" --model coder \
+    || warn "Could not set up autostart — run ./scripts/setup-startup.sh manually."
 else
-  warn "Ollama env not set where the app can see it (launchctl) — models would unload after 5 min."
-  bash "$ROOT_DIR/scripts/setup-ollama-env.sh" \
-    || warn "Could not configure Ollama env — run ./scripts/setup-ollama-env.sh manually."
-  echo "  ▶ Restart Ollama (menubar → Quit, then reopen) for it to take effect."
+  CUR_KA=$(launchctl getenv OLLAMA_KEEP_ALIVE 2>/dev/null || true)
+  if [ -n "$CUR_KA" ]; then
+    info "OLLAMA_KEEP_ALIVE=$CUR_KA  OLLAMA_MAX_LOADED_MODELS=$(launchctl getenv OLLAMA_MAX_LOADED_MODELS 2>/dev/null || echo '?')"
+  else
+    warn "Ollama env not set where the app can see it (launchctl) — models would unload after 5 min."
+    bash "$ROOT_DIR/scripts/setup-ollama-env.sh" \
+      || warn "Could not configure Ollama env — run ./scripts/setup-ollama-env.sh manually."
+    echo "  ▶ Restart Ollama (menubar → Quit, then reopen) for it to take effect."
+  fi
 fi
 
 # ── Hardware profile selection ─────────────────────────────────────────────

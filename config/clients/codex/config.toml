@@ -1,0 +1,87 @@
+# ── ailocal provider — injected by scripts/install-clients.sh ───────────────
+#
+# Route ALL Codex requests through the local LiteLLM proxy.
+# Deployed to ~/.config/ailocal/codex/config.toml (CODEX_HOME for the
+# codex-local() wrapper — see config/clients/configure.zsh). Plain `codex`
+# never sees this file and stays on the cloud.
+# Requires: OPENAI_API_KEY set by the wrapper (env_key below).
+#
+# Switch model per-session: codex --model <name>
+# Valid models: coder-main | coder-agent | coder-fast | deep-think | deep-think-more | supervisor
+# Phase profiles (deployed alongside): codex-local --profile plan | review
+
+# ── Core Model Selection ────────────────────────────────────────────────────
+
+# Primary model used by Codex
+model = "coder-main"
+
+# Provider id selected from [model_providers] (default: "openai")
+model_provider = "ailocal"
+
+# Optional manual model metadata — loaded from model_catalog.json when present.
+# ${CODEX_HOME} is substituted at install time by `envsubst '${CODEX_HOME}'`
+# in scripts/install-clients.sh, so this stays a template placeholder rather
+# than a hardcoded ~/.codex path (Codex itself does not expand env vars here).
+model_catalog_json = "${CODEX_HOME}/model_catalog.json"
+
+# ── Approval & Sandbox ──────────────────────────────────────────────────────
+
+# Never prompt for approval — equivalent of --full-auto on the command line
+approval_policy = "never"
+
+# Disable the macOS sandbox. Required for local stack (Docker socket, Ollama).
+sandbox_mode = "danger-full-access"
+
+# ── Reasoning & Verbosity ───────────────────────────────────────────────────
+
+model_reasoning_effort = "medium"
+model_supports_reasoning_summaries = false
+model_reasoning_summary = "none"
+
+# ── Fallback for built-in OpenAI provider ───────────────────────────────────
+# In addition to the custom [model_providers.ailocal] block above, set
+# openai_base_url so any code path that hard-codes model_provider = "openai"
+# still routes through LiteLLM instead of silently falling back to api.openai.com.
+openai_base_url = "http://localhost:4000/v1"
+
+# ── Model Providers ─────────────────────────────────────────────────────────
+
+[model_providers.ailocal]
+name       = "ailocal (LiteLLM)"
+base_url   = "http://localhost:4000/v1"
+env_key    = "OPENAI_API_KEY"
+wire_api   = "responses"
+
+# Local first-token latency is HIGH: a big repo prompt (~14K tokens) takes a 35B
+# model ~15-20s of prompt-processing before the first SSE byte. Codex otherwise
+# gives up (~5s/attempt) and shows "Reconnecting... N/5 → high demand" — which is
+# NOT high demand, just a slow cold prompt. The proxy itself streams correctly
+# (verified: response.completed + [DONE] even with tool calls). These raise the
+# idle timeout and retry budget so a slow first token isn't mistaken for a dead
+# stream. (Warm prefix-cache hits after the first turn are much faster.)
+stream_idle_timeout_ms = 600000   # 10 min — cover cold prompt-processing on large contexts
+stream_max_retries     = 10
+request_max_retries    = 4
+
+# ── Skills budget ───────────────────────────────────────────────────────────
+# Codex reserves a hardcoded ~2% of the context window for skill metadata. Its
+# built-in .system skills (image generation, skill/plugin authoring, doc lookup)
+# are irrelevant to a local coding proxy but eat that budget — producing the
+# "Skill descriptions were shortened to fit the 2% skills context budget" notice
+# and inflating every prompt. Disable them so the budget (and the prompt) go to
+# real work. ${CODEX_HOME} is substituted at install time by install-clients.sh.
+[[skills.config]]
+path = "${CODEX_HOME}/skills/.system/imagegen/SKILL.md"
+enabled = false
+[[skills.config]]
+path = "${CODEX_HOME}/skills/.system/skill-creator/SKILL.md"
+enabled = false
+[[skills.config]]
+path = "${CODEX_HOME}/skills/.system/plugin-creator/SKILL.md"
+enabled = false
+[[skills.config]]
+path = "${CODEX_HOME}/skills/.system/skill-installer/SKILL.md"
+enabled = false
+[[skills.config]]
+path = "${CODEX_HOME}/skills/.system/openai-docs/SKILL.md"
+enabled = false

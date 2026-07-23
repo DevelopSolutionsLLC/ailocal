@@ -1,0 +1,26 @@
+{
+  "//": [
+    "Claude Code settings — deployed to ~/.config/ailocal/claude/settings.json",
+    "(CLAUDE_CONFIG_DIR for the local variant; ~/.claude — this cloud session — is never touched).",
+    "",
+    "No secrets here. Base URL + API key are injected per-process by the",
+    "claude-local() wrapper (config/clients/configure.zsh), which reads them",
+    "from ~/.config/ailocal/env and sets ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY",
+    "only for that one 'claude' invocation. Plain 'claude' in the same shell",
+    "is unaffected and stays on the cloud.",
+    "",
+    "All requests route through LiteLLM using role-based model names.",
+    "Valid roles: coder-main | coder-agent | coder-fast | deep-think | deep-think-more | supervisor | embed",
+    "",
+    "The 'model' field below is the LAUNCH default (Claude Code sends 'coder-main').",
+    "At runtime, /model lists every LiteLLM role — coder-main, coder-agent,",
+    "coder-fast, deep-think, deep-think-more, supervisor — because the claude-local",
+    "wrapper sets CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1 (Claude Code then",
+    "GETs /v1/models from the proxy). The wrapper also remaps the built-in Opus/",
+    "Sonnet/Haiku slots to deep-think-more/coder-main/coder-fast so background",
+    "calls stay local. See config/clients/configure.zsh.",
+    "",
+    "Launch with: claude-local"
+  ],
+  "model": "coder-main"
+}
