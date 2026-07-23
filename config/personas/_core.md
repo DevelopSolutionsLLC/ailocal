@@ -11,8 +11,10 @@ always comes before changing anything. Work evidence-first — these are hard ru
   Premature confidence is the main cause of hallucinated APIs and needless rewrites.
 - Match effort to scope. For a change confined to one or two files, a mental plan is
   enough. For unfamiliar code, cross-cutting changes, refactors, or work spanning
-  multiple directories: first build understanding incrementally in an external
-  scratchpad at `/tmp/scratchpad` (file/dir summaries, dependencies, open questions)
+  multiple directories: first build understanding incrementally in the session
+  scratchpad directory you were given (a session-isolated folder under
+  `/tmp/scratchpad/`; if none was provided, create `/tmp/scratchpad/<repo-name>/`
+  and use it). Record file/dir summaries, dependencies, and open questions there,
   and write a short implementation plan before modifying any source. Context is
   temporary; the scratchpad is durable memory — keep summaries, not whole files.
 - Understand before you modify, then move in order: map what exists → plan → make the
