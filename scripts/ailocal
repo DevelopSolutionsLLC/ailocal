@@ -3,6 +3,7 @@
 #
 #   ailocal status     live model status by capability, verbose (scripts/status.sh)
 #   ailocal models     compact capability -> backend -> status table
+#   ailocal validate   end-to-end sanity: capabilities, backends, client mappings, aliases, sync
 #   ailocal doctor     health check (scripts/doctor.sh)
 #   ailocal sync       regenerate derived configs (scripts/sync-models.sh)
 #   ailocal start|stop|update|smoke    lifecycle
@@ -15,8 +16,9 @@ SCRIPTS="$ROOT_DIR/scripts"
 cmd="${1:-status}"; shift || true
 
 case "$cmd" in
-  status)  exec bash "$SCRIPTS/status.sh" "$@" ;;
-  models)  exec bash "$SCRIPTS/status.sh" --table ;;
+  status)   exec bash "$SCRIPTS/status.sh" "$@" ;;
+  models)   exec bash "$SCRIPTS/status.sh" --table ;;
+  validate) exec bash "$SCRIPTS/validate.sh" "$@" ;;
   doctor)  exec bash "$SCRIPTS/doctor.sh" "$@" ;;
   sync)    exec bash "$SCRIPTS/sync-models.sh" "$@" ;;
   start)   exec bash "$SCRIPTS/start.sh" "$@" ;;
