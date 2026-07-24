@@ -41,7 +41,7 @@ Most of this repo's complexity is in these; change them carefully.
    (`config/profiles/{16,32,64,128}gb.yaml`); `--profile <tier>` overrides.
    `sync-models.py --resolve <capability>` prints the active backend (used by the shell scripts).
 2. **Persona injection.** `config/litellm/persona_injector.py` is a LiteLLM pre-call
-   hook merging `config/personas/_core.md` + `<capability>.md` into whatever system
+   hook merging `config/instructions/_core.md` + `<capability>.md` into whatever system
    prompt the client sent — server-side, so every alias inherits it. It handles **both**
    request shapes: OpenAI (`call_type` completion/acompletion — system lives in
    `messages[]`) and Anthropic `/v1/messages` (`call_type anthropic_messages` — system is
@@ -52,7 +52,7 @@ Most of this repo's complexity is in these; change them carefully.
    assumed (persona marker + the propagation probe). Re-verify only after a LiteLLM
    downgrade. Coupling: injection depends on model names resolving back to a
    capability key. The hook resolves the requested model through `model_group_alias` and
-   uses that capability key to load `config/personas/<capability>.md`. Any future change
+   uses that capability key to load `config/instructions/<capability>.md`. Any future change
    to canonical model names, aliases, or routing layers must preserve this mapping or
    personas silently stop applying.
    Completion and embeddings intentionally have no persona.
@@ -95,7 +95,8 @@ ailocal and Cadence are independent *installations*, not independent *content*. 
 - `config/profiles/<tier>.yaml` — role → backend + num_ctx + sampling (the source of truth).
 - `config/litellm/` — `config.yaml` (generated block + hand-kept aliases/fallbacks)
   and `persona_injector.py`.
-- `config/personas/` — `_core.md` + per-role enhancers (`_`-prefixed = not a role).
+- `config/instructions/` — `_core.md` + per-capability enhancers (`_`-prefixed = not a capability).
+  Per-capability instruction/behavior profiles; injected server-side by `persona_injector.py`.
 - `config/clients/` — `configure.zsh`/`finalize.zsh`, `env.sh`, `model_catalog.json`,
   `scratchpad-hook.sh` (shared SessionStart hook → per-session
   `/tmp/scratchpad/<tool>-<session_id>/`), and per-client dirs `claude/` (settings,
