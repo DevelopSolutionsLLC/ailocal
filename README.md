@@ -30,10 +30,10 @@ ollama serve                  # or open Ollama.app
 `install.sh` offers **production autostart**: answer `y` and it runs
 `scripts/setup-startup.sh`, which installs launchd LaunchAgents so at every login
 `ollama serve` starts (env baked in — `OLLAMA_MODELS=/Users/Shared/ollama/models`,
-`MAX_LOADED=4`, `NUM_PARALLEL=2`, `KEEP_ALIVE=-1`, flash-attn, q8 KV cache) and the
-coder model preloads once Ollama is healthy. Disable Ollama.app's "launch at login"
+`MAX_LOADED=5`, `NUM_PARALLEL=2`, `KEEP_ALIVE=-1`, flash-attn, q8 KV cache) and the
+architecture model preloads once Ollama is healthy. Disable Ollama.app's "launch at login"
 (menubar → Settings) so two servers don't fight over port 11434. Re-run any time:
-`./scripts/setup-startup.sh --model coder` (add `--with-litellm` to also run LiteLLM
+`./scripts/setup-startup.sh --model architecture` (add `--with-litellm` to also run LiteLLM
 natively; `--uninstall` to remove). Answer `n` to keep using Ollama.app and only set
 runtime env vars (`scripts/setup-ollama-env.sh`).
 
@@ -57,37 +57,35 @@ You can keep Docker Desktop tiny: **Settings → Resources**, CPUs `2`, Memory `
 
 LiteLLM exposes **capability names only** — no backend model names are visible to clients. Agents
 request a capability; the router owns the backend, context, sampling, and lifecycle. The table shows
-the **64 GB** profile (see [Changing models](#changing-models)). Full detail:
-`docs/MODEL_ARCHITECTURE.md`, `docs/MODEL_ROUTING.md`, `docs/MODEL_LIFECYCLE.md`.
+the **64 GB** profile (see [Changing models](#changing-models)). Source of truth: two files —
+`config/profiles/<tier>.yaml` (what each capability is) and `config/clients.yaml` (which capability each client uses).
 
 | Capability | Backend model (64 GB) | ctx / keep_alive | Purpose |
 |---|---|---|---|
-| `architect` | qwen3-coder:30b | 32K / 2h | Architecture, complex refactor, multi-step debug, design |
-| `coder` | qwen2.5-coder:14b-instruct-q4_K_M | 16K / 60m | Implementation, features, tests, everyday refactoring |
-| `reviewer` | deepseek-coder-v2:16b-lite-instruct-q4_K_M | 16K / 20m | Code review, bug & security detection, alternatives |
-| `autocomplete` | qwen2.5-coder:3b-instruct-q4_K_M | 4K / warm | Inline completion (FIM), quick fixes, small transforms |
-| `embed` | nomic-embed-text | 8K / pinned | Semantic retrieval and memory — infrastructure, not chat |
+| `architecture` | qwen3-coder:30b | 64K / -1 (resident) | Design, deep reasoning, large interactive/agent prompts — the shared big-context hub for every client |
+| `implementation` | qwen2.5-coder:14b-instruct-q4_K_M | 16K / 20m | Implementation, features, tests, everyday refactoring |
+| `review` | deepseek-coder-v2:16b-lite-instruct-q4_K_M | 16K / 20m | Code review, bug & security detection, alternatives |
+| `completion` | qwen2.5-coder:3b-instruct-q4_K_M | 4K / -1 (resident) | Inline completion (FIM), quick fixes, small transforms |
+| `embeddings` | nomic-embed-text | 8K / -1 (resident) | Semantic retrieval and memory — infrastructure, not chat |
 
-Also accepted (aliased onto the above): the `local/*` namespace (internal agent API) and the
-`claude-*`/`gpt-*` compatibility IDs (external adapters — see [Compatibility Model IDs](docs/MODEL_ROUTING.md)).
-The old ailocal role names (`coder-main`/`deep-think*`/`supervisor`/…) have been removed.
+Also accepted (aliased onto the above): the `claude-*`/`gpt-*` compatibility IDs Claude Code and the
+OpenAI SDK hard-code (external adapters). The old ailocal role names
+(`coder-main`/`deep-think*`/`supervisor`/…) and the `local/*` namespace have been removed.
 **Never use backend model names directly in client configs or scripts.** Use capability names only.
 
-**Personas & sampling.** `architect`, `coder`, and `reviewer` get a grounded engineering persona
-injected server-side by the `persona_injector` hook (from `config/instructions/<capability>.md`) — merged
-into the client's system prompt (the `messages[]` system entry for OpenAI clients, or the top-level
-`system` field for Claude Code's Anthropic `/v1/messages` route), so it survives even when the client
-sends its own. `autocomplete` and
-`embed` are persona-free by design (lean/infra). Sampling lives in `config/profiles/<tier>.yaml` (architect/
-coder temp 0.2, reviewer 0.1, autocomplete 0).
+**Personas & sampling.** `architecture`, `implementation`, and `review` get a grounded engineering
+persona injected server-side by the `persona_injector` hook (from `config/instructions/<capability>.md`)
+— merged into the client's system prompt (the `messages[]` system entry for OpenAI clients, or the
+top-level `system` field for Claude Code's Anthropic `/v1/messages` route), so it survives even when the
+client sends its own. `completion` and `embeddings` are persona-free by design (lean/infra). Sampling
+lives in `config/profiles/<tier>.yaml` (architecture/implementation temp 0.2, review 0.1, completion 0).
 
 **No reasoning tier right now.** None of the installed models emit `<think>` — the deepseek-r1
 reasoners were removed, and `qwen3-coder` is Qwen's non-thinking variant. Every capability carries
 `additional_drop_params: ["thinking", "reasoning_effort"]` + `think: false` so a client sending
 `thinking` doesn't 400 and a backend's default reasoning can't hang VS Code Copilot. The reasoning
 path (merged `<think>` via `merge_reasoning_content_in_choices`) still exists in `sync-models.py`; a
-commented `reasoning` slot in `config/profiles/<tier>.yaml` restores the tier in one repoint (see
-`docs/MODEL_LIFECYCLE.md`).
+commented `reasoning` slot in `config/profiles/<tier>.yaml` restores the tier in one repoint.
 
 ### Changing models
 
