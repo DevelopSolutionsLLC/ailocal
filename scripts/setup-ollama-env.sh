@@ -13,8 +13,13 @@
 set -euo pipefail
 
 # Desired values (edit here if you want different behavior).
-KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-24h}"    # keep models resident for 24 hours of idle
-MAX_LOADED="${OLLAMA_MAX_LOADED_MODELS:-3}" # 3 = e.g. coder-fast (~2 GB) + one big coder + one reasoner can co-reside. MAX_LOADED caps COUNT, not size — Ollama refuses a model that won't fit, so two big models still never thrash. Bounded by the retuned num_ctx (64K coders / 32K supervisor) so KV stays small enough for 3-way residency on 64 GB.
+# KEEP_ALIVE is the GLOBAL DEFAULT. It governs only direct-to-Ollama callers that
+# send no per-request keep_alive — in practice `embed` (grepai on :11434, bypassing
+# LiteLLM), which we WANT pinned as infrastructure. Generation models go through
+# LiteLLM, which sends a per-role keep_alive (architect 2h / coder 60m / reviewer
+# 20m / autocomplete -1) that overrides this. See MODEL_LIFECYCLE.md.
+KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-24h}"    # global default; effectively pins embed (24h idle)
+MAX_LOADED="${OLLAMA_MAX_LOADED_MODELS:-4}" # 4 = embed + autocomplete stay warm while up to two working models (coder/reviewer/architect) rotate. MAX_LOADED caps COUNT, not size — Ollama refuses a model that won't fit, so two big models still never thrash. The reduced per-role num_ctx (32K/16K/16K/4K) keeps KV small enough for 4-way residency on 64 GB.
 NUM_PARALLEL="${OLLAMA_NUM_PARALLEL:-2}"  # concurrent requests per model (GLOBAL — Ollama has no per-model setting). 2 balances snappy multi-request against KV growth (KV = num_ctx x NUM_PARALLEL per loaded model).
 FLASH_ATTN="${OLLAMA_FLASH_ATTENTION:-1}" # faster attention + lower memory, no quality loss
 KV_CACHE="${OLLAMA_KV_CACHE_TYPE:-q8_0}" # quantize KV cache to 8-bit, halves memory at large contexts

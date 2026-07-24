@@ -71,7 +71,7 @@ else
 fi
 
 # Derive required models from the model manifest — single source of truth.
-required_models=($(grep '^\s*backend:' "$ROOT_DIR/config/models.yaml" | sed 's/.*backend:[[:space:]]*//'))
+required_models=($(grep -E '^\s*active:' "$ROOT_DIR/config/models.yaml" | sed 's/.*active:[[:space:]]*//'))
 if has ollama && ollama list >/dev/null 2>&1; then
   installed_models=$(ollama list 2>/dev/null | awk 'NR>1 {print $1}')
   missing_models=()

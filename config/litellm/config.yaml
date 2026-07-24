@@ -6,162 +6,42 @@
 #   OLLAMA_URL          — http://host.docker.internal:11434
 #
 # ── How model names work ─────────────────────────────────────────────────────
-#   Layer 1 — Role names (canonical). ONE model_list entry each, GENERATED from
+#   Layer 1 — Capabilities (canonical). ONE model_list entry each, GENERATED from
 #             config/models.yaml by sync-models.py between the markers below.
-#             Use these in all client configs:
-#               coder-main | coder-agent | coder-fast |
-#               deep-think | deep-think-more | supervisor | embed
-#   Layer 2/3 — Claude/OpenAI compatibility names (claude-*, gpt-*) that CLI tools
-#             hard-code. These are NOT duplicate blocks anymore — they are plain
-#             aliases onto a role via router_settings.model_group_alias (below).
+#             Agents request these:
+#               architecture | implementation | review | completion | embeddings
+#   Layer 2 — The `local/*` namespace + legacy role names + Claude/OpenAI names.
+#             GENERATED from config/clients.yaml into model_group_alias (below).
 #             One backend config, many names, one shared persona.
 #
-# Persona note: roles point straight at their base Ollama model. The "Opus-like"
-# persona is injected at request time by the persona_injector hook (see
-# config/litellm/persona_injector.py + config/personas/<role>.md), which merges it
-# into the client's system message. Because aliases resolve to the role's model
-# group, every Claude/OpenAI alias inherits that persona automatically.
+# Persona note: capabilities point straight at their base Ollama model. The persona
+# is injected at request time by the persona_injector hook (see
+# config/litellm/persona_injector.py + config/personas/<capability>.md). Because
+# aliases resolve to the capability's model group, every legacy/compat name inherits
+# that persona automatically.
 #
-# ── Backend mapping (64gb profile) ───────────────────────────────────────────
-#   coder-main      → qwen3-coder:30b                    (primary heavy coder)
-#   coder-agent     → qwen3.6:35b-mlx                    (planning / agentic)
-#   coder-fast      → qwen2.5-coder:3b                   (fast chat; autocomplete FIM)
-#   deep-think      → deepseek-r1:14b-qwen-distill-q8_0  (lighter reasoning, merged)
-#   deep-think-more → deepseek-r1:32b                    (deep reasoning, merged)
-#   supervisor      → gemma4:31b-mxfp8                   (review / approval)
-#   embed           → nomic-embed-text                   (embeddings only)
+# ── Backend mapping (64gb profile) — the real model is never hidden ──────────
+#   architecture   → qwen3-coder:30b                            (heavy design/refactor)
+#   implementation → qwen2.5-coder:14b-instruct-q4_K_M          (everyday coding)
+#   review         → deepseek-coder-v2:16b-lite-instruct-q4_K_M (review / bug / security)
+#   completion     → qwen2.5-coder:3b-instruct-q4_K_M           (FIM autocomplete; fast)
+#   embeddings     → nomic-embed-text                           (retrieval; infrastructure)
 #
-# DO NOT hand-edit the model_list block — edit config/models.yaml then run
-# ./scripts/sync-models.sh.
+# DO NOT hand-edit the generated blocks — edit config/models.yaml + config/clients.yaml
+# then run ./scripts/sync-models.sh.
 
 model_list:
 
   # >>> BEGIN GENERATED model_list (sync-models.py) — do not edit <<<
 
-  # coder-main — Primary repository coding, logic, syntax — MoE ~3B active / 30B total, 64K ctx default
-  - model_name: coder-main
+  # architecture — Lead architect (qwen3-coder:30b)
+  - model_name: architecture
     litellm_params:
       model: ollama_chat/qwen3-coder:30b
       api_base: os.environ/OLLAMA_URL
-      num_ctx: 65536
-      temperature: 0.7
-      top_p: 0.8
-      top_k: 20
-      repetition_penalty: 1.05
-      additional_drop_params: ["thinking", "reasoning_effort"]
-      think: false
-    model_info:
-      supports_function_calling: true
-      supports_tool_choice: true
-      supports_parallel_function_calling: true
-      supports_system_messages: true
-      supports_native_streaming: true
-      supports_reasoning: false
-      max_input_tokens: 65536
-      max_output_tokens: 16384
-      input_cost_per_token: 0
-      output_cost_per_token: 0
-
-  # coder-agent — Multi-step planning and agentic orchestration — MoE, newest Apr 2026, multimodal
-  - model_name: coder-agent
-    litellm_params:
-      model: ollama_chat/qwen3.6:35b-mlx
-      api_base: os.environ/OLLAMA_URL
-      num_ctx: 65536
-      temperature: 0.7
-      top_p: 0.8
-      top_k: 20
-      additional_drop_params: ["thinking", "reasoning_effort"]
-      think: false
-    model_info:
-      supports_function_calling: true
-      supports_tool_choice: true
-      supports_parallel_function_calling: true
-      supports_system_messages: true
-      supports_native_streaming: true
-      supports_reasoning: false
-      supports_vision: true
-      supports_pdf_input: true
-      max_input_tokens: 65536
-      max_output_tokens: 16384
-      input_cost_per_token: 0
-      output_cost_per_token: 0
-
-  # coder-fast — IDE autocomplete (FIM) and fast chat — small, low-latency
-  - model_name: coder-fast
-    litellm_params:
-      model: ollama_chat/qwen2.5-coder:3b
-      api_base: os.environ/OLLAMA_URL
-      num_ctx: 16384
-      temperature: 0.7
-      top_p: 0.8
-      top_k: 20
-      repetition_penalty: 1.05
-      additional_drop_params: ["thinking", "reasoning_effort"]
-      think: false
-    model_info:
-      supports_function_calling: true
-      supports_tool_choice: true
-      supports_parallel_function_calling: true
-      supports_system_messages: true
-      supports_native_streaming: true
-      supports_reasoning: false
-      max_input_tokens: 16384
-      max_output_tokens: 4096
-      input_cost_per_token: 0
-      output_cost_per_token: 0
-
-  # deep-think — Lighter chain-of-thought reasoning — 8-bit distill, fits alongside a coder
-  - model_name: deep-think
-    litellm_params:
-      model: ollama_chat/deepseek-r1:14b-qwen-distill-q8_0
-      api_base: os.environ/OLLAMA_URL
-      num_ctx: 65536
-      temperature: 0.6
-      top_p: 0.95
-      merge_reasoning_content_in_choices: true
-    model_info:
-      supports_function_calling: true
-      supports_tool_choice: true
-      supports_parallel_function_calling: false
-      supports_system_messages: true
-      supports_native_streaming: true
-      supports_reasoning: true
-      max_input_tokens: 65536
-      max_output_tokens: 16384
-      input_cost_per_token: 0
-      output_cost_per_token: 0
-
-  # deep-think-more — Deep reasoning and decomposition — full 32B CoT distill
-  - model_name: deep-think-more
-    litellm_params:
-      model: ollama_chat/deepseek-r1:32b
-      api_base: os.environ/OLLAMA_URL
-      num_ctx: 65536
-      temperature: 0.6
-      top_p: 0.95
-      merge_reasoning_content_in_choices: true
-    model_info:
-      supports_function_calling: true
-      supports_tool_choice: true
-      supports_parallel_function_calling: false
-      supports_system_messages: true
-      supports_native_streaming: true
-      supports_reasoning: true
-      max_input_tokens: 65536
-      max_output_tokens: 16384
-      input_cost_per_token: 0
-      output_cost_per_token: 0
-
-  # supervisor — Review, critique, approval gate — 8-bit MXFP8 (text-only in this build)
-  - model_name: supervisor
-    litellm_params:
-      model: ollama_chat/gemma4:31b-mxfp8
-      api_base: os.environ/OLLAMA_URL
       num_ctx: 32768
-      temperature: 1.0
-      top_p: 0.95
-      top_k: 64
+      temperature: 0.2
+      keep_alive: 2h
       additional_drop_params: ["thinking", "reasoning_effort"]
       think: false
     model_info:
@@ -176,11 +56,81 @@ model_list:
       input_cost_per_token: 0
       output_cost_per_token: 0
 
-  - model_name: embed
+  # implementation — Daily coding (qwen2.5-coder:14b-instruct-q4_K_M)
+  - model_name: implementation
+    litellm_params:
+      model: ollama_chat/qwen2.5-coder:14b-instruct-q4_K_M
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 16384
+      temperature: 0.2
+      num_predict: -1
+      keep_alive: 60m
+      additional_drop_params: ["thinking", "reasoning_effort"]
+      think: false
+    model_info:
+      supports_function_calling: true
+      supports_tool_choice: true
+      supports_parallel_function_calling: true
+      supports_system_messages: true
+      supports_native_streaming: true
+      supports_reasoning: false
+      max_input_tokens: 16384
+      max_output_tokens: 4096
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+
+  # review — Code review (deepseek-coder-v2:16b-lite-instruct-q4_K_M)
+  - model_name: review
+    litellm_params:
+      model: ollama_chat/deepseek-coder-v2:16b-lite-instruct-q4_K_M
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 16384
+      temperature: 0.1
+      num_predict: 2048
+      keep_alive: 20m
+      additional_drop_params: ["thinking", "reasoning_effort"]
+      think: false
+    model_info:
+      supports_function_calling: true
+      supports_tool_choice: true
+      supports_parallel_function_calling: true
+      supports_system_messages: true
+      supports_native_streaming: true
+      supports_reasoning: false
+      max_input_tokens: 16384
+      max_output_tokens: 4096
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+
+  # completion — Autocomplete (qwen2.5-coder:3b-instruct-q4_K_M)
+  - model_name: completion
+    litellm_params:
+      model: ollama_chat/qwen2.5-coder:3b-instruct-q4_K_M
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 4096
+      temperature: 0
+      num_predict: 128
+      keep_alive: -1
+      additional_drop_params: ["thinking", "reasoning_effort"]
+      think: false
+    model_info:
+      supports_function_calling: true
+      supports_tool_choice: true
+      supports_parallel_function_calling: true
+      supports_system_messages: true
+      supports_native_streaming: true
+      supports_reasoning: false
+      max_input_tokens: 4096
+      max_output_tokens: 1024
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+
+  - model_name: embeddings
     litellm_params:
       model: ollama_chat/nomic-embed-text
       api_base: os.environ/OLLAMA_URL
       num_ctx: 8192
+      keep_alive: -1
     model_info:
       mode: embedding
       max_tokens: 8192
@@ -198,41 +148,39 @@ router_settings:
   allowed_fails: 2                  # cool down a model after 2 failures/min
   cooldown_time: 30                 # seconds before retrying a cooled-down model
 
-  # ── Layer 2/3 compatibility names → role groups ──────────────────────────
-  # Claude Code, Codex, and OpenAI SDK clients send these fixed strings; route
-  # each to a role. Persona + capabilities are inherited from the role group.
-  #   opus          → deep-think-more (deepest reasoning tier)
-  #   fable         → supervisor      (so a Claude Code subagent can pin the
-  #                                    gemma reviewer via `model: fable` — a
-  #                                    documented tier, unlike a raw gateway name
-  #                                    which hits anthropics/claude-code#5680)
-  #   sonnet, gpt-5.5 → coder-main    (primary heavy coder)
-  #   haiku, gpt-4o* → coder-fast      (fast tier)
+  # ── Layer 2 aliases → capability groups ───────────────────────────────────
+  # GENERATED from config/clients.yaml by sync-models.py (local/* + legacy/compat).
+  # Do NOT hand-edit between the markers — edit config/clients.yaml and run sync.
+  # >>> BEGIN GENERATED model_group_alias (sync-models.py) — do not edit <<<
   model_group_alias:
-    claude-opus-4-8: deep-think-more
-    claude-opus-4-8-20251101: deep-think-more
-    claude-fable-5: supervisor
-    claude-sonnet-4-6: coder-main
-    claude-sonnet-4-6-20250219: coder-main
-    gpt-5.5: coder-main
-    claude-haiku-4-5: coder-fast
-    claude-haiku-4-5-20251001: coder-fast
-    gpt-4o: coder-fast
-    gpt-4o-mini: coder-fast
-    gpt-3.5-turbo: coder-fast
+    local/architecture: architecture
+    local/implementation: implementation
+    local/review: review
+    local/completion: completion
+    local/embeddings: embeddings
+    claude-opus-4-8: architecture
+    claude-opus-4-8-20251101: architecture
+    claude-fable-5: review
+    claude-sonnet-4-6: implementation
+    claude-sonnet-4-6-20250219: implementation
+    gpt-5.5: implementation
+    claude-haiku-4-5: completion
+    claude-haiku-4-5-20251001: completion
+    gpt-4o: completion
+    gpt-4o-mini: completion
+    gpt-3.5-turbo: completion
+  # >>> END GENERATED model_group_alias <<<
 
   fallbacks:
-    # Role hierarchy — degrade by capability tier
-    - {"deep-think-more": ["coder-main", "coder-fast"]}
-    - {"deep-think":      ["coder-main", "coder-fast"]}
-    - {"supervisor":      ["deep-think-more", "coder-main"]}
-    - {"coder-agent":     ["coder-main", "coder-fast"]}
-    - {"coder-main":      ["coder-fast"]}
+    # Capability hierarchy — degrade by tier when a model is unavailable.
+    - {"architecture":  ["implementation", "completion"]}
+    - {"review":        ["implementation", "completion"]}
+    - {"implementation": ["completion"]}
   context_window_fallbacks:
-    # Graceful fallback when a request exceeds a role's declared context window
-    - {"deep-think-more": ["coder-main"]}
-    - {"coder-agent":     ["coder-main"]}
-    - {"coder-main":      ["coder-fast"]}
+    # Graceful fallback when a request exceeds a capability's declared window.
+    - {"architecture":  ["implementation"]}
+    - {"review":        ["implementation"]}
+    - {"implementation": ["completion"]}
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

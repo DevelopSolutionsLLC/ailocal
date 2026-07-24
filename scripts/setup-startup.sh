@@ -32,7 +32,7 @@ LOG_DIR="$HOME/Library/Logs/ailocal"
 # from the repo at install time, since the repo itself may be under ~/Documents).
 APP_SUPPORT="$HOME/Library/Application Support/ailocal"
 OLLAMA_BIN="/Applications/Ollama.app/Contents/Resources/ollama"
-MODEL_ROLE="coder-main"
+MODEL_ROLE="coder"
 WITH_LITELLM=0
 UNINSTALL=0
 
@@ -43,11 +43,9 @@ step() { echo; echo "▶ $*"; }
 # Resolve a role name to its Ollama backend tag from models.yaml (at install time,
 # from the interactive shell — the agent can't read ~/Documents at runtime).
 resolve_backend() {
-  awk -v role="$1" '
-    $0 ~ "^"role":" { inrole=1; next }
-    inrole && /^[a-z]/ && $0 !~ /^ / { inrole=0 }
-    inrole && $1=="backend:" { print $2; exit }
-  ' "$ROOT_DIR/config/models.yaml" 2>/dev/null
+  # Resolve capability -> active Ollama backend via the generator (single source; handles the
+  # active/preferred schema). Runs at install time from the interactive shell, where python3 exists.
+  python3 "$ROOT_DIR/scripts/sync-models.py" --resolve "$1" 2>/dev/null
 }
 
 while [ $# -gt 0 ]; do
@@ -77,10 +75,16 @@ fi
 mkdir -p "$LA_DIR" "$LOG_DIR" "$APP_SUPPORT" /Users/Shared/ollama/models
 
 # ── 1. ollama serve ──────────────────────────────────────────────────────────
-# KEEP_ALIVE=-1 (never unload; -1 is the documented "pin" value). MAX_LOADED=2 +
-# NUM_PARALLEL=3 lets a big coder coexist with a small model and serve concurrent
-# requests. OLLAMA_MODELS lives on /Users/Shared (out of any one user's home, and
-# matches the other machines). flash-attn + q8 KV cache = the memory/speed tuning.
+# KEEP_ALIVE=-1 is the GLOBAL DEFAULT and it pins `embed`: grepai calls Ollama
+# directly on :11434 (bypassing LiteLLM) and sends no per-request keep_alive, so it
+# inherits this default. Generation models go THROUGH LiteLLM, which sends a
+# per-role keep_alive (architect 2h / coder 60m / reviewer 20m / autocomplete -1)
+# that OVERRIDES this global — so they self-unload on their own TTL. See
+# MODEL_LIFECYCLE.md. MAX_LOADED=4 + NUM_PARALLEL=2: embed + autocomplete stay warm
+# while up to two working models rotate; MAX_LOADED caps COUNT not size (Ollama
+# refuses an oversized load, so two big models never co-reside and thrash).
+# OLLAMA_MODELS lives on /Users/Shared (out of any one user's home, matches the
+# other machines). flash-attn + q8 KV cache = the memory/speed tuning.
 step "Installing com.ailocal.ollama (ollama serve)"
 cat > "$LA_DIR/com.ailocal.ollama.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -98,8 +102,8 @@ cat > "$LA_DIR/com.ailocal.ollama.plist" <<PLIST
     <key>OLLAMA_HOST</key><string>127.0.0.1:11434</string>
     <key>OLLAMA_MODELS</key><string>/Users/Shared/ollama/models</string>
     <key>OLLAMA_KEEP_ALIVE</key><string>-1</string>
-    <key>OLLAMA_MAX_LOADED_MODELS</key><string>2</string>
-    <key>OLLAMA_NUM_PARALLEL</key><string>3</string>
+    <key>OLLAMA_MAX_LOADED_MODELS</key><string>4</string>
+    <key>OLLAMA_NUM_PARALLEL</key><string>2</string>
     <key>OLLAMA_FLASH_ATTENTION</key><string>1</string>
     <key>OLLAMA_KV_CACHE_TYPE</key><string>q8_0</string>
   </dict>
