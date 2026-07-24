@@ -302,7 +302,6 @@ def write_caps_json(models):
             "context": ctx_of(info),
             "keep_alive": ka,
             "persistent": ka == "-1",
-            "priority": info.get("priority", ""),
             "purpose": flow_list(info.get("purpose")),
             "strengths": flow_list(info.get("strengths")),
             "weaknesses": flow_list(info.get("weaknesses")),

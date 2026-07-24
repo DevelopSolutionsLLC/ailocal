@@ -18,7 +18,6 @@ architecture:
   context: 8192
   temperature: 0.2
   keep_alive: 15m
-  priority: highest
   persona: true
   enabled: false
   purpose: [architecture, design — does not fit 16 GB; pull a smaller backend to enable]
@@ -31,7 +30,6 @@ implementation:
   temperature: 0.2
   num_predict: -1
   keep_alive: 15m
-  priority: medium
   persona: true
   purpose: [implementation, features, tests — marginal on 16 GB, one model at a time]
 
@@ -43,7 +41,6 @@ review:
   temperature: 0.1
   num_predict: 2048
   keep_alive: 10m
-  priority: low
   persona: true
   enabled: false
   purpose: [code review — does not fit 16 GB alongside anything; enable with a smaller backend]
@@ -56,7 +53,6 @@ completion:
   temperature: 0
   num_predict: 128
   keep_alive: forever
-  priority: warm
   purpose: [inline completion, FIM, quick fixes]
 
 embeddings:
@@ -65,5 +61,4 @@ embeddings:
   preferred: [nomic-embed-text]
   context: 8192
   keep_alive: forever
-  priority: infrastructure
   purpose: [semantic search, memory, retrieval for grepai]
