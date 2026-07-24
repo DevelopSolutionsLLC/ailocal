@@ -58,6 +58,68 @@ already_has() {
   [ -f "$file" ] && grep -qF "$marker" "$file" 2>/dev/null
 }
 
+# ── Composing with Cadence ───────────────────────────────────────────────
+# Cadence (github.com/DevelopSolutionsLLC/cadence) deploys into this same config root and owns
+# two things inside directories ailocal also writes:
+#
+#   1. a <!-- cadence:start -->…<!-- cadence:end --> block appended INTO our own agent files
+#   2. symlinks for agents that have no ailocal counterpart (e.g. repository-health.md)
+#
+# This directory used to be replaced wholesale with `rm -rf`, which destroyed both — silently,
+# and only in one install order (ailocal after cadence). We already reason this way about
+# .claude.json, which we preserve rather than clobber; the same applies here.
+#
+# ailocal remains the owner of the files it ships. It is not the owner of the directory.
+CADENCE_START='<!-- cadence:start -->'
+CADENCE_END='<!-- cadence:end -->'
+MANIFEST_NAME=".ailocal-managed"
+
+# Copy a directory of managed files WITHOUT taking ownership of the directory itself.
+# Preserves foreign files, preserves symlinks it does not own, and carries any Cadence block
+# in a destination file across the overwrite.
+install_managed_dir() {
+  local src="$1" dst="$2" f base carried manifest="$2/$MANIFEST_NAME"
+  mkdir -p "$dst"
+
+  # Prune files we shipped previously but no longer ship. Without this the old `rm -rf` behaviour
+  # of clearing stale files would be lost. Only ever touches names in OUR manifest.
+  if [ -f "$manifest" ]; then
+    while IFS= read -r base; do
+      [ -n "$base" ] || continue
+      [ -e "$src/$base" ] && continue          # still shipped
+      [ -L "$dst/$base" ] && continue          # someone else's symlink now — not ours to delete
+      rm -f "$dst/$base"
+    done < "$manifest"
+  fi
+
+  : > "$manifest"
+  for f in "$src"/*; do
+    [ -e "$f" ] || continue
+    base="$(basename "$f")"
+    echo "$base" >> "$manifest"
+
+    if [ -d "$f" ]; then
+      rm -rf "${dst:?}/$base"; cp -R "$f" "$dst/$base"; continue
+    fi
+
+    # Capture any Cadence block already present so overwriting our file does not drop it.
+    carried=""
+    if [ -f "$dst/$base" ] && [ ! -L "$dst/$base" ] \
+       && grep -qF "$CADENCE_START" "$dst/$base" 2>/dev/null; then
+      carried="$(sed -n "/$(printf '%s' "$CADENCE_START" | sed 's/[][\.*^$/]/\\&/g')/,/$(printf '%s' "$CADENCE_END" | sed 's/[][\.*^$/]/\\&/g')/p" "$dst/$base")"
+    fi
+
+    # Never write THROUGH a symlink — that would edit the linked source file in its own repo.
+    [ -L "$dst/$base" ] && rm -f "$dst/$base"
+    cp "$f" "$dst/$base"
+
+    if [ -n "$carried" ]; then
+      printf '\n%s\n' "$carried" >> "$dst/$base"
+      info "  preserved Cadence block in $base"
+    fi
+  done
+}
+
 # ── Shared step: ~/.config/ailocal + the two silent .zshrc source lines ───
 # Creates the XDG-style config home for ailocal client state, writes the
 # env file the claude-local/codex-local wrappers read, deploys the managed
@@ -393,12 +455,12 @@ if has_target "claude"; then
   cp "$ROOT_DIR/config/clients/CLAUDE.md" "$CLAUDE_MD"
   info "$CLAUDE_MD written"
 
-  # Local agent trio + /local-build command + checklist — managed, always overwrite.
+  # Local agent trio + /local-build command + checklist — ailocal owns these FILES, but not the
+  # directories they live in. Cadence deploys into the same directories; see install_managed_dir.
   for d in agents commands references; do
-    rm -rf "${CLAUDE_HOME_DIR:?}/$d"
-    cp -R "$ROOT_DIR/config/clients/claude/$d" "$CLAUDE_HOME_DIR/$d"
+    install_managed_dir "$ROOT_DIR/config/clients/claude/$d" "$CLAUDE_HOME_DIR/$d"
   done
-  info "$CLAUDE_HOME_DIR/{agents,commands,references} written"
+  info "$CLAUDE_HOME_DIR/{agents,commands,references} written (Cadence overlays preserved)"
 
   # .claude.json — seed onboarding-complete only if absent, so a real session
   # under this CLAUDE_CONFIG_DIR never gets clobbered.
