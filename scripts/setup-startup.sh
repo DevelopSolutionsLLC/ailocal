@@ -78,11 +78,12 @@ mkdir -p "$LA_DIR" "$LOG_DIR" "$APP_SUPPORT" /Users/Shared/ollama/models
 # KEEP_ALIVE=-1 is the GLOBAL DEFAULT and it pins `embed`: grepai calls Ollama
 # directly on :11434 (bypassing LiteLLM) and sends no per-request keep_alive, so it
 # inherits this default. Generation models go THROUGH LiteLLM, which sends a
-# per-role keep_alive (architect 2h / coder 60m / reviewer 20m / autocomplete -1)
-# that OVERRIDES this global — so they self-unload on their own TTL. See
-# MODEL_LIFECYCLE.md. MAX_LOADED=4 + NUM_PARALLEL=2: embed + autocomplete stay warm
-# while up to two working models rotate; MAX_LOADED caps COUNT not size (Ollama
-# refuses an oversized load, so two big models never co-reside and thrash).
+# per-role keep_alive (architecture -1 / implementation 20m / review 20m /
+# completion -1) that OVERRIDES this global — so the rotating ones self-unload on
+# their TTL. See MODEL_LIFECYCLE.md. MAX_LOADED=5 + NUM_PARALLEL=2: all five
+# capabilities can co-reside — architecture/completion/embeddings pinned (-1) plus
+# implementation/review loaded concurrently (~46 GB peak, fits the ~48 GB GPU budget).
+# MAX_LOADED caps COUNT not size (Ollama refuses an oversized load, never OOMs).
 # OLLAMA_MODELS lives on /Users/Shared (out of any one user's home, matches the
 # other machines). flash-attn + q8 KV cache = the memory/speed tuning.
 step "Installing com.ailocal.ollama (ollama serve)"
@@ -102,7 +103,7 @@ cat > "$LA_DIR/com.ailocal.ollama.plist" <<PLIST
     <key>OLLAMA_HOST</key><string>127.0.0.1:11434</string>
     <key>OLLAMA_MODELS</key><string>/Users/Shared/ollama/models</string>
     <key>OLLAMA_KEEP_ALIVE</key><string>-1</string>
-    <key>OLLAMA_MAX_LOADED_MODELS</key><string>4</string>
+    <key>OLLAMA_MAX_LOADED_MODELS</key><string>5</string>
     <key>OLLAMA_NUM_PARALLEL</key><string>2</string>
     <key>OLLAMA_FLASH_ATTENTION</key><string>1</string>
     <key>OLLAMA_KV_CACHE_TYPE</key><string>q8_0</string>
