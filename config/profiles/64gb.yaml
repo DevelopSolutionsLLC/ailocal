@@ -92,6 +92,25 @@ embeddings:
   strengths: [always-on, tiny, grepai calls it directly on :11434]
   weaknesses: [not a chat model]
 
+# ── vscode-chat — large-context IDE chat (VS Code Copilot via litellm-connector) ──
+# IDE chat is a DIFFERENT workload from a coding agent: the client sends a big system
+# prompt + tool schemas + workspace context, so it needs a large advertised window
+# (the connector rejects prompts over ~0.95*max_input). Dedicated so architecture/
+# implementation are not inflated to absorb it. Rotating (keep_alive 20m), NOT resident —
+# the large 64K KV only loads while VS Code chat is active. Needs the daemon on q8 KV +
+# flash attention (own the daemon) or the 64K KV ~doubles.
+vscode-chat:
+  role: IDE chat
+  active: qwen3-coder:30b
+  preferred: [qwen3-coder:30b]
+  context: 65536
+  temperature: 0.1
+  num_predict: 4096
+  keep_alive: 20m
+  purpose: [VS Code Copilot Chat, interactive IDE Q&A, large-context editor conversations]
+  strengths: [large window for IDE tool schemas + workspace context, 256K-capable backend]
+  weaknesses: [heavy 64K KV — rotating not resident; a 2nd 30b instance vs architecture]
+
 # ── reasoning tier (no installed backend) ────────────────────────────────────
 # The deepseek-r1 reasoners were removed; no installed model emits <think>. To restore,
 # pull a reasoner, uncomment, and repoint the deep-think* legacy names at `reasoning` in
