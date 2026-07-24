@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """sync-models.py — propagate the capability registry to every derived file.
 
-Single source of truth:
-  config/models.yaml    WHAT each capability is (backend `active`, context, sampling,
-                        keep_alive, persona, decision metadata). Written from a RAM profile
-                        (config/profiles/<tier>.yaml) by install.sh.
+Single source of truth (both TRACKED — no gitignored intermediate):
+  config/profiles/<tier>.yaml  WHAT each capability is (backend `active`, context, sampling,
+                        keep_alive, persona, decision metadata), per RAM tier. Edit the profile
+                        directly. The active tier is config/active-profile (machine-specific,
+                        written by install.sh from detected RAM) or `--profile <tier>`; default 64gb.
   config/clients.yaml   WHICH capability each client surface uses (launch defaults, Codex
-                        profiles, Continue entries, legacy/compat aliases).
+                        profiles, Continue entries, compat aliases).
 
 Running ./scripts/sync-models.sh regenerates, deterministically:
   config/litellm/config.yaml         model_list + model_group_alias (between markers)
@@ -20,9 +21,9 @@ Running ./scripts/sync-models.sh regenerates, deterministically:
 Also: `sync-models.py --resolve <capability>` prints the active Ollama backend tag, so shell
 scripts (setup-startup.sh, preload-model.sh) resolve without parsing YAML themselves.
 
-Capabilities are TOP-LEVEL keys in models.yaml; lists are flow-style [a, b, c]. keep_alive
+Capabilities are TOP-LEVEL keys in the profile; lists are flow-style [a, b, c]. keep_alive
 accepts durations, -1, or the words forever/persistent (both -> -1). Never hand-edit a generated
-region — edit models.yaml / clients.yaml and re-run.
+region — edit config/profiles/<tier>.yaml / config/clients.yaml and re-run.
 """
 
 import json
@@ -32,7 +33,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-MODELS_YAML    = ROOT / "config/models.yaml"
+PROFILES_DIR   = ROOT / "config/profiles"
+ACTIVE_PROFILE = ROOT / "config/active-profile"   # one line, e.g. "64gb" (machine-specific)
 CLIENTS_YAML   = ROOT / "config/clients.yaml"
 LITELLM_CONFIG = ROOT / "config/litellm/config.yaml"
 CAPS_JSON      = ROOT / "config/capabilities.generated.json"
@@ -82,12 +84,35 @@ def flow_dict(v):
     return out
 
 
+# ── profile resolution ─────────────────────────────────────────────────────────
+def resolve_tier(explicit=None):
+    """Which RAM profile is active: an explicit --profile wins; else the tracked-intent
+    config/active-profile marker (written by install.sh from detected RAM); else 64gb."""
+    if explicit:
+        return explicit
+    if ACTIVE_PROFILE.exists():
+        t = ACTIVE_PROFILE.read_text().strip()
+        if t:
+            return t
+    return "64gb"
+
+
+def profile_path(tier=None, explicit=None):
+    p = PROFILES_DIR / f"{resolve_tier(explicit) if tier is None else tier}.yaml"
+    if not p.exists():
+        print(f"Error: profile not found: {p}", file=sys.stderr)
+        sys.exit(1)
+    return p
+
+
 # ── config loading ────────────────────────────────────────────────────────────
-def load_models_yaml():
-    """Ordered dict: capability -> {field: scalar-string}. List fields stay as their
-    raw "[a, b, c]" string; use flow_list() at the point of use."""
+def load_models_yaml(path):
+    """Read a profile (config/profiles/<tier>.yaml) into an ordered dict:
+    capability -> {field: scalar-string}. List fields stay as their raw "[a, b, c]"
+    string; use flow_list() at the point of use. Top-level scalars (disk_gb, status,
+    profile) are ignored — only indented `key: value` under a capability is captured."""
     models, current = {}, None
-    for line in MODELS_YAML.read_text().splitlines():
+    for line in Path(path).read_text().splitlines():
         s = line.rstrip()
         if not s or s.lstrip().startswith("#"):
             continue
@@ -438,7 +463,7 @@ def regen_continue(models, clients):
     }
     data["//"] = [
         "ailocal — VS Code Continue config. MANAGED/GENERATED — edit config/clients.yaml +",
-        "config/models.yaml, run sync-models.sh. Deployed to ~/.continue/config.json by",
+        "config/profiles/<tier>.yaml + config/clients.yaml, run sync-models.sh. Deployed by",
         "install-clients.sh (vscode); __LITELLM_KEY__ substituted from .env at install.",
         "Chat/edit go through LiteLLM (4000); autocomplete hits Ollama (11434) directly for FIM.",
         "Capabilities: " + " | ".join(models.keys()),
@@ -451,8 +476,8 @@ def regen_continue(models, clients):
 # duplication); they are NOT regenerated here. Update them by hand when capabilities change.
 
 # ── resolve mode (for shell) ───────────────────────────────────────────────────
-def resolve(role):
-    info = load_models_yaml().get(role)
+def resolve(role, tier=None):
+    info = load_models_yaml(profile_path(explicit=tier)).get(role)
     if not info:
         print("", end="")
         return 1
@@ -460,16 +485,29 @@ def resolve(role):
     return 0
 
 
+def parse_profile_flag(argv):
+    """Pull `--profile <tier>` out of argv, returning (tier_or_None, remaining_argv)."""
+    tier, rest, i = None, [], 0
+    while i < len(argv):
+        if argv[i] == "--profile" and i + 1 < len(argv):
+            tier = argv[i + 1]; i += 2
+        else:
+            rest.append(argv[i]); i += 1
+    return tier, rest
+
+
 def main():
-    if len(sys.argv) >= 3 and sys.argv[1] == "--resolve":
-        sys.exit(resolve(sys.argv[2]))
+    tier, args = parse_profile_flag(sys.argv[1:])
 
-    for p in (MODELS_YAML, LITELLM_CONFIG):
-        if not p.exists():
-            print(f"Error: {p} not found", file=sys.stderr); sys.exit(1)
+    if args and args[0] == "--resolve":
+        sys.exit(resolve(args[1], tier) if len(args) >= 2 else 1)
 
-    step("Reading config/models.yaml + config/clients.yaml")
-    models = load_models_yaml()
+    if not LITELLM_CONFIG.exists():
+        print(f"Error: {LITELLM_CONFIG} not found", file=sys.stderr); sys.exit(1)
+
+    path = profile_path(explicit=tier)
+    step(f"Reading {path.relative_to(ROOT)} + config/clients.yaml")
+    models = load_models_yaml(path)
     clients = load_clients_yaml()
     for role, info in models.items():
         print(f"  {role}: {backend_of(info)}  (ctx {ctx_of(info)}, keep_alive {norm_keep_alive(info.get('keep_alive'))})")

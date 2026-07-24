@@ -12,7 +12,7 @@ sessions short, diffs small, and claims verifiable. Follow it literally.
 - Check callers: grep for the function/variable/config key you're about to
   change so you know who depends on it before you change its shape.
 - For generated files (`config/litellm/config.yaml`, `model_catalog.json`,
-  backend names in README/CLAUDE.md), edit the source (`config/models.yaml`)
+  backend names in README/CLAUDE.md), edit the source (`config/profiles/<tier>.yaml`)
   and regenerate — never hand-edit generated output.
 
 ## While editing
@@ -38,7 +38,7 @@ sessions short, diffs small, and claims verifiable. Follow it literally.
   guessed result.
 - Any shell script you touch: run `bash -n <script>` before calling it done.
 - Config changes: `./scripts/sync-models.sh` must produce zero diff after
-  regeneration if `models.yaml` changed.
+  regeneration if the active profile changed.
 - Prefer `./scripts/doctor.sh` (0=healthy, 2=degraded) and
   `./scripts/smoke-test.sh` as final sanity checks when touching runtime
   config.

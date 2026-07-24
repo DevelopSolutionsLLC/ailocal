@@ -28,7 +28,7 @@ name a model.
 
 Most of this repo's complexity is in these; change them carefully.
 
-1. **Generation.** Two source files drive everything: `config/models.yaml` (WHAT each
+1. **Generation.** Two source files drive everything: `config/profiles/<tier>.yaml` (WHAT each
    capability is — backend `active`, context, sampling, keep_alive, metadata) and
    `config/clients.yaml` (WHICH capability each client surface uses + the `claude-*`/`gpt-*`
    compat map). `sync-models.py` regenerates, between GENERATED markers or as whole managed
@@ -36,8 +36,9 @@ Most of this repo's complexity is in these; change them carefully.
    `config/capabilities.generated.json`, `config/clients/model_catalog.json`, and the
    `claude/settings.json` · `codex/config.toml` (+ profiles) · `continue/config.json` · copilot
    tables. Never hand-edit a generated region — edit the two sources and run
-   `./scripts/sync-models.sh`, then `./scripts/install-clients.sh` to deploy. `models.yaml` is
-   written by `install.sh` from the RAM tier in `config/profiles/{16,32,64,128}gb.yaml`.
+   `./scripts/sync-models.sh`, then `./scripts/install-clients.sh` to deploy. Which tier is active
+   is the one-line `config/active-profile` marker, written by `install.sh` from detected RAM
+   (`config/profiles/{16,32,64,128}gb.yaml`); `--profile <tier>` overrides.
    `sync-models.py --resolve <capability>` prints the active backend (used by the shell scripts).
 2. **Persona injection.** `config/litellm/persona_injector.py` is a LiteLLM pre-call
    hook merging `config/personas/_core.md` + `<role>.md` into whatever system message
@@ -52,7 +53,7 @@ Most of this repo's complexity is in these; change them carefully.
    backend's default reasoning, which otherwise hangs VS Code Copilot). Both are required — dropping
    either reintroduces a real, previously-hit bug. The reasoning path (`reasoning`/`merge` flags →
    `merge_reasoning_content_in_choices`, no drop, no `think:false`) is still in `sync-models.py`; a
-   commented `reasoner` slot in `config/models.yaml` restores the tier in one repoint (see
+   commented `reasoning` slot in `config/profiles/<tier>.yaml` restores the tier in one repoint (see
    `docs/MODEL_LIFECYCLE.md`).
 4. **Client deployment is XDG-isolated.** Everything lands in `~/.config/ailocal/`;
    `~/.claude` and `~/.codex` are never touched, so cloud and local sessions coexist.
@@ -81,7 +82,7 @@ ailocal and Cadence are independent *installations*, not independent *content*. 
 
 ## Where things live
 
-- `config/models.yaml` — role → backend + num_ctx + sampling (the source of truth).
+- `config/profiles/<tier>.yaml` — role → backend + num_ctx + sampling (the source of truth).
 - `config/litellm/` — `config.yaml` (generated block + hand-kept aliases/fallbacks)
   and `persona_injector.py`.
 - `config/personas/` — `_core.md` + per-role enhancers (`_`-prefixed = not a role).

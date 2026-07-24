@@ -17,7 +17,6 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-MODELS_YAML="$ROOT_DIR/config/models.yaml"
 OLLAMA_URL="${OLLAMA_HOST:-http://localhost:11434}"
 LABEL="com.ailocal.ollama-preload"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"

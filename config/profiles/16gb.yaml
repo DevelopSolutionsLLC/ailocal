@@ -1,60 +1,69 @@
 # profile: 16gb
-# Models sized for 16 GB unified memory — one model loaded at a time.
-# NOTE: the 6-chat-role split below is UNVERIFIED on real 16 GB hardware; at this
-# memory tier the two coder tiers and two reasoning tiers largely overlap. Confirm
-# before switching to this profile. The 64gb profile is the validated one.
-# Approximate download: ~20 GB
-# Run ./scripts/sync-models.sh after any manual change.
+# status: unverified — same capability schema as 64gb, but 16 GB is genuinely tight and the memory
+# fit below is estimated, not measured. `enabled: false` marks capabilities whose backend does not
+# realistically fit on 16 GB (advisory only — the capability is still routable, but expect an Ollama
+# OOM if you actually load it). Run `ailocal validate` before relying on this tier.
+#
+# Fit on ~10 GB usable (16 GB minus OS/apps): only completion (~2 GB) + embeddings (~0.3 GB) stay
+# comfortable. implementation (~9 GB) is marginal (one at a time, small context). architecture
+# (~18 GB) and review (~10 GB) do NOT fit — enabled:false. Keep OLLAMA_MAX_LOADED_MODELS=2.
+# Prefer a smaller backend here later (e.g. qwen2.5-coder:1.5b/7b) once evaluated.
 
 disk_gb: 20
 
-coder-main:
-  backend: qwen2.5-coder:7b
-  description: Primary repository coding — compact coder that fits in 16 GB
-  context_window: 32768
-  num_ctx: 32768
+architecture:
+  role: Lead architect
+  active: qwen3-coder:30b
+  preferred: [qwen3-coder:30b, qwen2.5-coder:7b-instruct-q4_K_M]
+  context: 8192
+  temperature: 0.2
+  keep_alive: 15m
+  priority: highest
   persona: true
+  enabled: false
+  purpose: [architecture, design — does not fit 16 GB; pull a smaller backend to enable]
 
-coder-agent:
-  backend: qwen3.5:4b-mlx
-  description: Multi-step planning and agentic orchestration — MLX-native
-  context_window: 32768
-  num_ctx: 32768
+implementation:
+  role: Daily coding
+  active: qwen2.5-coder:14b-instruct-q4_K_M
+  preferred: [qwen2.5-coder:14b-instruct-q4_K_M, qwen2.5-coder:7b-instruct-q4_K_M]
+  context: 8192
+  temperature: 0.2
+  num_predict: -1
+  keep_alive: 15m
+  priority: medium
   persona: true
+  purpose: [implementation, features, tests — marginal on 16 GB, one model at a time]
 
-coder-fast:
-  backend: qwen2.5-coder:1.5b
-  description: IDE autocomplete (FIM) and fast chat — tiny, low-latency
-  context_window: 32768
-  num_ctx: 32768
-
-deep-think:
-  backend: deepseek-r1:8b
-  description: Chain-of-thought reasoning — auto-MLX via Ollama 0.19+
-  context_window: 32768
-  num_ctx: 32768
-  reasoning: true
-  merge: true
+review:
+  role: Code review
+  active: deepseek-coder-v2:16b-lite-instruct-q4_K_M
+  preferred: [deepseek-coder-v2:16b-lite-instruct-q4_K_M]
+  context: 8192
+  temperature: 0.1
+  num_predict: 2048
+  keep_alive: 10m
+  priority: low
   persona: true
+  enabled: false
+  purpose: [code review — does not fit 16 GB alongside anything; enable with a smaller backend]
 
-deep-think-more:
-  backend: deepseek-r1:8b
-  description: Deeper reasoning tier (same backend as deep-think at this memory tier)
-  context_window: 32768
-  num_ctx: 32768
-  reasoning: true
-  merge: true
-  persona: true
+completion:
+  role: Autocomplete
+  active: qwen2.5-coder:3b-instruct-q4_K_M
+  preferred: [qwen2.5-coder:3b-instruct-q4_K_M, qwen2.5-coder:1.5b]
+  context: 4096
+  temperature: 0
+  num_predict: 128
+  keep_alive: forever
+  priority: warm
+  purpose: [inline completion, FIM, quick fixes]
 
-supervisor:
-  backend: gemma4:e4b-mlx
-  description: Review, critique, approval gate — MLX-native efficient 4B, multimodal
-  context_window: 32768
-  num_ctx: 32768
-  vision: true
-  persona: true
-
-embed:
-  backend: nomic-embed-text
-  description: Semantic retrieval and memory — not for chat
-  context_window: 8192
+embeddings:
+  role: Semantic retrieval
+  active: nomic-embed-text
+  preferred: [nomic-embed-text]
+  context: 8192
+  keep_alive: forever
+  priority: infrastructure
+  purpose: [semantic search, memory, retrieval for grepai]

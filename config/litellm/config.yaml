@@ -7,7 +7,7 @@
 #
 # ── How model names work ─────────────────────────────────────────────────────
 #   Layer 1 — Capabilities (canonical). ONE model_list entry each, GENERATED from
-#             config/models.yaml by sync-models.py between the markers below.
+#             the active config/profiles/<tier>.yaml by sync-models.py, between markers.
 #             Agents request these:
 #               architecture | implementation | review | completion | embeddings
 #   Layer 2 — The `local/*` namespace + legacy role names + Claude/OpenAI names.
@@ -27,7 +27,7 @@
 #   completion     → qwen2.5-coder:3b-instruct-q4_K_M           (FIM autocomplete; fast)
 #   embeddings     → nomic-embed-text                           (retrieval; infrastructure)
 #
-# DO NOT hand-edit the generated blocks — edit config/models.yaml + config/clients.yaml
+# DO NOT hand-edit the generated blocks — edit config/profiles/<tier>.yaml + config/clients.yaml
 # then run ./scripts/sync-models.sh.
 
 model_list:
