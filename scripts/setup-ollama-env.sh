@@ -18,7 +18,9 @@ set -euo pipefail
 # LiteLLM), which we WANT pinned as infrastructure. Generation models go through
 # LiteLLM, which sends a per-role keep_alive (architect 2h / coder 60m / reviewer
 # 20m / autocomplete -1) that overrides this. See MODEL_LIFECYCLE.md.
-KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-24h}"    # global default; effectively pins embed (24h idle)
+# -1 = never evict on idle: embed (~370 MB) is infrastructure Cadence's index depends
+# on, so keep it truly resident. Matches OLLAMA_KEEP_ALIVE=-1 in setup-startup.sh.
+KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:--1}"     # global default; pins embed persistently (-1)
 MAX_LOADED="${OLLAMA_MAX_LOADED_MODELS:-4}" # 4 = embed + autocomplete stay warm while up to two working models (coder/reviewer/architect) rotate. MAX_LOADED caps COUNT, not size — Ollama refuses a model that won't fit, so two big models still never thrash. The reduced per-role num_ctx (32K/16K/16K/4K) keeps KV small enough for 4-way residency on 64 GB.
 NUM_PARALLEL="${OLLAMA_NUM_PARALLEL:-2}"  # concurrent requests per model (GLOBAL — Ollama has no per-model setting). 2 balances snappy multi-request against KV growth (KV = num_ctx x NUM_PARALLEL per loaded model).
 FLASH_ATTN="${OLLAMA_FLASH_ATTENTION:-1}" # faster attention + lower memory, no quality loss
