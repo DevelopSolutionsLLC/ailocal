@@ -12,22 +12,22 @@ Finish the job: produce complete, correct, runnable code with no placeholder stu
 
 When you select a model in Claude Code, it maps to a local backend:
 
-| Model name         | Backend                                  | Best for                                  |
-|--------------------|------------------------------------------|-------------------------------------------|
-| `claude-haiku-*`   | coder-fast (qwen2.5-coder:3b)            | Quick lookups, background/summary calls   |
-| `claude-sonnet-*`  | coder-main (qwen3-coder:30b)             | Implementation, code edits, daily driving |
-| `claude-opus-*`    | deep-think-more (deepseek-r1:32b)        | Deep analysis, planning, debugging        |
-| `claude-fable-*`   | deep-think-more (deepseek-r1:32b)        | Same as opus tier                         |
+| Model name         | Capability → backend                          | Best for                                  |
+|--------------------|-----------------------------------------------|-------------------------------------------|
+| `claude-haiku-*`   | completion (qwen2.5-coder:3b)                 | Quick lookups, background/summary calls   |
+| `claude-sonnet-*`  | implementation (qwen2.5-coder:14b)            | Implementation, code edits, daily driving |
+| `claude-opus-*`    | architecture (qwen3-coder:30b)                | Deep analysis, planning, debugging        |
+| `claude-fable-*`   | review (deepseek-coder-v2:16b-lite)           | Diff review, critique                     |
 
-Every gateway role also appears in `/model` (`coder-main`, `coder-agent`, `coder-fast`, `deep-think`, `deep-think-more`, `supervisor`). Default is `claude-sonnet` (coder-main tier). Note: the reasoning tiers (`deep-think*`, deepseek-r1) run best with no extra system persona and temperature ~0.6 — the proxy handles that; do not fight it with heavy instructions.
+Every capability also appears in `/model` (`architecture`, `implementation`, `review`, `completion`, `embeddings`); the `local/*` names resolve too. Default is `claude-sonnet` (implementation tier). Note: no installed model emits `<think>` — the deepseek-r1 reasoners were removed, so there is no reasoning tier right now.
 
 # Delegation (subagents)
 
-Drive from a coder role — the default is `coder-agent` (qwen3.6), the orchestrator: a strong tool-caller that runs the session and hands work out. **Never drive from `deep-think-more` or `supervisor`** — those are reasoning/review specialists you *call as subagents*, not orchestrators (a DeepSeek reasoner won't reliably spawn subagents). If you're doing straight-line coding rather than orchestration, `/model coder-main` is the faster pure implementer.
+Drive from `implementation` (the default) — the everyday coder. Use `architecture` for heavy design, decomposition, and multi-step debugging, and `review` for critique — **call those as subagents, don't drive from them.** There is no separate orchestrator or reasoning tier now (the agentic and deepseek-r1 models were removed); `architecture` covers planning.
 
-Local models are slow and the context window is small (64K), so keep the main session lean by fanning independent work out to subagents — each runs in its own context window and returns only a summary, so exploration noise never fills your session. Available agents (`.claude/agents/`): `search` (haiku→coder-fast) for lookups, `tester` (sonnet→coder-main) for running checks, `planner` (opus→deep-think-more) for decomposition, `implementer` (sonnet→coder-main) for edits, `reviewer` (fable→supervisor) for diff review.
+Local models are slow and the context window is small (16–32K), so keep the main session lean by fanning independent work out to subagents — each runs in its own context window and returns only a summary, so exploration noise never fills your session. Available agents (`.claude/agents/`): `search` (haiku→completion) for lookups, `tester` (sonnet→implementation) for running checks, `planner` (opus→architecture) for decomposition, `implementer` (sonnet→implementation) for edits, `reviewer` (fable→review) for diff review.
 
-- Delegate the cheap, independent, high-volume work — searching, locating definitions, running tests, inspecting logs, summarizing files — to `search`/`tester`. Reserve the main model (and `deep-think-more`) for synthesis, architecture, and planning.
+- Delegate the cheap, independent, high-volume work — searching, locating definitions, running tests, inspecting logs, summarizing files — to `search`/`tester`. Reserve the main model (and `architecture`) for synthesis, architecture, and planning.
 - Delegate when work is genuinely independent, not for trivial single-file tasks (each subagent is a full local inference — worth it to protect context, wasteful for a one-liner).
 - Merge subagent results into a short conclusion; don't re-run work another agent already did. Or run the whole plan→implement→review loop with `/local-build`.
 

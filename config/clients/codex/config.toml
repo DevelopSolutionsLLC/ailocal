@@ -7,13 +7,13 @@
 # Requires: OPENAI_API_KEY set by the wrapper (env_key below).
 #
 # Switch model per-session: codex --model <name>
-# Valid models: coder-main | coder-agent | coder-fast | deep-think | deep-think-more | supervisor
+# Valid models: architecture | implementation | review | completion | embeddings
 # Phase profiles (deployed alongside): codex-local --profile plan | review
 
 # ── Core Model Selection ────────────────────────────────────────────────────
 
 # Primary model used by Codex
-model = "coder-main"
+model = "implementation"
 
 # Provider id selected from [model_providers] (default: "openai")
 model_provider = "ailocal"

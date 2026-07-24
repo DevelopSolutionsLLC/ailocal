@@ -1,8 +1,9 @@
-# ailocal Codex profile: planning session on the reasoner model.
+# ailocal Codex profile: planning session on the architecture capability (heavy tier).
 # Deployed to $CODEX_HOME/plan.config.toml — select with: codex-local --profile plan
 # Overlays the base config.toml (provider/base_url stay ailocal/LiteLLM).
-# Reasoner (deepseek-r1) is unreliable at tool calling: use this profile for
-# read/plan sessions only, never for editing.
 
-model = "deep-think-more"
-model_reasoning_effort = "high"
+model = "architecture"
+# `architecture` (qwen3-coder:30b) is NOT a chain-of-thought reasoner — no installed model emits
+# <think>. So reasoning effort is kept at "medium", not "high": a high setting here would imply a
+# reasoning tier that does not exist. Raise this only if a true reasoning backend is added.
+model_reasoning_effort = "medium"

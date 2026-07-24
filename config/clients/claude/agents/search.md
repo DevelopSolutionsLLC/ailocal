@@ -5,7 +5,7 @@ description: >
   find where something is defined/used, or answer "does X exist / where is Y"
   without spending the main model's context on the hunt. Returns a tight summary
   (files + line refs + a one-line answer), not raw dumps.
-# haiku tier → coder-fast (qwen2.5-coder:3b): small and fast, ideal for lookups.
+# haiku tier → completion (qwen2.5-coder:3b): small and fast, ideal for lookups.
 model: haiku
 tools: ["Read", "Grep", "Glob"]
 ---

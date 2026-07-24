@@ -330,9 +330,10 @@ if has_target "codex"; then
   cp "$ROOT_DIR/config/clients/model_catalog.json" "$CODEX_CAT"
   info "$CODEX_CAT written"
 
-  # AGENTS.md — phase protocol + shared build checklist (single source in
-  # config/clients/claude/references/), concatenated at install time.
-  cat "$ROOT_DIR/config/clients/codex/AGENTS.md" \
+  # AGENTS.md — operating protocol (config/clients/codex/AGENTS.md.template, a TRACKED source)
+  # + the shared build checklist, concatenated at install time. The template carries the .template
+  # extension so the /AGENTS.md gitignore rule cannot swallow it (that bare pattern once did).
+  cat "$ROOT_DIR/config/clients/codex/AGENTS.md.template" \
       <(sed '/<!-- claude-only -->/,/<!-- \/claude-only -->/d' \
           "$ROOT_DIR/config/clients/claude/references/build-checklist.md") \
       > "$CODEX_HOME_DIR/AGENTS.md"
