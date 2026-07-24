@@ -4,6 +4,7 @@
 #   ailocal status     live model status by capability, verbose (scripts/status.sh)
 #   ailocal models     compact capability -> backend -> status table
 #   ailocal validate   end-to-end sanity: capabilities, backends, client mappings, aliases, sync
+#   ailocal validate --runtime   also probe the live proxy: /v1/models, advertised contexts, embeddings
 #   ailocal doctor     health check (scripts/doctor.sh)
 #   ailocal sync       regenerate derived configs (scripts/sync-models.sh)
 #   ailocal start|stop|update|smoke    lifecycle

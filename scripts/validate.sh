@@ -2,21 +2,35 @@
 # validate.sh — end-to-end sanity for the capability platform. Answers: does the active profile
 # (or --profile <tier>) actually hang together?
 #
-#   ./scripts/validate.sh [--profile <tier>]     (or: ailocal validate [--profile <tier>])
+#   ./scripts/validate.sh [--profile <tier>] [--runtime]   (or: ailocal validate [...])
 #
-# Checks, and FAILS (exit 1) on any ✗:
+# STATIC checks (always), FAIL (exit 1) on any ✗:
 #   Capabilities — every capability declares a backend
 #   Backends     — every backend is installed in Ollama
 #   Clients      — every clients.yaml mapping targets a real capability
 #   Aliases      — every generated model_group_alias resolves to a real capability
 #   Generated    — the derived files are in sync (active profile only)
 #
-# This is the guardrail that catches "aliases point at a capability this tier doesn't define".
+# RUNTIME checks (--runtime) — live against the running proxy + Ollama:
+#   /v1/models   — the proxy actually serves every ailocal-<capability>
+#   /model/info  — the ADVERTISED max_input_tokens matches the profile context (catches a
+#                  proxy running stale config — the exact failure that broke VS Code chat,
+#                  where clients trust the advertised window, not the model's real limit)
+#   Embeddings   — the embeddings backend is loaded in Ollama (grepai infrastructure)
+#
+# This is the guardrail that catches "aliases point at a capability this tier doesn't define"
+# and "the deployed proxy advertises a different context than the source of truth".
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
-TIER=""
-[ "${1:-}" = "--profile" ] && TIER="${2:-}"
+TIER=""; RUNTIME=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --profile) TIER="${2:-}"; shift 2 ;;
+    --runtime) RUNTIME=1; shift ;;
+    *) shift ;;
+  esac
+done
 ACTIVE="$(cat "$ROOT_DIR/config/active-profile" 2>/dev/null || echo 64gb)"
 CHECK_GENERATED=1
 [ -n "$TIER" ] && [ "$TIER" != "$ACTIVE" ] && CHECK_GENERATED=0   # generated files reflect the ACTIVE tier
@@ -109,6 +123,59 @@ if [ "$CHECK_GENERATED" = 1 ]; then
   if OUT="$("$ROOT_DIR/scripts/sync-models.sh" --check 2>&1)"; then echo "  ✓ $OUT"; else echo -e "  \033[31m✗\033[0m drift — run ./scripts/sync-models.sh && commit"; STATUS=1; fi
 else
   echo "  (generated-files check skipped — --profile $TIER differs from active $ACTIVE)"
+fi
+
+if [ "$RUNTIME" = 1 ]; then
+  KEY="$(grep '^LITELLM_MASTER_KEY=' "$ROOT_DIR/.env" 2>/dev/null | cut -d= -f2-)"
+  BASE="http://localhost:4000"
+  MODELS_JSON="$(curl -fsS -m 5 -H "Authorization: Bearer $KEY" "$BASE/v1/models" 2>/dev/null || echo '')"
+  INFO_JSON="$(curl -fsS -m 5 -H "Authorization: Bearer $KEY" "$BASE/model/info" 2>/dev/null || echo '')"
+  PS_JSON="$(curl -fsS -m 3 "${OLLAMA_HOST:-http://127.0.0.1:11434}/api/ps" 2>/dev/null || echo '{"models":[]}')"
+  if ! ROOT_DIR="$ROOT_DIR" TIER="$TIER" MODELS_JSON="$MODELS_JSON" INFO_JSON="$INFO_JSON" PS_JSON="$PS_JSON" python3 - <<'PY'
+import os, sys, json, importlib.util
+root = os.environ["ROOT_DIR"]; tier = os.environ["TIER"] or None
+spec = importlib.util.spec_from_file_location("sm", root + "/scripts/sync-models.py")
+sm = importlib.util.module_from_spec(spec); spec.loader.exec_module(sm)
+models = sm.load_models_yaml(sm.profile_path(explicit=tier))
+
+C = lambda s, c: f"\033[{c}m{s}\033[0m"
+YES, NO = C("✓", "32"), C("✗", "31")
+fails = 0
+def check(cond, msg):
+    global fails
+    print(f"  {YES if cond else NO} {msg}")
+    if not cond: fails += 1
+
+print(C("Runtime — proxy /v1/models", "1;36"))
+mj = os.environ["MODELS_JSON"]
+check(bool(mj), "proxy reachable at localhost:4000")
+served = {m["id"] for m in json.loads(mj).get("data", [])} if mj else set()
+for cap in models:
+    check(f"ailocal-{cap}" in served, f"serves ailocal-{cap}")
+
+print(C("Runtime — advertised context (/model/info) matches profile", "1;36"))
+ij = os.environ["INFO_JSON"]
+adv = {}
+if ij:
+    for m in json.loads(ij).get("data", []):
+        adv[m.get("model_name")] = (m.get("model_info") or {}).get("max_input_tokens")
+for cap, info in models.items():
+    if cap == "embeddings":
+        continue
+    want, got = sm.ctx_of(info), adv.get(f"ailocal-{cap}")
+    check(got == want, f"ailocal-{cap}: advertises max_input={got} (profile {want})"
+          + ("" if got == want else " — proxy running STALE config; restart it"))
+
+print(C("Runtime — embeddings loaded in Ollama", "1;36"))
+ps = json.loads(os.environ["PS_JSON"]).get("models", [])
+emb = sm.backend_of(models.get("embeddings", {}))
+base = lambda t: t.split(":", 1)[0]
+check(any(base(m.get("name", "")) == base(emb) for m in ps),
+      f"embeddings backend '{emb}' resident (grepai depends on it)")
+
+sys.exit(1 if fails else 0)
+PY
+  then STATUS=1; fi
 fi
 
 echo
