@@ -43,7 +43,7 @@ model_list:
       api_base: os.environ/OLLAMA_URL
       num_ctx: 32768
       temperature: 0.2
-      keep_alive: 2h
+      keep_alive: -1
       additional_drop_params: ["thinking", "reasoning_effort"]
       think: false
     model_info:
@@ -66,7 +66,7 @@ model_list:
       num_ctx: 16384
       temperature: 0.2
       num_predict: -1
-      keep_alive: 60m
+      keep_alive: 20m
       additional_drop_params: ["thinking", "reasoning_effort"]
       think: false
     model_info:
