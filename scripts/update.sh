@@ -77,7 +77,7 @@ if "$ROOT_DIR/scripts/doctor.sh"; then
   step "Update complete — LiteLLM healthy."
 else
   warn "Health check reported issues after update."
-  echo "  Check logs: docker logs ailocal_litellm --tail=50"
+  echo "  Check logs: docker logs ailocal-litellm --tail=50"
   echo "  To roll back: git checkout the previous config, then docker compose up -d"
   exit 1
 fi

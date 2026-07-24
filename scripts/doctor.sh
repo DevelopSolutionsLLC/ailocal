@@ -91,8 +91,8 @@ if has ollama && ollama list >/dev/null 2>&1; then
 fi
 
 step "Compose status"
-if docker ps --format '{{.Names}}' | grep -q '^ailocal_litellm$'; then
-  health=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' ailocal_litellm 2>/dev/null)
+if docker ps --format '{{.Names}}' | grep -q '^ailocal-litellm$'; then
+  health=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' ailocal-litellm 2>/dev/null)
   case "$health" in
     healthy|none) info "LiteLLM container running [$health]" ;;
     starting)     warn "LiteLLM container still starting" ;;
@@ -105,12 +105,12 @@ fi
 
 # Crash-loop detection (folded in from the old healthcheck.sh).
 if docker ps --filter status=restarting --format '{{.Names}}' | grep -q .; then
-  error "A container is restart-looping — check: docker logs ailocal_litellm"
+  error "A container is restart-looping — check: docker logs ailocal-litellm"
   ok=false
 fi
 
 step "Service endpoints"
-if docker ps --format '{{.Names}}' | grep -q '^ailocal_litellm$'; then
+if docker ps --format '{{.Names}}' | grep -q '^ailocal-litellm$'; then
   check_http "LiteLLM" "http://localhost:4000/health/liveliness" 5
 else
   echo "  — LiteLLM endpoint skipped (container not running)"

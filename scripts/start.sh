@@ -77,7 +77,7 @@ else
     attempts=$((attempts + 1))
     if [ $attempts -ge $max_attempts ]; then
       warn "LiteLLM did not become ready after $((max_attempts * 3))s"
-      echo "  Check logs: docker logs ailocal_litellm"
+      echo "  Check logs: docker logs ailocal-litellm"
       break
     fi
     printf "  Waiting... (%ds)\r" $((attempts * 3))
