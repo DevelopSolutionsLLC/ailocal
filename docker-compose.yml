@@ -1,3 +1,5 @@
+name: ailocal
+
 networks:
   ailocal_net:
     driver: bridge
@@ -11,7 +13,7 @@ services:
   litellm:
     # Docs: https://docs.litellm.ai/docs/proxy/docker_quick_start
     image: ghcr.io/berriai/litellm:main-stable
-    container_name: ailocal_litellm
+    container_name: ailocal-litellm
     restart: unless-stopped
     mem_limit: 2g
     security_opt:

@@ -196,7 +196,7 @@ run_next_steps() {
   until curl -sSf --max-time 3 http://localhost:4000/health/liveliness >/dev/null 2>&1; do
     attempts=$((attempts + 1))
     if [ $attempts -ge 30 ]; then
-      warn "LiteLLM did not become ready — check: docker logs ailocal_litellm"
+      warn "LiteLLM did not become ready — check: docker logs ailocal-litellm"
       break
     fi
     printf "  Waiting... (%ds)\r" $((attempts * 3))

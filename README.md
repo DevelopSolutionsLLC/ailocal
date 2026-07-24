@@ -189,7 +189,7 @@ Disabled by default. `.env` carries `ENABLE_CLOUD`, `ANTHROPIC_API_KEY`, `OPENAI
 
 **VS Code: model spins on "Considering…" and never answers** — a backend emitted reasoning that streams invisibly. All installed models answer directly (none stream `<think>`). If you hit "Message exceeds token limit," pick a capability with a larger window (`architect` 32K, `coder`/`reviewer` 16K, `autocomplete` 4K). (A persistent 401 with "Ensure Key has Bearer prefix" instead means the connector's API key isn't entered — re-enter it via **Chat: Manage Language Models**.)
 
-**LiteLLM won't start** — `docker logs ailocal_litellm`. Usually a YAML error in `config/litellm/config.yaml` or a missing `LITELLM_MASTER_KEY` in `.env`.
+**LiteLLM won't start** — `docker logs ailocal-litellm`. Usually a YAML error in `config/litellm/config.yaml` or a missing `LITELLM_MASTER_KEY` in `.env`.
 
 **404 on a role name** — Ollama isn't running (`ollama serve`), the backend model isn't pulled (`ollama list`), or the capability isn't in `config/litellm/config.yaml`.
 
