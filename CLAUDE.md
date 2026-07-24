@@ -15,7 +15,8 @@ model_list entry named `ailocal-<capability>` — never a raw model tag. The `cl
 compatibility IDs (external client adapters that Claude Code / OpenAI SDK hard-code) are aliased onto
 those `ailocal-*` groups via a `model_group_alias` block **generated from `config/clients.yaml`** —
 one backend entry, many client-facing names. There is no `local/*` namespace. The old ailocal role names (`coder-main`/`deep-think*`/`supervisor`/…) are
-gone. Full map + lifecycle in `docs/MODEL_ARCHITECTURE.md`, `MODEL_ROUTING.md`, `MODEL_LIFECYCLE.md`.
+gone. The map is the two source files: `config/profiles/<tier>.yaml` (what each capability is —
+backend, context, sampling, keep_alive) and `config/clients.yaml` (which capability each client uses).
 
 ## Golden rule
 
@@ -63,8 +64,7 @@ Most of this repo's complexity is in these; change them carefully.
    backend's default reasoning, which otherwise hangs VS Code Copilot). Both are required — dropping
    either reintroduces a real, previously-hit bug. The reasoning path (`reasoning`/`merge` flags →
    `merge_reasoning_content_in_choices`, no drop, no `think:false`) is still in `sync-models.py`; a
-   commented `reasoning` slot in `config/profiles/<tier>.yaml` restores the tier in one repoint (see
-   `docs/MODEL_LIFECYCLE.md`).
+   commented `reasoning` slot in `config/profiles/<tier>.yaml` restores the tier in one repoint.
 4. **Client deployment is XDG-isolated.** Everything lands in `~/.config/ailocal/`;
    `~/.claude` and `~/.codex` are never touched, so cloud and local sessions coexist.
    `configure.zsh` defines the `claude-local` / `codex-local` / `ailocal-code` wrappers

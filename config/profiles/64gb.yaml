@@ -3,7 +3,7 @@
 #
 # Each entry is a CAPABILITY (intent), not a model name — but the real Ollama backend
 # is always right here (`active`), never hidden. Agents request the capability; the
-# router (LiteLLM) resolves it to `active`. See docs/MODEL_ARCHITECTURE.md.
+# router (LiteLLM) resolves it to `active`.
 #
 # Fields:
 #   role         human label shown in `ailocal status`
@@ -15,7 +15,7 @@
 #   temperature / num_predict   sampling (forwarded to LiteLLM)
 #   keep_alive   idle TTL AND the residency signal. `-1`/`forever`/`persistent` pin the model
 #                (resident); a duration (e.g. 20m) lets it self-unload when idle (rotating).
-#                Per-request keep_alive beats the global default — see docs/MODEL_LIFECYCLE.md.
+#                Per-request keep_alive beats the global default.
 #                This is the ONLY residency lever Ollama consumes; there is no separate priority
 #                field (Ollama evicts LRU under OLLAMA_MAX_LOADED_MODELS pressure).
 #   persona      persona_injector merges config/instructions/<capability>.md at request time.
@@ -101,7 +101,7 @@ embeddings:
 # ── reasoning tier (no installed backend) ────────────────────────────────────
 # The deepseek-r1 reasoners were removed; no installed model emits <think>. To restore,
 # pull a reasoner, uncomment, and repoint the deep-think* legacy names at `reasoning` in
-# config/clients.yaml. See docs/MODEL_LIFECYCLE.md.
+# config/clients.yaml.
 # reasoning:
 #   role: Chain-of-thought
 #   active: deepseek-r1:14b-qwen-distill-q8_0
