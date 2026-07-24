@@ -117,18 +117,19 @@ cat /tmp/step1.log
 
 ## Local model roles
 
-The proxy exposes these roles — use role names only, never backend model names:
+The proxy exposes these capabilities — use capability names only, never backend model names:
 
-| Role | Model (64 GB) | Context | Purpose |
-|---|---|---|---|
-| `router` | qwen3.5:9b-mlx | 32k | Fast classification, triage |
-| `coder` | qwen3.6:35b-mlx | **256k** | Implementation, code edits |
-| `reasoner` | deepseek-r1:32b | 128k | Planning, deep debugging |
-| `supervisor` | gemma4:31b-mxfp8 | 128k | Review, critique, vision |
-| `embed` | nomic-embed-text | 8k | Semantic search only |
+| Capability | Model (64 GB) | Context | Keep-alive | Purpose |
+|---|---|---|---|---|
+| `architecture` | qwen3-coder:30b | 32k | 2h | Design, complex refactor, multi-step debug |
+| `implementation` | qwen2.5-coder:14b | 16k | 60m | Implementation, features, tests |
+| `review` | deepseek-coder-v2:16b-lite | 16k | 20m | Code review, bug & security |
+| `completion` | qwen2.5-coder:3b | 4k | warm | Fast small tasks, autocomplete (FIM) |
+| `embeddings` | nomic-embed-text | 8k | pinned | Semantic search only |
 
-Models stay resident for **24 hours** (keep-alive). A model not yet loaded takes 30–60 seconds on
-first use. After that, responses start in under a second.
+Each capability self-unloads after its idle keep-alive; `completion`/`embeddings` stay resident. A
+model not yet loaded takes 30–60 seconds on first use. After that, responses start in under a second.
+No installed model emits `<think>` — there is no reasoning tier right now.
 
 ---
 
