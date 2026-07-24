@@ -13,22 +13,33 @@ instructions.
 Mechanism (documented): a CustomLogger with async_pre_call_hook, registered via
   litellm_settings:
     callbacks: persona_injector.proxy_handler_instance
-The hook mutates data["messages"] before the call is dispatched.
 Ref: https://docs.litellm.ai/docs/proxy/call_hooks
+
+Two request shapes, two injection points (both verified to reach the backend on
+LiteLLM 1.92.0 — the async_pre_call_hook bypass of issue #27518 was against
+v1.83.10 and no longer applies here):
+  - OpenAI  (/v1/chat/completions, call_type completion/acompletion/...): the system
+    prompt lives in data["messages"] as a role:system entry — merge the persona there.
+  - Anthropic (/v1/messages, call_type anthropic_messages — the route Claude Code
+    uses): the system prompt lives in the TOP-LEVEL data["system"] field (a string or
+    a list of content blocks), NOT in messages[] — merge the persona into data["system"].
 
 Persona source of truth: config/personas/<role>.md (a shared _core.md plus a
 per-role enhancer), mounted read-only at $AILOCAL_PERSONA_DIR. The same files
 document the Claude Code persona (config/clients/CLAUDE.md), so persona text
 lives in one place.
 
-Roles without a persona file (coder-fast, embed) pass through untouched — the fast
-autocomplete tier stays lean by design.
+Roles without a persona file (completion, embeddings) pass through untouched — the
+fast autocomplete/embedding tiers stay lean by design.
 """
 
 import glob
+import logging
 import os
 
 from litellm.integrations.custom_logger import CustomLogger
+
+log = logging.getLogger("persona_injector")
 
 PERSONA_DIR = os.environ.get("AILOCAL_PERSONA_DIR", "/app/personas")
 CONFIG_PATH = os.environ.get("AILOCAL_CONFIG_PATH", "/app/config/config.yaml")
@@ -42,9 +53,9 @@ def _read(path):
 
 
 def _load_personas():
-    """role -> persona text: the shared _opus-core.md prepended to each curated
-    per-role enhancer config/personas/<role>.md. Files whose name starts with '_'
-    are shared fragments, not roles."""
+    """role -> persona text: the shared _core.md prepended to each curated per-role
+    enhancer config/personas/<role>.md. Files whose name starts with '_' are shared
+    fragments, not roles."""
     core = _read(os.path.join(PERSONA_DIR, "_core.md"))
     personas = {}
     for path in glob.glob(os.path.join(PERSONA_DIR, "*.md")):
@@ -77,18 +88,17 @@ class PersonaInjector(CustomLogger):
         self.personas = _load_personas()
         self.alias = _load_alias_map()
 
-    def _persona_for(self, model):
+    def _role_for(self, model):
         # Resolve a compat alias (claude-*/gpt-*) to its ailocal-<cap> group, then strip the
         # ailocal- prefix to get the capability key the persona files are named by.
         role = self.alias.get(model, model)
         if role.startswith("ailocal-"):
             role = role[len("ailocal-"):]
-        return self.personas.get(role)
+        return role
 
-    def _inject(self, data):
-        persona = self._persona_for(data.get("model", ""))
-        if not persona:
-            return data
+    @staticmethod
+    def _merge_openai(data, persona):
+        """Merge into the role:system entry of data["messages"] (OpenAI shape)."""
         messages = data.get("messages")
         if not isinstance(messages, list):
             return data
@@ -104,11 +114,48 @@ class PersonaInjector(CustomLogger):
         data["messages"] = messages
         return data
 
+    @staticmethod
+    def _merge_anthropic(data, persona):
+        """Merge into the TOP-LEVEL data["system"] (Anthropic /v1/messages shape). The
+        field may be absent, a string, or a list of content blocks — handle all three,
+        idempotently."""
+        system = data.get("system")
+        if not system:
+            data["system"] = persona
+        elif isinstance(system, str):
+            if persona not in system:
+                data["system"] = persona + "\n\n" + system
+        elif isinstance(system, list):
+            # List of content blocks ({"type":"text","text":...}); prepend one text block
+            # unless the persona is already present in some block.
+            present = any(isinstance(b, dict) and persona in (b.get("text") or "")
+                          for b in system)
+            if not present:
+                data["system"] = [{"type": "text", "text": persona}] + system
+        return data
+
+    def _inject(self, data, anthropic=False):
+        model = data.get("model", "")
+        role = self._role_for(model)
+        persona = self.personas.get(role)
+        route = "anthropic_messages" if anthropic else "openai"
+        # Debug line for tracing alias/model → capability resolution. Visible when the proxy
+        # runs with --detailed_debug (or the persona_injector logger set to DEBUG).
+        log.debug("persona_inject requested_model=%s resolved_capability=%s persona=%s route=%s",
+                  model, role, f"{role}.md" if persona else "none", route)
+        if not persona:
+            return data
+        return self._merge_anthropic(data, persona) if anthropic else self._merge_openai(data, persona)
+
     async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
-        # Only chat/completion-shaped calls carry a messages array.
+        # Anthropic /v1/messages (Claude Code's route) — system is a top-level field.
+        if call_type == "anthropic_messages":
+            return self._inject(data, anthropic=True)
+        # OpenAI-shaped chat/completion calls carry a role:system entry in messages[].
         if call_type in ("completion", "acompletion", "text_completion",
                          "chat_completion", None):
             return self._inject(data)
+        # embeddings / image_generation / moderation / audio_transcription: no system prompt.
         return data
 
 

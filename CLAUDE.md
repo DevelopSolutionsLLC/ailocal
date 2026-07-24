@@ -41,15 +41,20 @@ Most of this repo's complexity is in these; change them carefully.
    (`config/profiles/{16,32,64,128}gb.yaml`); `--profile <tier>` overrides.
    `sync-models.py --resolve <capability>` prints the active backend (used by the shell scripts).
 2. **Persona injection.** `config/litellm/persona_injector.py` is a LiteLLM pre-call
-   hook merging `config/personas/_core.md` + `<role>.md` into whatever system message
-   the client sent — server-side, so every alias inherits it. Reasoners get **no**
-   persona (DeepSeek's guidance), temp 0.6 / top-p 0.95. Caveat: LiteLLM issue #27518
-   reports `async_pre_call_hook` being bypassed on the Anthropic `/v1/messages` route —
-   the one Claude Code uses. Re-verify before relying on personas there.
-   Coupling: persona injection depends on model names resolving back to a capability key.
-   The hook resolves the requested model through `model_group_alias` and uses that capability
-   key to load `config/personas/<capability>.md`. Any future change to canonical model names,
-   aliases, or routing layers must preserve this mapping or personas silently stop applying.
+   hook merging `config/personas/_core.md` + `<capability>.md` into whatever system
+   prompt the client sent — server-side, so every alias inherits it. It handles **both**
+   request shapes: OpenAI (`call_type` completion/acompletion — system lives in
+   `messages[]`) and Anthropic `/v1/messages` (`call_type anthropic_messages` — system is
+   the **top-level `system`** field), which is the route Claude Code uses. Reasoners get
+   **no** persona (DeepSeek's guidance), temp 0.6 / top-p 0.95. LiteLLM issue #27518 (hook
+   bypassed on `/v1/messages`) was filed against **v1.83.10**; on the **1.92.0** we run,
+   the hook fires AND its mutation reaches the backend on both routes — measured, not
+   assumed (persona marker + the propagation probe). Re-verify only after a LiteLLM
+   downgrade. Coupling: injection depends on model names resolving back to a
+   capability key. The hook resolves the requested model through `model_group_alias` and
+   uses that capability key to load `config/personas/<capability>.md`. Any future change
+   to canonical model names, aliases, or routing layers must preserve this mapping or
+   personas silently stop applying.
    Completion and embeddings intentionally have no persona.
 3. **Reasoning vs. non-reasoning.** No installed model currently thinks — the `deep-think*`
    reasoners (deepseek-r1) were removed, and `qwen3-coder` is Qwen's non-thinking variant. Every
