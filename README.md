@@ -2,9 +2,9 @@
 
 Run AI coding tools — Claude Code, Codex, VS Code Copilot Chat — against local models on Apple Silicon. No cloud costs, no data leaving your machine, no changes to the tools.
 
-**How it works:** Ollama runs your models natively for Metal/MLX GPU access. LiteLLM sits in front as an OpenAI/Anthropic-compatible proxy, exposing role names (`coder-main`, `deep-think-more`, `supervisor`) instead of raw model names. Your tools point at `localhost:4000` instead of Anthropic or OpenAI — everything else stays the same.
+**How it works:** Ollama runs your models natively for Metal/MLX GPU access. LiteLLM sits in front as an OpenAI/Anthropic-compatible proxy, exposing capability names (`architect`, `coder`, `reviewer`, `autocomplete`) instead of raw model names. Your tools point at `localhost:4000` instead of Anthropic or OpenAI — everything else stays the same.
 
-**Why over bare Ollama:** one endpoint for all tools; role names decouple client configs from backend models (swap a model without touching any config); automatic fallback chains; optional per-role cloud fallback; minimal footprint (a single small container — the only heavy memory user is Ollama on the host).
+**Why over bare Ollama:** one endpoint for all tools; capability names decouple client configs from backend models (swap a model without touching any config); automatic fallback chains; optional per-role cloud fallback; minimal footprint (a single small container — the only heavy memory user is Ollama on the host).
 
 New here? Read [CLAUDE.md](CLAUDE.md) for the architecture and file map.
 
@@ -30,10 +30,10 @@ ollama serve                  # or open Ollama.app
 `install.sh` offers **production autostart**: answer `y` and it runs
 `scripts/setup-startup.sh`, which installs launchd LaunchAgents so at every login
 `ollama serve` starts (env baked in — `OLLAMA_MODELS=/Users/Shared/ollama/models`,
-`MAX_LOADED=3`, `NUM_PARALLEL=2`, `KEEP_ALIVE=-1`, flash-attn, q8 KV cache) and the
-coder-main model preloads once Ollama is healthy. Disable Ollama.app's "launch at login"
+`MAX_LOADED=4`, `NUM_PARALLEL=2`, `KEEP_ALIVE=-1`, flash-attn, q8 KV cache) and the
+coder model preloads once Ollama is healthy. Disable Ollama.app's "launch at login"
 (menubar → Settings) so two servers don't fight over port 11434. Re-run any time:
-`./scripts/setup-startup.sh --model coder-main` (add `--with-litellm` to also run LiteLLM
+`./scripts/setup-startup.sh --model coder` (add `--with-litellm` to also run LiteLLM
 natively; `--uninstall` to remove). Answer `n` to keep using Ollama.app and only set
 runtime env vars (`scripts/setup-ollama-env.sh`).
 
@@ -55,23 +55,37 @@ You can keep Docker Desktop tiny: **Settings → Resources**, CPUs `2`, Memory `
 
 ## Role-based routing
 
-LiteLLM exposes **role names only** — no backend model names are visible to clients. The table shows the **64 GB** profile; backends vary by tier (see [Changing models](#changing-models)).
+LiteLLM exposes **capability names only** — no backend model names are visible to clients. Agents
+request a capability; the router owns the backend, context, sampling, and lifecycle. The table shows
+the **64 GB** profile (see [Changing models](#changing-models)). Full detail:
+`docs/MODEL_ARCHITECTURE.md`, `docs/MODEL_ROUTING.md`, `docs/MODEL_LIFECYCLE.md`.
 
-| Role | Backend model (64 GB) | Purpose |
-|---|---|---|
-| `coder-main` | qwen3-coder:30b | Primary repository coding, logic, syntax — the daily driver |
-| `coder-agent` | qwen3.6:35b-mlx | Multi-step planning / agentic orchestration (Cline) |
-| `coder-fast` | qwen2.5-coder:3b | Fast small tasks; IDE autocomplete (FIM) |
-| `deep-think` | deepseek-r1:14b-qwen-distill-q8_0 | Lighter reasoning, thinking merged into the answer text |
-| `deep-think-more` | deepseek-r1:32b | Deep reasoning / decomposition, thinking merged |
-| `supervisor` | gemma4:31b-mxfp8 | Review, critique, approval gate |
-| `embed` | nomic-embed-text | Semantic retrieval and memory — not for chat |
+| Capability | Backend model (64 GB) | ctx / keep_alive | Purpose |
+|---|---|---|---|
+| `architect` | qwen3-coder:30b | 32K / 2h | Architecture, complex refactor, multi-step debug, design |
+| `coder` | qwen2.5-coder:14b-instruct-q4_K_M | 16K / 60m | Implementation, features, tests, everyday refactoring |
+| `reviewer` | deepseek-coder-v2:16b-lite-instruct-q4_K_M | 16K / 20m | Code review, bug & security detection, alternatives |
+| `autocomplete` | qwen2.5-coder:3b-instruct-q4_K_M | 4K / warm | Inline completion (FIM), quick fixes, small transforms |
+| `embed` | nomic-embed-text | 8K / pinned | Semantic retrieval and memory — infrastructure, not chat |
 
-**Never use backend model names directly in client configs or scripts.** Use role names only.
+Also accepted (aliased onto the above): the `local/*` namespace (internal agent API) and the
+`claude-*`/`gpt-*` compatibility IDs (external adapters — see [Compatibility Model IDs](docs/MODEL_ROUTING.md)).
+The old ailocal role names (`coder-main`/`deep-think*`/`supervisor`/…) have been removed.
+**Never use backend model names directly in client configs or scripts.** Use capability names only.
 
-**Personas & sampling.** Each role gets an "Opus-like" grounded engineering persona injected server-side by the `persona_injector` LiteLLM hook (from `config/personas/<role>.md`) — merged into the client's system message, so it survives even when the client sends its own. Reasoners are the exception: per DeepSeek's official guidance they get **no** persona and run at temperature 0.6 / top-p 0.95. Coders use Qwen's recommended sampling (0.7 / 0.8 / top-k 20), supervisor uses Gemma's (1.0 / 0.95 / top-k 64). All sampling lives in `config/models.yaml`.
+**Personas & sampling.** `architect`, `coder`, and `reviewer` get a grounded engineering persona
+injected server-side by the `persona_injector` hook (from `config/personas/<role>.md`) — merged into
+the client's system message, so it survives even when the client sends its own. `autocomplete` and
+`embed` are persona-free by design (lean/infra). Sampling lives in `config/models.yaml` (architect/
+coder temp 0.2, reviewer 0.1, autocomplete 0).
 
-**Reasoning behavior by role.** `coder-*` and `supervisor` are execution roles that answer directly — a long invisible reasoning stream reads as a hang in OpenAI-format clients (VS Code Copilot). Two settings enforce that, and both are needed: `additional_drop_params: ["thinking", "reasoning_effort"]` (so a client sending `thinking` to a non-thinking backend doesn't 400) and `think: false` (suppresses qwen3.6's default reasoning). The `deep-think*` roles are the thinking tiers; their reasoning stream is merged into the answer text (`merge_reasoning_content_in_choices`) so it renders as visible `<think>…</think>` content instead of a silent "Considering…" spinner.
+**No reasoning tier right now.** None of the installed models emit `<think>` — the deepseek-r1
+reasoners were removed, and `qwen3-coder` is Qwen's non-thinking variant. Every capability carries
+`additional_drop_params: ["thinking", "reasoning_effort"]` + `think: false` so a client sending
+`thinking` doesn't 400 and a backend's default reasoning can't hang VS Code Copilot. The reasoning
+path (merged `<think>` via `merge_reasoning_content_in_choices`) still exists in `sync-models.py`; a
+commented `reasoner` slot in `config/models.yaml` restores the tier in one repoint (see
+`docs/MODEL_LIFECYCLE.md`).
 
 ### Changing models
 
@@ -83,7 +97,7 @@ $EDITOR config/models.yaml         # 1. edit backend / num_ctx / vision flag
 docker compose restart litellm     # 3. reload the proxy  (or ./scripts/start.sh)
 ```
 
-`sync-models.sh` regenerates the `model_list` block in `config/litellm/config.yaml` (backend, `num_ctx`, sampling, capability flags — between the GENERATED markers) and the Codex `model_catalog.json`. **Do not hand-edit those generated regions.** Capabilities: tool calling everywhere; parallel tool calls everywhere except the `deep-think*` reasoners; reasoning (streamed `<think>`) on the `deep-think*` roles only; vision/PDF on backends flagged `vision:` in `models.yaml`. Backend model tags are served directly (no persona overlays); the persona is injected by the `persona_injector` hook.
+`sync-models.sh` regenerates the `model_list` block in `config/litellm/config.yaml` (backend, `num_ctx`, sampling, capability flags — between the GENERATED markers) and the Codex `model_catalog.json`. **Do not hand-edit those generated regions.** Capabilities: tool calling everywhere; parallel tool calls everywhere (no reasoner is installed); reasoning (streamed `<think>`) only if a `reasoner` slot is enabled; vision/PDF on backends flagged `vision:` in `models.yaml`. Backend model tags are served directly (no persona overlays); the persona is injected by the `persona_injector` hook.
 
 ## Client integration
 
@@ -94,7 +108,7 @@ docker compose restart litellm     # 3. reload the proxy  (or ./scripts/start.sh
 
 The installer is safe to re-run and backs up before touching anything. Client state lives in `~/.config/ailocal/` (XDG-style) — cloud clients (`~/.claude`, `~/.codex`) are never touched, so cloud and local sessions coexist safely.
 
-**Claude Code** — run `claude-local` to start a Claude Code session pointed at local models (the wrapper sets `CLAUDE_CONFIG_DIR=~/.config/ailocal/claude` + per-invocation env vars). Launches on `coder-agent` — the orchestrator — which fans work out to the other roles; use `/model` to switch mid-session. Plain `claude` still connects to Anthropic cloud.
+**Claude Code** — run `claude-local` to start a Claude Code session pointed at local models (the wrapper sets `CLAUDE_CONFIG_DIR=~/.config/ailocal/claude` + per-invocation env vars). Launches on `architect` — the heavy tier — and delegates via the `/model` picker or subagents; use `/model` to switch mid-session. Plain `claude` still connects to Anthropic cloud.
 
 **Codex CLI** — run `codex-local` for local models (sets `CODEX_HOME=~/.config/ailocal/codex` + env vars). The model picker shows role names. Plain `codex` still connects to OpenAI cloud.
 
@@ -113,6 +127,29 @@ The installer handles extension install, recommended settings (`inactivityTimeou
 - **Subagents and commands** (Claude Code): `planner`, `implementer`, `reviewer`, `search`, `tester`, plus `/local-build` and `/analyze-repo`. Each subagent is pinned to the role that suits it, so heavy search doesn't occupy the orchestrator's context. Codex gets the equivalent prompts.
 - **Per-session scratchpad**: a shared `SessionStart` hook gives every session its own `/tmp/scratchpad/<tool>-<session_id>/`, so concurrent Claude/Codex sessions never collide over temp files. Wired identically for Claude Code (`settings.json`) and Codex (`config.toml`).
 
+### Layering Cadence on top (optional)
+
+[Cadence](https://github.com/DevelopSolutionsLLC/cadence) can deploy its rules, hooks, and
+repository-intelligence agents into these same local roots, so `claude-local` gets the same
+workflow tooling as a cloud session:
+
+```bash
+cadence install claude --root ~/.config/ailocal/claude
+cadence install codex  --root ~/.config/ailocal/codex
+CLAUDE_CONFIG_DIR=~/.config/ailocal/claude \
+  claude mcp add grepai -s user -- grepai mcp-serve --workspace DevelopSolutions
+```
+
+MCP servers are registered per-root, so this does not touch your cloud `~/.claude` setup. Cadence
+keeps ailocal's five subagents and **appends** its operating rules into them between
+`<!-- cadence:start -->` / `<!-- cadence:end -->` markers, adding only `repository-health` as a new
+agent — it does not install competing `Explore`/`Plan`/`verify` agents, because `search`/`planner`/
+`tester` already cover those jobs.
+
+**Order matters:** `install-clients.sh` rewrites the subagent files and strips that block. Install
+cadence → ailocal → cadence-local, and re-run the Cadence installer after any `install-clients.sh`
+run. `cadence doctor --root ~/.config/ailocal/claude` reports `NO-OVERLAY` when the block is gone.
+
 **For full-shell environment (optional)** — `source ~/.config/ailocal/env` redirects both SDKs (Claude Code, Codex, and any Python/JS SDK) to local models for that shell session only. The wrappers above are the recommended path.
 
 **Uninstall** — `./scripts/teardown.sh --clients` removes the installer's `.zshrc` markers and `~/.config/ailocal` (backs up the API key first).
@@ -122,13 +159,13 @@ The installer handles extension install, recommended settings (`inactivityTimeou
 ```python
 from openai import OpenAI
 client = OpenAI(base_url="http://localhost:4000/v1", api_key="<LITELLM_MASTER_KEY>")
-client.chat.completions.create(model="coder-main", messages=[{"role": "user", "content": "Hello"}])
+client.chat.completions.create(model="coder", messages=[{"role": "user", "content": "Hello"}])
 ```
 
 ```python
 import anthropic
 client = anthropic.Anthropic(base_url="http://localhost:4000", api_key="<LITELLM_MASTER_KEY>")
-client.messages.create(model="coder-main", max_tokens=1024, messages=[{"role": "user", "content": "Hello"}])
+client.messages.create(model="coder", max_tokens=1024, messages=[{"role": "user", "content": "Hello"}])
 ```
 
 ## Operations
@@ -150,13 +187,13 @@ Disabled by default. `.env` carries `ENABLE_CLOUD`, `ANTHROPIC_API_KEY`, `OPENAI
 
 **VS Code: "No utility model is configured for 'copilot-utility-small'"** — a VS Code 1.128+ regression for BYOK providers. Set `"chat.byokUtilityModelDefault": "mainAgent"` in settings.json (`install-clients.sh vscode` adds it) and reload the window. This keeps utility calls (titles, summaries) on your selected local model.
 
-**VS Code: model spins on "Considering…" and never answers** — you selected a thinking model whose reasoning streams invisibly. Use `coder-main` (or `coder-fast`) for direct answers, or `deep-think` / `deep-think-more` for visible thinking (their reasoning is merged into the answer text). If you hit "Message exceeds token limit," pick a role with a larger window (`coder-main`/`coder-agent` are 64K, `deep-think*` 64K, `supervisor` 32K, `coder-fast` 16K). (A persistent 401 with "Ensure Key has Bearer prefix" instead means the connector's API key isn't entered — re-enter it via **Chat: Manage Language Models**.)
+**VS Code: model spins on "Considering…" and never answers** — a backend emitted reasoning that streams invisibly. All installed models answer directly (none stream `<think>`). If you hit "Message exceeds token limit," pick a capability with a larger window (`architect` 32K, `coder`/`reviewer` 16K, `autocomplete` 4K). (A persistent 401 with "Ensure Key has Bearer prefix" instead means the connector's API key isn't entered — re-enter it via **Chat: Manage Language Models**.)
 
 **LiteLLM won't start** — `docker logs ailocal_litellm`. Usually a YAML error in `config/litellm/config.yaml` or a missing `LITELLM_MASTER_KEY` in `.env`.
 
-**404 on a role name** — Ollama isn't running (`ollama serve`), the backend model isn't pulled (`ollama list`), or the role isn't in `config/litellm/config.yaml`.
+**404 on a role name** — Ollama isn't running (`ollama serve`), the backend model isn't pulled (`ollama list`), or the capability isn't in `config/litellm/config.yaml`.
 
-**Claude Code `/model` only shows Opus/Sonnet/Haiku** — gateway discovery isn't on (needs Claude Code v2.1.129+). The `claude-local` wrapper sets `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1` so `/model` lists every LiteLLM role (`coder-main`, `coder-agent`, `coder-fast`, `deep-think`, `deep-think-more`, `supervisor`) under "From gateway", and remaps the built-in slots — Opus→`deep-think-more`, Sonnet→`coder-main`, Haiku→`coder-fast` — so background calls stay local. If you don't see them, reload your shell (`source ~/.zshrc`) and relaunch `claude-local`.
+**Claude Code `/model` only shows Opus/Sonnet/Haiku** — gateway discovery isn't on (needs Claude Code v2.1.129+). The `claude-local` wrapper sets `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1` so `/model` lists every LiteLLM capability (`architect`, `coder`, `reviewer`, `autocomplete`, `embed`) under "From gateway", and remaps the built-in slots — Opus→`architect`, Sonnet→`coder`, Haiku→`autocomplete`, Fable→`reviewer` — so background calls stay local. If you don't see them, reload your shell (`source ~/.zshrc`) and relaunch `claude-local`.
 
 **Models unload too fast** — the Ollama macOS app doesn't read `~/.zshrc`; run `./scripts/setup-ollama-env.sh`, restart Ollama, verify with `ollama ps`.
 
