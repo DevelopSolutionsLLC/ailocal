@@ -4,27 +4,27 @@
     "config/profiles/<tier>.yaml + config/clients.yaml, run sync-models.sh. Deployed by",
     "install-clients.sh (vscode); __LITELLM_KEY__ substituted from .env at install.",
     "Chat/edit go through LiteLLM (4000); autocomplete hits Ollama (11434) directly for FIM.",
-    "Capabilities: architecture | implementation | review | completion | embeddings"
+    "Models: ailocal-architecture | ailocal-implementation | ailocal-review | ailocal-completion | ailocal-embeddings"
   ],
   "models": [
     {
       "title": "Lead architect (architecture)",
       "provider": "openai",
-      "model": "architecture",
+      "model": "ailocal-architecture",
       "apiBase": "http://localhost:4000/v1",
       "apiKey": "__LITELLM_KEY__"
     },
     {
       "title": "Daily coding (implementation)",
       "provider": "openai",
-      "model": "implementation",
+      "model": "ailocal-implementation",
       "apiBase": "http://localhost:4000/v1",
       "apiKey": "__LITELLM_KEY__"
     },
     {
       "title": "Code review (review)",
       "provider": "openai",
-      "model": "review",
+      "model": "ailocal-review",
       "apiBase": "http://localhost:4000/v1",
       "apiKey": "__LITELLM_KEY__"
     }
@@ -37,7 +37,7 @@
   },
   "embeddingsProvider": {
     "provider": "openai",
-    "model": "embeddings",
+    "model": "ailocal-embeddings",
     "apiBase": "http://localhost:4000/v1",
     "apiKey": "__LITELLM_KEY__"
   }

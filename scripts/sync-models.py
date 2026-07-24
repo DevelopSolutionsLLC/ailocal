@@ -50,6 +50,14 @@ ML_END   = "  # >>> END GENERATED model_list <<<"
 AL_BEGIN = "  # >>> BEGIN GENERATED model_group_alias (sync-models.py) — do not edit <<<"
 AL_END   = "  # >>> END GENERATED model_group_alias <<<"
 
+# Capabilities are short keys in the source (config/profiles/<tier>.yaml + config/clients.yaml);
+# every client-facing model id is that key with an `ailocal-` prefix, applied only at emit time.
+# One canonical model_list entry per capability (`ailocal-<cap>`) — no `local/*` duplicate.
+MODEL_PREFIX = "ailocal-"
+def mn(cap):
+    """Client-facing model id for a capability (the ailocal- prefixed name LiteLLM serves)."""
+    return f"{MODEL_PREFIX}{cap}"
+
 
 def step(m): print(f"\n▶ {m}")
 def ok(m):   print(f"  ✓ {m}")
@@ -185,7 +193,7 @@ def gen_role_block(role, info):
 
     if role == "embeddings" or truthy(info.get("embedding", "false")) or backend.startswith("nomic") or "embed" in role:
         lines = [
-            f"  - model_name: {role}",
+            f"  - model_name: {mn(role)}",
             f"    litellm_params:",
             f"      model: ollama_chat/{backend}",
             f"      api_base: os.environ/OLLAMA_URL",
@@ -210,7 +218,7 @@ def gen_role_block(role, info):
     desc      = info.get("role", "")
 
     params = [
-        f"  - model_name: {role}",
+        f"  - model_name: {mn(role)}",
         f"    litellm_params:",
         f"      model: ollama_chat/{backend}",
         f"      api_base: os.environ/OLLAMA_URL",
@@ -244,7 +252,7 @@ def gen_role_block(role, info):
         f"      input_cost_per_token: 0",
         f"      output_cost_per_token: 0",
     ]
-    header = f"  # {role} — {desc} ({backend})\n" if desc else ""
+    header = f"  # {mn(role)} — {desc} ({backend})\n" if desc else ""
     return header + "\n".join(params) + "\n" + "\n".join(mi) + "\n"
 
 
@@ -254,13 +262,13 @@ def gen_model_list(models):
 
 
 def gen_alias_block(models, clients):
-    """model_group_alias YAML from clients.yaml: the local/* capability namespace plus the
-    external client-compat names. Capabilities inherit persona/capabilities from the target group."""
+    """model_group_alias YAML from clients.yaml: the external client-compat names (claude-*/gpt-*)
+    that Claude Code and the OpenAI SDK hard-code, each pointing at its `ailocal-<cap>` model group.
+    No `local/*` namespace — the single canonical `ailocal-<cap>` model_list entry is the only name.
+    Compat names inherit the target group's persona/settings."""
     lines = [AL_BEGIN, "  model_group_alias:"]
-    for cap in models:
-        lines.append(f"    local/{cap}: {cap}")
     for name, cap in clients.get("compat", {}).items():
-        lines.append(f"    {name}: {cap}")
+        lines.append(f"    {name}: {mn(cap)}")
     lines.append(AL_END)
     return "\n".join(lines) + "\n"
 
@@ -345,7 +353,7 @@ def regen_catalog(models):
                              CATALOG_ROLE_SENTENCE.get(name, f"You are the {role} capability."),
                              CATALOG_TOOLING])
         entries.append({
-            "slug": name,
+            "slug": mn(name),
             "display_name": f"{role} ({backend})",
             "description": f"{role} — {backend}, {num_ctx // 1024}K ctx",
             "base_instructions": instr,
@@ -384,10 +392,10 @@ def regen_claude_settings(models, clients):
         return False
     data = json.loads(CLAUDE_SETTINGS.read_text())
     default = (clients.get("claude") or {}).get("launch_default", next(iter(models)))
-    caps = " | ".join(models.keys())
+    caps = " | ".join(mn(k) for k in models.keys())
     slots = (clients.get("claude") or {}).get("slots", {})
-    slot_txt = ", ".join(f"{k.title()}->{v}" for k, v in slots.items())
-    data["model"] = default
+    slot_txt = ", ".join(f"{k.title()}->{mn(v)}" for k, v in slots.items())
+    data["model"] = mn(default)
     data["//"] = [
         "Claude Code settings — deployed to ~/.config/ailocal/claude/settings.json",
         "(CLAUDE_CONFIG_DIR for the local variant; ~/.claude is never touched).",
@@ -395,9 +403,9 @@ def regen_claude_settings(models, clients):
         "GENERATED FIELDS ('model' + this note) — edit config/clients.yaml, run sync-models.sh.",
         "Base URL + key are injected per-process by the claude-local() wrapper.",
         "",
-        "All requests route through LiteLLM by capability name.",
-        f"Capabilities: {caps}",
-        f"Launch default = {default}. At runtime /model lists every capability (the wrapper sets",
+        "All requests route through LiteLLM by ailocal-<capability> model id.",
+        f"Models: {caps}",
+        f"Launch default = {mn(default)}. At runtime /model lists every model (the wrapper sets",
         "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1, so Claude Code GETs /v1/models).",
         f"Built-in slots remap: {slot_txt}.",
         "Launch with: claude-local",
@@ -426,15 +434,15 @@ def regen_codex(models, clients):
     done = False
     if CODEX_CONFIG.exists():
         text = CODEX_CONFIG.read_text()
-        text = re.sub(r'(?m)^model\s*=.*$', f'model = "{default}"', text, count=1)
+        text = re.sub(r'(?m)^model\s*=.*$', f'model = "{mn(default)}"', text, count=1)
         text = re.sub(r'(?m)^# Valid models:.*$',
-                      "# Valid models: " + " | ".join(models.keys()), text, count=1)
+                      "# Valid models: " + " | ".join(mn(k) for k in models.keys()), text, count=1)
         CODEX_CONFIG.write_text(text)
         done = True
     if "plan" in profiles:
-        _set_toml_model(CODEX_PLAN, profiles["plan"])
+        _set_toml_model(CODEX_PLAN, mn(profiles["plan"]))
     if "review" in profiles:
-        _set_toml_model(CODEX_REVIEW, profiles["review"])
+        _set_toml_model(CODEX_REVIEW, mn(profiles["review"]))
     return done
 
 
@@ -447,7 +455,7 @@ def regen_continue(models, clients):
     chat = cont.get("chat", list(models.keys()))
     data["models"] = [
         {"title": f"{models.get(c, {}).get('role', c)} ({c})", "provider": "openai",
-         "model": c, "apiBase": "http://localhost:4000/v1", "apiKey": "__LITELLM_KEY__"}
+         "model": mn(c), "apiBase": "http://localhost:4000/v1", "apiKey": "__LITELLM_KEY__"}
         for c in chat
     ]
     ac = cont.get("autocomplete", "completion")
@@ -458,7 +466,7 @@ def regen_continue(models, clients):
     }
     emb = cont.get("embeddings", "embeddings")
     data["embeddingsProvider"] = {
-        "provider": "openai", "model": emb,
+        "provider": "openai", "model": mn(emb),
         "apiBase": "http://localhost:4000/v1", "apiKey": "__LITELLM_KEY__",
     }
     data["//"] = [
@@ -466,7 +474,7 @@ def regen_continue(models, clients):
         "config/profiles/<tier>.yaml + config/clients.yaml, run sync-models.sh. Deployed by",
         "install-clients.sh (vscode); __LITELLM_KEY__ substituted from .env at install.",
         "Chat/edit go through LiteLLM (4000); autocomplete hits Ollama (11434) directly for FIM.",
-        "Capabilities: " + " | ".join(models.keys()),
+        "Models: " + " | ".join(mn(k) for k in models.keys()),
     ]
     CONTINUE_CONFIG.write_text(json.dumps(data, indent=2) + "\n")
     return True

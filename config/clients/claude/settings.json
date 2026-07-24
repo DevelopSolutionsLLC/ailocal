@@ -6,14 +6,14 @@
     "GENERATED FIELDS ('model' + this note) \u2014 edit config/clients.yaml, run sync-models.sh.",
     "Base URL + key are injected per-process by the claude-local() wrapper.",
     "",
-    "All requests route through LiteLLM by capability name.",
-    "Capabilities: architecture | implementation | review | completion | embeddings",
-    "Launch default = implementation. At runtime /model lists every capability (the wrapper sets",
+    "All requests route through LiteLLM by ailocal-<capability> model id.",
+    "Models: ailocal-architecture | ailocal-implementation | ailocal-review | ailocal-completion | ailocal-embeddings",
+    "Launch default = ailocal-implementation. At runtime /model lists every model (the wrapper sets",
     "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1, so Claude Code GETs /v1/models).",
-    "Built-in slots remap: Opus->architecture, Sonnet->implementation, Haiku->completion, Fable->review.",
+    "Built-in slots remap: Opus->ailocal-architecture, Sonnet->ailocal-implementation, Haiku->ailocal-completion, Fable->ailocal-review.",
     "Launch with: claude-local"
   ],
-  "model": "implementation",
+  "model": "ailocal-implementation",
   "hooks": {
     "SessionStart": [
       {

@@ -6,19 +6,21 @@
 #   OLLAMA_URL          — http://host.docker.internal:11434
 #
 # ── How model names work ─────────────────────────────────────────────────────
-#   Layer 1 — Capabilities (canonical). ONE model_list entry each, GENERATED from
-#             the active config/profiles/<tier>.yaml by sync-models.py, between markers.
-#             Agents request these:
-#               architecture | implementation | review | completion | embeddings
-#   Layer 2 — The `local/*` namespace + legacy role names + Claude/OpenAI names.
-#             GENERATED from config/clients.yaml into model_group_alias (below).
-#             One backend config, many names, one shared persona.
+#   Layer 1 — Capabilities (canonical). ONE model_list entry each, named
+#             `ailocal-<capability>`, GENERATED from the active config/profiles/<tier>.yaml
+#             by sync-models.py, between markers. Agents/clients request these:
+#               ailocal-architecture | ailocal-implementation | ailocal-review
+#               | ailocal-completion | ailocal-embeddings
+#   Layer 2 — Claude/OpenAI compat names (claude-*/gpt-*) that clients hard-code.
+#             GENERATED from config/clients.yaml into model_group_alias (below),
+#             each pointing at its `ailocal-<capability>` group. There is NO `local/*`
+#             namespace — one canonical name per capability, one backend, one persona.
 #
 # Persona note: capabilities point straight at their base Ollama model. The persona
 # is injected at request time by the persona_injector hook (see
 # config/litellm/persona_injector.py + config/personas/<capability>.md). Because
-# aliases resolve to the capability's model group, every legacy/compat name inherits
-# that persona automatically.
+# compat names resolve to the capability's model group, every one inherits that
+# persona automatically.
 #
 # ── Backend mapping (64gb profile) — the real model is never hidden ──────────
 #   architecture   → qwen3-coder:30b                            (heavy design/refactor)
@@ -34,8 +36,8 @@ model_list:
 
   # >>> BEGIN GENERATED model_list (sync-models.py) — do not edit <<<
 
-  # architecture — Lead architect (qwen3-coder:30b)
-  - model_name: architecture
+  # ailocal-architecture — Lead architect (qwen3-coder:30b)
+  - model_name: ailocal-architecture
     litellm_params:
       model: ollama_chat/qwen3-coder:30b
       api_base: os.environ/OLLAMA_URL
@@ -56,8 +58,8 @@ model_list:
       input_cost_per_token: 0
       output_cost_per_token: 0
 
-  # implementation — Daily coding (qwen2.5-coder:14b-instruct-q4_K_M)
-  - model_name: implementation
+  # ailocal-implementation — Daily coding (qwen2.5-coder:14b-instruct-q4_K_M)
+  - model_name: ailocal-implementation
     litellm_params:
       model: ollama_chat/qwen2.5-coder:14b-instruct-q4_K_M
       api_base: os.environ/OLLAMA_URL
@@ -79,8 +81,8 @@ model_list:
       input_cost_per_token: 0
       output_cost_per_token: 0
 
-  # review — Code review (deepseek-coder-v2:16b-lite-instruct-q4_K_M)
-  - model_name: review
+  # ailocal-review — Code review (deepseek-coder-v2:16b-lite-instruct-q4_K_M)
+  - model_name: ailocal-review
     litellm_params:
       model: ollama_chat/deepseek-coder-v2:16b-lite-instruct-q4_K_M
       api_base: os.environ/OLLAMA_URL
@@ -102,8 +104,8 @@ model_list:
       input_cost_per_token: 0
       output_cost_per_token: 0
 
-  # completion — Autocomplete (qwen2.5-coder:3b-instruct-q4_K_M)
-  - model_name: completion
+  # ailocal-completion — Autocomplete (qwen2.5-coder:3b-instruct-q4_K_M)
+  - model_name: ailocal-completion
     litellm_params:
       model: ollama_chat/qwen2.5-coder:3b-instruct-q4_K_M
       api_base: os.environ/OLLAMA_URL
@@ -125,7 +127,7 @@ model_list:
       input_cost_per_token: 0
       output_cost_per_token: 0
 
-  - model_name: embeddings
+  - model_name: ailocal-embeddings
     litellm_params:
       model: ollama_chat/nomic-embed-text
       api_base: os.environ/OLLAMA_URL
@@ -149,38 +151,35 @@ router_settings:
   cooldown_time: 30                 # seconds before retrying a cooled-down model
 
   # ── Layer 2 aliases → capability groups ───────────────────────────────────
-  # GENERATED from config/clients.yaml by sync-models.py (local/* + legacy/compat).
+  # GENERATED from config/clients.yaml by sync-models.py — claude-*/gpt-* compat names,
+  # each aliased to its ailocal-<capability> group.
   # Do NOT hand-edit between the markers — edit config/clients.yaml and run sync.
   # >>> BEGIN GENERATED model_group_alias (sync-models.py) — do not edit <<<
   model_group_alias:
-    local/architecture: architecture
-    local/implementation: implementation
-    local/review: review
-    local/completion: completion
-    local/embeddings: embeddings
-    claude-opus-4-8: architecture
-    claude-opus-4-8-20251101: architecture
-    claude-fable-5: review
-    claude-sonnet-4-6: implementation
-    claude-sonnet-4-6-20250219: implementation
-    gpt-5.5: implementation
-    claude-haiku-4-5: completion
-    claude-haiku-4-5-20251001: completion
-    gpt-4o: completion
-    gpt-4o-mini: completion
-    gpt-3.5-turbo: completion
+    claude-opus-4-8: ailocal-architecture
+    claude-opus-4-8-20251101: ailocal-architecture
+    claude-fable-5: ailocal-review
+    claude-sonnet-4-6: ailocal-implementation
+    claude-sonnet-4-6-20250219: ailocal-implementation
+    gpt-5.5: ailocal-implementation
+    claude-haiku-4-5: ailocal-completion
+    claude-haiku-4-5-20251001: ailocal-completion
+    gpt-4o: ailocal-completion
+    gpt-4o-mini: ailocal-completion
+    gpt-3.5-turbo: ailocal-completion
   # >>> END GENERATED model_group_alias <<<
 
   fallbacks:
     # Capability hierarchy — degrade by tier when a model is unavailable.
-    - {"architecture":  ["implementation", "completion"]}
-    - {"review":        ["implementation", "completion"]}
-    - {"implementation": ["completion"]}
+    # Group names are the canonical `ailocal-<capability>` model_list entries.
+    - {"ailocal-architecture":   ["ailocal-implementation", "ailocal-completion"]}
+    - {"ailocal-review":         ["ailocal-implementation", "ailocal-completion"]}
+    - {"ailocal-implementation": ["ailocal-completion"]}
   context_window_fallbacks:
     # Graceful fallback when a request exceeds a capability's declared window.
-    - {"architecture":  ["implementation"]}
-    - {"review":        ["implementation"]}
-    - {"implementation": ["completion"]}
+    - {"ailocal-architecture":   ["ailocal-implementation"]}
+    - {"ailocal-review":         ["ailocal-implementation"]}
+    - {"ailocal-implementation": ["ailocal-completion"]}
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
