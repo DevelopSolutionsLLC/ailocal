@@ -1,145 +1,204 @@
 #!/usr/bin/env python3
-"""
-sync-models.py — propagate config/models.yaml to all derived files.
+"""sync-models.py — propagate the capability registry to every derived file.
 
-Edit config/models.yaml (or switch profiles via install.sh), then run
-./scripts/sync-models.sh. This script:
+Single source of truth:
+  config/models.yaml    WHAT each capability is (backend `active`, context, sampling,
+                        keep_alive, persona, decision metadata). Written from a RAM profile
+                        (config/profiles/<tier>.yaml) by install.sh.
+  config/clients.yaml   WHICH capability each client surface uses (launch defaults, Codex
+                        profiles, Continue entries, legacy/compat aliases).
 
-  1. Regenerates the ENTIRE `model_list:` block of config/litellm/config.yaml
-     deterministically from models.yaml, between the GENERATED markers. Every
-     role becomes exactly one canonical model_name entry; there are no per-model
-     duplicate alias blocks anymore — the Claude/OpenAI compatibility names are
-     handled once by `router_settings.model_group_alias` (hand-maintained tail,
-     which references stable role names, not backend tags). This removes the old
-     global backend-name text-swap and its corruption risk.
-  2. Regenerates config/clients/model_catalog.json capability fields + "<n>K ctx"
-     tokens for the canonical roles Codex exposes.
+Running ./scripts/sync-models.sh regenerates, deterministically:
+  config/litellm/config.yaml         model_list + model_group_alias (between markers)
+  config/capabilities.generated.json resolved capabilities (for `ailocal status`)
+  config/clients/model_catalog.json  Codex picker (capability slugs)
+  config/clients/claude/settings.json launch default + valid-capability note
+  config/clients/codex/config.toml    default model + valid-capability note
+  config/clients/codex/{plan,review}.config.toml  profile models
+  config/clients/continue/config.json chat models, FIM autocomplete, embeddings
 
-Per-role flags read from models.yaml:
-  reasoning : model thinks / streams reasoning (deepseek-r1). -> supports_reasoning,
-              no parallel tool calls, no reasoning_effort:none pin.
-  merge     : merge_reasoning_content_in_choices (OpenAI-format clients).
-  persona   : informational only — the persona_injector LiteLLM hook injects
-              config/personas/<role>.md at request time (roles are served on
-              their raw base tags; there are no ailocal-<role> overlay models).
-  vision    : advertise image/PDF input.
+Also: `sync-models.py --resolve <capability>` prints the active Ollama backend tag, so shell
+scripts (setup-startup.sh, preload-model.sh) resolve without parsing YAML themselves.
 
-Non-reasoning chat roles are pinned to reasoning_effort:"none" (a long
-reasoning_content burst reads as a hang in OpenAI-format clients like VS Code
-Copilot). embed is emitted with its fixed embedding model_info.
-
-Advanced cloud-only capabilities (audio, web_search, computer_use, prompt_caching,
-response_schema) are intentionally left off — local Ollama backends don't support
-them through the OpenAI-compatible API.
+Capabilities are TOP-LEVEL keys in models.yaml; lists are flow-style [a, b, c]. keep_alive
+accepts durations, -1, or the words forever/persistent (both -> -1). Never hand-edit a generated
+region — edit models.yaml / clients.yaml and re-run.
 """
 
 import json
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 MODELS_YAML    = ROOT / "config/models.yaml"
+CLIENTS_YAML   = ROOT / "config/clients.yaml"
 LITELLM_CONFIG = ROOT / "config/litellm/config.yaml"
+CAPS_JSON      = ROOT / "config/capabilities.generated.json"
 CODEX_CATALOG  = ROOT / "config/clients/model_catalog.json"
+CLAUDE_SETTINGS= ROOT / "config/clients/claude/settings.json"
+CODEX_CONFIG   = ROOT / "config/clients/codex/config.toml"
+CODEX_PLAN     = ROOT / "config/clients/codex/plan.config.toml"
+CODEX_REVIEW   = ROOT / "config/clients/codex/review.config.toml"
+CONTINUE_CONFIG= ROOT / "config/clients/continue/config.json"
 
-GEN_BEGIN = "  # >>> BEGIN GENERATED model_list (sync-models.py) — do not edit <<<"
-GEN_END   = "  # >>> END GENERATED model_list <<<"
+ML_BEGIN = "  # >>> BEGIN GENERATED model_list (sync-models.py) — do not edit <<<"
+ML_END   = "  # >>> END GENERATED model_list <<<"
+AL_BEGIN = "  # >>> BEGIN GENERATED model_group_alias (sync-models.py) — do not edit <<<"
+AL_END   = "  # >>> END GENERATED model_group_alias <<<"
 
 
-def step(msg): print(f"\n▶ {msg}")
-def ok(msg):   print(f"  ✓ {msg}")
-def warn(msg): print(f"  ⚠ {msg}", file=sys.stderr)
+def step(m): print(f"\n▶ {m}")
+def ok(m):   print(f"  ✓ {m}")
+def warn(m): print(f"  ⚠ {m}", file=sys.stderr)
 
 
 def truthy(v):
     return str(v).strip().lower() in ("true", "1", "yes", "on")
 
 
+def flow_list(v):
+    """Parse a flow-style list "[a, b, c]" -> ["a","b","c"]; tolerate a bare scalar."""
+    if v is None:
+        return []
+    v = str(v).strip()
+    if v.startswith("[") and v.endswith("]"):
+        inner = v[1:-1].strip()
+        return [x.strip() for x in inner.split(",") if x.strip()] if inner else []
+    return [v] if v else []
+
+
+def flow_dict(v):
+    """Parse a flow-style map "{a: b, c: d}" -> {"a":"b","c":"d"}."""
+    v = str(v).strip()
+    out = {}
+    if v.startswith("{") and v.endswith("}"):
+        inner = v[1:-1].strip()
+        for pair in inner.split(","):
+            if ":" in pair:
+                k, _, val = pair.partition(":")
+                out[k.strip()] = val.strip()
+    return out
+
+
+# ── config loading ────────────────────────────────────────────────────────────
 def load_models_yaml():
-    """Return ordered dict: role → {backend, num_ctx, reasoning, merge, ...}."""
-    models = {}
-    current = None
-    with open(MODELS_YAML) as f:
-        for line in f:
-            s = line.rstrip()
-            if not s or s.lstrip().startswith("#"):
-                continue
-            if not s.startswith(" ") and s.endswith(":"):
-                current = s.rstrip(":")
-                models[current] = {}
-            elif current and ":" in s:
-                k, _, v = s.strip().partition(":")
-                v = v.split("#", 1)[0].strip()
-                models[current][k.strip()] = v
-    # drop the scalar disk_gb "role"
+    """Ordered dict: capability -> {field: scalar-string}. List fields stay as their
+    raw "[a, b, c]" string; use flow_list() at the point of use."""
+    models, current = {}, None
+    for line in MODELS_YAML.read_text().splitlines():
+        s = line.rstrip()
+        if not s or s.lstrip().startswith("#"):
+            continue
+        if not s.startswith(" ") and s.endswith(":"):
+            current = s[:-1].strip()
+            models[current] = {}
+        elif current and ":" in s and s.startswith(" "):
+            k, _, v = s.strip().partition(":")
+            models[current][k.strip()] = v.split("#", 1)[0].strip()
     models.pop("disk_gb", None)
     return models
 
 
-def served_tag(role, info):
-    """The Ollama tag LiteLLM calls — always the raw base backend.
+def load_clients_yaml():
+    """Two-level: section -> {key: scalar | list | dict}."""
+    data, section = {}, None
+    if not CLIENTS_YAML.exists():
+        return data
+    for line in CLIENTS_YAML.read_text().splitlines():
+        s = line.rstrip()
+        if not s or s.lstrip().startswith("#"):
+            continue
+        if not s.startswith(" ") and s.endswith(":"):
+            section = s[:-1].strip()
+            data[section] = {}
+        elif section is not None and ":" in s and s.startswith(" "):
+            k, _, v = s.strip().partition(":")
+            # Strip an inline "# comment" from scalar values (flow [..]/{..} never contain one),
+            # so a documentation comment can't leak into a generated alias value.
+            v = v.strip()
+            if not v.startswith(("[", "{")):
+                v = v.split("#", 1)[0].strip()
+            if v.startswith("["):
+                data[section][k.strip()] = flow_list(v)
+            elif v.startswith("{"):
+                data[section][k.strip()] = flow_dict(v)
+            else:
+                data[section][k.strip()] = v
+    return data
 
-    Personas are delivered by the LiteLLM persona_injector hook (from the curated
-    config/personas/<role>.md), NOT by a baked Ollama SYSTEM. So there is no need
-    for ailocal-<role> overlay tags: roles point straight at their base model, and
-    `ollama ps` shows the real model name. The `persona:` flag in models.yaml is
-    now informational only (the hook keys off which <role>.md files exist).
-    """
-    return info["backend"]
+
+def backend_of(info):
+    """The Ollama backend tag actually served: `active`, else `backend`, else first
+    `preferred`. Never hidden — this is the real model that runs."""
+    if info.get("active"):
+        return info["active"]
+    if info.get("backend"):
+        return info["backend"]
+    pref = flow_list(info.get("preferred"))
+    return pref[0] if pref else ""
 
 
+def norm_keep_alive(v):
+    """forever/persistent -> -1; else pass through (durations like 2h/60m, or -1)."""
+    if v in (None, ""):
+        return None
+    s = str(v).strip()
+    return "-1" if s.lower() in ("forever", "persistent") else s
+
+
+def ctx_of(info):
+    return int(info.get("context") or info.get("num_ctx") or info.get("context_window") or 32768)
+
+
+# ── LiteLLM model_list ─────────────────────────────────────────────────────────
 def gen_role_block(role, info):
-    """Return the config.yaml model_list entry text for one chat/embed role."""
-    num_ctx = int(info.get("num_ctx") or info.get("context_window") or 32768)
+    num_ctx = ctx_of(info)
+    backend = backend_of(info)
+    ka = norm_keep_alive(info.get("keep_alive"))
 
-    if role == "embed":
-        return (
-            f"  - model_name: {role}\n"
-            f"    litellm_params:\n"
-            f"      model: ollama_chat/{info['backend']}\n"
-            f"      api_base: os.environ/OLLAMA_URL\n"
-            f"      num_ctx: {num_ctx}\n"
-            f"    model_info:\n"
-            f"      mode: embedding\n"
-            f"      max_tokens: {num_ctx}\n"
-            f"      input_cost_per_token: 0\n"
-            f"      output_cost_per_token: 0\n"
-        )
+    if role == "embeddings" or truthy(info.get("embedding", "false")) or backend.startswith("nomic") or "embed" in role:
+        lines = [
+            f"  - model_name: {role}",
+            f"    litellm_params:",
+            f"      model: ollama_chat/{backend}",
+            f"      api_base: os.environ/OLLAMA_URL",
+            f"      num_ctx: {num_ctx}",
+        ]
+        if ka is not None:
+            lines.append(f"      keep_alive: {ka}")
+        lines += [
+            f"    model_info:",
+            f"      mode: embedding",
+            f"      max_tokens: {num_ctx}",
+            f"      input_cost_per_token: 0",
+            f"      output_cost_per_token: 0",
+        ]
+        return "\n".join(lines) + "\n"
 
     reasoning = truthy(info.get("reasoning", "false"))
     merge     = truthy(info.get("merge", "false"))
     vision    = truthy(info.get("vision", "false"))
-    parallel  = not reasoning                 # DeepSeek-R1: no reliable parallel calls
+    parallel  = not reasoning
     max_out   = min(16384, max(1024, num_ctx // 4))
-    desc      = info.get("description", "")
+    desc      = info.get("role", "")
 
     params = [
         f"  - model_name: {role}",
         f"    litellm_params:",
-        f"      model: ollama_chat/{served_tag(role, info)}",
+        f"      model: ollama_chat/{backend}",
         f"      api_base: os.environ/OLLAMA_URL",
         f"      num_ctx: {num_ctx}",
     ]
-    # Vendor-recommended sampling defaults (from models.yaml). Applied when the
-    # client does not send its own. DeepSeek-R1: temp 0.6 / top_p 0.95, no system
-    # prompt. Qwen coders: temp 0.7 / top_p 0.8 / top_k 20 / rep 1.05. Gemma:
-    # temp 1.0 / top_p 0.95 / top_k 64.
-    for key in ("temperature", "top_p", "top_k", "repetition_penalty"):
+    for key in ("temperature", "top_p", "top_k", "repetition_penalty", "num_predict"):
         if info.get(key) not in (None, ""):
             params.append(f"      {key}: {info[key]}")
+    if ka is not None:
+        params.append(f"      keep_alive: {ka}")
     if merge:
         params.append("      merge_reasoning_content_in_choices: true")
     if not reasoning:
-        # Execution roles: two independent guards.
-        # (1) Drop client-sent thinking params — a client sending `thinking`/
-        #     `reasoning_effort` (Claude Code does, on its opus/sonnet/haiku slots)
-        #     otherwise 400s in Ollama ("<model> does not support thinking").
-        # (2) think:false — suppress DEFAULT reasoning. Some capable backends
-        #     (qwen3.6) emit reasoning_content unprompted, which OpenAI-format
-        #     clients (VS Code Copilot) render as a silent "Considering…" hang.
-        #     Accepted by all non-reasoner backends (no-op where not applicable).
-        # The deep-think* reasoners omit both — they genuinely think.
         params.append('      additional_drop_params: ["thinking", "reasoning_effort"]')
         params.append("      think: false")
 
@@ -160,88 +219,273 @@ def gen_role_block(role, info):
         f"      input_cost_per_token: 0",
         f"      output_cost_per_token: 0",
     ]
-    header = f"  # {role} — {desc}\n" if desc else ""
+    header = f"  # {role} — {desc} ({backend})\n" if desc else ""
     return header + "\n".join(params) + "\n" + "\n".join(mi) + "\n"
 
 
 def gen_model_list(models):
-    blocks = [gen_role_block(role, info) for role, info in models.items()]
-    return GEN_BEGIN + "\n\n" + "\n".join(blocks) + "\n" + GEN_END + "\n"
+    blocks = [gen_role_block(r, i) for r, i in models.items()]
+    return ML_BEGIN + "\n\n" + "\n".join(blocks) + "\n" + ML_END + "\n"
 
 
-def splice_generated(text, generated):
-    """Replace everything between the markers (inclusive) with `generated`."""
-    pat = re.compile(re.escape(GEN_BEGIN) + r".*?" + re.escape(GEN_END) + r"\n",
-                     re.DOTALL)
+def gen_alias_block(models, clients):
+    """model_group_alias YAML from clients.yaml: the local/* capability namespace plus the
+    external client-compat names. Capabilities inherit persona/capabilities from the target group."""
+    lines = [AL_BEGIN, "  model_group_alias:"]
+    for cap in models:
+        lines.append(f"    local/{cap}: {cap}")
+    for name, cap in clients.get("compat", {}).items():
+        lines.append(f"    {name}: {cap}")
+    lines.append(AL_END)
+    return "\n".join(lines) + "\n"
+
+
+def splice(text, begin, end, generated, label):
+    pat = re.compile(re.escape(begin) + r".*?" + re.escape(end) + r"\n?", re.DOTALL)
     if not pat.search(text):
-        warn("GENERATED markers not found in config.yaml — cannot splice")
+        warn(f"markers not found for {label}; skipping")
         return text, False
     return pat.sub(lambda _m: generated, text, count=1), True
 
 
-def regen_codex_catalog(models):
-    """Update config/clients/model_catalog.json capability fields from models.yaml."""
+def regen_litellm(models, clients):
+    text = LITELLM_CONFIG.read_text()
+    text, s1 = splice(text, ML_BEGIN, ML_END, gen_model_list(models), "model_list")
+    text, s2 = splice(text, AL_BEGIN, AL_END, gen_alias_block(models, clients), "model_group_alias")
+    LITELLM_CONFIG.write_text(text)
+    return s1 and s2
+
+
+# ── capabilities.generated.json (for `ailocal status`) ─────────────────────────
+def write_caps_json(models):
+    caps = []
+    for name, info in models.items():
+        ka = norm_keep_alive(info.get("keep_alive"))
+        caps.append({
+            "name": name,
+            "role": info.get("role", name),
+            "backend": backend_of(info),
+            "preferred": flow_list(info.get("preferred")),
+            "context": ctx_of(info),
+            "keep_alive": ka,
+            "persistent": ka == "-1",
+            "priority": info.get("priority", ""),
+            "purpose": flow_list(info.get("purpose")),
+            "strengths": flow_list(info.get("strengths")),
+            "weaknesses": flow_list(info.get("weaknesses")),
+        })
+    CAPS_JSON.write_text(json.dumps(
+        {"generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+         "capabilities": caps}, indent=2) + "\n")
+    return True
+
+
+# ── Codex model_catalog.json ───────────────────────────────────────────────────
+CATALOG_PREAMBLE = (
+    "Ground every claim in the actual code: open the files, search before claiming something "
+    "does not exist, and read a value before quoting it — the repository is the source of truth, "
+    "not prior assumptions. Understand before you change; keep edits scoped and in the codebase's "
+    "existing style; produce complete, runnable code with no placeholder stubs. Be precise and "
+    "honest — state what you did and did not do, and lead with any uncertainty. Respect explicit "
+    "constraints, and ask one focused question when something essential is missing."
+)
+CATALOG_TOOLING = (
+    "Use `rg` / `rg --files` for search. Use `apply_patch` for edits — never write files with "
+    "`cat` or heredocs. Set the git author locally: `git config user.name \"Victor T. Chevalier\"` "
+    "and `user.email \"13876123+VTChevalier@users.noreply.github.com\"`. Format in GitHub-flavored "
+    "Markdown; no emojis or em dashes."
+)
+CATALOG_ROLE_SENTENCE = {
+    "architecture":  "You are the architect tier: architecture, complex refactoring, multi-step debugging, and design. Decompose the work, map the system before committing, and pivot if an approach keeps failing.",
+    "implementation":"You are the everyday coder for repository work, logic, and syntax. Plan the change briefly, then implement it fully; trace a bug to its source before fixing it.",
+    "review":        "You review; you do not fix. Read the full file, its tests, and the diff, then report findings ranked by severity (correctness, security, error handling, test gaps, design) with file:line and a concrete fix each.",
+    "completion":    "You handle quick, small tasks fast. If a task needs multi-file analysis or architecture, say so and hand off rather than doing it at low quality.",
+}
+CATALOG_PRIORITY = {"architecture": 10, "implementation": 15, "review": 40, "completion": 30}
+
+
+def regen_catalog(models):
     if not CODEX_CATALOG.exists():
         return False
-    try:
-        catalog = json.loads(CODEX_CATALOG.read_text())
-    except json.JSONDecodeError as e:
-        warn(f"model_catalog.json is not valid JSON — skipping ({e})")
-        return False
-    for entry in catalog.get("models", []):
-        role = entry.get("slug")
-        info = models.get(role)
-        if not info or role == "embed":
+    entries = []
+    prio = 10
+    for name, info in models.items():
+        if name == "embeddings":
             continue
-        num_ctx = int(info.get("num_ctx") or info.get("context_window") or 32768)
+        backend = backend_of(info)
+        num_ctx = ctx_of(info)
         vision = truthy(info.get("vision", "false"))
-        entry["context_window"] = num_ctx
-        entry["max_context_window"] = num_ctx
-        entry["input_modalities"] = ["text", "image"] if vision else ["text"]
-        entry["supports_parallel_tool_calls"] = not truthy(info.get("reasoning", "false"))
-        if "description" in entry:
-            entry["description"] = re.sub(
-                r"\b\d+K ctx\b", f"{num_ctx // 1024}K ctx", entry["description"])
-    new_raw = json.dumps(catalog, indent=2, ensure_ascii=False) + "\n"
-    if new_raw != CODEX_CATALOG.read_text():
-        CODEX_CATALOG.write_text(new_raw)
-        return True
-    return False
+        role = info.get("role", name)
+        instr = "\n\n".join([CATALOG_PREAMBLE,
+                             CATALOG_ROLE_SENTENCE.get(name, f"You are the {role} capability."),
+                             CATALOG_TOOLING])
+        entries.append({
+            "slug": name,
+            "display_name": f"{role} ({backend})",
+            "description": f"{role} — {backend}, {num_ctx // 1024}K ctx",
+            "base_instructions": instr,
+            "shell_type": "shell_command",
+            "visibility": "list",
+            "supported_in_api": True,
+            "priority": CATALOG_PRIORITY.get(name, prio),
+            "context_window": num_ctx,
+            "max_context_window": num_ctx,
+            "effective_context_window_percent": 90,
+            "input_modalities": ["text", "image"] if vision else ["text"],
+            "supports_parallel_tool_calls": not truthy(info.get("reasoning", "false")),
+            "supports_search_tool": False,
+            "supports_image_detail_original": False,
+            "supports_reasoning_summaries": False,
+            "support_verbosity": False,
+            "apply_patch_tool_type": "freeform",
+            "web_search_tool_type": "text",
+            "experimental_supported_tools": [],
+            "supported_reasoning_levels": [
+                {"effort": "low", "description": "Fast, lighter reasoning"},
+                {"effort": "medium", "description": "Balanced speed and depth"},
+                {"effort": "high", "description": "Deep reasoning for complex problems"},
+            ],
+            "service_tiers": [],
+            "truncation_policy": {"mode": "tokens", "limit": 10000},
+        })
+        prio += 5
+    CODEX_CATALOG.write_text(json.dumps({"models": entries}, indent=2) + "\n")
+    return True
+
+
+# ── Claude settings.json ───────────────────────────────────────────────────────
+def regen_claude_settings(models, clients):
+    if not CLAUDE_SETTINGS.exists():
+        return False
+    data = json.loads(CLAUDE_SETTINGS.read_text())
+    default = (clients.get("claude") or {}).get("launch_default", next(iter(models)))
+    caps = " | ".join(models.keys())
+    slots = (clients.get("claude") or {}).get("slots", {})
+    slot_txt = ", ".join(f"{k.title()}->{v}" for k, v in slots.items())
+    data["model"] = default
+    data["//"] = [
+        "Claude Code settings — deployed to ~/.config/ailocal/claude/settings.json",
+        "(CLAUDE_CONFIG_DIR for the local variant; ~/.claude is never touched).",
+        "",
+        "GENERATED FIELDS ('model' + this note) — edit config/clients.yaml, run sync-models.sh.",
+        "Base URL + key are injected per-process by the claude-local() wrapper.",
+        "",
+        "All requests route through LiteLLM by capability name.",
+        f"Capabilities: {caps}",
+        f"Launch default = {default}. At runtime /model lists every capability (the wrapper sets",
+        "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1, so Claude Code GETs /v1/models).",
+        f"Built-in slots remap: {slot_txt}.",
+        "Launch with: claude-local",
+    ]
+    CLAUDE_SETTINGS.write_text(json.dumps(data, indent=2) + "\n")
+    return True
+
+
+# ── Codex config.toml + profiles ───────────────────────────────────────────────
+def _set_toml_model(path, model):
+    if not path.exists():
+        return False
+    text = path.read_text()
+    if re.search(r'(?m)^model\s*=', text):
+        text = re.sub(r'(?m)^model\s*=.*$', f'model = "{model}"', text, count=1)
+    else:
+        text = f'model = "{model}"\n' + text
+    path.write_text(text)
+    return True
+
+
+def regen_codex(models, clients):
+    cx = clients.get("codex", {})
+    default = cx.get("default", next(iter(models)))
+    profiles = cx.get("profiles", {})
+    done = False
+    if CODEX_CONFIG.exists():
+        text = CODEX_CONFIG.read_text()
+        text = re.sub(r'(?m)^model\s*=.*$', f'model = "{default}"', text, count=1)
+        text = re.sub(r'(?m)^# Valid models:.*$',
+                      "# Valid models: " + " | ".join(models.keys()), text, count=1)
+        CODEX_CONFIG.write_text(text)
+        done = True
+    if "plan" in profiles:
+        _set_toml_model(CODEX_PLAN, profiles["plan"])
+    if "review" in profiles:
+        _set_toml_model(CODEX_REVIEW, profiles["review"])
+    return done
+
+
+# ── Continue config.json ───────────────────────────────────────────────────────
+def regen_continue(models, clients):
+    if not CONTINUE_CONFIG.exists():
+        return False
+    data = json.loads(CONTINUE_CONFIG.read_text())
+    cont = clients.get("continue", {})
+    chat = cont.get("chat", list(models.keys()))
+    data["models"] = [
+        {"title": f"{models.get(c, {}).get('role', c)} ({c})", "provider": "openai",
+         "model": c, "apiBase": "http://localhost:4000/v1", "apiKey": "__LITELLM_KEY__"}
+        for c in chat
+    ]
+    ac = cont.get("autocomplete", "completion")
+    ac_backend = backend_of(models.get(ac, {}))
+    data["tabAutocompleteModel"] = {
+        "title": f"Autocomplete — {ac_backend} (FIM, direct Ollama)",
+        "provider": "ollama", "model": ac_backend, "apiBase": "http://localhost:11434",
+    }
+    emb = cont.get("embeddings", "embeddings")
+    data["embeddingsProvider"] = {
+        "provider": "openai", "model": emb,
+        "apiBase": "http://localhost:4000/v1", "apiKey": "__LITELLM_KEY__",
+    }
+    data["//"] = [
+        "ailocal — VS Code Continue config. MANAGED/GENERATED — edit config/clients.yaml +",
+        "config/models.yaml, run sync-models.sh. Deployed to ~/.continue/config.json by",
+        "install-clients.sh (vscode); __LITELLM_KEY__ substituted from .env at install.",
+        "Chat/edit go through LiteLLM (4000); autocomplete hits Ollama (11434) directly for FIM.",
+        "Capabilities: " + " | ".join(models.keys()),
+    ]
+    CONTINUE_CONFIG.write_text(json.dumps(data, indent=2) + "\n")
+    return True
+
+
+# Copilot instruction files are hand-maintained prose (generating a table into them created
+# duplication); they are NOT regenerated here. Update them by hand when capabilities change.
+
+# ── resolve mode (for shell) ───────────────────────────────────────────────────
+def resolve(role):
+    info = load_models_yaml().get(role)
+    if not info:
+        print("", end="")
+        return 1
+    print(backend_of(info))
+    return 0
 
 
 def main():
-    for path in [MODELS_YAML, LITELLM_CONFIG]:
-        if not path.exists():
-            print(f"Error: {path} not found", file=sys.stderr)
-            sys.exit(1)
+    if len(sys.argv) >= 3 and sys.argv[1] == "--resolve":
+        sys.exit(resolve(sys.argv[2]))
 
-    step("Reading config/models.yaml")
+    for p in (MODELS_YAML, LITELLM_CONFIG):
+        if not p.exists():
+            print(f"Error: {p} not found", file=sys.stderr); sys.exit(1)
+
+    step("Reading config/models.yaml + config/clients.yaml")
     models = load_models_yaml()
+    clients = load_clients_yaml()
     for role, info in models.items():
-        tags = []
-        if truthy(info.get("persona", "false")): tags.append("persona")
-        if truthy(info.get("reasoning", "false")): tags.append("reasoning")
-        if truthy(info.get("merge", "false")): tags.append("merge")
-        if truthy(info.get("vision", "false")): tags.append("vision")
-        suffix = f"  [{', '.join(tags)}]" if tags else ""
-        print(f"  {role}: {info.get('backend', '?')} → served as "
-              f"{served_tag(role, info)}{suffix}")
+        print(f"  {role}: {backend_of(info)}  (ctx {ctx_of(info)}, keep_alive {norm_keep_alive(info.get('keep_alive'))})")
 
-    step("Regenerating config/litellm/config.yaml model_list")
-    litellm_text = LITELLM_CONFIG.read_text()
-    new_text, spliced = splice_generated(litellm_text, gen_model_list(models))
-    if spliced and new_text != litellm_text:
-        LITELLM_CONFIG.write_text(new_text)
-        ok("config.yaml model_list regenerated")
-    elif spliced:
-        ok("config.yaml already up to date")
+    step("Regenerating config/litellm/config.yaml (model_list + aliases)")
+    ok("litellm config regenerated" if regen_litellm(models, clients) else "litellm config unchanged/skipped")
 
-    step("Syncing Codex model_catalog.json (capabilities + ctx tokens)")
-    ok("model_catalog.json updated" if regen_codex_catalog(models)
-       else "model_catalog.json already up to date")
+    step("Writing derived files")
+    ok("capabilities.generated.json") if write_caps_json(models) else warn("caps json skipped")
+    ok("model_catalog.json") if regen_catalog(models) else warn("catalog skipped")
+    ok("claude/settings.json") if regen_claude_settings(models, clients) else warn("claude settings skipped")
+    ok("codex config + profiles") if regen_codex(models, clients) else warn("codex skipped")
+    ok("continue/config.json") if regen_continue(models, clients) else warn("continue skipped")
 
-    step("Done — restart LiteLLM (./scripts/start.sh) so it reloads model_info; "
-         "pull any new models (./scripts/install-models.sh)")
+    step("Done — restart LiteLLM (./scripts/start.sh) and re-run ./scripts/install-clients.sh "
+         "to deploy the regenerated client configs.")
 
 
 if __name__ == "__main__":

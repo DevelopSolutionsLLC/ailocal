@@ -7,8 +7,8 @@
 # With OLLAMA_KEEP_ALIVE set (see setup-ollama-env.sh) it then stays resident.
 #
 # Usage:
-#   ./scripts/preload-model.sh              # preload the default backend (coder-main)
-#   ./scripts/preload-model.sh deep-think    # preload a different role's backend
+#   ./scripts/preload-model.sh              # preload the default backend (coder)
+#   ./scripts/preload-model.sh architect     # preload a different role's backend
 #   ./scripts/preload-model.sh --now        # just warm now, don't install the agent
 #   ./scripts/preload-model.sh --uninstall  # remove the LaunchAgent
 #
@@ -30,13 +30,10 @@ step() { echo; echo "▶ $*"; }
 # the LiteLLM hook, not baked into an overlay), so the base tag is what runs.
 resolve_backend() {
   local want="$1"
-  # If it already looks like a tag (has a colon), use as-is.
-  case "$want" in *:*) echo "$want"; return;; esac
-  awk -v role="$want" '
-    $0 ~ "^"role":" { inrole=1; next }
-    inrole && /^[a-z]/ && $0 !~ /^ / { inrole=0 }
-    inrole && $1=="backend:" { print $2; exit }
-  ' "$MODELS_YAML"
+  # A raw tag (has a colon and is not a known capability) is used as-is.
+  local resolved; resolved="$(python3 "$ROOT_DIR/scripts/sync-models.py" --resolve "$want" 2>/dev/null)"
+  if [ -n "$resolved" ]; then echo "$resolved"; return; fi
+  case "$want" in *:*) echo "$want";; esac
 }
 
 warm() {
@@ -68,12 +65,12 @@ case "${1:-}" in
     rm -f "$PLIST" && info "Removed preload LaunchAgent"
     exit 0 ;;
   --now)
-    BACKEND="$(resolve_backend "${2:-coder-main}")"
-    [ -n "$BACKEND" ] || { echo "  ✗ could not resolve model for '${2:-coder-main}'"; exit 1; }
+    BACKEND="$(resolve_backend "${2:-coder}")"
+    [ -n "$BACKEND" ] || { echo "  ✗ could not resolve model for '${2:-coder}'"; exit 1; }
     warm "$BACKEND"; exit 0 ;;
 esac
 
-ROLE="${1:-coder-main}"
+ROLE="${1:-coder}"
 BACKEND="$(resolve_backend "$ROLE")"
 [ -n "$BACKEND" ] || { echo "  ✗ could not resolve backend for role '$ROLE' in models.yaml"; exit 1; }
 
