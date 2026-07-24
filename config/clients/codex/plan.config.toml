@@ -2,7 +2,7 @@
 # Deployed to $CODEX_HOME/plan.config.toml — select with: codex-local --profile plan
 # Overlays the base config.toml (provider/base_url stay ailocal/LiteLLM).
 
-model = "architecture"
+model = "ailocal-architecture"
 # `architecture` (qwen3-coder:30b) is NOT a chain-of-thought reasoner — no installed model emits
 # <think>. So reasoning effort is kept at "medium", not "high": a high setting here would imply a
 # reasoning tier that does not exist. Raise this only if a true reasoning backend is added.

@@ -19,7 +19,7 @@ When you select a model in Claude Code, it maps to a local backend:
 | `claude-opus-*`    | architecture (qwen3-coder:30b)                | Deep analysis, planning, debugging        |
 | `claude-fable-*`   | review (deepseek-coder-v2:16b-lite)           | Diff review, critique                     |
 
-Every capability also appears in `/model` (`architecture`, `implementation`, `review`, `completion`, `embeddings`); the `local/*` names resolve too. Default is `claude-sonnet` (implementation tier). Note: no installed model emits `<think>` — the deepseek-r1 reasoners were removed, so there is no reasoning tier right now.
+Every capability also appears in `/model` under its canonical name (`ailocal-architecture`, `ailocal-implementation`, `ailocal-review`, `ailocal-completion`, `ailocal-embeddings`). Default is `ailocal-implementation`. Note: no installed model emits `<think>` — the deepseek-r1 reasoners were removed, so there is no reasoning tier right now.
 
 # Delegation (subagents)
 

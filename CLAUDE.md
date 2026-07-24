@@ -9,12 +9,12 @@ Tooling to run AI coding clients (Claude Code, Codex CLI, VS Code Copilot Chat)
 against **local** models on Apple Silicon — no cloud, no code changes to the tools.
 
 **Ollama** runs models natively (Metal/MLX). **LiteLLM** (one Docker container,
-`127.0.0.1:4000`) fronts it as an OpenAI+Anthropic-compatible proxy exposing **capability
-names** (`architecture`, `implementation`, `review`, `completion`, `embeddings`) instead of raw
-model tags. The `local/*` namespace (internal agent API) and the `claude-*`/`gpt-*` compatibility
-IDs (external client adapters that Claude Code / OpenAI SDK hard-code) are aliased onto capabilities
-via a `model_group_alias` block **generated from `config/clients.yaml`** — one backend entry, many
-client-facing names. The old ailocal role names (`coder-main`/`deep-think*`/`supervisor`/…) are
+`127.0.0.1:4000`) fronts it as an OpenAI+Anthropic-compatible proxy. Each capability
+(`architecture`, `implementation`, `review`, `completion`, `embeddings`) is served as ONE canonical
+model_list entry named `ailocal-<capability>` — never a raw model tag. The `claude-*`/`gpt-*`
+compatibility IDs (external client adapters that Claude Code / OpenAI SDK hard-code) are aliased onto
+those `ailocal-*` groups via a `model_group_alias` block **generated from `config/clients.yaml`** —
+one backend entry, many client-facing names. There is no `local/*` namespace. The old ailocal role names (`coder-main`/`deep-think*`/`supervisor`/…) are
 gone. Full map + lifecycle in `docs/MODEL_ARCHITECTURE.md`, `MODEL_ROUTING.md`, `MODEL_LIFECYCLE.md`.
 
 ## Golden rule
@@ -46,6 +46,11 @@ Most of this repo's complexity is in these; change them carefully.
    persona (DeepSeek's guidance), temp 0.6 / top-p 0.95. Caveat: LiteLLM issue #27518
    reports `async_pre_call_hook` being bypassed on the Anthropic `/v1/messages` route —
    the one Claude Code uses. Re-verify before relying on personas there.
+   Coupling: persona injection depends on model names resolving back to a capability key.
+   The hook resolves the requested model through `model_group_alias` and uses that capability
+   key to load `config/personas/<capability>.md`. Any future change to canonical model names,
+   aliases, or routing layers must preserve this mapping or personas silently stop applying.
+   Completion and embeddings intentionally have no persona.
 3. **Reasoning vs. non-reasoning.** No installed model currently thinks — the `deep-think*`
    reasoners (deepseek-r1) were removed, and `qwen3-coder` is Qwen's non-thinking variant. Every
    capability carries `additional_drop_params: ["thinking", "reasoning_effort"]` (so Claude Code

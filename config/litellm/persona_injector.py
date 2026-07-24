@@ -78,7 +78,11 @@ class PersonaInjector(CustomLogger):
         self.alias = _load_alias_map()
 
     def _persona_for(self, model):
+        # Resolve a compat alias (claude-*/gpt-*) to its ailocal-<cap> group, then strip the
+        # ailocal- prefix to get the capability key the persona files are named by.
         role = self.alias.get(model, model)
+        if role.startswith("ailocal-"):
+            role = role[len("ailocal-"):]
         return self.personas.get(role)
 
     def _inject(self, data):
