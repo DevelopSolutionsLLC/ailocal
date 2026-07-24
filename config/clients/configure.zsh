@@ -28,16 +28,17 @@ claude-local() {
     return 1
   fi
   # CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: on launch, Claude Code GETs
-  # $ANTHROPIC_BASE_URL/v1/models and adds every LiteLLM role (coder-main,
-  # coder-agent, coder-fast, deep-think, deep-think-more, supervisor) to the
-  # /model picker ("From gateway"), alongside the built-in Opus/Sonnet/Haiku
+  # $ANTHROPIC_BASE_URL/v1/models and adds every LiteLLM model (ailocal-architecture,
+  # ailocal-implementation, ailocal-review, ailocal-completion, ailocal-embeddings) to
+  # the /model picker ("From gateway"), alongside the built-in Opus/Sonnet/Haiku
   # entries. The three ANTHROPIC_DEFAULT_*_MODEL vars remap those built-in slots
-  # onto real local roles so the default model AND Claude Code's silent
+  # onto real capabilities so the default model AND Claude Code's silent
   # background/summary calls (the "Haiku" slot) resolve to something LiteLLM
-  # actually serves. (Requires Claude Code v2.1.129+ for gateway discovery.)
-  #   Opus  → deep-think-more (deepest reasoning tier)
-  #   Sonnet→ coder-main      (primary heavy coder, the daily driver)
-  #   Haiku → coder-fast      (fast, for background/summary calls)
+  # actually serves. Values track config/clients.yaml `slots`; keep them in sync.
+  # (Requires Claude Code v2.1.129+ for gateway discovery.)
+  #   Opus  → ailocal-architecture   (heavy design/refactor)
+  #   Sonnet→ ailocal-implementation (primary coder, the daily driver)
+  #   Haiku → ailocal-completion     (fast, for background/summary calls)
   # CLAUDE_CODE_DISABLE_1M_CONTEXT: local backends cap at num_ctx (64K here), not
   # 1M — so let Claude Code request the 1M-context beta and it just overflows.
   # Disabling it keeps sessions inside the window the models actually serve.
@@ -45,9 +46,9 @@ claude-local() {
   ANTHROPIC_BASE_URL="$base" ANTHROPIC_API_KEY="$key" \
   CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1 \
   CLAUDE_CODE_DISABLE_1M_CONTEXT=1 \
-  ANTHROPIC_DEFAULT_OPUS_MODEL="deep-think-more" \
-  ANTHROPIC_DEFAULT_SONNET_MODEL="coder-main" \
-  ANTHROPIC_DEFAULT_HAIKU_MODEL="coder-fast" \
+  ANTHROPIC_DEFAULT_OPUS_MODEL="ailocal-architecture" \
+  ANTHROPIC_DEFAULT_SONNET_MODEL="ailocal-implementation" \
+  ANTHROPIC_DEFAULT_HAIKU_MODEL="ailocal-completion" \
   command claude "$@"
 }
 
