@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# ailocal — thin CLI dispatcher over the scripts/ in this repo.
+#
+#   ailocal status     live model status by capability, verbose (scripts/status.sh)
+#   ailocal models     compact capability -> backend -> status table
+#   ailocal doctor     health check (scripts/doctor.sh)
+#   ailocal sync       regenerate derived configs (scripts/sync-models.sh)
+#   ailocal start|stop|update|smoke    lifecycle
+#   ailocal resolve <capability>       print the active Ollama backend tag
+#
+# Put it on PATH once:  ln -sf "$(pwd)/scripts/ailocal" /usr/local/bin/ailocal
+set -euo pipefail
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+SCRIPTS="$ROOT_DIR/scripts"
+cmd="${1:-status}"; shift || true
+
+case "$cmd" in
+  status)  exec bash "$SCRIPTS/status.sh" "$@" ;;
+  models)  exec bash "$SCRIPTS/status.sh" --table ;;
+  doctor)  exec bash "$SCRIPTS/doctor.sh" "$@" ;;
+  sync)    exec bash "$SCRIPTS/sync-models.sh" "$@" ;;
+  start)   exec bash "$SCRIPTS/start.sh" "$@" ;;
+  stop)    exec bash "$SCRIPTS/stop.sh" "$@" ;;
+  update)  exec bash "$SCRIPTS/update.sh" "$@" ;;
+  smoke)   exec bash "$SCRIPTS/smoke-test.sh" "$@" ;;
+  resolve) exec python3 "$SCRIPTS/sync-models.py" --resolve "$@" ;;
+  *) echo "ailocal — usage: ailocal {status|doctor|sync|start|stop|update|smoke|resolve <capability>}" >&2; exit 1 ;;
+esac
