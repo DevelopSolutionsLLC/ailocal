@@ -16,7 +16,6 @@ architecture:
   context: 65536
   temperature: 0.2
   keep_alive: 4h
-  priority: highest
   persona: true
   purpose: [architecture, complex refactoring, multi-step debugging, design]
 
@@ -28,7 +27,6 @@ implementation:
   temperature: 0.2
   num_predict: -1
   keep_alive: 2h
-  priority: medium
   persona: true
   purpose: [implementation, features, tests, refactoring]
 
@@ -40,7 +38,6 @@ review:
   temperature: 0.1
   num_predict: 4096
   keep_alive: 1h
-  priority: low
   persona: true
   purpose: [code review, bug detection, security review]
 
@@ -52,7 +49,6 @@ completion:
   temperature: 0
   num_predict: 128
   keep_alive: forever
-  priority: warm
   purpose: [inline completion, FIM, quick fixes]
 
 embeddings:
@@ -61,5 +57,4 @@ embeddings:
   preferred: [nomic-embed-text]
   context: 8192
   keep_alive: forever
-  priority: infrastructure
   purpose: [semantic search, memory, retrieval for grepai]

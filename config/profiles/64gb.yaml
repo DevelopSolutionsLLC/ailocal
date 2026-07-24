@@ -13,11 +13,11 @@
 #                others so six months from now you compare, not remember.
 #   context      num_ctx
 #   temperature / num_predict   sampling (forwarded to LiteLLM)
-#   keep_alive   idle TTL. `forever`/`persistent`/`-1` pin the model. Generation models
-#                self-unload on their TTL (per-request keep_alive beats the global default
-#                — see docs/MODEL_LIFECYCLE.md); embeddings stay pinned as infrastructure.
-#   priority     numeric eviction rank (higher = protected/evict last). Documents intent
-#                and feeds the (future, opt-in) memory-pressure eviction daemon.
+#   keep_alive   idle TTL AND the residency signal. `-1`/`forever`/`persistent` pin the model
+#                (resident); a duration (e.g. 20m) lets it self-unload when idle (rotating).
+#                Per-request keep_alive beats the global default — see docs/MODEL_LIFECYCLE.md.
+#                This is the ONLY residency lever Ollama consumes; there is no separate priority
+#                field (Ollama evicts LRU under OLLAMA_MAX_LOADED_MODELS pressure).
 #   persona      persona_injector merges config/instructions/<capability>.md at request time.
 #   purpose/strengths/weaknesses   why this model was chosen — read before swapping it.
 #
@@ -35,7 +35,6 @@ architecture:
   context: 32768
   temperature: 0.2
   keep_alive: -1
-  priority: 100
   persona: true
   purpose: [architecture, complex refactoring, multi-step debugging, design, repository-wide planning]
   strengths: [large-context reasoning, holds a whole subsystem in view, strong code generation]
@@ -50,7 +49,6 @@ implementation:
   temperature: 0.2
   num_predict: -1
   keep_alive: 20m
-  priority: 50
   persona: true
   purpose: [implementation, features, refactoring, tests, shell, python, typescript]
   strengths: [fast, low memory, excellent everyday code generation]
@@ -65,7 +63,6 @@ review:
   temperature: 0.1
   num_predict: 2048
   keep_alive: 20m
-  priority: 40
   persona: true
   purpose: [code review, bug detection, security review, alternative solutions]
   strengths: [careful analysis, security awareness, concrete findings]
@@ -80,7 +77,6 @@ completion:
   temperature: 0
   num_predict: 128
   keep_alive: -1
-  priority: 100
   purpose: [inline completion, FIM, quick syntax fixes, small transforms]
   strengths: [very fast, tiny footprint, native FIM tokens]
   weaknesses: [no deep reasoning, short context]
@@ -92,7 +88,6 @@ embeddings:
   preferred: [nomic-embed-text, mxbai-embed-large]
   context: 8192
   keep_alive: -1
-  priority: 200
   purpose: [semantic search, memory, retrieval for grepai]
   strengths: [always-on, tiny, grepai calls it directly on :11434]
   weaknesses: [not a chat model]
