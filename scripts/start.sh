@@ -43,7 +43,8 @@ else
   info "Ollama daemon responding"
   missing_models=()
   _required=()
-  while IFS= read -r _m; do _required+=("$_m"); done < <(grep '^\s*backend:' "$ROOT_DIR/config/models.yaml" | sed 's/.*backend:[[:space:]]*//')
+  _tier="$(cat "$ROOT_DIR/config/active-profile" 2>/dev/null || echo 64gb)"
+  while IFS= read -r _m; do _required+=("$_m"); done < <(grep -E '^\s*active:' "$ROOT_DIR/config/profiles/${_tier}.yaml" | sed 's/.*active:[[:space:]]*//')
   for model in "${_required[@]}"; do
     if ! ollama list 2>/dev/null | awk 'NR>1 {print $1}' | grep -Eq "^${model}(:.+)?$"; then
       missing_models+=("$model")

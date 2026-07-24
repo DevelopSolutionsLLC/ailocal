@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# sync-models.sh — propagate config/models.yaml + config/clients.yaml to all derived files.
+# sync-models.sh — propagate the active config/profiles/<tier>.yaml + config/clients.yaml
+# to all derived files.
 # Usage:
 #   ./scripts/sync-models.sh          regenerate every derived file
 #   ./scripts/sync-models.sh --check  regenerate, then fail if any TRACKED generated file changed
@@ -28,7 +29,7 @@ if [ "${1:-}" = "--check" ]; then
     (cd "$ROOT_DIR" && git --no-pager diff --stat -- "${GENERATED[@]}") >&2 || true
     exit 1
   fi
-  echo "[REAL] in sync — generated files match config/models.yaml + config/clients.yaml"
+  echo "[REAL] in sync — generated files match the active profile + config/clients.yaml"
   exit 0
 fi
 

@@ -1,63 +1,66 @@
 # profile: 32gb
-# Models sized for 32 GB unified memory.
-# NOTE: the 6-chat-role split below is sized by analogy to the old 4-role 32gb
-# profile — it is UNVERIFIED on real 32 GB hardware. Confirm backends/ctx before
-# switching to this profile. The 64gb profile is the validated one.
-# coder-main (18 GB) + coder-agent (21 GB) hot-swap (OLLAMA_MAX_LOADED_MODELS).
-# deep-think (5 GB) / deep-think-more (9 GB) can coexist with supervisor (17 GB).
-# Approximate download: ~60 GB
-# Run ./scripts/sync-models.sh after any manual change.
+# status: unverified — same capability schema and backends as 64gb, with contexts and TTLs scaled
+# for 32 GB. NOT runtime-tested on 32 GB hardware; the memory fit below is estimated from model
+# footprints, not measured. Validate with `ailocal validate` and a real session before relying on it.
+# Full per-capability rationale lives in config/profiles/64gb.yaml.
+#
+# Fit on ~26 GB usable (32 GB minus OS/apps): only ONE large model resident at a time. architecture
+# (~18 GB), implementation (~9 GB), and review (~10 GB) each fit alone; completion (~2 GB) and
+# embeddings (~0.3 GB) stay warm. Keep OLLAMA_MAX_LOADED_MODELS low (2) on this tier.
 
-disk_gb: 60
+disk_gb: 40
 
-coder-main:
-  backend: qwen3-coder:30b
-  description: Primary repository coding — MoE ~3B active / 30B total
-  context_window: 131072
-  num_ctx: 131072
+architecture:
+  role: Lead architect
+  active: qwen3-coder:30b
+  preferred: [qwen3-coder:30b]
+  context: 16384
+  temperature: 0.2
+  keep_alive: 30m
+  priority: highest
   persona: true
+  purpose: [architecture, complex refactoring, multi-step debugging, design]
 
-coder-agent:
-  backend: qwen3.6:35b-mlx
-  description: Multi-step planning and agentic orchestration — MoE, multimodal
-  context_window: 131072
-  num_ctx: 131072
-  vision: true
+implementation:
+  role: Daily coding
+  active: qwen2.5-coder:14b-instruct-q4_K_M
+  preferred: [qwen2.5-coder:14b-instruct-q4_K_M]
+  context: 16384
+  temperature: 0.2
+  num_predict: -1
+  keep_alive: 30m
+  priority: medium
   persona: true
+  purpose: [implementation, features, tests, refactoring]
 
-coder-fast:
-  backend: qwen2.5-coder:3b
-  description: IDE autocomplete (FIM) and fast chat — small, low-latency
-  context_window: 32768
-  num_ctx: 32768
-
-deep-think:
-  backend: deepseek-r1:8b
-  description: Lighter chain-of-thought reasoning — auto-MLX via Ollama 0.19+
-  context_window: 32768
-  num_ctx: 32768
-  reasoning: true
-  merge: true
+review:
+  role: Code review
+  active: deepseek-coder-v2:16b-lite-instruct-q4_K_M
+  preferred: [deepseek-coder-v2:16b-lite-instruct-q4_K_M]
+  context: 16384
+  temperature: 0.1
+  num_predict: 2048
+  keep_alive: 15m
+  priority: low
   persona: true
+  purpose: [code review, bug detection, security review]
 
-deep-think-more:
-  backend: deepseek-r1:14b
-  description: Deeper reasoning — fits alongside supervisor (17+9=26 GB)
-  context_window: 131072
-  num_ctx: 131072
-  reasoning: true
-  merge: true
-  persona: true
+completion:
+  role: Autocomplete
+  active: qwen2.5-coder:3b-instruct-q4_K_M
+  preferred: [qwen2.5-coder:3b-instruct-q4_K_M]
+  context: 4096
+  temperature: 0
+  num_predict: 128
+  keep_alive: forever
+  priority: warm
+  purpose: [inline completion, FIM, quick fixes]
 
-supervisor:
-  backend: gemma4:27b
-  description: Review, critique, approval gate — multimodal
-  context_window: 131072
-  num_ctx: 131072
-  vision: true
-  persona: true
-
-embed:
-  backend: nomic-embed-text
-  description: Semantic retrieval and memory — not for chat
-  context_window: 8192
+embeddings:
+  role: Semantic retrieval
+  active: nomic-embed-text
+  preferred: [nomic-embed-text]
+  context: 8192
+  keep_alive: forever
+  priority: infrastructure
+  purpose: [semantic search, memory, retrieval for grepai]

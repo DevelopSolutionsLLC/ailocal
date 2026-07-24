@@ -11,7 +11,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 OLLAMA="${OLLAMA_CLI:-ollama}"
-MODELS_YAML="$ROOT_DIR/config/models.yaml"
+_TIER="$(cat "$ROOT_DIR/config/active-profile" 2>/dev/null || echo 64gb)"
+MODELS_YAML="$ROOT_DIR/config/profiles/${_TIER}.yaml"   # active profile (tracked SoT)
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -45,7 +46,7 @@ fi
 info "Model manifest found"
 
 # ── Disk space check ───────────────────────────────────────────────────────
-# Read expected disk usage from models.yaml (set per hardware profile).
+# Read expected disk usage from the active profile (set per hardware tier).
 
 DISK_NEEDED=$(grep '^disk_gb:' "$MODELS_YAML" | awk '{print $2}' || echo 0)
 DISK_WARN=$((DISK_NEEDED + DISK_NEEDED / 4))   # warn at 125% of model size
@@ -55,11 +56,11 @@ if [ "$DISK_NEEDED" -gt 0 ] && [ "$FREE_GB" -lt "$DISK_WARN" ]; then
   echo "  Proceeding — skip large models if you run low."
 fi
 
-# ── Model list — derived from config/models.yaml ──────────────────────────
+# ── Model list — derived from the active config/profiles/<tier>.yaml ──────────
 
 MODELS=()
 while IFS= read -r _m; do MODELS+=("$_m"); done < <(
-  grep '^\s*backend:' "$MODELS_YAML" | sed 's/.*backend:[[:space:]]*//'
+  grep -E '^\s*active:' "$MODELS_YAML" | sed 's/.*active:[[:space:]]*//'
 )
 
 # ── Pull models ────────────────────────────────────────────────────────────

@@ -1,11 +1,11 @@
 # clients.yaml — the semantic map generation can't infer.
 #
-# models.yaml says WHAT each capability is. This says WHICH capability each client
-# surface uses. Together they are the single source of truth: sync-models.py reads
-# both and regenerates every client config + the LiteLLM alias block, so a future
-# capability change never requires hand-editing a client file.
+# config/profiles/<tier>.yaml says WHAT each capability is. This says WHICH capability each client
+# surface uses. Together they are the single source of truth: sync-models.py reads both and
+# regenerates every client config + the LiteLLM alias block, so a future capability change never
+# requires hand-editing a client file.
 #
-# Values on the right are capability names from models.yaml. Flow-style lists.
+# Values on the right are capability names from the active profile. Flow-style lists.
 
 # Claude Code
 claude:
@@ -32,17 +32,6 @@ continue:
 # ailocal role names (coder-main/coder-fast/coder-agent/deep-think*/supervisor/embed) are gone:
 # agents and configs use capability names now.
 compat:
-  claude-opus-4-8: architecture
-  claude-opus-4-8-20251101: architecture
-  claude-fable-5: review
-  claude-sonnet-4-6: implementation
-  claude-sonnet-4-6-20250219: implementation
-  gpt-5.5: implementation
-  claude-haiku-4-5: completion
-  claude-haiku-4-5-20251001: completion
-  gpt-4o: completion
-  gpt-4o-mini: completion
-  gpt-3.5-turbo: completion
   claude-opus-4-8: architecture
   claude-opus-4-8-20251101: architecture
   claude-fable-5: review

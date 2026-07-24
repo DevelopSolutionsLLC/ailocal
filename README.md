@@ -76,7 +76,7 @@ The old ailocal role names (`coder-main`/`deep-think*`/`supervisor`/…) have be
 **Personas & sampling.** `architect`, `coder`, and `reviewer` get a grounded engineering persona
 injected server-side by the `persona_injector` hook (from `config/personas/<role>.md`) — merged into
 the client's system message, so it survives even when the client sends its own. `autocomplete` and
-`embed` are persona-free by design (lean/infra). Sampling lives in `config/models.yaml` (architect/
+`embed` are persona-free by design (lean/infra). Sampling lives in `config/profiles/<tier>.yaml` (architect/
 coder temp 0.2, reviewer 0.1, autocomplete 0).
 
 **No reasoning tier right now.** None of the installed models emit `<think>` — the deepseek-r1
@@ -84,20 +84,20 @@ reasoners were removed, and `qwen3-coder` is Qwen's non-thinking variant. Every 
 `additional_drop_params: ["thinking", "reasoning_effort"]` + `think: false` so a client sending
 `thinking` doesn't 400 and a backend's default reasoning can't hang VS Code Copilot. The reasoning
 path (merged `<think>` via `merge_reasoning_content_in_choices`) still exists in `sync-models.py`; a
-commented `reasoner` slot in `config/models.yaml` restores the tier in one repoint (see
+commented `reasoning` slot in `config/profiles/<tier>.yaml` restores the tier in one repoint (see
 `docs/MODEL_LIFECYCLE.md`).
 
 ### Changing models
 
-Model choices live in **one place**: `config/models.yaml` (the active profile, selected from `config/profiles/{16,32,64,128}gb.yaml` by `install.sh`).
+Model choices live in **one place**: `config/profiles/<tier>.yaml` (the active profile, selected from `config/profiles/{16,32,64,128}gb.yaml` by `install.sh`).
 
 ```bash
-$EDITOR config/models.yaml         # 1. edit backend / num_ctx / vision flag
+$EDITOR config/profiles/<tier>.yaml         # 1. edit backend / num_ctx / vision flag
 ./scripts/sync-models.sh           # 2. propagate to every generated file
 docker compose restart litellm     # 3. reload the proxy  (or ./scripts/start.sh)
 ```
 
-`sync-models.sh` regenerates the `model_list` block in `config/litellm/config.yaml` (backend, `num_ctx`, sampling, capability flags — between the GENERATED markers) and the Codex `model_catalog.json`. **Do not hand-edit those generated regions.** Capabilities: tool calling everywhere; parallel tool calls everywhere (no reasoner is installed); reasoning (streamed `<think>`) only if a `reasoner` slot is enabled; vision/PDF on backends flagged `vision:` in `models.yaml`. Backend model tags are served directly (no persona overlays); the persona is injected by the `persona_injector` hook.
+`sync-models.sh` regenerates the `model_list` block in `config/litellm/config.yaml` (backend, `num_ctx`, sampling, capability flags — between the GENERATED markers) and the Codex `model_catalog.json`. **Do not hand-edit those generated regions.** Capabilities: tool calling everywhere; parallel tool calls everywhere (no reasoner is installed); reasoning (streamed `<think>`) only if a `reasoner` slot is enabled; vision/PDF on backends flagged `vision:` in the active profile. Backend model tags are served directly (no persona overlays); the persona is injected by the `persona_injector` hook.
 
 ## Client integration
 

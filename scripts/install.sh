@@ -142,28 +142,26 @@ else                             RAM_TIER="16gb"
 fi
 
 PROFILE_SRC="$ROOT_DIR/config/profiles/${RAM_TIER}.yaml"
-MODELS_YAML="$ROOT_DIR/config/models.yaml"
+ACTIVE_PROFILE="$ROOT_DIR/config/active-profile"
 
 info "Detected ${RAM_GB} GB RAM → profile: ${RAM_TIER}"
 
-if [ -f "$MODELS_YAML" ]; then
-  ACTIVE=$(grep '^# profile:' "$MODELS_YAML" | awk '{print $3}' || echo "unknown")
-  if [ "$ACTIVE" = "$RAM_TIER" ]; then
-    info "models.yaml already on $RAM_TIER profile — keeping existing"
-  else
-    warn "models.yaml is on '$ACTIVE' profile — switching to $RAM_TIER"
-    read -r -p "  Apply $RAM_TIER profile? This overwrites any custom model changes. [y/N]: " APPLY
-    if [[ "${APPLY:-}" =~ ^[Yy]$ ]]; then
-      cp "$PROFILE_SRC" "$MODELS_YAML"
-      info "models.yaml updated to $RAM_TIER profile"
-    else
-      info "Keeping existing models.yaml"
-    fi
-  fi
-else
-  cp "$PROFILE_SRC" "$MODELS_YAML"
-  info "models.yaml written from $RAM_TIER profile"
+# Record the active tier as a one-line marker (machine-specific, gitignored). sync-models.py reads
+# config/profiles/<tier>.yaml directly — there is no intermediate models.yaml copy to drift or to
+# edit-then-lose. Edit the tracked profile itself to change models.
+if [ ! -f "$PROFILE_SRC" ]; then
+  warn "profile $RAM_TIER not found at $PROFILE_SRC — cannot continue"
+  exit 1
 fi
+CURRENT="$(cat "$ACTIVE_PROFILE" 2>/dev/null || echo none)"
+if [ "$CURRENT" = "$RAM_TIER" ]; then
+  info "active profile already $RAM_TIER"
+else
+  [ "$CURRENT" != "none" ] && warn "active profile was '$CURRENT' — switching to $RAM_TIER"
+  echo "$RAM_TIER" > "$ACTIVE_PROFILE"
+  info "active profile set to $RAM_TIER (config/active-profile)"
+fi
+[ "$RAM_TIER" != "64gb" ] && warn "profile '$RAM_TIER' is marked status: unverified — validate with 'ailocal validate' before relying on it"
 
 # ── Directory structure ────────────────────────────────────────────────────
 step "Creating directory structure"
