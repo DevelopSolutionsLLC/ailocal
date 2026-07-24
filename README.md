@@ -74,8 +74,10 @@ The old ailocal role names (`coder-main`/`deep-think*`/`supervisor`/…) have be
 **Never use backend model names directly in client configs or scripts.** Use capability names only.
 
 **Personas & sampling.** `architect`, `coder`, and `reviewer` get a grounded engineering persona
-injected server-side by the `persona_injector` hook (from `config/personas/<role>.md`) — merged into
-the client's system message, so it survives even when the client sends its own. `autocomplete` and
+injected server-side by the `persona_injector` hook (from `config/personas/<role>.md`) — merged
+into the client's system prompt (the `messages[]` system entry for OpenAI clients, or the top-level
+`system` field for Claude Code's Anthropic `/v1/messages` route), so it survives even when the client
+sends its own. `autocomplete` and
 `embed` are persona-free by design (lean/infra). Sampling lives in `config/profiles/<tier>.yaml` (architect/
 coder temp 0.2, reviewer 0.1, autocomplete 0).
 
