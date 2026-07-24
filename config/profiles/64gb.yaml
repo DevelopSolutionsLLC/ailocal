@@ -18,7 +18,7 @@
 #                — see docs/MODEL_LIFECYCLE.md); embeddings stay pinned as infrastructure.
 #   priority     highest|medium|low|warm|infrastructure — documents intent and feeds the
 #                (future, opt-in) memory-pressure eviction daemon.
-#   persona      persona_injector merges config/personas/<capability>.md at request time.
+#   persona      persona_injector merges config/instructions/<capability>.md at request time.
 #   purpose/strengths/weaknesses   why this model was chosen — read before swapping it.
 #
 # NOTE: capabilities are TOP-LEVEL keys (not nested under a `capabilities:` map) so the

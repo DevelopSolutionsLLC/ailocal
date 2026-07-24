@@ -31,7 +31,7 @@ sys.modules["litellm.integrations"] = types.ModuleType("litellm.integrations")
 sys.modules["litellm.integrations.custom_logger"] = _clog
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-os.environ.setdefault("AILOCAL_PERSONA_DIR", "/nonexistent")   # _load_personas → {} (we override)
+os.environ.setdefault("AILOCAL_INSTRUCTIONS_DIR", "/nonexistent")   # _load_personas → {} (we override)
 _spec = importlib.util.spec_from_file_location(
     "persona_injector", os.path.join(ROOT, "config/litellm/persona_injector.py"))
 pi = importlib.util.module_from_spec(_spec)

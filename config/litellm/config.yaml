@@ -18,7 +18,7 @@
 #
 # Persona note: capabilities point straight at their base Ollama model. The persona
 # is injected at request time by the persona_injector hook (see
-# config/litellm/persona_injector.py + config/personas/<capability>.md). Because
+# config/litellm/persona_injector.py + config/instructions/<capability>.md). Because
 # compat names resolve to the capability's model group, every one inherits that
 # persona automatically.
 #
