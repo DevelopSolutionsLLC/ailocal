@@ -2,7 +2,7 @@
 
 Run AI coding tools — Claude Code, Codex, VS Code Copilot Chat — against local models on Apple Silicon. No cloud costs, no data leaving your machine, no changes to the tools.
 
-**How it works:** Ollama runs your models natively for Metal/MLX GPU access. LiteLLM sits in front as an OpenAI/Anthropic-compatible proxy, exposing capability names (`architect`, `coder`, `reviewer`, `autocomplete`) instead of raw model names. Your tools point at `localhost:4000` instead of Anthropic or OpenAI — everything else stays the same.
+**How it works:** Ollama runs your models natively for Metal/MLX GPU access. LiteLLM sits in front as an OpenAI/Anthropic-compatible proxy, exposing capability names (`architecture`, `implementation`, `review`, `completion`, `embeddings`) instead of raw model names. Your tools point at `localhost:4000` instead of Anthropic or OpenAI — everything else stays the same.
 
 **Why over bare Ollama:** one endpoint for all tools; capability names decouple client configs from backend models (swap a model without touching any config); automatic fallback chains; optional per-role cloud fallback; minimal footprint (a single small container — the only heavy memory user is Ollama on the host).
 
@@ -108,11 +108,11 @@ docker compose restart litellm     # 3. reload the proxy  (or ./scripts/start.sh
 
 The installer is safe to re-run and backs up before touching anything. Client state lives in `~/.config/ailocal/` (XDG-style) — cloud clients (`~/.claude`, `~/.codex`) are never touched, so cloud and local sessions coexist safely.
 
-**Claude Code** — run `claude-local` to start a Claude Code session pointed at local models (the wrapper sets `CLAUDE_CONFIG_DIR=~/.config/ailocal/claude` + per-invocation env vars). Launches on `architect` — the heavy tier — and delegates via the `/model` picker or subagents; use `/model` to switch mid-session. Plain `claude` still connects to Anthropic cloud.
+**Claude Code** — run `claude-local` to start a Claude Code session pointed at local models (the wrapper sets `CLAUDE_CONFIG_DIR=~/.config/ailocal/claude` + per-invocation env vars). Launches on `implementation`; switch to `architecture` (the shared 64K heavy tier) via the `/model` picker, or delegate via subagents. Plain `claude` still connects to Anthropic cloud.
 
-**Codex CLI** — run `codex-local` for local models (sets `CODEX_HOME=~/.config/ailocal/codex` + env vars). The model picker shows role names. Plain `codex` still connects to OpenAI cloud.
+**Codex CLI** — run `codex-local` for local models (sets `CODEX_HOME=~/.config/ailocal/codex` + env vars). The model picker shows capability names. Plain `codex` still connects to OpenAI cloud.
 
-**VS Code (Copilot Chat)** — run `ailocal-code [path]` to open the isolated `ailocal` VS Code profile (`code --profile ailocal`), which keeps these extensions and settings out of your normal window. Models and capabilities are auto-discovered from LiteLLM's `/v1/model/info`.
+**VS Code (Copilot Chat)** — run `ailocal-code [path]` to open the isolated `ailocal` VS Code profile (`code --profile ailocal`), which keeps these extensions and settings out of your normal window. Models and capabilities are auto-discovered from LiteLLM's `/model/info`.
 
 To configure Copilot Chat manually or in an existing window, connect the [LiteLLM Connector for Copilot](https://marketplace.visualstudio.com/items?itemName=Gethnet.litellm-connector-copilot) extension:
 
@@ -159,13 +159,13 @@ run. `cadence doctor --root ~/.config/ailocal/claude` reports `NO-OVERLAY` when 
 ```python
 from openai import OpenAI
 client = OpenAI(base_url="http://localhost:4000/v1", api_key="<LITELLM_MASTER_KEY>")
-client.chat.completions.create(model="coder", messages=[{"role": "user", "content": "Hello"}])
+client.chat.completions.create(model="implementation", messages=[{"role": "user", "content": "Hello"}])
 ```
 
 ```python
 import anthropic
 client = anthropic.Anthropic(base_url="http://localhost:4000", api_key="<LITELLM_MASTER_KEY>")
-client.messages.create(model="coder", max_tokens=1024, messages=[{"role": "user", "content": "Hello"}])
+client.messages.create(model="implementation", max_tokens=1024, messages=[{"role": "user", "content": "Hello"}])
 ```
 
 ## Operations
@@ -187,13 +187,13 @@ Disabled by default. `.env` carries `ENABLE_CLOUD`, `ANTHROPIC_API_KEY`, `OPENAI
 
 **VS Code: "No utility model is configured for 'copilot-utility-small'"** — a VS Code 1.128+ regression for BYOK providers. Set `"chat.byokUtilityModelDefault": "mainAgent"` in settings.json (`install-clients.sh vscode` adds it) and reload the window. This keeps utility calls (titles, summaries) on your selected local model.
 
-**VS Code: model spins on "Considering…" and never answers** — a backend emitted reasoning that streams invisibly. All installed models answer directly (none stream `<think>`). If you hit "Message exceeds token limit," pick a capability with a larger window (`architect` 32K, `coder`/`reviewer` 16K, `autocomplete` 4K). (A persistent 401 with "Ensure Key has Bearer prefix" instead means the connector's API key isn't entered — re-enter it via **Chat: Manage Language Models**.)
+**VS Code: model spins on "Considering…" and never answers** — a backend emitted reasoning that streams invisibly. All installed models answer directly (none stream `<think>`). If you hit "Message exceeds token limit," select `architecture` (64K, ~49K usable after VS Code's 0.75 reserve) — the other capabilities advertise smaller windows (`implementation`/`review` 16K, `completion` 4K) that a large workspace prompt overruns. (A persistent 401 with "Ensure Key has Bearer prefix" instead means the connector's API key isn't entered — re-enter it via **Chat: Manage Language Models**.)
 
 **LiteLLM won't start** — `docker logs ailocal-litellm`. Usually a YAML error in `config/litellm/config.yaml` or a missing `LITELLM_MASTER_KEY` in `.env`.
 
 **404 on a role name** — Ollama isn't running (`ollama serve`), the backend model isn't pulled (`ollama list`), or the capability isn't in `config/litellm/config.yaml`.
 
-**Claude Code `/model` only shows Opus/Sonnet/Haiku** — gateway discovery isn't on (needs Claude Code v2.1.129+). The `claude-local` wrapper sets `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1` so `/model` lists every LiteLLM capability (`architect`, `coder`, `reviewer`, `autocomplete`, `embed`) under "From gateway", and remaps the built-in slots — Opus→`architect`, Sonnet→`coder`, Haiku→`autocomplete`, Fable→`reviewer` — so background calls stay local. If you don't see them, reload your shell (`source ~/.zshrc`) and relaunch `claude-local`.
+**Claude Code `/model` only shows Opus/Sonnet/Haiku** — gateway discovery isn't on (needs Claude Code v2.1.129+). The `claude-local` wrapper sets `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1` so `/model` lists every LiteLLM capability (`architecture`, `implementation`, `review`, `completion`, `embeddings`) under "From gateway", and remaps the built-in slots — Opus→`architecture`, Sonnet→`implementation`, Haiku→`completion`, Fable→`review` — so background calls stay local. If you don't see them, reload your shell (`source ~/.zshrc`) and relaunch `claude-local`.
 
 **Models unload too fast** — the Ollama macOS app doesn't read `~/.zshrc`; run `./scripts/setup-ollama-env.sh`, restart Ollama, verify with `ollama ps`.
 
