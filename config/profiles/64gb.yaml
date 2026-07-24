@@ -27,18 +27,24 @@
 
 disk_gb: 40
 
-# ── architecture — heavy reasoning / design tier ─────────────────────────────
+# ── architecture — shared large-context coding/reasoning tier ─────────────────
+# The one big-context capability every client shares (Claude Code, Codex, VS Code):
+# design, deep reasoning, AND large interactive/agent prompts. 65536 num_ctx gives clients
+# a genuinely large input window; qwen3-coder:30b supports 262144, so 128K is a future
+# "architecture-deep" capability, not this one (a resident -1 model carries its full KV,
+# so 64K is the balance between input capacity and permanent memory).
 architecture:
   role: Lead architect
   active: qwen3-coder:30b
   preferred: [qwen3-coder:30b, qwen4-coder:32b, deepseek-r2:32b]
-  context: 32768
+  context: 65536
   temperature: 0.2
+  num_predict: 16384
   keep_alive: -1
   persona: true
-  purpose: [architecture, complex refactoring, multi-step debugging, design, repository-wide planning]
-  strengths: [large-context reasoning, holds a whole subsystem in view, strong code generation]
-  weaknesses: [slower, higher memory, non-thinking (no <think> stream)]
+  purpose: [architecture, complex refactoring, multi-step debugging, design, repository-wide planning, large interactive/agent prompts]
+  strengths: [large 64K input window shared across clients, holds a whole subsystem in view, strong code generation]
+  weaknesses: [slower, higher resident memory (64K KV pinned), non-thinking (no <think> stream)]
 
 # ── implementation — everyday working coder ──────────────────────────────────
 implementation:
@@ -91,25 +97,6 @@ embeddings:
   purpose: [semantic search, memory, retrieval for grepai]
   strengths: [always-on, tiny, grepai calls it directly on :11434]
   weaknesses: [not a chat model]
-
-# ── vscode-chat — large-context IDE chat (VS Code Copilot via litellm-connector) ──
-# IDE chat is a DIFFERENT workload from a coding agent: the client sends a big system
-# prompt + tool schemas + workspace context, so it needs a large advertised window
-# (the connector rejects prompts over ~0.95*max_input). Dedicated so architecture/
-# implementation are not inflated to absorb it. Rotating (keep_alive 20m), NOT resident —
-# the large 64K KV only loads while VS Code chat is active. Needs the daemon on q8 KV +
-# flash attention (own the daemon) or the 64K KV ~doubles.
-vscode-chat:
-  role: IDE chat
-  active: qwen3-coder:30b
-  preferred: [qwen3-coder:30b]
-  context: 65536
-  temperature: 0.1
-  num_predict: 4096
-  keep_alive: 20m
-  purpose: [VS Code Copilot Chat, interactive IDE Q&A, large-context editor conversations]
-  strengths: [large window for IDE tool schemas + workspace context, 256K-capable backend]
-  weaknesses: [heavy 64K KV — rotating not resident; a 2nd 30b instance vs architecture]
 
 # ── reasoning tier (no installed backend) ────────────────────────────────────
 # The deepseek-r1 reasoners were removed; no installed model emits <think>. To restore,
