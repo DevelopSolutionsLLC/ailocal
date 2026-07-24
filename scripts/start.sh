@@ -60,6 +60,9 @@ fi
 
 # ── Start services ─────────────────────────────────────────────────────────
 
+# No `docker compose pull` here by design: start (incl. the boot LaunchAgent) must be
+# reproducible and offline-safe, so it runs whatever image is on disk. main-stable is a
+# moving tag — refresh deliberately via install.sh (initial) or update.sh, not on every boot.
 step "Starting ailocal services"
 DOCKER_CLI_HINTS=false docker compose up -d --remove-orphans
 

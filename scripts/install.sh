@@ -185,6 +185,13 @@ run_next_steps() {
   fi
 
   echo
+  # Initial setup pulls the latest image so a fresh install starts on current LiteLLM
+  # (bug fixes land in main-stable frequently). Routine start.sh never auto-pulls —
+  # that keeps a reboot reproducible; use update.sh (or `docker compose pull`) to refresh.
+  step "Pulling latest Docker images"
+  docker compose pull
+
+  echo
   step "Starting Docker services"
   bash "$ROOT_DIR/scripts/start.sh" --no-wait
 
