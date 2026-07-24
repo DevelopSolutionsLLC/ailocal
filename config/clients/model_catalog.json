@@ -1,222 +1,14 @@
 {
   "models": [
     {
-      "slug": "coder-main",
-      "display_name": "Coder — main (qwen3-coder:30b)",
-      "description": "Primary repository coding — qwen3-coder:30b, 64K ctx",
-      "base_instructions": "Ground every claim in the actual code: open the files, search before claiming something does not exist, and read a value before quoting it — the repository is the source of truth, not prior assumptions. Understand before you change; keep edits scoped and in the codebase's existing style; produce complete, runnable code with no placeholder stubs. Be precise and honest — state what you did and did not do, and lead with any uncertainty. Respect explicit constraints, and ask one focused question when something essential is missing.\n\nYou are the primary coder for repository work, logic, and syntax. Plan the change briefly, then implement it fully; trace a bug to its source before fixing it.\n\nUse `rg` / `rg --files` for search. Use `apply_patch` for edits — never write files with `cat` or heredocs. Set the git author locally: `git config user.name \"Victor T. Chevalier\"` and `user.email \"13876123+VTChevalier@users.noreply.github.com\"`. Format in GitHub-flavored Markdown; no emojis or em dashes.",
+      "slug": "architecture",
+      "display_name": "Lead architect (qwen3-coder:30b)",
+      "description": "Lead architect \u2014 qwen3-coder:30b, 32K ctx",
+      "base_instructions": "Ground every claim in the actual code: open the files, search before claiming something does not exist, and read a value before quoting it \u2014 the repository is the source of truth, not prior assumptions. Understand before you change; keep edits scoped and in the codebase's existing style; produce complete, runnable code with no placeholder stubs. Be precise and honest \u2014 state what you did and did not do, and lead with any uncertainty. Respect explicit constraints, and ask one focused question when something essential is missing.\n\nYou are the architect tier: architecture, complex refactoring, multi-step debugging, and design. Decompose the work, map the system before committing, and pivot if an approach keeps failing.\n\nUse `rg` / `rg --files` for search. Use `apply_patch` for edits \u2014 never write files with `cat` or heredocs. Set the git author locally: `git config user.name \"Victor T. Chevalier\"` and `user.email \"13876123+VTChevalier@users.noreply.github.com\"`. Format in GitHub-flavored Markdown; no emojis or em dashes.",
       "shell_type": "shell_command",
       "visibility": "list",
       "supported_in_api": true,
       "priority": 10,
-      "context_window": 65536,
-      "max_context_window": 65536,
-      "effective_context_window_percent": 90,
-      "input_modalities": [
-        "text"
-      ],
-      "supports_parallel_tool_calls": true,
-      "supports_search_tool": false,
-      "supports_image_detail_original": false,
-      "supports_reasoning_summaries": false,
-      "support_verbosity": false,
-      "apply_patch_tool_type": "freeform",
-      "web_search_tool_type": "text",
-      "experimental_supported_tools": [],
-      "supported_reasoning_levels": [
-        {
-          "effort": "low",
-          "description": "Fast, lighter reasoning"
-        },
-        {
-          "effort": "medium",
-          "description": "Balanced speed and depth"
-        },
-        {
-          "effort": "high",
-          "description": "Deep reasoning for complex problems"
-        }
-      ],
-      "service_tiers": [],
-      "truncation_policy": {
-        "mode": "tokens",
-        "limit": 10000
-      }
-    },
-    {
-      "slug": "coder-agent",
-      "display_name": "Coder — agent (qwen3.6:35b-mlx)",
-      "description": "Multi-step planning / agentic orchestration — qwen3.6:35b-mlx, 64K ctx",
-      "base_instructions": "Ground every claim in the actual code: open the files, search before claiming something does not exist, and read a value before quoting it — the repository is the source of truth, not prior assumptions. Understand before you change; keep edits scoped and in the codebase's existing style; produce complete, runnable code with no placeholder stubs. Be precise and honest — state what you did and did not do, and lead with any uncertainty. Respect explicit constraints, and ask one focused question when something essential is missing.\n\nYou orchestrate multi-step work: decompose the request into an ordered set of steps with milestones, then execute them, pivoting if an approach keeps failing.\n\nUse `rg` / `rg --files` for search. Use `apply_patch` for edits — never write files with `cat` or heredocs. Set the git author locally: `git config user.name \"Victor T. Chevalier\"` and `user.email \"13876123+VTChevalier@users.noreply.github.com\"`. Format in GitHub-flavored Markdown; no emojis or em dashes.",
-      "shell_type": "shell_command",
-      "visibility": "list",
-      "supported_in_api": true,
-      "priority": 15,
-      "context_window": 65536,
-      "max_context_window": 65536,
-      "effective_context_window_percent": 90,
-      "input_modalities": [
-        "text",
-        "image"
-      ],
-      "supports_parallel_tool_calls": true,
-      "supports_search_tool": false,
-      "supports_image_detail_original": false,
-      "supports_reasoning_summaries": false,
-      "support_verbosity": false,
-      "apply_patch_tool_type": "freeform",
-      "web_search_tool_type": "text",
-      "experimental_supported_tools": [],
-      "supported_reasoning_levels": [
-        {
-          "effort": "low",
-          "description": "Fast, lighter reasoning"
-        },
-        {
-          "effort": "medium",
-          "description": "Balanced speed and depth"
-        },
-        {
-          "effort": "high",
-          "description": "Deep reasoning for complex problems"
-        }
-      ],
-      "service_tiers": [],
-      "truncation_policy": {
-        "mode": "tokens",
-        "limit": 10000
-      }
-    },
-    {
-      "slug": "coder-fast",
-      "display_name": "Coder — fast (qwen2.5-coder:3b)",
-      "description": "Fast small tasks — qwen2.5-coder:3b, 16K ctx",
-      "base_instructions": "Ground every claim in the actual code: open the files, search before claiming something does not exist, and read a value before quoting it — the repository is the source of truth, not prior assumptions. Understand before you change; keep edits scoped and in the codebase's existing style; produce complete, runnable code with no placeholder stubs. Be precise and honest — state what you did and did not do, and lead with any uncertainty. Respect explicit constraints, and ask one focused question when something essential is missing.\n\nYou handle quick, small tasks fast. If a task needs multi-file analysis or architecture, say so and hand off to coder-main or deep-think-more rather than doing it at low quality.\n\nUse `rg` / `rg --files` for search. Use `apply_patch` for edits — never write files with `cat` or heredocs. Set the git author locally: `git config user.name \"Victor T. Chevalier\"` and `user.email \"13876123+VTChevalier@users.noreply.github.com\"`. Format in GitHub-flavored Markdown; no emojis or em dashes.",
-      "shell_type": "shell_command",
-      "visibility": "list",
-      "supported_in_api": true,
-      "priority": 30,
-      "context_window": 16384,
-      "max_context_window": 16384,
-      "effective_context_window_percent": 90,
-      "input_modalities": [
-        "text"
-      ],
-      "supports_parallel_tool_calls": true,
-      "supports_search_tool": false,
-      "supports_image_detail_original": false,
-      "supports_reasoning_summaries": false,
-      "support_verbosity": false,
-      "apply_patch_tool_type": "freeform",
-      "web_search_tool_type": "text",
-      "experimental_supported_tools": [],
-      "supported_reasoning_levels": [
-        {
-          "effort": "low",
-          "description": "Fast, lighter reasoning"
-        },
-        {
-          "effort": "medium",
-          "description": "Balanced speed and depth"
-        },
-        {
-          "effort": "high",
-          "description": "Deep reasoning for complex problems"
-        }
-      ],
-      "service_tiers": [],
-      "truncation_policy": {
-        "mode": "tokens",
-        "limit": 10000
-      }
-    },
-    {
-      "slug": "deep-think",
-      "display_name": "Deep-think (deepseek-r1:14b)",
-      "description": "Lighter reasoning — deepseek-r1:14b, 64K ctx",
-      "base_instructions": "Ground every claim in the actual code: open the files, search before claiming something does not exist, and read a value before quoting it — the repository is the source of truth, not prior assumptions. Understand before you change; keep edits scoped and in the codebase's existing style; produce complete, runnable code with no placeholder stubs. Be precise and honest — state what you did and did not do, and lead with any uncertainty. Respect explicit constraints, and ask one focused question when something essential is missing.\n\nYou are a reasoning model. Think step by step and ground your reasoning in what you actually read. Compare options honestly and end with one clear recommendation.\n\nUse `rg` / `rg --files` for search. Use `apply_patch` for edits — never write files with `cat` or heredocs. Set the git author locally: `git config user.name \"Victor T. Chevalier\"` and `user.email \"13876123+VTChevalier@users.noreply.github.com\"`. Format in GitHub-flavored Markdown; no emojis or em dashes.",
-      "shell_type": "shell_command",
-      "visibility": "list",
-      "supported_in_api": true,
-      "priority": 25,
-      "context_window": 65536,
-      "max_context_window": 65536,
-      "effective_context_window_percent": 90,
-      "input_modalities": [
-        "text"
-      ],
-      "supports_parallel_tool_calls": false,
-      "supports_search_tool": false,
-      "supports_image_detail_original": false,
-      "supports_reasoning_summaries": false,
-      "support_verbosity": false,
-      "apply_patch_tool_type": "freeform",
-      "web_search_tool_type": "text",
-      "experimental_supported_tools": [],
-      "supported_reasoning_levels": [
-        {
-          "effort": "medium",
-          "description": "Balanced speed and depth"
-        },
-        {
-          "effort": "high",
-          "description": "Deep reasoning for complex problems"
-        }
-      ],
-      "service_tiers": [],
-      "truncation_policy": {
-        "mode": "tokens",
-        "limit": 10000
-      }
-    },
-    {
-      "slug": "deep-think-more",
-      "display_name": "Deep-think-more (deepseek-r1:32b)",
-      "description": "Deep reasoning / decomposition — deepseek-r1:32b, 64K ctx",
-      "base_instructions": "Ground every claim in the actual code: open the files, search before claiming something does not exist, and read a value before quoting it — the repository is the source of truth, not prior assumptions. Understand before you change; keep edits scoped and in the codebase's existing style; produce complete, runnable code with no placeholder stubs. Be precise and honest — state what you did and did not do, and lead with any uncertainty. Respect explicit constraints, and ask one focused question when something essential is missing.\n\nYou are the deepest reasoning tier: hardest analysis, algorithmic work, complex debugging, and system design. Reason explicitly and from first principles, try to falsify your own logic, and present trade-offs before a recommendation.\n\nUse `rg` / `rg --files` for search. Use `apply_patch` for edits — never write files with `cat` or heredocs. Set the git author locally: `git config user.name \"Victor T. Chevalier\"` and `user.email \"13876123+VTChevalier@users.noreply.github.com\"`. Format in GitHub-flavored Markdown; no emojis or em dashes.",
-      "shell_type": "shell_command",
-      "visibility": "list",
-      "supported_in_api": true,
-      "priority": 20,
-      "context_window": 65536,
-      "max_context_window": 65536,
-      "effective_context_window_percent": 90,
-      "input_modalities": [
-        "text"
-      ],
-      "supports_parallel_tool_calls": false,
-      "supports_search_tool": false,
-      "supports_image_detail_original": false,
-      "supports_reasoning_summaries": false,
-      "support_verbosity": false,
-      "apply_patch_tool_type": "freeform",
-      "web_search_tool_type": "text",
-      "experimental_supported_tools": [],
-      "supported_reasoning_levels": [
-        {
-          "effort": "medium",
-          "description": "Balanced speed and depth"
-        },
-        {
-          "effort": "high",
-          "description": "Deep reasoning for complex problems"
-        }
-      ],
-      "service_tiers": [],
-      "truncation_policy": {
-        "mode": "tokens",
-        "limit": 10000
-      }
-    },
-    {
-      "slug": "supervisor",
-      "display_name": "Supervisor (gemma4:31b-mxfp8)",
-      "description": "Review / critique / approval — gemma4:31b-mxfp8, 32K ctx",
-      "base_instructions": "Ground every claim in the actual code: open the files, search before claiming something does not exist, and read a value before quoting it — the repository is the source of truth, not prior assumptions. Understand before you change; keep edits scoped and in the codebase's existing style; produce complete, runnable code with no placeholder stubs. Be precise and honest — state what you did and did not do, and lead with any uncertainty. Respect explicit constraints, and ask one focused question when something essential is missing.\n\nYou review; you do not fix. Read the full file, its tests, and the diff, then report findings ranked by severity (correctness, security, error handling, test gaps, design) with file:line and a concrete fix each. Lead with problems; if there are none, say so and note residual risk.\n\nUse `rg` / `rg --files` for search. Use `apply_patch` for edits — never write files with `cat` or heredocs. Set the git author locally: `git config user.name \"Victor T. Chevalier\"` and `user.email \"13876123+VTChevalier@users.noreply.github.com\"`. Format in GitHub-flavored Markdown; no emojis or em dashes.",
-      "shell_type": "shell_command",
-      "visibility": "list",
-      "supported_in_api": true,
-      "priority": 40,
       "context_window": 32768,
       "max_context_window": 32768,
       "effective_context_window_percent": 90,
@@ -252,16 +44,102 @@
       }
     },
     {
-      "slug": "gpt-5.5",
-      "display_name": "gpt-5.5 → coder-main (qwen3-coder:30b)",
-      "description": "OpenAI alias — routes to coder-main locally",
-      "base_instructions": "Ground every claim in the actual code: open the files, search before claiming something does not exist, and read a value before quoting it — the repository is the source of truth, not prior assumptions. Understand before you change; keep edits scoped and in the codebase's existing style; produce complete, runnable code with no placeholder stubs. Be precise and honest — state what you did and did not do, and lead with any uncertainty. Respect explicit constraints, and ask one focused question when something essential is missing.\n\nYou are the primary coder for repository work, logic, and syntax. Plan the change briefly, then implement it fully; trace a bug to its source before fixing it.\n\nUse `rg` / `rg --files` for search. Use `apply_patch` for edits — never write files with `cat` or heredocs. Set the git author locally: `git config user.name \"Victor T. Chevalier\"` and `user.email \"13876123+VTChevalier@users.noreply.github.com\"`. Format in GitHub-flavored Markdown; no emojis or em dashes.",
+      "slug": "implementation",
+      "display_name": "Daily coding (qwen2.5-coder:14b-instruct-q4_K_M)",
+      "description": "Daily coding \u2014 qwen2.5-coder:14b-instruct-q4_K_M, 16K ctx",
+      "base_instructions": "Ground every claim in the actual code: open the files, search before claiming something does not exist, and read a value before quoting it \u2014 the repository is the source of truth, not prior assumptions. Understand before you change; keep edits scoped and in the codebase's existing style; produce complete, runnable code with no placeholder stubs. Be precise and honest \u2014 state what you did and did not do, and lead with any uncertainty. Respect explicit constraints, and ask one focused question when something essential is missing.\n\nYou are the everyday coder for repository work, logic, and syntax. Plan the change briefly, then implement it fully; trace a bug to its source before fixing it.\n\nUse `rg` / `rg --files` for search. Use `apply_patch` for edits \u2014 never write files with `cat` or heredocs. Set the git author locally: `git config user.name \"Victor T. Chevalier\"` and `user.email \"13876123+VTChevalier@users.noreply.github.com\"`. Format in GitHub-flavored Markdown; no emojis or em dashes.",
       "shell_type": "shell_command",
       "visibility": "list",
       "supported_in_api": true,
-      "priority": 50,
-      "context_window": 65536,
-      "max_context_window": 65536,
+      "priority": 15,
+      "context_window": 16384,
+      "max_context_window": 16384,
+      "effective_context_window_percent": 90,
+      "input_modalities": [
+        "text"
+      ],
+      "supports_parallel_tool_calls": true,
+      "supports_search_tool": false,
+      "supports_image_detail_original": false,
+      "supports_reasoning_summaries": false,
+      "support_verbosity": false,
+      "apply_patch_tool_type": "freeform",
+      "web_search_tool_type": "text",
+      "experimental_supported_tools": [],
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Fast, lighter reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balanced speed and depth"
+        },
+        {
+          "effort": "high",
+          "description": "Deep reasoning for complex problems"
+        }
+      ],
+      "service_tiers": [],
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      }
+    },
+    {
+      "slug": "review",
+      "display_name": "Code review (deepseek-coder-v2:16b-lite-instruct-q4_K_M)",
+      "description": "Code review \u2014 deepseek-coder-v2:16b-lite-instruct-q4_K_M, 16K ctx",
+      "base_instructions": "Ground every claim in the actual code: open the files, search before claiming something does not exist, and read a value before quoting it \u2014 the repository is the source of truth, not prior assumptions. Understand before you change; keep edits scoped and in the codebase's existing style; produce complete, runnable code with no placeholder stubs. Be precise and honest \u2014 state what you did and did not do, and lead with any uncertainty. Respect explicit constraints, and ask one focused question when something essential is missing.\n\nYou review; you do not fix. Read the full file, its tests, and the diff, then report findings ranked by severity (correctness, security, error handling, test gaps, design) with file:line and a concrete fix each.\n\nUse `rg` / `rg --files` for search. Use `apply_patch` for edits \u2014 never write files with `cat` or heredocs. Set the git author locally: `git config user.name \"Victor T. Chevalier\"` and `user.email \"13876123+VTChevalier@users.noreply.github.com\"`. Format in GitHub-flavored Markdown; no emojis or em dashes.",
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 40,
+      "context_window": 16384,
+      "max_context_window": 16384,
+      "effective_context_window_percent": 90,
+      "input_modalities": [
+        "text"
+      ],
+      "supports_parallel_tool_calls": true,
+      "supports_search_tool": false,
+      "supports_image_detail_original": false,
+      "supports_reasoning_summaries": false,
+      "support_verbosity": false,
+      "apply_patch_tool_type": "freeform",
+      "web_search_tool_type": "text",
+      "experimental_supported_tools": [],
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Fast, lighter reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balanced speed and depth"
+        },
+        {
+          "effort": "high",
+          "description": "Deep reasoning for complex problems"
+        }
+      ],
+      "service_tiers": [],
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      }
+    },
+    {
+      "slug": "completion",
+      "display_name": "Autocomplete (qwen2.5-coder:3b-instruct-q4_K_M)",
+      "description": "Autocomplete \u2014 qwen2.5-coder:3b-instruct-q4_K_M, 4K ctx",
+      "base_instructions": "Ground every claim in the actual code: open the files, search before claiming something does not exist, and read a value before quoting it \u2014 the repository is the source of truth, not prior assumptions. Understand before you change; keep edits scoped and in the codebase's existing style; produce complete, runnable code with no placeholder stubs. Be precise and honest \u2014 state what you did and did not do, and lead with any uncertainty. Respect explicit constraints, and ask one focused question when something essential is missing.\n\nYou handle quick, small tasks fast. If a task needs multi-file analysis or architecture, say so and hand off rather than doing it at low quality.\n\nUse `rg` / `rg --files` for search. Use `apply_patch` for edits \u2014 never write files with `cat` or heredocs. Set the git author locally: `git config user.name \"Victor T. Chevalier\"` and `user.email \"13876123+VTChevalier@users.noreply.github.com\"`. Format in GitHub-flavored Markdown; no emojis or em dashes.",
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 30,
+      "context_window": 4096,
+      "max_context_window": 4096,
       "effective_context_window_percent": 90,
       "input_modalities": [
         "text"

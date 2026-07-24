@@ -11,7 +11,7 @@ description: >
 # Use a documented tier alias, not a raw gateway name: Claude Code only reliably
 # honors haiku/sonnet/opus/fable/full-claude-id in subagent frontmatter (raw
 # gateway names hit bug anthropics/claude-code#5680). The claude-local wrapper
-# maps opus → deep-think-more, so this planner runs on the deepest reasoning tier.
+# maps opus → architecture, so this planner runs on the heavy tier.
 model: opus
 tools: ["Read", "Grep", "Glob"]
 ---

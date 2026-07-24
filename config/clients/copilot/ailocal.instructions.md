@@ -5,17 +5,17 @@ applyTo: "**"
 # Local AI Stack
 
 You are connected to local Ollama models via a LiteLLM proxy at `http://localhost:4000`. No cloud
-API calls are made. Models are exposed as role names — never use backend model names directly.
+API calls are made. Models are exposed as capability names — never use backend model names directly.
 
-| Role | Purpose |
-|---|---|
-| `coder-main` | Primary implementation, code edits, generation (64k context) |
-| `coder-agent` | Multi-step planning / agentic orchestration (64k, vision) |
-| `coder-fast` | Fast small tasks; IDE autocomplete (16k context) |
-| `deep-think` | Lighter reasoning, thinking merged into the answer (64k) |
-| `deep-think-more` | Deep reasoning / decomposition (64k) |
-| `supervisor` | Review, critique, approval gate (32k context) |
-| `embed` | Semantic search only — not for chat |
+| Capability | Backend | Purpose |
+|---|---|---|
+| `architecture` | qwen3-coder:30b | Architecture, complex refactor, multi-step debug, design (32k) |
+| `implementation` | qwen2.5-coder:14b | Implementation, features, tests, everyday refactoring (16k) |
+| `review` | deepseek-coder-v2:16b-lite | Code review, bug & security detection (16k) |
+| `completion` | qwen2.5-coder:3b | Fast small tasks; IDE autocomplete (FIM) (4k) |
+| `embeddings` | nomic-embed-text | Semantic search only — not for chat |
+
+No installed model emits `<think>` — there is no reasoning tier right now.
 
 The proxy speaks both OpenAI (`/v1/chat/completions`) and Anthropic (`/v1/messages`) formats.
 

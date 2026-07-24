@@ -1,7 +1,7 @@
 ---
 name: reviewer
 # 'fable' is a documented Claude Code tier (reliable in subagent frontmatter),
-# and the proxy maps claude-fable-5 → supervisor, so this pins the review
+# and the proxy maps claude-fable-5 → review, so this pins the review
 # subagent to the gemma reviewer WITHOUT relying on a raw gateway name (which
 # hits anthropics/claude-code#5680). See model_group_alias in config.yaml.
 model: fable

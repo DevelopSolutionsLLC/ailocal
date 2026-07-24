@@ -4,7 +4,7 @@ description: >
   Executes an approved plan step-by-step. Use after planner has produced a
   numbered plan and it needs to be turned into actual file changes.
 # Documented tier alias (reliable in subagent frontmatter). claude-local maps
-# sonnet → coder-main, so this implementer runs on the primary coder.
+# sonnet → implementation, so this implementer runs on the everyday coder.
 model: sonnet
 ---
 

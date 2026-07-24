@@ -71,8 +71,14 @@ cat file.txt
   To free a stuck dev server, kill it by its specific port or PID instead:
   `lsof -ti tcp:3000 | xargs kill` (only that port), never a blanket `node` match.
 
-## Model roles (this machine)
+## Capabilities (this machine)
 
-`coder-fast` (16k) → fast/small tasks | `coder-main` (64k) → primary coding |
-`coder-agent` (64k, vision) → planning/agentic | `deep-think` / `deep-think-more` (64k) → reasoning |
-`supervisor` (32k) → review | `embed` → search only
+| Capability | Backend | For |
+|---|---|---|
+| `architecture` | qwen3-coder:30b (32k) | design, complex refactor, multi-step debug |
+| `implementation` | qwen2.5-coder:14b (16k) | everyday coding, features, tests |
+| `review` | deepseek-coder-v2:16b-lite (16k) | code review, bug & security |
+| `completion` | qwen2.5-coder:3b (4k) | fast/small tasks, autocomplete |
+| `embeddings` | nomic-embed-text | semantic search only |
+
+No installed model emits `<think>` — there is no reasoning tier right now.
