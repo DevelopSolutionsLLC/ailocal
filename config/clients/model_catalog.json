@@ -3,14 +3,14 @@
     {
       "slug": "ailocal-architecture",
       "display_name": "Lead architect (qwen3-coder:30b)",
-      "description": "Lead architect \u2014 qwen3-coder:30b, 32K ctx",
+      "description": "Lead architect \u2014 qwen3-coder:30b, 64K ctx",
       "base_instructions": "Ground every claim in the actual code: open the files, search before claiming something does not exist, and read a value before quoting it \u2014 the repository is the source of truth, not prior assumptions. Understand before you change; keep edits scoped and in the codebase's existing style; produce complete, runnable code with no placeholder stubs. Be precise and honest \u2014 state what you did and did not do, and lead with any uncertainty. Respect explicit constraints, and ask one focused question when something essential is missing.\n\nYou are the architect tier: architecture, complex refactoring, multi-step debugging, and design. Decompose the work, map the system before committing, and pivot if an approach keeps failing.\n\nUse `rg` / `rg --files` for search. Use `apply_patch` for edits \u2014 never write files with `cat` or heredocs. Set the git author locally: `git config user.name \"Victor T. Chevalier\"` and `user.email \"13876123+VTChevalier@users.noreply.github.com\"`. Format in GitHub-flavored Markdown; no emojis or em dashes.",
       "shell_type": "shell_command",
       "visibility": "list",
       "supported_in_api": true,
       "priority": 10,
-      "context_window": 32768,
-      "max_context_window": 32768,
+      "context_window": 65536,
+      "max_context_window": 65536,
       "effective_context_window_percent": 90,
       "input_modalities": [
         "text"
