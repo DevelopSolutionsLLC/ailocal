@@ -209,6 +209,138 @@ def recover(content, declared_tools):
     return calls, (leftover or None)
 
 
+
+# ── /v1/responses (Codex) ───────────────────────────────────────────────────
+# This route is NOT byte-oriented. Measured: the streaming iterator hook receives
+# LiteLLM Pydantic events (OutputTextDeltaEvent, OutputItemDoneEvent, ...) and the
+# SSE serializer runs AFTER the hook. So this branch mutates typed objects and
+# constructs LiteLLM's own event classes — never hand-built dicts, never
+# reconstructed `data:` lines. Porting the Anthropic byte approach here would have
+# parsed nothing.
+#
+# The observed failure: Codex asks for a tool, the local model answers with a
+# fenced JSON blob inside output_text, and zero function_call events are emitted,
+# so the call never executes.
+
+# The fence must be TERMINAL — nothing but whitespace may follow it. Leading prose
+# is permitted and deliberately NOT inspected (see responses_fence_candidate).
+TERMINAL_FENCE_RE = re.compile(
+    r'```(?:json)?[ \t]*\n((?:(?!```).)*?)\n?[ \t]*```[ \t\r\n]*\Z', re.S)
+
+
+def responses_fence_candidate(text, declared_tools):
+    """Recover a tool call from output_text — Responses route only.
+
+    Deliberately NOT `recover()`: that strips fenced blocks as a safety measure,
+    which would delete the very content we need here. This is the narrow inverse,
+    and it stays narrow on purpose — the whole output must be one fence and
+    nothing else.
+
+    ALLOW   leading prose followed by a terminal fence holding one complete,
+            declared, schema-valid tool invocation
+    REJECT  trailing content after the fence, multiple fences, multiple objects,
+            malformed JSON, undeclared tools, invalid or missing required args
+
+    Prose is NOT inspected. An earlier draft required a bare fence on the theory
+    that "a fence wrapped in prose is an illustration" — but the two are
+    structurally identical ("I will execute a command to read the file." vs
+    "Here is what this would look like:"), so separating them means classifying
+    intent from natural language. This layer is a capability adapter, not an
+    intent classifier, and no reference implementation does that:
+
+      vLLM's Llama tool parser "only extracts JSON content and ignores any
+      surrounding plain text" (docs.vllm.ai/en/stable/features/tool_calling/)
+      llama.cpp prevents the problem instead, via GBNF grammar-constrained
+      decoding — the better answer, unavailable to us through Ollama+Responses
+      llm-toolcall-proxy uses model-specific structured tags
+
+    We remain stricter than vLLM: it needs neither a fence nor a single object.
+
+    ACCEPTED TRADEOFF: a model that *illustrates* a declared tool with valid
+    arguments in a terminal fence will have it executed. Bounded by the checks
+    below — declared tools only, schema-valid, never invented arguments.
+
+    Argument validation is delegated to _validate(), so the shared safety rules
+    (declared tools only, schema-checked, never invent a required argument)
+    remain authoritative.
+    """
+    if not text or not declared_tools:
+        return None
+    if text.count("```") > 2:
+        return None                      # more than one fence -> multiple objects
+    m = TERMINAL_FENCE_RE.search(text)
+    if not m:
+        return None                      # no fence, or content follows it
+    inner = m.group(1).strip()
+    if not inner.startswith("{") or not inner.endswith("}"):
+        return None
+    try:
+        obj = json.loads(inner)          # must be exactly one JSON object
+    except Exception:                    # noqa: BLE001
+        return None
+    if not isinstance(obj, dict):
+        return None
+    name = obj.get("name")
+    args = obj.get("arguments")
+    if not isinstance(name, str) or not isinstance(args, dict):
+        return None
+    call = _validate(name, {k: str(v) for k, v in args.items()}, _index_tools(declared_tools))
+    return [call] if call else None
+
+
+def _responses_function_call_events(call, output_index):
+    """Build the event sequence LiteLLM emits for a genuine function call.
+
+    Mirrors responses/streaming_iterator.py's function_call branch so Codex
+    receives the same object stream it would have gotten natively.
+    """
+    from litellm.types.llms.openai import (
+        FunctionCallArgumentsDeltaEvent,
+        FunctionCallArgumentsDoneEvent,
+        OutputItemAddedEvent,
+        OutputItemDoneEvent,
+        ResponsesAPIStreamEvents,
+    )
+    from litellm.types.llms.openai import BaseLiteLLMOpenAIResponseObject as Base
+
+    fn = call["function"]
+    args = fn["arguments"]
+    item_id = "fc_" + uuid.uuid4().hex[:24]
+    item = Base(**{
+        "id": item_id,
+        "call_id": call["id"],
+        "type": "function_call",
+        "name": fn["name"],
+        "arguments": args,
+        "status": "completed",
+    })
+    return [
+        OutputItemAddedEvent(
+            type=ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED,
+            output_index=output_index,
+            item=item,
+        ),
+        FunctionCallArgumentsDeltaEvent(
+            type=ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DELTA,
+            item_id=item_id, output_index=output_index, delta=args,
+        ),
+        FunctionCallArgumentsDoneEvent(
+            type=ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DONE,
+            item_id=item_id, output_index=output_index, arguments=args,
+        ),
+        OutputItemDoneEvent(
+            type=ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE,
+            output_index=output_index, item=item,
+        ),
+    ]
+
+
+def _responses_event_name(chunk):
+    """Event discriminator, tolerant of enum-or-str typing."""
+    t = getattr(chunk, "type", None)
+    return getattr(t, "value", t) if t is not None else None
+
+
 class ToolRepair(CustomLogger):
     """Registered via litellm_settings.callbacks: tool_repair.proxy_handler_instance"""
 
@@ -470,6 +602,9 @@ class ToolRepair(CustomLogger):
         both possible and safe.
         """
         tools = (request_data or {}).get("tools")
+        # Responses-route state. Kept separate from the byte-oriented sse_state so
+        # the two branches cannot interfere.
+        rs = {"buf": [], "text": "", "native": False, "index": 0, "done": False}
         sse_state = {"saw_tool_use": False,
                      "model": (request_data or {}).get("model"),
                      "ntools": len(tools or [])}
@@ -482,6 +617,60 @@ class ToolRepair(CustomLogger):
         native_seen = False
         try:
             async for chunk in response:
+                # ── /v1/responses: typed events, handled before anything else ──
+                ev = _responses_event_name(chunk)
+                if isinstance(ev, str) and ev.startswith("response."):
+                    if rs["done"]:
+                        yield chunk
+                        continue
+                    # A genuine function call means the runtime got it right.
+                    item = getattr(chunk, "item", None)
+                    if getattr(item, "type", None) == "function_call" or "function_call" in ev:
+                        rs["native"] = True
+                        attribute(route="/v1/responses", stream=True, native=True,
+                                  repaired=False, model=sse_state.get("model"),
+                                  tools=sse_state.get("ntools"))
+                    if rs["native"] or not tools:
+                        yield chunk
+                        continue
+
+                    if ev == "response.output_text.delta":
+                        rs["text"] += getattr(chunk, "delta", "") or ""
+                        rs["buf"].append(chunk)
+                        continue
+                    if ev in ("response.output_item.added", "response.content_part.added",
+                              "response.content_part.done"):
+                        rs["buf"].append(chunk)
+                        rs["index"] = getattr(chunk, "output_index", rs["index"]) or 0
+                        continue
+                    if ev == "response.output_text.done":
+                        rs["buf"].append(chunk)
+                        calls = responses_fence_candidate(rs["text"], tools)
+                        if calls:
+                            rs["done"] = True
+                            attribute(route="/v1/responses", stream=True, native=False,
+                                      repaired=True, model=sse_state.get("model"),
+                                      tools=sse_state.get("ntools"),
+                                      tool_names=[c["function"]["name"] for c in calls],
+                                      n_calls=len(calls))
+                            log.info("tool_repair: recovered %d Responses tool call(s)", len(calls))
+                            if AILOCAL_DEBUG:
+                                print(f"tool_repair: RESPONSES repaired {len(calls)} call(s)", flush=True)
+                            for out in _responses_function_call_events(calls[0], rs["index"]):
+                                yield out
+                        else:
+                            for c in rs["buf"]:      # ordinary text — release verbatim
+                                yield c
+                        rs["buf"] = []
+                        continue
+                    # anything else (in_progress, completed, ...) passes through,
+                    # after flushing whatever text was buffered.
+                    for c in rs["buf"]:
+                        yield c
+                    rs["buf"] = []
+                    yield chunk
+                    continue
+
                 delta = None
                 try:
                     delta = chunk.choices[0].delta
