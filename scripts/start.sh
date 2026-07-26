@@ -6,6 +6,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
+# Single source of truth for how this stack is composed (deploy/litellm + deploy/searxng).
+AILOCAL_ROOT="$ROOT_DIR"
+. "$(dirname "$0")/lib/compose.sh"
+
 NO_WAIT=false
 [[ "${1:-}" == "--no-wait" ]] && NO_WAIT=true
 
@@ -64,7 +68,7 @@ fi
 # reproducible and offline-safe, so it runs whatever image is on disk. main-stable is a
 # moving tag — refresh deliberately via install.sh (initial) or update.sh, not on every boot.
 step "Starting ailocal services"
-DOCKER_CLI_HINTS=false docker compose up -d --remove-orphans
+dc up -d --remove-orphans
 
 if [ "$NO_WAIT" = true ]; then
   info "Services launched (skipping health wait)"

@@ -15,6 +15,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
+# Single source of truth for how this stack is composed (deploy/litellm + deploy/searxng).
+AILOCAL_ROOT="$ROOT_DIR"
+. "$(dirname "$0")/lib/compose.sh"
+
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 has()   { command -v "$1" >/dev/null 2>&1; }
@@ -55,7 +59,7 @@ read -r -p "  Proceed? [y/N]: " confirm
 # ── Stop containers and remove volumes ────────────────────────────────────
 
 step "Stopping containers and removing volumes"
-docker compose down --volumes --remove-orphans 2>/dev/null || true
+dc down --volumes --remove-orphans 2>/dev/null || true
 
 # ── Remove Docker network (compose may have already done this) ─────────────
 
@@ -68,8 +72,8 @@ fi
 
 if [ "$REMOVE_IMAGES" = true ]; then
   step "Removing Docker images"
-  # Extract image names from docker-compose.yml and remove them
-  grep '^\s*image:' docker-compose.yml \
+  # Extract image names from the deploy/ compose files and remove them
+  grep -h '^\s*image:' deploy/litellm/docker-compose.yml deploy/searxng/docker-compose.yml \
     | awk '{print $2}' \
     | while read -r img; do
         if docker image inspect "$img" >/dev/null 2>&1; then

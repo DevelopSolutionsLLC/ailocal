@@ -6,6 +6,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ENV_FILE="$ROOT_DIR/.env"
 
+# Single source of truth for how this stack is composed (deploy/litellm + deploy/searxng).
+AILOCAL_ROOT="$ROOT_DIR"
+. "$ROOT_DIR/scripts/lib/compose.sh"
+
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 has() { command -v "$1" >/dev/null 2>&1; }
@@ -187,9 +191,9 @@ run_next_steps() {
   echo
   # Initial setup pulls the latest image so a fresh install starts on current LiteLLM
   # (bug fixes land in main-stable frequently). Routine start.sh never auto-pulls —
-  # that keeps a reboot reproducible; use update.sh (or `docker compose pull`) to refresh.
+  # that keeps a reboot reproducible; use update.sh (or `./scripts/update.sh`) to refresh.
   step "Pulling latest Docker images"
-  docker compose pull
+  dc pull
 
   echo
   step "Starting Docker services"
@@ -198,7 +202,7 @@ run_next_steps() {
   # Always restart LiteLLM so it picks up any config or model changes.
   echo
   step "Reloading LiteLLM"
-  docker compose restart litellm
+  dc restart litellm searxng
   attempts=0
   until curl -sSf --max-time 3 http://localhost:4000/health/liveliness >/dev/null 2>&1; do
     attempts=$((attempts + 1))
@@ -258,10 +262,14 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 echo
-echo "  Generating the LiteLLM master key..."
+echo "  Generating the LiteLLM master key and SearXNG secret..."
 
 # LiteLLM master key — must start with sk- for OpenAI SDK compatibility
 LITELLM_MASTER_KEY="sk-$(openssl rand -hex 24)"
+
+# SearXNG refuses to start without a real secret. Generated per install so the
+# placeholder in deploy/searxng/settings.yml is never used.
+SEARXNG_SECRET="$(openssl rand -hex 32)"
 
 
 # Write the .env file from scratch (no fragile sed replacements)
@@ -280,13 +288,18 @@ OLLAMA_URL=http://host.docker.internal:11434
 # at http://localhost:4000 instead of the real cloud APIs.
 LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
 
+# ── SearXNG (local web search backend) ─────────────────────────────────────
+# Consumed by deploy/searxng/docker-compose.yml. LiteLLM reaches SearXNG over
+# the ailocal_net bridge at http://searxng:8080 — no API key, nothing external.
+SEARXNG_SECRET=${SEARXNG_SECRET}
+
 # ── Cloud fallbacks (disabled by default) ─────────────────────────────────
 # Set ENABLE_CLOUD=true and uncomment the relevant model block in
 # config/litellm/config.yaml to enable cloud fallback for a specific model.
 ENABLE_CLOUD=false
 # To enable cloud fallback: add your key here, set ENABLE_CLOUD=true,
 # and uncomment the relevant model block in config/litellm/config.yaml.
-# Then: docker compose restart litellm
+# Then: ./scripts/start.sh  (or: dc restart litellm)
 ANTHROPIC_API_KEY=
 OPENAI_API_KEY=
 EOF

@@ -6,6 +6,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
+# Single source of truth for how this stack is composed (deploy/litellm + deploy/searxng).
+AILOCAL_ROOT="$ROOT_DIR"
+. "$(dirname "$0")/lib/compose.sh"
+
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 has()   { command -v "$1" >/dev/null 2>&1; }
@@ -36,7 +40,7 @@ fi
 # ── Pull updated images ────────────────────────────────────────────────────
 
 step "Pulling latest Docker images"
-docker compose pull
+dc pull
 
 # ── Update Ollama models ───────────────────────────────────────────────────
 
@@ -58,10 +62,10 @@ step "Regenerating model config (sync-models)"
 # Restart infrastructure first, then dependents.
 
 step "Restarting services"
-docker compose up -d --remove-orphans
+dc up -d --remove-orphans
 # Ensure LiteLLM reloads the regenerated model_info (config-only changes are
 # not picked up by `up -d` when the image is unchanged).
-docker compose restart litellm
+dc restart litellm searxng
 
 # ── Post-update health check ───────────────────────────────────────────────
 
@@ -78,6 +82,6 @@ if "$ROOT_DIR/scripts/doctor.sh"; then
 else
   warn "Health check reported issues after update."
   echo "  Check logs: docker logs ailocal-litellm --tail=50"
-  echo "  To roll back: git checkout the previous config, then docker compose up -d"
+  echo "  To roll back: git checkout the previous config, then ./scripts/start.sh"
   exit 1
 fi
