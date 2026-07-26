@@ -12,7 +12,12 @@ claude:
   launch_default: implementation
   # built-in slot -> capability. Also emitted into model_group_alias so `model: opus`
   # in a subagent (or a background Opus/Sonnet/Haiku call) routes to the right tier.
-  slots: {opus: architecture, sonnet: implementation, haiku: completion, fable: review}
+  # haiku is deliberately NOT `completion`. Claude Code uses its haiku slot for real
+  # background work (post-tool processing, summarisation), not autocomplete — those
+  # requests routinely carry the full conversation. Pointing it at the 4096-token FIM
+  # model made every such call a hard 400: measured ContextWindowExceededError,
+  # Max Input Tokens=4096, Got=12023. `completion` is FIM only; never a chat tier.
+  slots: {opus: architecture, sonnet: implementation, haiku: implementation, fable: review}
 
 # Codex CLI
 codex:
@@ -38,8 +43,11 @@ compat:
   claude-sonnet-4-6: implementation
   claude-sonnet-4-6-20250219: implementation
   gpt-5.5: implementation
-  claude-haiku-4-5: completion
-  claude-haiku-4-5-20251001: completion
-  gpt-4o: completion
-  gpt-4o-mini: completion
-  gpt-3.5-turbo: completion
+  # See the note on claude.slots above: these are conversational model IDs, so they
+  # must not resolve to the 4096-token FIM tier. Only `continue.autocomplete` should
+  # ever point at `completion`.
+  claude-haiku-4-5: implementation
+  claude-haiku-4-5-20251001: implementation
+  gpt-4o: implementation
+  gpt-4o-mini: implementation
+  gpt-3.5-turbo: implementation

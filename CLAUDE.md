@@ -21,9 +21,25 @@ backend, context, sampling, keep_alive) and `config/clients.yaml` (which capabil
 ## Golden rule
 
 **Use capability names only** in client configs and scripts — never backend tags
-(`qwen3-coder:30b`). Capabilities decouple configs from the models behind them, and the router owns
+(`qwen3-coder:30b-a3b-q4_K_M`). Capabilities decouple configs from the models behind them, and the router owns
 context, sampling, and per-role lifecycle (`keep_alive`). Agents request a capability; they never
 name a model.
+
+**`completion` is FIM/autocomplete only** — the 3B tier at `num_ctx` 4096. Never map a
+conversational alias to it, and never use it as a `fallbacks` or `context_window_fallbacks`
+target: any real agent turn routed there hard-400s with "No models have context window large
+enough". Only autocomplete surfaces (`continue.autocomplete`) may point at it. Context-window
+fallbacks must move **up** to a larger window, never down — falling from 16K to 4K cannot
+succeed by construction. Measured regression: `claude-haiku-4-5` (and the `gpt-*` compat names)
+mapped to `completion`, so Claude Code's background calls failed at `Got=12023`.
+
+**Claude Code web search never reaches SearXNG.** Its native `WebSearch` is a *client-side*
+tool. LiteLLM's interception accepts only `litellm_web_search` and bare `web_search`, and
+deliberately refuses a `WebSearch` carrying an `input_schema`
+(`integrations/websearch_interception/tools.py`) so it doesn't hijack the client's own handler.
+Also: `websearch_interception_params.enabled_providers` matches the **backend** provider
+(`ollama_chat`), not the inbound API dialect — it read `anthropic` and silently disabled
+interception entirely. SearXNG itself is healthy; it is simply unreachable from that tool.
 
 ## The four non-obvious mechanisms
 
