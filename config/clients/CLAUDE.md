@@ -14,9 +14,9 @@ When you select a model in Claude Code, it maps to a local backend:
 
 | Model name         | Capability → backend                          | Best for                                  |
 |--------------------|-----------------------------------------------|-------------------------------------------|
-| `claude-haiku-*`   | completion (qwen2.5-coder:3b)                 | Quick lookups, background/summary calls   |
+| `claude-haiku-*`   | implementation (qwen2.5-coder:14b)            | Quick lookups, background/summary calls   |
 | `claude-sonnet-*`  | implementation (qwen2.5-coder:14b)            | Implementation, code edits, daily driving |
-| `claude-opus-*`    | architecture (qwen3-coder:30b)                | Deep analysis, planning, debugging        |
+| `claude-opus-*`    | architecture (qwen3-coder:30b-a3b-q4_K_M)                | Deep analysis, planning, debugging        |
 | `claude-fable-*`   | review (deepseek-coder-v2:16b-lite)           | Diff review, critique                     |
 
 Every capability also appears in `/model` under its canonical name (`ailocal-architecture`, `ailocal-implementation`, `ailocal-review`, `ailocal-completion`, `ailocal-embeddings`). Default is `ailocal-implementation`. Note: no installed model emits `<think>` — the deepseek-r1 reasoners were removed, so there is no reasoning tier right now.
@@ -25,7 +25,7 @@ Every capability also appears in `/model` under its canonical name (`ailocal-arc
 
 Drive from `implementation` (the default) — the everyday coder. Use `architecture` for heavy design, decomposition, and multi-step debugging, and `review` for critique — **call those as subagents, don't drive from them.** There is no separate orchestrator or reasoning tier now (the agentic and deepseek-r1 models were removed); `architecture` covers planning.
 
-Local models are slow and the context window is small (16–32K), so keep the main session lean by fanning independent work out to subagents — each runs in its own context window and returns only a summary, so exploration noise never fills your session. Available agents (`.claude/agents/`): `search` (haiku→completion) for lookups, `tester` (sonnet→implementation) for running checks, `planner` (opus→architecture) for decomposition, `implementer` (sonnet→implementation) for edits, `reviewer` (fable→review) for diff review.
+Local models are slow and the context window is small (16–32K), so keep the main session lean by fanning independent work out to subagents — each runs in its own context window and returns only a summary, so exploration noise never fills your session. Available agents (`.claude/agents/`): `search` (haiku→implementation) for lookups, `tester` (sonnet→implementation) for running checks, `planner` (opus→architecture) for decomposition, `implementer` (sonnet→implementation) for edits, `reviewer` (fable→review) for diff review.
 
 - Delegate the cheap, independent, high-volume work — searching, locating definitions, running tests, inspecting logs, summarizing files — to `search`/`tester`. Reserve the main model (and `architecture`) for synthesis, architecture, and planning.
 - Delegate when work is genuinely independent, not for trivial single-file tasks (each subagent is a full local inference — worth it to protect context, wasteful for a one-liner).
@@ -152,6 +152,8 @@ When ailocal is running, the LiteLLM proxy is available:
 
 To verify LiteLLM is healthy: `curl http://localhost:4000/health/liveliness`
 
-To restart after config changes: `docker compose restart litellm` (from the ailocal repo root)
+To restart after config changes: `./scripts/start.sh` (from the ailocal repo root). There is no
+root compose file — the stack is two files under `deploy/` merged by `scripts/lib/compose.sh`,
+which the lifecycle scripts source; a bare `docker compose` in the root finds nothing.
 
 To check which models are loaded: `curl -s http://localhost:4000/v1/models | jq '.data[].id'`
