@@ -9,7 +9,7 @@ API calls are made. Models are exposed as capability names — never use backend
 
 | Capability | Backend | Purpose |
 |---|---|---|
-| `architecture` | qwen3-coder:30b | Architecture, complex refactor, multi-step debug, design (32k) |
+| `architecture` | qwen3-coder:30b-a3b-q4_K_M | Architecture, complex refactor, multi-step debug, design (32k) |
 | `implementation` | qwen2.5-coder:14b | Implementation, features, tests, everyday refactoring (16k) |
 | `review` | deepseek-coder-v2:16b-lite | Code review, bug & security detection (16k) |
 | `completion` | qwen2.5-coder:3b | Fast small tasks; IDE autocomplete (FIM) (4k) |
@@ -37,7 +37,7 @@ cause of the agent getting stuck.
 trailing `&` and a log — but never with `exit`:
 ```bash
 ./scripts/install.sh > /tmp/install.log 2>&1 &
-docker compose up -d > /tmp/compose.log 2>&1 &
+./scripts/start.sh > /tmp/compose.log 2>&1 &
 npm install > /tmp/npm.log 2>&1 &
 ```
 
