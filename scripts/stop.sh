@@ -8,6 +8,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
+# Single source of truth for how this stack is composed (deploy/litellm + deploy/searxng).
+AILOCAL_ROOT="$ROOT_DIR"
+. "$(dirname "$0")/lib/compose.sh"
+
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 has()   { command -v "$1" >/dev/null 2>&1; }
@@ -31,10 +35,10 @@ fi
 step "Stopping ailocal services"
 
 if [ "$REMOVE_VOLUMES" = true ]; then
-  docker compose down --volumes --remove-orphans
+  dc down --volumes --remove-orphans
   info "Services stopped and volumes removed."
 else
-  docker compose down --remove-orphans
+  dc down --remove-orphans
   info "Services stopped. Data volumes preserved."
   echo "  To also remove volumes: ./scripts/stop.sh --volumes"
 fi
