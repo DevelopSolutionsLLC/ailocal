@@ -1,0 +1,90 @@
+general:
+  instance_name: "local-ai-search"
+  debug: false
+
+server:
+  bind_address: "0.0.0.0"
+  port: 8080
+  secret_key: "change_this_to_a_random_string_for_production"
+
+search:
+  formats:
+    - html
+    - json
+
+outgoing:
+  # SearXNG's own default is 3.0s, applied to every engine that doesn't override
+  # it. github regularly exceeded that (measured: 3.2 s -> TimeoutException), so
+  # the engine below raises its own. Left at the default here on purpose: a
+  # global raise would let a genuinely dead engine hold up every search.
+  request_timeout: 3.0
+
+# ── Engine policy ────────────────────────────────────────────────────────────
+# keep_only is applied to SearXNG's default engine list BEFORE our `engines:`
+# block is merged onto it, so this whitelist decides what exists at all.
+#
+# It replaces the previous `disabled: true` approach, which was insufficient:
+# `use_default_settings: true` LOADS every default engine, and some fail at
+# *init* time regardless of `disabled` — wikidata 403s against
+# query.wikidata.org on every boot, ahmia and torch fail to import. Those three
+# errors were startup noise from engines we never query. keep_only drops them
+# before load, so they cannot fail.
+#
+# Names must match the default list exactly; an unmatched name is silently
+# dropped, not an error.
+#
+# Measured against this instance (query: "python asyncio semaphore", results
+# returned): google cse 20 · github 14 · stackoverflow 10 · mojeek 10 ·
+# wikipedia 0 · wikidata 0 · qwant 0 (CAPTCHA). Previously measured and also
+# excluded: duckduckgo, startpage (CAPTCHA), brave (429).
+#
+# Deliberately NOT solved with Redis, a proxy pool, or a FlareSolverr-style
+# browser: SearXNG is an aggregator, so engine selection is the correct lever
+# and keeps the container at ~167 MiB.
+use_default_settings:
+  engines:
+    keep_only:
+      - google cse
+      - mojeek
+      - github
+      - stackoverflow
+      - wikipedia
+
+engines:
+  # Carries the general-web result set, but rate-limits: it is not the keyed
+  # Custom Search API (require_api_key is False upstream), so there is no quota
+  # to buy and 429s are inherent. Its "unusual traffic" errors are left visible
+  # rather than silenced — mojeek exists to cover the suspension window.
+  - name: google cse
+    disabled: false
+
+  # Independent index, no CAPTCHA. Present so a google cse 429 does not mean
+  # zero general-web results.
+  - name: mojeek
+    shortcut: mjk
+    disabled: false
+
+  # API-backed, no CAPTCHA, directly useful for coding queries.
+  - name: github
+    shortcut: gh
+    categories: [general, it]
+    timeout: 6.0
+    disabled: false
+
+  - name: stackoverflow
+    shortcut: so
+    categories: [general, it]
+    disabled: false
+
+  # Returns nothing on technical queries; kept for non-code lookups only.
+  - name: wikipedia
+    shortcut: wp
+    categories: [general]
+    disabled: false
+
+ui:
+  show_about: false
+  show_search_log: false
+
+logging:
+  level: warning

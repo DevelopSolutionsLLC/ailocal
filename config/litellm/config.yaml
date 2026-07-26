@@ -23,7 +23,7 @@
 # persona automatically.
 #
 # ── Backend mapping (64gb profile) — the real model is never hidden ──────────
-#   architecture   → qwen3-coder:30b                            (heavy design/refactor)
+#   architecture   → qwen3-coder:30b-a3b-q4_K_M               (heavy design/refactor)
 #   implementation → qwen2.5-coder:14b-instruct-q4_K_M          (everyday coding)
 #   review         → deepseek-coder-v2:16b-lite-instruct-q4_K_M (review / bug / security)
 #   completion     → qwen2.5-coder:3b-instruct-q4_K_M           (FIM autocomplete; fast)
@@ -36,10 +36,10 @@ model_list:
 
   # >>> BEGIN GENERATED model_list (sync-models.py) — do not edit <<<
 
-  # ailocal-architecture — Lead architect (qwen3-coder:30b)
+  # ailocal-architecture — Lead architect (qwen3-coder:30b-a3b-q4_K_M)
   - model_name: ailocal-architecture
     litellm_params:
-      model: ollama_chat/qwen3-coder:30b
+      model: ollama_chat/qwen3-coder:30b-a3b-q4_K_M
       api_base: os.environ/OLLAMA_URL
       num_ctx: 65536
       temperature: 0.2
@@ -163,24 +163,30 @@ router_settings:
     claude-sonnet-4-6: ailocal-implementation
     claude-sonnet-4-6-20250219: ailocal-implementation
     gpt-5.5: ailocal-implementation
-    claude-haiku-4-5: ailocal-completion
-    claude-haiku-4-5-20251001: ailocal-completion
-    gpt-4o: ailocal-completion
-    gpt-4o-mini: ailocal-completion
-    gpt-3.5-turbo: ailocal-completion
+    claude-haiku-4-5: ailocal-implementation
+    claude-haiku-4-5-20251001: ailocal-implementation
+    gpt-4o: ailocal-implementation
+    gpt-4o-mini: ailocal-implementation
+    gpt-3.5-turbo: ailocal-implementation
   # >>> END GENERATED model_group_alias <<<
 
   fallbacks:
     # Capability hierarchy — degrade by tier when a model is unavailable.
     # Group names are the canonical `ailocal-<capability>` model_list entries.
-    - {"ailocal-architecture":   ["ailocal-implementation", "ailocal-completion"]}
-    - {"ailocal-review":         ["ailocal-implementation", "ailocal-completion"]}
-    - {"ailocal-implementation": ["ailocal-completion"]}
-  context_window_fallbacks:
-    # Graceful fallback when a request exceeds a capability's declared window.
+    #
+    # `ailocal-completion` is deliberately absent from every chain. It is the 3B
+    # FIM tier at num_ctx 4096; any real agent turn exceeds that, so using it as a
+    # terminal fallback converted a recoverable upstream failure into a hard 400
+    # ("No models have context window large enough for this call"). Degrading to a
+    # model that cannot serve the request is not degradation. Chat tiers only.
     - {"ailocal-architecture":   ["ailocal-implementation"]}
     - {"ailocal-review":         ["ailocal-implementation"]}
-    - {"ailocal-implementation": ["ailocal-completion"]}
+  context_window_fallbacks:
+    # Graceful fallback when a request exceeds a capability's declared window.
+    # Same rule, and more obviously so here: routing an over-16K request to a 4K
+    # model is arithmetically guaranteed to fail. Only ever fall back UP.
+    - {"ailocal-review":         ["ailocal-architecture"]}
+    - {"ailocal-implementation": ["ailocal-architecture"]}
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
@@ -197,8 +203,60 @@ litellm_settings:
   # persona_injector merges each role's baked "Opus-like" persona into the
   # client's system message (a Modelfile SYSTEM alone is overridden whenever the
   # client sends its own system prompt). See config/litellm/persona_injector.py.
-  callbacks: persona_injector.proxy_handler_instance
+  callbacks:
+    - persona_injector.proxy_handler_instance
+    # Restores context-window validation for local models. LiteLLM's
+    # register_model strips the provider prefix from the key while the router's
+    # pre-call check looks it up WITH the prefix, so max_input_tokens is never
+    # enforced and oversized prompts are forwarded unvalidated. See the module
+    # docstring for the full trace. Remove once fixed upstream.
+    - model_registrar.proxy_handler_instance
+    # Generic malformed tool-call recovery. Local models drift out of their
+    # structured tool-call format and the runtime hands the whole call back as
+    # plain text, stalling the agent loop. Measured here: qwen3-coder 25% -> 100%,
+    # qwen2.5-coder 0% -> 100%, devstral untouched (hook never fires). ~0.1-0.2ms.
+    # Known unfixed upstream bug: ollama/ollama#16686 (PR #16693 open, stale).
+    # Model-agnostic by design - keep it even after upstream lands a fix.
+    - tool_repair.proxy_handler_instance
+    - websearch_interception
+  # Rewrites a client's native web_search tool into a call against the
+  # search_tools entry below.
+  #
+  # enabled_providers is matched against the BACKEND deployment's provider, NOT
+  # the inbound client's API dialect. The router resolves it by stripping the
+  # prefix off the chosen deployment's litellm_params.model (router.py:4358-4408
+  # -> get_llm_provider), then passes it explicitly into anthropic_messages(), so
+  # the "infer from model" fallback in the websearch handler never runs. Every
+  # gate in websearch_interception/handler.py then tests that value.
+  #
+  # Every model here is ollama_chat/*, so this MUST be ollama_chat. It previously
+  # read `anthropic` — reasoning from the fact that Claude Code speaks the
+  # Anthropic Messages API — which matched nothing and silently disabled web
+  # search entirely: the gates short-circuit before search detection runs, with
+  # no error logged.
+  #
+  # Do NOT "fix" this by deleting the key. The handler's docstring claims None
+  # enables all providers; the code does `self.enabled_providers =
+  # [LlmProviders.BEDROCK.value]`. An empty list is equally wrong — `not in []`
+  # is always true, closing every gate. Explicit provider names only.
+  websearch_interception_params:
+    enabled_providers:
+      - ollama_chat
+    search_tool_name: searxng-search
   # No response cache — coding agents almost never send byte-identical requests.
+
+# ── Web search backend (SearXNG) ─────────────────────────────────────────────
+# MUST be top-level: proxy_server.parse_search_tools() reads config["search_tools"]
+# (falling back to general_settings.search_tools) and NEVER litellm_settings.
+# Nesting it under litellm_settings silently yields zero registered tools, and
+# every search then fails with "Search tool 'searxng-search' not found".
+# api_base is resolved inside the container -> SearXNG must share ailocal_net.
+# LiteLLM appends /search itself and always requests format=json.
+search_tools:
+  - search_tool_name: searxng-search
+    litellm_params:
+      search_provider: searxng
+      api_base: http://searxng:8080
 
 # ── Cloud fallbacks (disabled by default) ────────────────────────────────────
 # To enable: set the API key in .env and add a second model_list entry for the
