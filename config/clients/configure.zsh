@@ -55,7 +55,7 @@ claude-local() {
   slots=(
     ANTHROPIC_DEFAULT_OPUS_MODEL="ailocal-architecture"
     ANTHROPIC_DEFAULT_SONNET_MODEL="ailocal-implementation"
-    ANTHROPIC_DEFAULT_HAIKU_MODEL="ailocal-implementation"
+    ANTHROPIC_DEFAULT_HAIKU_MODEL="ailocal-fast"
     ANTHROPIC_DEFAULT_FABLE_MODEL="ailocal-review"
   )
   # >>> END GENERATED claude slots <<<

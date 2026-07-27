@@ -17,7 +17,14 @@ claude:
   # requests routinely carry the full conversation. Pointing it at the 4096-token FIM
   # model made every such call a hard 400: measured ContextWindowExceededError,
   # Max Input Tokens=4096, Got=12023. `completion` is FIM only; never a chat tier.
-  slots: {opus: architecture, sonnet: implementation, haiku: implementation, fable: review}
+  # haiku -> fast, NOT implementation and emphatically NOT completion.
+  #   completion (4096, FIM) is a hard 400 on any real turn — measured Got=12023.
+  #   implementation works, but pointing two slots at one capability listed
+  #   `ailocal-implementation` twice in the /model picker, and tied up the 14B on
+  #   background summarisation.
+  #   fast (qwen3.5:2b, 32768 ctx, native tools, persona) is built for exactly
+  #   this traffic and had no consumer at all until now.
+  slots: {opus: architecture, sonnet: implementation, haiku: fast, fable: review}
 
 # Codex CLI
 codex:
@@ -46,8 +53,8 @@ compat:
   # See the note on claude.slots above: these are conversational model IDs, so they
   # must not resolve to the 4096-token FIM tier. Only `continue.autocomplete` should
   # ever point at `completion`.
-  claude-haiku-4-5: implementation
-  claude-haiku-4-5-20251001: implementation
+  claude-haiku-4-5: fast
+  claude-haiku-4-5-20251001: fast
   gpt-4o: implementation
   gpt-4o-mini: implementation
   gpt-3.5-turbo: implementation

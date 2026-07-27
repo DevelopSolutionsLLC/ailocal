@@ -68,7 +68,38 @@ fi
 # reproducible and offline-safe, so it runs whatever image is on disk. main-stable is a
 # moving tag — refresh deliberately via install.sh (initial) or update.sh, not on every boot.
 step "Starting ailocal services"
+
+# Was LiteLLM already up BEFORE this run? `dc up -d` is a no-op for an
+# already-running container whose compose spec is unchanged — and config.yaml,
+# the persona instructions and every hook are BIND-MOUNTED, so editing them
+# changes no spec and triggers no restart. LiteLLM parses config.yaml once at
+# boot, so the proxy then keeps serving the OLD routing while the file on disk
+# says something else, with nothing in the logs to say so.
+#
+# Measured: after regenerating model_group_alias so claude-haiku-4-5 pointed at
+# ailocal-fast, `start.sh` reported success and the proxy still routed haiku to
+# ailocal-implementation. Only an explicit `docker restart` picked it up.
+WAS_RUNNING=false
+docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^ailocal-litellm$' && WAS_RUNNING=true
+
 dc up -d --remove-orphans
+
+# Config fingerprint: the mounted files LiteLLM only reads at boot. If any of
+# them changed since the last start, the running process is stale and must be
+# restarted explicitly — `up -d` will not do it.
+CONFIG_STAMP="$ROOT_DIR/data/.litellm-config.sha"
+mkdir -p "$(dirname "$CONFIG_STAMP")"
+current_sha=$(cat "$ROOT_DIR/config/litellm/config.yaml" \
+                  "$ROOT_DIR"/config/litellm/*.py \
+                  "$ROOT_DIR"/config/instructions/*.md 2>/dev/null | shasum -a 256 | cut -d' ' -f1)
+previous_sha=$(cat "$CONFIG_STAMP" 2>/dev/null || echo "")
+
+if [ "$WAS_RUNNING" = true ] && [ -n "$previous_sha" ] && [ "$current_sha" != "$previous_sha" ]; then
+  step "LiteLLM config changed since last start — restarting to load it"
+  docker restart ailocal-litellm >/dev/null
+  info "ailocal-litellm restarted (routing/persona/hook changes are now live)"
+fi
+printf '%s' "$current_sha" > "$CONFIG_STAMP"
 
 if [ "$NO_WAIT" = true ]; then
   info "Services launched (skipping health wait)"
