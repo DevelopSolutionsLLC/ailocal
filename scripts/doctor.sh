@@ -103,6 +103,18 @@ else
   ok=false
 fi
 
+if docker ps --format '{{.Names}}' | grep -q '^ailocal-searxng$'; then
+  health=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' ailocal-searxng 2>/dev/null)
+  case "$health" in
+    healthy|none) info "SearXNG container running [$health]" ;;
+    starting)     warn "SearXNG container still starting" ;;
+    *)            error "SearXNG container unhealthy [$health]"; ok=false ;;
+  esac
+else
+  # Degraded, not fatal: models still work, only WebSearch stops.
+  warn "SearXNG container is not running — local web search unavailable"
+fi
+
 # Crash-loop detection (folded in from the old healthcheck.sh).
 if docker ps --filter status=restarting --format '{{.Names}}' | grep -q .; then
   error "A container is restart-looping — check: docker logs ailocal-litellm"
@@ -114,6 +126,20 @@ if docker ps --format '{{.Names}}' | grep -q '^ailocal-litellm$'; then
   check_http "LiteLLM" "http://localhost:4000/health/liveliness" 5
 else
   echo "  — LiteLLM endpoint skipped (container not running)"
+fi
+
+# Probe SearXNG the way LiteLLM actually uses it: by service name, over
+# ailocal_net, asking for JSON. A reachable UI proves nothing if json is not in
+# settings.yml search.formats.
+if docker ps --format '{{.Names}}' | grep -q '^ailocal-searxng$'; then
+  if docker exec ailocal-litellm python3 -c "
+import urllib.request,json,sys
+d=json.load(urllib.request.urlopen('http://searxng:8080/search?q=test&format=json',timeout=20))
+sys.exit(0 if d.get('results') else 1)" 2>/dev/null; then
+    info "SearXNG JSON API reachable from LiteLLM (http://searxng:8080)"
+  else
+    warn "LiteLLM cannot get JSON results from SearXNG — WebSearch will fail"
+  fi
 fi
 
 if [ "$ok" = true ]; then

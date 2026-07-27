@@ -44,11 +44,14 @@ CODEX_CONFIG   = ROOT / "config/clients/codex/config.toml"
 CODEX_PLAN     = ROOT / "config/clients/codex/plan.config.toml"
 CODEX_REVIEW   = ROOT / "config/clients/codex/review.config.toml"
 CONTINUE_CONFIG= ROOT / "config/clients/continue/config.json"
+CONFIGURE_ZSH  = ROOT / "config/clients/configure.zsh"
 
 ML_BEGIN = "  # >>> BEGIN GENERATED model_list (sync-models.py) — do not edit <<<"
 ML_END   = "  # >>> END GENERATED model_list <<<"
 AL_BEGIN = "  # >>> BEGIN GENERATED model_group_alias (sync-models.py) — do not edit <<<"
 AL_END   = "  # >>> END GENERATED model_group_alias <<<"
+CS_BEGIN = "  # >>> BEGIN GENERATED claude slots (sync-models.py) — do not edit <<<"
+CS_END   = "  # >>> END GENERATED claude slots <<<"
 
 # Capabilities are short keys in the source (config/profiles/<tier>.yaml + config/clients.yaml);
 # every client-facing model id is that key with an `ailocal-` prefix, applied only at emit time.
@@ -435,6 +438,53 @@ def regen_catalog(models):
 
 
 # ── Claude settings.json ───────────────────────────────────────────────────────
+# ── configure.zsh: the claude-local built-in-slot env block ───────────────────
+# These four vars are what actually decide which backend Claude Code's built-in
+# tiers (and any subagent whose frontmatter says `model: haiku|sonnet|opus|fable`)
+# resolve to. They were hand-maintained and drifted out of sync with clients.yaml,
+# which is why haiku pointed at the 4096-token FIM tier and fable was absent.
+SLOT_ENV = {
+    "opus":   "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "sonnet": "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "haiku":  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "fable":  "ANTHROPIC_DEFAULT_FABLE_MODEL",
+}
+
+
+def check_conversational_slots(models, clients):
+    """`completion` is FIM-only at num_ctx 4096; any real agent turn routed there
+    hard-400s. Every built-in Claude slot carries full conversation context, so
+    none of them may point at it. Fail loudly at generation time rather than
+    letting the breakage surface as a runtime 400."""
+    bad = [s for s, cap in (clients.get("claude") or {}).get("slots", {}).items()
+           if cap == "completion"]
+    if bad:
+        sys.exit(f"error: claude.slots {bad} -> 'completion' (FIM tier, num_ctx "
+                 f"{ctx_of(models.get('completion', {}))}). Conversational slots "
+                 f"must not use it; see CLAUDE.md. Fix config/clients.yaml.")
+
+
+def gen_slot_block(clients):
+    lines = [CS_BEGIN, "  slots=("]
+    for slot, cap in (clients.get("claude") or {}).get("slots", {}).items():
+        var = SLOT_ENV.get(slot)
+        if not var:
+            warn(f"unknown claude slot '{slot}' — no ANTHROPIC_DEFAULT_* var; skipping")
+            continue
+        lines.append(f'    {var}="{mn(cap)}"')
+    lines += ["  )", CS_END]
+    return "\n".join(lines) + "\n"
+
+
+def regen_configure_zsh(clients):
+    if not CONFIGURE_ZSH.exists():
+        return False
+    text = CONFIGURE_ZSH.read_text()
+    text, spliced = splice(text, CS_BEGIN, CS_END, gen_slot_block(clients), "claude slots")
+    CONFIGURE_ZSH.write_text(text)
+    return spliced
+
+
 def regen_claude_settings(models, clients):
     if not CLAUDE_SETTINGS.exists():
         return False
@@ -568,6 +618,8 @@ def main():
     for role, info in models.items():
         print(f"  {role}: {backend_of(info)}  (ctx {ctx_of(info)}, keep_alive {norm_keep_alive(info.get('keep_alive'))})")
 
+    check_conversational_slots(models, clients)
+
     step("Regenerating config/litellm/config.yaml (model_list + aliases)")
     ok("litellm config regenerated" if regen_litellm(models, clients) else "litellm config unchanged/skipped")
 
@@ -575,6 +627,7 @@ def main():
     ok("capabilities.generated.json") if write_caps_json(models) else warn("caps json skipped")
     ok("model_catalog.json") if regen_catalog(models) else warn("catalog skipped")
     ok("claude/settings.json") if regen_claude_settings(models, clients) else warn("claude settings skipped")
+    ok("configure.zsh (claude slots)") if regen_configure_zsh(clients) else warn("configure.zsh slots skipped")
     ok("codex config + profiles") if regen_codex(models, clients) else warn("codex skipped")
     ok("continue/config.json") if regen_continue(models, clients) else warn("continue skipped")
 
