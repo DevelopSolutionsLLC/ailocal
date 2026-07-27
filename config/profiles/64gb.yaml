@@ -35,11 +35,15 @@ disk_gb: 40
 # so 64K is the balance between input capacity and permanent memory).
 architecture:
   role: Lead architect
-  active: qwen3.6:27b
+  active: qwen3-coder:30b-a3b-q4_K_M
   # Rollback: qwen3-coder:30b-a3b-q4_K_M stays installed and listed here, so
   # reverting is a one-line `active:` change plus ./scripts/sync-models.sh.
-  preferred: [qwen3.6:27b, qwen3-coder:30b-a3b-q4_K_M]
-  reasoning: true          # VERIFIED: capabilities include `thinking`
+  # MEASURED: this is MoE — 128 experts, 8 used, ~3B ACTIVE params per token.
+  # That is why it beats the dense qwen3.6:27b at 197 vs 90 chunks/s despite
+  # being nominally larger. Daily coding velocity is the priority; the dense
+  # model's thinking/vision did not pay for ~2x slower generation.
+  preferred: [qwen3-coder:30b-a3b-q4_K_M]
+  reasoning: false         # VERIFIED: no `thinking` capability on this model
   context: 65536
   temperature: 0.2
   num_predict: 16384
@@ -52,9 +56,11 @@ architecture:
 # ── implementation — everyday working coder ──────────────────────────────────
 implementation:
   role: Daily coding
-  active: qwen3.5:4b
-  preferred: [qwen3.5:4b, qwen2.5-coder:14b-instruct-q4_K_M]
-  reasoning: true          # VERIFIED: capabilities include `thinking`
+  active: qwen3-coder:30b-a3b-q4_K_M
+  # Same MoE as architecture, smaller window. Deliberately NOT a second, weaker
+  # model: a "cheap coding tier" nobody routes to is complexity without benefit.
+  preferred: [qwen3-coder:30b-a3b-q4_K_M]
+  reasoning: false
   context: 16384
   temperature: 0.2
   num_predict: -1
@@ -112,8 +118,15 @@ completion:
 fast:
   role: Fast agent
   active: qwen3.5:2b
-  preferred: [qwen3.5:2b, qwen3.5:4b]
-  reasoning: true          # VERIFIED: capabilities include `thinking`
+  preferred: [qwen3.5:2b]
+  # MEASURED 114 tok/s gen / 1056 tok/s prompt vs the 4b's 78 / 549 — fewer
+  # params beat lighter quantization, so Q8_0 won on SPEED, not just quality.
+  #
+  # reasoning DELIBERATELY false despite the model supporting it: with thinking
+  # on it emitted 19,056 reasoning characters and returned EMPTY content at both
+  # max_tokens 8 and 64 (finish_reason=length). This tier answers one word; it
+  # must not think itself out of its budget.
+  reasoning: false
   context: 32768
   temperature: 0.2
   num_predict: 4096

@@ -36,45 +36,47 @@ model_list:
 
   # >>> BEGIN GENERATED model_list (sync-models.py) — do not edit <<<
 
-  # ailocal-architecture — Lead architect (qwen3.6:27b)
+  # ailocal-architecture — Lead architect (qwen3-coder:30b-a3b-q4_K_M)
   - model_name: ailocal-architecture
     litellm_params:
-      model: ollama_chat/qwen3.6:27b
+      model: ollama_chat/qwen3-coder:30b-a3b-q4_K_M
       api_base: os.environ/OLLAMA_URL
       num_ctx: 65536
       temperature: 0.2
       num_predict: 16384
       keep_alive: -1
-      think: true
+      additional_drop_params: ["thinking", "reasoning_effort"]
+      think: false
     model_info:
       supports_function_calling: true
       supports_tool_choice: true
-      supports_parallel_function_calling: false
+      supports_parallel_function_calling: true
       supports_system_messages: true
       supports_native_streaming: true
-      supports_reasoning: true
+      supports_reasoning: false
       max_input_tokens: 65536
       max_output_tokens: 16384
       input_cost_per_token: 0
       output_cost_per_token: 0
 
-  # ailocal-implementation — Daily coding (qwen3.5:4b)
+  # ailocal-implementation — Daily coding (qwen3-coder:30b-a3b-q4_K_M)
   - model_name: ailocal-implementation
     litellm_params:
-      model: ollama_chat/qwen3.5:4b
+      model: ollama_chat/qwen3-coder:30b-a3b-q4_K_M
       api_base: os.environ/OLLAMA_URL
       num_ctx: 16384
       temperature: 0.2
       num_predict: -1
       keep_alive: 20m
-      think: true
+      additional_drop_params: ["thinking", "reasoning_effort"]
+      think: false
     model_info:
       supports_function_calling: true
       supports_tool_choice: true
-      supports_parallel_function_calling: false
+      supports_parallel_function_calling: true
       supports_system_messages: true
       supports_native_streaming: true
-      supports_reasoning: true
+      supports_reasoning: false
       max_input_tokens: 16384
       max_output_tokens: 4096
       input_cost_per_token: 0
@@ -134,14 +136,15 @@ model_list:
       temperature: 0.2
       num_predict: 4096
       keep_alive: 20m
-      think: true
+      additional_drop_params: ["thinking", "reasoning_effort"]
+      think: false
     model_info:
       supports_function_calling: true
       supports_tool_choice: true
-      supports_parallel_function_calling: false
+      supports_parallel_function_calling: true
       supports_system_messages: true
       supports_native_streaming: true
-      supports_reasoning: true
+      supports_reasoning: false
       max_input_tokens: 32768
       max_output_tokens: 8192
       input_cost_per_token: 0
