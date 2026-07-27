@@ -367,6 +367,69 @@ check(fr4["task_class"] is None and fr4["tools_dropped"] == 0,
       "a passthrough model is never task-negotiated")
 os.environ.pop(tg.TASK_ENV, None)
 
+print("\nNAMESPACE EXPANSION (Codex MCP reachability)")
+ns_cfg_off = {"enabled": False}
+bundle = {"type": "namespace", "name": "mcp__lsp", "description": "LSP bundle",
+          "tools": [
+              {"type": "function", "name": "get_hover", "description": "Hover",
+               "strict": False, "parameters": {"type": "object"}},
+              {"type": "function", "name": "get_definition", "description": "Def",
+               "strict": False, "parameters": {"type": "object"}}]}
+
+out, info = tg.expand_namespaces([bundle], ns_cfg_off)
+check(out == [bundle] and info == [],
+      "disabled: the bundle passes through untouched")
+
+cfg = reg.namespace_expansion()
+check(cfg["enabled"] is False,
+      "registry ships expansion DISABLED — flattening changes the name the "
+      "model emits and the client must be able to route it")
+check(cfg["name_template"] == "{namespace}__{tool}",
+      "default template reproduces the mcp__<server>__<tool> convention")
+
+on = dict(cfg, enabled=True)
+out, info = tg.expand_namespaces([bundle], on, reg.group_of)
+names = [tg.tool_name(t) for t in out]
+check(names == ["mcp__lsp__get_hover", "mcp__lsp__get_definition"],
+      f"flattened to mcp__lsp__* names (got {names})")
+check(all(t.get("type") == "function" for t in out),
+      "every expanded tool is type=function, which the route does NOT drop")
+check(not any(t.get("type") == "namespace" for t in out),
+      "the bundle itself is removed — keeping it would pay its bytes twice and "
+      "be dropped downstream anyway")
+check(info and info[0]["expanded"] == 2, "expansion is reported")
+
+# The whole point: expanded tools are REACHABLE where the bundle was not.
+rb, _ = gw.negotiate(dict(CODEX_HEADERS, model="ailocal-architecture", input="",
+                          tools=[bundle]), "aresponses")
+check(rb["bytes_kept_reachable"] == 0,
+      "baseline: an unexpanded bundle contributes ZERO reachable bytes")
+
+# Group awareness: flattened lsp tools land in the lsp group, so task
+# negotiation and client profiles apply to them like any other tool.
+check(reg.group_of("mcp__lsp__get_hover") == "lsp",
+      "an expanded tool is grouped by the registry like any other")
+
+only_search = dict(on, only_groups=["search"])
+out2, info2 = tg.expand_namespaces([bundle], only_search, reg.group_of)
+check(any(t.get("type") == "namespace" for t in out2),
+      "only_groups filters expansion: an lsp bundle is left alone when only "
+      "search was requested")
+
+many = {"type": "namespace", "name": "mcp__big", "tools": [
+    {"type": "function", "name": f"t{i}", "parameters": {"type": "object"}}
+    for i in range(50)]}
+out3, info3 = tg.expand_namespaces([many], dict(on, max_tools_per_namespace=40),
+                                   reg.group_of)
+check(any(t.get("type") == "namespace" for t in out3),
+      "a bundle over the limit is REFUSED, not truncated — a half-expanded "
+      "bundle advertises some tools and hides others with no way to tell")
+check(info3 and info3[0].get("skipped"), "and the refusal is reported")
+
+empty = {"type": "namespace", "name": "mcp__empty", "tools": []}
+out4, _ = tg.expand_namespaces([empty], on, reg.group_of)
+check(out4 == [empty], "an empty bundle is left as-is, not dropped")
+
 print("\nFAIL OPEN")
 empty = cr.Registry(path="/nonexistent", caps_json="/nonexistent",
                     config_path="/nonexistent")

@@ -205,6 +205,64 @@ def first_user_text(data):
     return ""
 
 
+def expand_namespaces(tools, cfg, group_of=None):
+    """Flatten namespace bundles into standalone function tools.
+
+    Codex declares MCP servers as {"type":"namespace","name":"mcp__lsp",
+    "tools":[<function tools>]}, and LiteLLM discards namespace-typed entries
+    before the backend — so the model never learns those tools exist. The
+    sub-tools are already valid function tools, and this hook runs before the
+    drop, so flattening them here is sufficient.
+
+    Returns (new_tools, expanded_info). The bundle itself is REMOVED once
+    expanded: leaving it would pay its bytes twice and it would be dropped
+    downstream anyway.
+
+    Pure — builds a new list.
+    """
+    if not cfg.get("enabled"):
+        return tools, []
+    template = cfg.get("name_template") or "{namespace}__{tool}"
+    limit = int(cfg.get("max_tools_per_namespace") or 40)
+    only = set(cfg.get("only_groups") or [])
+
+    out, info = [], []
+    for tool in tools or []:
+        if not (isinstance(tool, dict) and tool.get("type") == "namespace"):
+            out.append(tool)
+            continue
+        ns = tool.get("name") or "namespace"
+        subs = [t for t in (tool.get("tools") or []) if isinstance(t, dict)]
+        if not subs:
+            out.append(tool)          # nothing to expand; leave it be
+            continue
+        if len(subs) > limit:
+            # Refuse rather than silently truncate: a partially-expanded bundle
+            # would advertise some tools and hide others with no way to tell.
+            info.append({"namespace": ns, "expanded": 0, "sub_tools": len(subs),
+                         "skipped": "exceeds max_tools_per_namespace"})
+            out.append(tool)
+            continue
+        made = []
+        for sub in subs:
+            sub_name = sub.get("name")
+            if not sub_name:
+                continue
+            flat = dict(sub)
+            flat["name"] = template.format(namespace=ns, tool=sub_name)
+            flat["type"] = "function"
+            if only and group_of is not None and group_of(flat["name"]) not in only:
+                continue
+            made.append(flat)
+        if made:
+            out.extend(made)
+            info.append({"namespace": ns, "expanded": len(made),
+                         "sub_tools": len(subs)})
+        else:
+            out.append(tool)
+    return out, info
+
+
 def _schema_of(tool):
     """(container, key) for a tool's parameter schema, whichever dialect it is.
     Returns (None, None) when there is none to rewrite."""
@@ -341,6 +399,15 @@ class ToolGateway(CustomLogger):
         model_class, _ = reg.model_class(model)
         passthrough = reg.is_passthrough(model)
 
+        # Flatten namespace bundles first, so the tools inside them are
+        # measured, grouped and negotiated exactly like any other function tool.
+        # Done before inventory, not after: expanding afterwards would report
+        # byte figures for a payload that was never sent.
+        ns_cfg = {} if passthrough else reg.namespace_expansion()
+        tools, expanded = expand_namespaces(tools, ns_cfg, reg.group_of)
+        if expanded:
+            data["tools"] = tools
+
         names = [tool_name(t) for t in tools]
         sizes = [tool_bytes(t) for t in tools]
         total_bytes = sum(sizes)
@@ -434,6 +501,8 @@ class ToolGateway(CustomLogger):
             "registry": reg.state,
             "max_context": reg.max_context(model),
             "removable_groups": sorted(removable),
+            "namespace_expansion": bool(ns_cfg.get("enabled")),
+            "namespaces_expanded": expanded or None,
             "task_negotiation": task_negotiation_enabled(),
             "task_class": task_class,
             "task_pattern_hits": task_hits,
