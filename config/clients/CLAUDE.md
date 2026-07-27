@@ -16,8 +16,8 @@ When you select a model in Claude Code, it maps to a local backend:
 |--------------------|-----------------------------------------------|-------------------------------------------|
 | `claude-haiku-*`   | implementation (qwen2.5-coder:14b)            | Quick lookups, background/summary calls   |
 | `claude-sonnet-*`  | implementation (qwen2.5-coder:14b)            | Implementation, code edits, daily driving |
-| `claude-opus-*`    | architecture (qwen3-coder:30b-a3b-q4_K_M)                | Deep analysis, planning, debugging        |
-| `claude-fable-*`   | review (deepseek-coder-v2:16b-lite)           | Diff review, critique                     |
+| `claude-opus-*`    | architecture (qwen3-coder:30b-a3b-q4_K_M)     | Deep analysis, planning, debugging        |
+| `claude-fable-*`   | review (gpt-oss:20b)                          | Diff review, critique                     |
 
 Every capability also appears in `/model` under its canonical name (`ailocal-architecture`, `ailocal-implementation`, `ailocal-review`, `ailocal-completion`, `ailocal-embeddings`). Default is `ailocal-implementation`. Note: no installed model emits `<think>` — the deepseek-r1 reasoners were removed, so there is no reasoning tier right now.
 

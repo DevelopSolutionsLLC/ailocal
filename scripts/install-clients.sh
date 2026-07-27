@@ -39,6 +39,12 @@ skip() { echo "  — $*"; }
 step() { echo; echo "▶ $*"; }
 
 # Backup a file if it exists.
+# Keep this many timestamped backups per file. Every run of this script backed up
+# unconditionally and never pruned, so the deployed roots accumulated 43 stale
+# copies (212 KB of model_catalog.json alone) across a single day of iteration.
+# Rollback only ever reaches for a recent one; the rest is landfill.
+BACKUP_KEEP="${BACKUP_KEEP:-5}"
+
 backup() {
   local file="$1"
   if [ -f "$file" ]; then
@@ -47,9 +53,21 @@ backup() {
     backup="${file}.bak.${ts}"
     cp "$file" "$backup"
     warn "Backed up: $(basename "$file") → $(basename "$backup")"
+    prune_backups "$file"
     return 0
   fi
   return 1
+}
+
+# Drop all but the newest $BACKUP_KEEP backups of "$file". Sorted by name, which
+# is chronological because the suffix is YYYYmmdd_HHMMSS. Uses a null-delimited
+# read so paths with spaces survive.
+prune_backups() {
+  local file="$1" old n=0
+  while IFS= read -r old; do
+    n=$((n + 1))
+    [ "$n" -gt "$BACKUP_KEEP" ] && rm -f "$old"
+  done < <(ls -1t "${file}".bak.* 2>/dev/null)
 }
 
 # Returns 0 if file exists and contains the marker string.
@@ -485,6 +503,28 @@ if has_target "claude"; then
 
   echo "  Launch with: claude-local   (reload your shell first: source ~/.zshrc)"
   echo "  Plain 'claude' in this or any other shell is untouched — still the cloud session."
+fi
+
+# ── Re-apply Cadence-owned MCP registrations ───────────────────────────────
+# Codex's config.toml is rewritten wholesale from our template above, which
+# DESTROYS the [mcp_servers.*] blocks Cadence appends (grepai, lsp). That made
+# every run of this script silently strip codex-local's MCP servers — the
+# failure was invisible because Codex simply starts with no tools rather than
+# erroring. The documented workaround was "remember to re-run cadence
+# afterwards", which is exactly the kind of manual step that gets forgotten.
+#
+# MCP ownership stays with Cadence (single authoritative implementation); we
+# just re-invoke it so the ordering constraint is enforced by code, not memory.
+# Never fatal: ailocal must stay installable on a machine without Cadence.
+if command -v cadence >/dev/null 2>&1; then
+  if cadence mcp sync >/tmp/ailocal-mcp-sync.log 2>&1; then
+    info "Cadence MCP registrations re-applied (grepai/lsp survive this install)"
+  else
+    warn "cadence mcp sync failed — codex-local/claude-local may have no MCP servers."
+    warn "  See /tmp/ailocal-mcp-sync.log; re-run 'cadence mcp sync' by hand."
+  fi
+else
+  skip "cadence not on PATH — skipping MCP re-sync (no MCP servers to restore)"
 fi
 
 # ── Done ───────────────────────────────────────────────────────────────────

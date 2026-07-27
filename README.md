@@ -47,10 +47,11 @@ LiteLLM exposes capability names only — the router owns the backend, context, 
 
 | Capability | Backend | ctx / keep_alive |
 |---|---|---|
-| `architecture` | qwen3-coder:30b | 64K / resident — shared big-context hub: design, deep reasoning, large agent prompts |
+| `architecture` | qwen3-coder:30b-a3b-q4_K_M | 64K / resident — shared big-context hub: design, deep reasoning, large agent prompts |
 | `implementation` | qwen2.5-coder:14b | 16K / 20m — everyday coding, features, tests |
-| `review` | deepseek-coder-v2:16b-lite | 16K / 20m — code review, bug & security |
-| `completion` | qwen2.5-coder:3b | 4K / resident — inline autocomplete (FIM) |
+| `review` | gpt-oss:20b | 16K / 20m — code review, bug & security |
+| `fast` | qwen3.5:2b | 32K / 20m — classification, summarisation, cheap tool-driven lookups |
+| `completion` | qwen2.5-coder:3b | 4K / 20m — inline autocomplete (FIM) **only**; never a chat tier |
 | `embeddings` | nomic-embed-text | 8K / resident — retrieval infrastructure |
 
 Change a backend in `config/profiles/64gb.yaml`, run `./scripts/sync-models.sh`, and every generated client config regenerates. `architecture`/`implementation`/`review` get a server-side engineering persona (`config/instructions/<capability>.md`), injected on both the OpenAI and Anthropic routes. Use capability names only — never raw model tags.
