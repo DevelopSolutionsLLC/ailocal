@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-all.sh — the single regression gate. Run this before every commit.
 #
-# Six suites plus two invariants. Each reports independently and the script exits
+# Six suites plus six invariants. Each reports independently and the script exits
 # non-zero if ANY of them fails or could not run.
 #
 # "Could not run" is treated as failure, not as a skip. Several suites need PyYAML
@@ -147,6 +147,17 @@ sys.exit(1 if bad else 0)
 PY
 }
 run "every registered hook imports inside the proxy image" hooks_importable
+
+# Re-running an installer must change nothing. This is the check that catches an
+# installation rotting into duplicate MCP stanzas / provider groups / shell
+# blocks — invisible until something picks the wrong duplicate.
+run "installers are idempotent" ./scripts/test-idempotent-install.sh
+
+# The audit exits 3 when it finds actionable items. That is informational here,
+# not a gate failure: untracked notes are a normal working state. Only a hard
+# failure (exit 1 = the audit itself broke) fails the gate.
+audit_runs() { ./scripts/audit-installation.sh >/dev/null 2>&1; [ $? -ne 1 ]; }
+run "installation audit runs cleanly" audit_runs
 
 if [ -n "$FULL" ]; then
   echo
