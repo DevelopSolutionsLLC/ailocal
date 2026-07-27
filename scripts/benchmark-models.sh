@@ -41,6 +41,8 @@ OUT="$ROOT/data/benchmarks"; mkdir -p "$OUT"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 RESULT="$OUT/models-$STAMP.jsonl"
 WORK="/tmp/ailocal-bench-models"
+MFWORK="/tmp/ailocal-bench-multifile"
+. "$ROOT/scripts/lib/bench_fixture.sh"
 
 docker ps --format '{{.Names}}' | grep -qx ailocal-litellm || {
   echo "ailocal-litellm is not running."; exit 1; }
@@ -212,10 +214,55 @@ for c in d['tool_calls']:
     STOP=$(printf '%s' "$r3" | python3 -c "import sys,json;print(json.load(sys.stdin)['stop_reason'])")
     TERM=$(printf '%s' "$r3" | python3 -c "import sys,json;print(json.load(sys.stdin)['stream_terminated'])")
 
+    # ── Task B: multi-file. The wrong value ORIGINATES in pricing.with_tax and
+    # only fails visibly in the checkout test. A model that patches the nearest
+    # line to the failing assertion produces a plausible WRONG fix, which is the
+    # behaviour this task exists to catch.
+    fixture_multifile "$MFWORK"
+    r4=$(probe "$model" "In this repository, tests/test_checkout.py asserts order_total([(10.00,2)]) == 24.00 but it fails. src/checkout.py calls with_tax() from src/pricing.py, and docs/pricing.md says with_tax must return the amount INCLUDING tax. Reply with ONLY the corrected body of the with_tax function, no explanation and no markdown fence." "")
+    MFTEXT=$(printf '%s' "$r4" | python3 -c "import sys,json;print(json.load(sys.stdin)['text'])")
+    # Graded BEHAVIOURALLY: the answer is applied to the fixture and the real
+    # test suite decides. A regex grader scored qwen3-coder's `amount * 1.2` —
+    # numerically correct — as a FAILURE because it wanted a literal TAX_RATE.
+    # A capable model would have been recorded as incapable.
+    MFGRADE=$(printf '%s' "$MFTEXT" | python3 "$ROOT/scripts/lib/bench_grade.py" \
+              "$MFWORK" src/pricing.py with_tax 2>/dev/null \
+              | python3 -c "import sys,json;print(json.load(sys.stdin).get('grade','unusable'))" 2>/dev/null || echo unusable)
+    MULTIFILE=0; [ "$MFGRADE" = correct ] && MULTIFILE=1
+    MF_WALL=$(printf '%s' "$r4" | python3 -c "import sys,json;print(json.load(sys.stdin)['wall_s'])")
+
+    # ── Task D: long context. The same tool-heavy payload shape that produced
+    # the ~90 s silent first byte. This is the gate a larger model must pass:
+    # improved reasoning is worthless if it reintroduces that failure.
+    LONG_TTFB=""
+    if [ -s /tmp/ailocal-ttfb-req.json ]; then
+      LONG_TTFB=$(python3 - "$model" <<'PY2'
+import json, os, subprocess, sys, time
+model = sys.argv[1]
+req = json.load(open("/tmp/ailocal-ttfb-req.json"))
+req["model"] = model
+req["max_tokens"] = 16
+open("/tmp/ailocal-bench-long.json", "w").write(json.dumps(req))
+key = ""
+for line in open(".env"):
+    if line.startswith("LITELLM_MASTER_KEY="):
+        key = line.split("=", 1)[1].strip()
+out = subprocess.run(
+    ["curl", "-sN", "-m", "900", "-o", "/dev/null", "-w", "%{time_starttransfer}",
+     os.environ.get("AILOCAL_PROXY_URL", "http://127.0.0.1:4000") + "/v1/messages",
+     "-H", "x-api-key: " + key, "-H", "anthropic-version: 2023-06-01",
+     "-H", "content-type: application/json", "-H", "user-agent: claude-cli/bench",
+     "--data", "@/tmp/ailocal-bench-long.json"],
+    capture_output=True, text=True, timeout=900)
+print(out.stdout.strip() or "0")
+PY2
+)
+    fi
+
     MEM_AFTER=$(python3 "$ROOT/scripts/lib/bench_memory.py" snapshot)
     BACKEND=$(python3 "$ROOT/scripts/sync-models.py" --resolve "${model#ailocal-}" 2>/dev/null || echo "")
     MEM_MODEL=$(python3 "$ROOT/scripts/lib/bench_memory.py" model "$BACKEND" 2>/dev/null || echo '{}')
-    export MEM_BEFORE MEM_AFTER MEM_MODEL BACKEND
+    export MEM_BEFORE MEM_AFTER MEM_MODEL BACKEND MULTIFILE MFGRADE MF_WALL LONG_TTFB
     python3 - "$model" "$run" "$wall1" "$EMITTED" "$ACCEPTED" "$EXECUTED" "$VERIFIED" "$STOP" "$TERM" "$RESULT" <<'PY'
 import json, sys
 (model, run, wall1, em, ac, ex, ve, stop, term, out) = sys.argv[1:11]
@@ -241,7 +288,16 @@ rec = {"model": model, "run": int(run), "trivial_wall_s": float(wall1),
        "context_length": mm.get("context_length"),
        "all_models_vram_bytes": ma.get("loaded_vram_total_bytes"),
        "free_pct_before": mb.get("free_pct"), "free_pct_after": ma.get("free_pct"),
-       "pageouts_delta": pageouts_delta}
+       "pageouts_delta": pageouts_delta,
+       "multifile_correct": int(os.environ.get("MULTIFILE") or 0),
+       # correct / wrong / unusable are kept DISTINCT: a formatting failure is a
+       # different defect from a wrong answer and must not be averaged with it.
+       "multifile_grade": os.environ.get("MFGRADE"),
+       "multifile_wall_s": float(os.environ.get("MF_WALL") or 0),
+       # The gate for any larger model: does the tool-heavy payload still
+       # return a first byte quickly, or does it recreate the silent wait?
+       "long_ctx_ttfb_s": (float(os.environ["LONG_TTFB"])
+                           if os.environ.get("LONG_TTFB") else None)}
 open(out, "a").write(json.dumps(rec) + "\n")
 vs = f"{vram/1e9:.1f}GB" if vram else "?"
 pg = "" if not pageouts_delta else f" | \033[33mPAGED {pageouts_delta}\033[0m"
