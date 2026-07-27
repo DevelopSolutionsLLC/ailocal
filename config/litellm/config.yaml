@@ -59,10 +59,10 @@ model_list:
       input_cost_per_token: 0
       output_cost_per_token: 0
 
-  # ailocal-implementation — Daily coding (qwen3-coder:30b-a3b-q4_K_M)
+  # ailocal-implementation — Daily coding (qwen2.5-coder:14b-instruct-q4_K_M)
   - model_name: ailocal-implementation
     litellm_params:
-      model: ollama_chat/qwen3-coder:30b-a3b-q4_K_M
+      model: ollama_chat/qwen2.5-coder:14b-instruct-q4_K_M
       api_base: os.environ/OLLAMA_URL
       num_ctx: 16384
       temperature: 0.2
