@@ -33,6 +33,25 @@ printf 'print("the answer is 42")\n' > "$WORKDIR/sample.py"
 
 info() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 
+# This script flips a production setting. If it dies partway — a bad flag, a
+# Ctrl-C, an unhealthy proxy — it must not leave the proxy in a mode the
+# operator did not choose. An earlier crash left it in `report` and only turned
+# up on a later manual inspection.
+restore_default() {
+  local rc=$?
+  info "restoring gateway to the committed default (off)"
+  AILOCAL_TOOL_GATEWAY=off dc up -d >/dev/null 2>&1 || true
+  for _ in $(seq 1 40); do
+    [ "$(docker inspect ailocal-litellm --format '{{.State.Health.Status}}' \
+        2>/dev/null || echo none)" = healthy ] && break
+    sleep 3
+  done
+  docker inspect ailocal-litellm \
+    --format 'proxy health: {{.State.Health.Status}}' 2>/dev/null || true
+  exit "$rc"
+}
+trap restore_default EXIT INT TERM
+
 restart_with() {
   # Recreate the proxy with the requested mode, then WAIT for healthy. A
   # benchmark that starts measuring before the proxy is up measures startup.
@@ -53,8 +72,19 @@ restart_with() {
 }
 
 run_arm() {
-  local mode="$1" i="$2" log="$OUT/$STAMP-$mode-$i.log"
+  # Declared separately on purpose: `local a=$1 b=$a` does NOT work under
+  # `set -u`, because bash expands every argument to the `local` builtin before
+  # running it, so the later reference sees the variable as still unset.
+  local mode="$1"
+  local i="$2"
+  local log="$OUT/$STAMP-$mode-$i.log"
   local start end
+  # Docker's --since takes a wall-clock timestamp. Scope the metric read to
+  # THIS run: `docker logs | tail -1` reads whatever is last in the current
+  # container's buffer, which — when `dc up -d` finds nothing to change and so
+  # does not recreate the container — can be a line from a previous arm. That
+  # produced a baseline row with bytes_reachable=0 (a value the current module
+  # cannot emit) and went unnoticed until the field was cross-checked.
   start=$(python3 -c 'import time;print(time.time())')
   zsh -ic "cd '$WORKDIR' && claude-local -p '$PROMPT' --max-turns 4" \
     > "$log" 2>&1 || true
@@ -62,39 +92,86 @@ run_arm() {
   python3 -c "print(f'{$end-$start:.1f}')"
 }
 
+report_arm() {
+  # Largest metric line since this arm began — the turn that carries the full
+  # tool declaration, not a follow-up turn that re-declares a subset.
+  docker logs --since "$ARM_SINCE" ailocal-litellm 2>&1 \
+    | grep tool_gateway_metric \
+    | python3 -c "
+import sys, json
+best = None
+for line in sys.stdin:
+    try:
+        d = json.loads(line.split(' ', 1)[1])
+    except Exception:
+        continue
+    if best is None or d.get('bytes_in', 0) > best.get('bytes_in', 0):
+        best = d
+if best is None:
+    print('    NO METRIC for this arm — the run did not reach the proxy. '
+          'Treat this row as missing, not as zero.')
+    raise SystemExit
+missing = [k for k in ('bytes_reachable', 'bytes_kept', 'mode')
+           if k not in best]
+if missing:
+    print(f'    STALE METRIC (missing {missing}) — the proxy is running an '
+          f'older module than this script expects. Row discarded.')
+    raise SystemExit
+# What the model ACTUALLY received depends on whether the filter was applied.
+# In report mode the kept/dropped figures are hypothetical — printing them as
+# 'model saw' would describe a request that was never sent, and would make the
+# baseline arm look identical to the treatment arm in the results table.
+applied = best['applied']
+saw_b = best['bytes_kept'] if applied else best['bytes_reachable']
+saw_t = best['tokens_est_kept'] if applied else best['tokens_est_in']
+saw_n = best['tools_kept'] if applied else best['tools_in']
+note = '' if applied else '  (kept/dropped below are hypothetical)'
+print(f\"    latency ${1}s | mode={best['mode']} applied={applied}\")
+print(f\"      model received: {saw_n} tools, {saw_b} B, ~{saw_t} tokens{note}\")
+print(f\"      declared: {best['tools_in']} tools, {best['bytes_in']} B, \"
+      f\"~{best['tokens_est_in']} tokens\")
+"
+}
+
 echo "task:   $PROMPT"
 echo "runs:   $RUNS per arm"
 echo "output: $OUT/$STAMP-*"
 echo
 
-for mode in report filter; do
-  restart_with "$mode"
-  for i in $(seq 1 "$RUNS"); do
-    info "run $i/$RUNS  mode=$mode"
-    secs=$(run_arm "$mode" "$i")
-    # The gateway's own last metric line is the record of what the model saw.
-    metric=$(docker logs ailocal-litellm 2>&1 | grep tool_gateway_metric | tail -1)
-    echo "$metric" | python3 -c "
-import sys, json
-line = sys.stdin.read().strip()
-d = json.loads(line.split(' ', 1)[1]) if line else {}
-kept = d.get('bytes_kept', 0); base = d.get('bytes_reachable', 0)
-print(f\"    latency {'$secs'}s | mode={d.get('mode')} applied={d.get('applied')} \"
-      f\"| tools {d.get('tools_in')} -> {d.get('tools_kept')} \"
-      f\"| model saw {kept} B of {base} B\")
-"
+# Arms are INTERLEAVED and the order flips each round. Running all of one arm
+# then all of the other confounds the comparison with everything that warms up
+# over a session — the model staying resident, Ollama's caches, tiktoken's lazy
+# load. The first measured A/B here showed 244s then 81s in that fixed order,
+# which is unusable as evidence: cold-then-warm produces the same shape whether
+# or not filtering helps.
+for round in $(seq 1 "$RUNS"); do
+  if [ $((round % 2)) -eq 1 ]; then order="report filter"; else order="filter report"; fi
+  info "round $round/$RUNS  order: $order"
+  for mode in $order; do
+    restart_with "$mode"
+    # Set in the CALLER, not inside run_arm: run_arm is invoked via command
+    # substitution, so anything it assigns dies with that subshell. Docker's
+    # --since is second-granular, so take the stamp before the run starts.
+    #
+    # The trailing Z is REQUIRED. Without it `docker logs --since` reads the
+    # stamp as local time; from a UTC clock that is hours in the future, so it
+    # returns nothing at all — and an empty log looks exactly like "the run
+    # produced no metric". Verified: same window, 0 lines without Z, 1 with.
+    ARM_SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    secs=$(run_arm "$mode" "$round")
+    report_arm "$secs"
   done
   echo
 done
 
-info "leaving the proxy in the committed default (off)"
-AILOCAL_TOOL_GATEWAY=off dc up -d >/dev/null 2>&1
-for _ in $(seq 1 40); do
-  [ "$(docker inspect ailocal-litellm --format '{{.State.Health.Status}}')" = healthy ] && break
-  sleep 3
-done
-docker inspect ailocal-litellm --format 'proxy health: {{.State.Health.Status}}'
+if [ "$RUNS" -lt 2 ]; then
+  echo "NOTE: RUNS=1 means one run per arm in a single fixed order. That is"
+  echo "enough to confirm the payload change and NOT enough to attribute a"
+  echo "latency difference. Use RUNS=2 or more before quoting a speedup."
+  echo
+fi
 
+# The EXIT trap restores the default mode and reports proxy health.
 echo
 echo "Outputs for side-by-side comparison (check tool execution, not just time):"
 ls -1 "$OUT/$STAMP"-*.log

@@ -143,6 +143,57 @@ and slightly conservative. Re-run the calibration after any model change.
 
 ---
 
+## Measured effect
+
+`./scripts/benchmark-tool-gateway.sh` with `RUNS=2`, on the real `claude-local`
+against `qwen3-coder:30b-a3b-q4_K_M`. Task: *"Read the file sample.py in the
+current directory and tell me exactly what it prints. Use your tools."*
+
+| Round | Order | Arm | Tools the model received | Latency |
+|---|---|---|---|---|
+| 1 | report first | report | 61 / 104,202 B / ~23,937 tok | 136.4 s |
+| 1 | | filter | 41 / 30,403 B / ~6,853 tok | 39.9 s |
+| 2 | filter first | filter | 41 / 30,403 B / ~6,853 tok | 5.2 s |
+| 2 | | report | 61 / 104,202 B / ~23,937 tok | 128.8 s |
+
+**All four runs produced the correct answer** (`the answer is 42`), read from
+the file via the model's own tools. No regression in tool execution — which is
+the result that mattered, and the reason the runs' outputs are kept for
+side-by-side reading rather than reduced to a pass/pass.
+
+What can honestly be claimed from n=2 per arm: **every filtered run was faster
+than every unfiltered run, by at least 3.2×**, and the arms' ranges do not
+overlap (filter 5.2–39.9 s, report 128.8–136.4 s). Because the order was
+flipped between rounds and filter was faster even when it ran first and cold,
+the result is not the warm-up artefact that the first, fixed-order attempt
+produced.
+
+What cannot be claimed: a precise speedup factor. The filter arm's own spread
+(5.2 s vs 39.9 s) is larger than many effects one might want to measure, so
+treat this as "clearly and repeatably faster", not as "7× faster".
+
+### A note on the four harness bugs
+
+The first three attempts at this benchmark failed, every time in the measuring
+apparatus rather than the thing measured. They are worth knowing about because
+each produced a *plausible* result rather than an obvious error:
+
+1. A fixed report-then-filter order gave 244 s → 81 s, which is exactly the
+   shape cold-then-warm produces regardless of whether filtering helps.
+2. `docker logs | tail -1` read a metric line from a previous container
+   instance (`dc up -d` does not recreate when nothing changed), producing a
+   baseline row with `bytes_reachable: 0` — a value the module cannot emit.
+3. `local a="$1" b="$2" c="…$b…"` — bash expands every argument to `local`
+   before assigning any, so `$b` was unbound under `set -u`.
+4. `docker logs --since` was given a UTC stamp without the trailing `Z`, so
+   Docker read it as local time, hours in the future, and returned **zero
+   lines** — indistinguishable from "the run produced no metric".
+
+The harness now discards a row whose metric is missing or stale rather than
+coercing it to zero, restores the proxy's default mode from an `EXIT INT TERM`
+trap, and warns that `RUNS=1` cannot support a latency claim. Validate the
+plumbing with a fast `curl` before spending twenty minutes on the real client.
+
 ## Verification
 
 The measurement validates itself before it is allowed to report savings.
