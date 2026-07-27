@@ -32,6 +32,25 @@ enough". Only autocomplete surfaces (`continue.autocomplete`) may point at it. C
 fallbacks must move **up** to a larger window, never down — falling from 16K to 4K cannot
 succeed by construction. Measured regression: `claude-haiku-4-5` (and the `gpt-*` compat names)
 mapped to `completion`, so Claude Code's background calls failed at `Got=12023`.
+`sync-models.py` now **hard-fails** if any Claude slot resolves to `completion`, so this
+invariant is enforced at generation time instead of living only in this paragraph.
+
+**One capability per Claude slot.** Opus→architecture, Sonnet→implementation, Haiku→fast,
+Fable→review. Two slots sharing a capability is legal but lists it twice in `/model` and
+wastes a tier (sync warns). Haiku→`fast` also keeps the 14B free for real edits rather than
+background summarisation. The generated block lives in `config/clients/configure.zsh`
+between `BEGIN/END GENERATED claude slots` markers — it was hand-maintained until it drifted
+into the `completion` bug above, so it is now spliced from `config/clients.yaml` like every
+other generated region. The `/model` picker's ORDER is the key order of
+`config/profiles/<tier>.yaml`.
+
+**LiteLLM only reads its config at boot, and the config is bind-mounted.** So editing
+`config.yaml`, a hook, or a persona changes nothing in the running proxy, and
+`docker compose up -d` will not restart it — the spec did not change. It keeps serving the
+OLD routing with nothing in the logs to say so. `start.sh` now fingerprints those files and
+restarts the container when they change. Measured: after repointing `claude-haiku-4-5` at
+`ailocal-fast`, the proxy still routed it to `ailocal-implementation` until an explicit
+restart.
 
 **Claude Code web search never reaches SearXNG.** Its native `WebSearch` is a *client-side*
 tool. LiteLLM's interception accepts only `litellm_web_search` and bare `web_search`, and
@@ -126,6 +145,11 @@ ailocal and Cadence are independent *installations*, not independent *content*. 
    `cadence doctor --root ~/.config/ailocal/claude` reports `NO-OVERLAY` when it is missing.
 
 ## Where things live
+
+- `docs/environment-cheatsheet.md` — **start here for cross-system questions.** One page
+  covering the ailocal/Cadence split, the request path, which retrieval system answers
+  which question, per-language LSP status and its routing limits, required vs optional
+  dependencies, and per-client differences. Written for a cold session.
 
 - `config/profiles/<tier>.yaml` — role → backend + num_ctx + sampling (the source of truth).
 - `config/litellm/` — `config.yaml` (generated block + hand-kept aliases/fallbacks)

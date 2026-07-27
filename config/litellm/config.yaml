@@ -96,6 +96,36 @@ model_list:
       input_cost_per_token: 0
       output_cost_per_token: 0
 
+  # ailocal-fast — Fast agent (qwen3.5:2b)
+  - model_name: ailocal-fast
+    litellm_params:
+      model: ollama_chat/qwen3.5:2b
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 32768
+      temperature: 0.0
+      top_p: 0.9
+      top_k: 20
+      repeat_penalty: 1.0
+      num_predict: 4096
+      keep_alive: 20m
+      additional_drop_params: ["thinking", "reasoning_effort"]
+      think: false
+    model_info:
+      supports_function_calling: true
+      supports_tool_choice: true
+      supports_parallel_function_calling: true
+      supports_system_messages: true
+      supports_native_streaming: true
+      supports_reasoning: false
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+      cache_creation_input_token_cost: 0
+      cache_read_input_token_cost: 0
+      max_input_tokens: 32768
+      max_output_tokens: 8192
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+
   # ailocal-review — Code review (gpt-oss:20b)
   - model_name: ailocal-review
     litellm_params:
@@ -155,36 +185,6 @@ model_list:
       input_cost_per_token: 0
       output_cost_per_token: 0
 
-  # ailocal-fast — Fast agent (qwen3.5:2b)
-  - model_name: ailocal-fast
-    litellm_params:
-      model: ollama_chat/qwen3.5:2b
-      api_base: os.environ/OLLAMA_URL
-      num_ctx: 32768
-      temperature: 0.0
-      top_p: 0.9
-      top_k: 20
-      repeat_penalty: 1.0
-      num_predict: 4096
-      keep_alive: 20m
-      additional_drop_params: ["thinking", "reasoning_effort"]
-      think: false
-    model_info:
-      supports_function_calling: true
-      supports_tool_choice: true
-      supports_parallel_function_calling: true
-      supports_system_messages: true
-      supports_native_streaming: true
-      supports_reasoning: false
-      input_cost_per_token: 0
-      output_cost_per_token: 0
-      cache_creation_input_token_cost: 0
-      cache_read_input_token_cost: 0
-      max_input_tokens: 32768
-      max_output_tokens: 8192
-      input_cost_per_token: 0
-      output_cost_per_token: 0
-
   - model_name: ailocal-embeddings
     litellm_params:
       model: ollama/nomic-embed-text
@@ -222,8 +222,8 @@ router_settings:
     claude-sonnet-4-6: ailocal-implementation
     claude-sonnet-4-6-20250219: ailocal-implementation
     gpt-5.5: ailocal-implementation
-    claude-haiku-4-5: ailocal-implementation
-    claude-haiku-4-5-20251001: ailocal-implementation
+    claude-haiku-4-5: ailocal-fast
+    claude-haiku-4-5-20251001: ailocal-fast
     gpt-4o: ailocal-implementation
     gpt-4o-mini: ailocal-implementation
     gpt-3.5-turbo: ailocal-implementation

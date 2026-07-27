@@ -251,6 +251,36 @@ model_classes:
   # ── Local: FIM autocomplete ───────────────────────────────────────────────
   # 4096-token window. Any conversational turn routed here 400s with "No models
   # have context window large enough"; a real agent turn cannot fit at all.
+  # ── Local: small, tool-capable, background tier ───────────────────────────
+  # qwen3.5:2b behind `fast`. This is the capability Claude Code's HAIKU slot
+  # now maps to, so it takes real traffic: background summarisation, post-tool
+  # processing, task classification. Before this entry it matched no class at
+  # all and the gateway reported model_class=unknown, i.e. "no opinion" — which
+  # meant the one tier serving the highest-frequency requests had no tool policy.
+  #
+  # supports_tools is true (native tool calling, verified in Ollama metadata),
+  # but MCP is false and the group list is deliberately narrow: 32768 ctx sounds
+  # roomy until Claude Code's ~24K of tool schemas is subtracted, leaving ~8K for
+  # the actual conversation. A 2B model handed the full tool surface will spend
+  # its window describing tools it cannot drive.
+  local_small_agentic:
+    match_capabilities: [fast]
+    match_models: ["*qwen3.5:2b*"]
+    supports_tools: true
+    supports_mcp: false
+    supports_parallel_tools: false
+    supports_structured_output: false
+    supports_reasoning: false       # capable of it, but disabled: it thinks past
+                                    # its budget and returns empty content
+    preferred_groups: [search]
+    denied_groups: [orchestration, scheduling, worktree, interactive, lsp,
+                    mcp_plumbing, planning, edit_and_run]
+    routing_hints:
+      warmup: false
+      notes: >
+        Background/summarisation tier. Fine for classification and short
+        lookups; do not route file edits or multi-step tool loops here.
+
   local_completion:
     match_capabilities: [completion]
     supports_tools: false

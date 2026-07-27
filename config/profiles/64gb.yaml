@@ -104,6 +104,47 @@ implementation:
   #   ASSUMED starting point. No penalties, for the same reason as above.
   # THINKING
   #   MEASURED: qwen2.5-coder:14b has NO `thinking` capability. N/A here.
+# ── fast — lightweight tool-enabled agent (NOT autocomplete) ────────────────
+# Deliberately NOT the completion tier. qwen3.5:4b has no FIM/insert capability
+# (verified against Ollama metadata: no fim_prefix/fim_suffix/fim_middle markers,
+# capabilities are completion/vision/tools/thinking with NO `insert`), so it
+# cannot serve inline autocomplete. Putting it there would break Continue/VS Code
+# infill *quietly* — the model would still answer, just never as a correct infill.
+#
+# What it IS good for: 262K context, native tool calling, and thinking, at 3.4 GB.
+# That makes it the right home for cheap agentic work that currently runs on a
+# far larger model — task classification, doc summarisation, quick single-file
+# edits — freeing implementation/architecture for real coding.
+fast:
+  role: Fast agent
+  active: qwen3.5:2b
+  preferred: [qwen3.5:2b]
+  # MEASURED 114 tok/s gen / 1056 tok/s prompt vs the 4b's 78 / 549 — fewer
+  # params beat lighter quantization, so Q8_0 won on SPEED, not just quality.
+  #
+  # reasoning DELIBERATELY false despite the model supporting it: with thinking
+  # on it emitted 19,056 reasoning characters and returned EMPTY content at both
+  # max_tokens 8 and 64 (finish_reason=length). This tier answers one word; it
+  # must not think itself out of its budget.
+  reasoning: false
+  context: 32768
+  temperature: 0.0
+  num_predict: 4096
+  keep_alive: 20m
+  persona: true
+  purpose: [task classification, doc summarisation, quick edits, tool-driven lookups]
+  strengths: [tiny footprint, native tool calling, very long context, low latency]
+  weaknesses: [no FIM/insert - cannot do inline autocomplete, weaker on large refactors]
+  top_p: 0.9
+  top_k: 20
+  repeat_penalty: 1.0
+  # SAMPLING RATIONALE
+  #   temperature 0.0 — this tier emits one word. Any sampling variance is pure
+  #   downside for a classifier.
+  # THINKING: OFF, permanently, despite the model supporting it.
+  #   MEASURED: with thinking enabled qwen3.5:2b emitted 19,056 reasoning
+  #   characters and returned EMPTY content at BOTH max_tokens 8 and 64
+  #   (finish_reason=length). It thinks past its budget and never answers.
 # ── review — code review / bug & security detection ──────────────────────────
 review:
   role: Code review
@@ -160,47 +201,6 @@ completion:
   #   temperature 0.1 — infill must match surrounding style, not invent.
   # THINKING: N/A (no capability). num_predict stays small: this tier is
   #   latency-bound, and a long completion is worse than a short correct one.
-# ── fast — lightweight tool-enabled agent (NOT autocomplete) ────────────────
-# Deliberately NOT the completion tier. qwen3.5:4b has no FIM/insert capability
-# (verified against Ollama metadata: no fim_prefix/fim_suffix/fim_middle markers,
-# capabilities are completion/vision/tools/thinking with NO `insert`), so it
-# cannot serve inline autocomplete. Putting it there would break Continue/VS Code
-# infill *quietly* — the model would still answer, just never as a correct infill.
-#
-# What it IS good for: 262K context, native tool calling, and thinking, at 3.4 GB.
-# That makes it the right home for cheap agentic work that currently runs on a
-# far larger model — task classification, doc summarisation, quick single-file
-# edits — freeing implementation/architecture for real coding.
-fast:
-  role: Fast agent
-  active: qwen3.5:2b
-  preferred: [qwen3.5:2b]
-  # MEASURED 114 tok/s gen / 1056 tok/s prompt vs the 4b's 78 / 549 — fewer
-  # params beat lighter quantization, so Q8_0 won on SPEED, not just quality.
-  #
-  # reasoning DELIBERATELY false despite the model supporting it: with thinking
-  # on it emitted 19,056 reasoning characters and returned EMPTY content at both
-  # max_tokens 8 and 64 (finish_reason=length). This tier answers one word; it
-  # must not think itself out of its budget.
-  reasoning: false
-  context: 32768
-  temperature: 0.0
-  num_predict: 4096
-  keep_alive: 20m
-  persona: true
-  purpose: [task classification, doc summarisation, quick edits, tool-driven lookups]
-  strengths: [tiny footprint, native tool calling, very long context, low latency]
-  weaknesses: [no FIM/insert - cannot do inline autocomplete, weaker on large refactors]
-  top_p: 0.9
-  top_k: 20
-  repeat_penalty: 1.0
-  # SAMPLING RATIONALE
-  #   temperature 0.0 — this tier emits one word. Any sampling variance is pure
-  #   downside for a classifier.
-  # THINKING: OFF, permanently, despite the model supporting it.
-  #   MEASURED: with thinking enabled qwen3.5:2b emitted 19,056 reasoning
-  #   characters and returned EMPTY content at BOTH max_tokens 8 and 64
-  #   (finish_reason=length). It thinks past its budget and never answers.
 # ── embeddings — semantic retrieval (INFRASTRUCTURE) ─────────────────────────
 embeddings:
   role: Semantic retrieval
