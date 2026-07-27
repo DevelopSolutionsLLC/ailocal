@@ -13,8 +13,8 @@ disk_gb: 20
 
 architecture:
   role: Lead architect
-  active: qwen3-coder:30b
-  preferred: [qwen3-coder:30b, qwen2.5-coder:7b-instruct-q4_K_M]
+  active: qwen3-coder:30b-a3b-q4_K_M
+  preferred: [qwen3-coder:30b-a3b-q4_K_M, qwen2.5-coder:7b-instruct-q4_K_M]
   context: 8192
   temperature: 0.2
   keep_alive: 15m

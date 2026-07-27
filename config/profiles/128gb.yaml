@@ -5,14 +5,14 @@
 #
 # 128 GB comfortably holds all four generation models resident plus large KV caches, so every
 # capability can stay warm with generous contexts. Consider a larger backend for architecture later
-# (e.g. a 70B) once evaluated — kept at qwen3-coder:30b here since that is what is installed.
+# (e.g. a 70B) once evaluated — kept at qwen3-coder:30b-a3b-q4_K_M here since that is what is installed.
 
 disk_gb: 40
 
 architecture:
   role: Lead architect
-  active: qwen3-coder:30b
-  preferred: [qwen3-coder:30b, qwen2.5-coder:32b]
+  active: qwen3-coder:30b-a3b-q4_K_M
+  preferred: [qwen3-coder:30b-a3b-q4_K_M, qwen2.5-coder:32b]
   context: 65536
   temperature: 0.2
   keep_alive: 4h
