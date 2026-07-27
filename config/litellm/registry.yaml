@@ -165,6 +165,10 @@ routes:
 # task negotiation, a task that needs lsp gets lsp and a simple edit does not.
 namespace_expansion:
   enabled: false
+  # The tool `type` that denotes a bundle. Declared here rather than hard-coded
+  # in the negotiator: the architectural test greps that module for tool/type
+  # literals and correctly rejected `type == "namespace"` when it appeared there.
+  source_type: namespace
   # {namespace} is the bundle's own name (already "mcp__lsp"), {tool} the
   # sub-tool. The default reproduces the mcp__<server>__<tool> convention Claude
   # Code uses, which is the only convention observed in this stack.

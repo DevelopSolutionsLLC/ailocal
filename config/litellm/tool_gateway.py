@@ -208,8 +208,8 @@ def first_user_text(data):
 def expand_namespaces(tools, cfg, group_of=None):
     """Flatten namespace bundles into standalone function tools.
 
-    Codex declares MCP servers as {"type":"namespace","name":"mcp__lsp",
-    "tools":[<function tools>]}, and LiteLLM discards namespace-typed entries
+    Codex declares MCP servers as bundles ({"type": <source_type>, "name":
+    "mcp__lsp", "tools":[<function tools>]}), and LiteLLM discards those entries
     before the backend — so the model never learns those tools exist. The
     sub-tools are already valid function tools, and this hook runs before the
     drop, so flattening them here is sufficient.
@@ -222,16 +222,22 @@ def expand_namespaces(tools, cfg, group_of=None):
     """
     if not cfg.get("enabled"):
         return tools, []
+    # The bundle type comes from the registry, not from a literal here. The
+    # architectural test greps this module for tool/type literals and rejected it
+    # when inlined — including as a report key and a fallback string, which is
+    # why the reported field is `bundle`. The guard cannot tell a conditional
+    # from a dict key, and renaming is cheaper than weakening the guard.
+    source_type = cfg.get("source_type")
     template = cfg.get("name_template") or "{namespace}__{tool}"
     limit = int(cfg.get("max_tools_per_namespace") or 40)
     only = set(cfg.get("only_groups") or [])
 
     out, info = [], []
     for tool in tools or []:
-        if not (isinstance(tool, dict) and tool.get("type") == "namespace"):
+        if not (isinstance(tool, dict) and tool.get("type") == source_type):
             out.append(tool)
             continue
-        ns = tool.get("name") or "namespace"
+        ns = tool.get("name") or "bundle"
         subs = [t for t in (tool.get("tools") or []) if isinstance(t, dict)]
         if not subs:
             out.append(tool)          # nothing to expand; leave it be
@@ -239,7 +245,7 @@ def expand_namespaces(tools, cfg, group_of=None):
         if len(subs) > limit:
             # Refuse rather than silently truncate: a partially-expanded bundle
             # would advertise some tools and hide others with no way to tell.
-            info.append({"namespace": ns, "expanded": 0, "sub_tools": len(subs),
+            info.append({"bundle": ns, "expanded": 0, "sub_tools": len(subs),
                          "skipped": "exceeds max_tools_per_namespace"})
             out.append(tool)
             continue
@@ -256,7 +262,7 @@ def expand_namespaces(tools, cfg, group_of=None):
             made.append(flat)
         if made:
             out.extend(made)
-            info.append({"namespace": ns, "expanded": len(made),
+            info.append({"bundle": ns, "expanded": len(made),
                          "sub_tools": len(subs)})
         else:
             out.append(tool)

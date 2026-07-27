@@ -214,10 +214,29 @@ if os.path.exists(GATEWAY_PY):
     code = re.sub(r"#.*", "", code)
     forbidden = ["qwen", "deepseek", "claude-cli", "codex_cli", "Workflow",
                  "mcp__lsp", "mcp__grepai", "namespace", "ailocal-architecture"]
-    hits = [tok for tok in forbidden if tok in code]
+    # Match each token only as a COMPLETE quoted string, which is the shape a
+    # conditional comparison takes (`type == "namespace"`, `name == "Workflow"`).
+    #
+    # A bare substring search was too coarse: it flagged the function name
+    # expand_namespaces, the config key namespace_expansion, a
+    # `template.format(namespace=...)` kwarg and the default template
+    # "{namespace}__{tool}" — all legitimate identifiers. Renaming those to
+    # satisfy the grep would have made the code worse to read while catching
+    # nothing extra. This form still catches the real thing: an inlined
+    # `tool.get("type") == "namespace"` fails, and did.
+    hits = [tok for tok in forbidden
+            if re.search(r"""(?<![A-Za-z0-9_{])['"]%s['"]""" % re.escape(tok), code)]
     check(not hits,
-          f"tool_gateway.py executable code names no model/client/tool "
-          f"literal (found: {hits})")
+          f"tool_gateway.py executable code contains no model/client/tool "
+          f"literal as a quoted value (found: {hits})")
+
+    # Prove the guard still bites, so a future loosening cannot pass silently.
+    probe_bad = 'if tool.get("type") == "namespace": pass'
+    check(bool(re.search(r"""(?<![A-Za-z0-9_{])['"]namespace['"]""", probe_bad)),
+          "the guard still detects an inlined tool-type comparison")
+    probe_ok = 'template = "{namespace}__{tool}"'
+    check(not re.search(r"""(?<![A-Za-z0-9_{])['"]namespace['"]""", probe_ok),
+          "...and does not flag a template placeholder")
     check("registry" in code,
           "tool_gateway.py consults the registry")
 else:
