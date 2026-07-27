@@ -40,17 +40,42 @@ import sys
 
 DEFAULT_LEDGERS = "data/tool-captures/sessions"
 
-# Tools whose whole purpose is to change the tree. If these ran and nothing
-# changed, that is the pattern worth surfacing. Names span the dialects because
-# Claude Code and Codex disagree on them.
-MUTATING = {
-    "Edit", "Write", "NotebookEdit", "MultiEdit",
-    "apply_patch", "exec_command", "Bash", "write_stdin",
-}
-# Bash/exec_command are included above but are ambiguous: a session can
-# legitimately run only read-only commands. Tracked separately so the report can
-# say "possibly read-only" instead of asserting a fabrication.
-AMBIGUOUS = {"Bash", "exec_command", "write_stdin"}
+# Which tools mutate the tree is a registry fact (registry.yaml:mutating_tools),
+# because the verification pipeline and the negotiator must not disagree about
+# it. But this script runs on the HOST, where PyYAML is not installed, so the
+# registry may be unreadable here even when it is present and correct.
+#
+# Resolution: try the registry, fall back to these constants, and always REPORT
+# which source was used. A silent fallback would let the two definitions drift
+# apart invisibly — the report says "mutating-tool source: builtin fallback" so
+# a divergence is visible rather than assumed away.
+_FALLBACK_DEFINITE = {"Edit", "Write", "NotebookEdit", "MultiEdit", "apply_patch"}
+_FALLBACK_AMBIGUOUS = {"Bash", "exec_command", "write_stdin"}
+
+REGISTRY_YAML = os.environ.get(
+    "AILOCAL_REGISTRY_HOST",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                 "config/litellm/registry.yaml"))
+
+
+def mutating_sets():
+    """(definite, ambiguous, source). `source` is reported, never hidden."""
+    try:
+        import yaml
+        with open(REGISTRY_YAML, encoding="utf-8") as f:
+            spec = (yaml.safe_load(f) or {}).get("mutating_tools") or {}
+        definite = set(spec.get("definite") or [])
+        ambiguous = set(spec.get("ambiguous") or [])
+        if definite:
+            return definite, ambiguous, "registry.yaml"
+        return (_FALLBACK_DEFINITE, _FALLBACK_AMBIGUOUS,
+                "builtin fallback (registry had no mutating_tools)")
+    except ImportError:
+        return (_FALLBACK_DEFINITE, _FALLBACK_AMBIGUOUS,
+                "builtin fallback (PyYAML absent on host)")
+    except Exception as exc:
+        return (_FALLBACK_DEFINITE, _FALLBACK_AMBIGUOUS,
+                f"builtin fallback (registry unreadable: {type(exc).__name__})")
 
 
 def run(cmd, cwd, shell=False):
@@ -172,8 +197,10 @@ def main():
     print()
     findings = []
     called = set(led.get("tool_calls_by_name") or {})
-    mutators = called & MUTATING
-    definite = mutators - AMBIGUOUS
+    definite_set, ambiguous_set, mut_source = mutating_sets()
+    mutators = called & (definite_set | ambiguous_set)
+    definite = mutators & definite_set
+    print(f"mutating-tool source: {mut_source}")
 
     if git is not None and git["changed_paths"] == 0:
         if definite:

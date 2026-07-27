@@ -1,62 +1,58 @@
 """
-tool_gateway.py — LiteLLM pre-call hook that measures (and, when explicitly
-enabled, filters) the tool payload every client ships on every turn.
+tool_gateway.py — the Local Agent Gateway's capability negotiator.
 
-WHY THIS EXISTS
----------------
-Frontier agent clients declare their whole tool surface on turn 1, before they
-know what the task needs. Claude Code sends its full builtin set plus every MCP
-tool; Codex sends its own. Against a frontier model that cost is amortised. On a
-local 30B on Apple Silicon it is paid in prompt-eval time on the very first
-token of every session, and it competes for a context window that is 16K-64K,
-not 200K. This hook is the translation layer between "frontier agent protocol"
-and "what this local model can actually use".
+    incoming request -> inspect client -> inspect model -> inspect tools
+                     -> select compatible subset -> forward
 
-MODES (env AILOCAL_TOOL_GATEWAY, default "off")
------------------------------------------------
-  off     — hook returns immediately. No measurement, no mutation. THE DEFAULT.
-  report  — measure and emit metrics. Never mutates the request. Savings are
-            reported as HYPOTHETICAL: what a filter *would* have removed.
-  filter  — measure, then actually apply the allowlist to data["tools"].
+This module contains NO knowledge of any specific model, client, tool or route.
+Every such fact lives in config/litellm/registry.yaml and is reached through
+capability_registry.py. That is enforced, not merely intended:
+scripts/test-capability-registry.py greps this file's executable code for model,
+client and tool literals and fails if it finds any. If a fact about a model
+belongs anywhere, it belongs in the registry.
 
-The mode is read per-request, not cached at import, so it can be flipped by
-restarting the container without editing code.
+WHY THE GATEWAY, NOT THE MODEL, IS THE SUBJECT
+----------------------------------------------
+Earlier revisions were built around "make the local model work", which put model
+assumptions into code. This one is built around the boundary. A model the
+registry marks `passthrough` — any frontier/cloud model — is measured and
+forwarded untouched, no matter what the feature flags say. A local model is
+optimised aggressively. Swapping either is a registry edit.
 
-HONESTY OF THE NUMBERS
-----------------------
-  bytes   — EXACT. len() of the canonical JSON encoding of each tool schema,
-            separators=(",",":"). Deterministic and independently checkable;
-            this is the number the known-answer tests pin.
-  tokens  — ESTIMATE. litellm's token_counter selects `openai_tokenizer`
-            (cl100k) even for ollama_chat/qwen3-coder — verified, not assumed.
-            Qwen's own tokenizer is not available in this container, so every
-            token figure here is an OpenAI-tokenizer proxy for a Qwen model and
-            is labelled `tokens_est` with `tokenizer: "cl100k-proxy"` in the
-            metric.
+MODES (env AILOCAL_TOOL_GATEWAY, read per-request)
+--------------------------------------------------
+  off     hook returns immediately. Nothing measured, nothing changed. DEFAULT.
+  report  measure and log. NEVER mutates the request.
+  filter  measure, then remove the negotiated-away tools.
 
-            MEASURED, 2026-07-26, via scripts/calibrate-tokens.py against
-            Ollama's real prompt_eval_count on qwen3-coder:30b-a3b-q4_K_M, using
-            the actual captured payloads:
+An unrecognised value is reported and treated as off — never silently coerced,
+because a typo'd env var that quietly disables a safety layer is indistinguishable
+from the layer working.
 
-              claude-code /v1/messages   cl100k 23,937  real 24,448  ratio 1.021
-              codex       /v1/responses  cl100k  7,953  real  8,026  ratio 1.009
+WHAT IT REFUSES TO CLAIM
+------------------------
+`bytes_dropped` counts only tools that would otherwise have REACHED the backend.
+LiteLLM discards some tool types itself during dialect translation (which types
+is a registry fact, per route). Counting those would credit this gateway with
+work already done — measured, that is the difference between a 71% and an 18%
+figure on one real client. They are reported separately as
+`bytes_prefiltered_by_litellm` and `bytes_dropped_moot`.
 
-            So cl100k UNDER-counts Qwen by 1-2% on tool-schema JSON. tokens_est
-            is therefore usable as a working figure for this payload shape, and
-            slightly conservative. It is still an estimate: re-run the
-            calibration after a model change before trusting it again.
+Token figures come from litellm's counter, which selects the cl100k tokenizer
+even for a non-OpenAI backend. Calibrated against Ollama's real
+prompt_eval_count at 1.009-1.021 (scripts/calibrate-tokens.py), so the estimate
+under-counts by 1-2% on tool-schema JSON. Labelled `cl100k-proxy` in every
+record; re-calibrate after a model change.
 
-The measurement refuses to report savings it cannot ground: with no policy file
-loaded, it emits the inventory only and sets `policy: "none"`. An absent policy
-must never read as "nothing to save".
+FAIL-OPEN, EVERYWHERE
+---------------------
+No registry, an unparseable registry, an unknown client, an unknown model, an
+unnamed tool entry: each results in forwarding the request unchanged. A
+capability layer that fails closed turns a config mistake into a client that has
+silently lost its tools.
 
-METRICS
--------
-One JSON line per request on stdout, prefixed `tool_gateway_metric ` — the same
-convention tool_repair.py uses, and for the same reason: LiteLLM filters
-third-party loggers, so print() is what actually survives to `docker logs`.
-
-Registered via litellm_settings.callbacks: tool_gateway.proxy_handler_instance
+Registered LAST in litellm_settings.callbacks, after websearch_interception, so
+that interception always sees the client's full tool list.
 Ref: https://docs.litellm.ai/docs/proxy/call_hooks
 """
 
@@ -66,36 +62,52 @@ import time
 
 from litellm.integrations.custom_logger import CustomLogger
 
-# ── Configuration (read per-request; see module docstring) ───────────────────
+
+def _load_registry_module():
+    """Import capability_registry.py as a SIBLING FILE, by path.
+
+    LiteLLM loads callbacks with importlib.spec_from_file_location, which does
+    NOT put the module's directory on sys.path. So `from capability_registry
+    import Registry` raises ModuleNotFoundError at proxy boot and takes the whole
+    container down — measured, by doing exactly that. Neither does a package
+    import work: /app/config is not a package.
+
+    Resolving relative to __file__ is the only form that holds under all three
+    load paths: the proxy's file loader, a direct `python tool_gateway.py`, and
+    a test harness that loads it by path from the repo.
+    """
+    import importlib.util
+    import sys as _sys
+    if "capability_registry" in _sys.modules:
+        return _sys.modules["capability_registry"]
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "capability_registry.py")
+    spec = importlib.util.spec_from_file_location("capability_registry", path)
+    module = importlib.util.module_from_spec(spec)
+    # Registered before exec so a circular import cannot re-enter this loader.
+    _sys.modules["capability_registry"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+Registry = _load_registry_module().Registry
+
 MODE_ENV = "AILOCAL_TOOL_GATEWAY"
 VALID_MODES = ("off", "report", "filter")
-POLICY_PATH = os.environ.get(
-    "AILOCAL_TOOL_POLICY", "/app/config/tool-policy.yaml")
 CAPTURE_DIR = os.environ.get("AILOCAL_TOOL_GATEWAY_CAPTURE") or ""
 
-# Canonical JSON encoding used for every byte measurement. Fixed here so the
-# hook, the tests, and any offline analysis all count the same bytes.
+
 def encode(obj):
-    """The one canonical encoding. Byte counts are only comparable if every
-    call site uses this — separators and ensure_ascii both change the length."""
+    """The one canonical encoding. Byte counts are only comparable if every call
+    site uses this — separators, ensure_ascii and key order all change length."""
     return json.dumps(obj, separators=(",", ":"), ensure_ascii=False,
                       sort_keys=True, default=str)
 
 
-def mode():
-    """Current mode, validated. An unrecognised value is NOT silently treated
-    as 'off' — that would be exactly the kind of quiet fallback that hides a
-    typo'd env var for weeks. It is reported, then treated as off."""
-    raw = (os.environ.get(MODE_ENV) or "off").strip().lower()
-    if raw not in VALID_MODES:
-        emit({"event": "bad_mode", "value": raw, "using": "off"})
-        return "off"
-    return raw
-
-
 def emit(record):
-    """One metric line to stdout. Never raises — a measurement layer that can
-    break the request path is worse than no measurement layer."""
+    """One metric line to stdout. print(), not logging: LiteLLM filters
+    third-party loggers, so this is what survives to `docker logs`. Never
+    raises — a measurement layer must not be able to break the request path."""
     try:
         print("tool_gateway_metric " + json.dumps(record, default=str),
               flush=True)
@@ -103,22 +115,24 @@ def emit(record):
         pass
 
 
-# ── Tool-shape normalisation ─────────────────────────────────────────────────
-# The same logical tool arrives in three different envelopes depending on which
-# API dialect the client speaks. All three put the array at data["tools"];
-# they disagree on everything inside it.
-#
-#   /v1/messages        {"name":…, "description":…, "input_schema":{…}}
-#   /v1/chat/completions {"type":"function","function":{"name":…,"parameters":{…}}}
-#   /v1/responses       {"type":"function","name":…,"parameters":{…}}
-#
-# /v1/responses also carries non-function entries (type "namespace",
-# "web_search", …) that have no name at all. Those are real payload weight and
-# must be counted, so they get a bracketed pseudo-name rather than being
-# dropped from the inventory.
+def mode():
+    raw = (os.environ.get(MODE_ENV) or "off").strip().lower()
+    if raw not in VALID_MODES:
+        emit({"event": "bad_mode", "value": raw, "using": "off"})
+        return "off"
+    return raw
+
+
+# ── Tool-shape normalisation ────────────────────────────────────────────────
+# All three dialects put the array at data["tools"] and disagree about the
+# contents. The registry documents the shapes; the gateway only needs a logical
+# name and a byte count, so this stays dialect-agnostic by construction.
 
 def tool_name(tool):
-    """Logical name of a tool entry, whatever envelope it arrived in."""
+    """Logical name, whatever envelope the entry arrived in. Entries with no
+    name at all (a bare {"type":"web_search"}) get a bracketed pseudo-name so
+    they are still counted — they are real payload weight — and the registry
+    treats bracketed names as protected."""
     if not isinstance(tool, dict):
         return "<malformed>"
     fn = tool.get("function")
@@ -130,85 +144,13 @@ def tool_name(tool):
 
 
 def tool_bytes(tool):
-    """Exact wire cost of one tool entry under the canonical encoding."""
     return len(encode(tool).encode("utf-8"))
 
 
-# Tool types LiteLLM itself discards when translating /v1/responses into Chat
-# Completions, because they have no Chat Completions equivalent. Verbatim from
-# litellm/responses/litellm_completion_transformation/transformation.py:1309 on
-# the 1.93.0 image we run — not inferred from the log message.
-#
-# This matters for honesty, not just completeness. Codex's largest declarations
-# are `namespace` bundles (mcp__lsp, mcp__grepai, multi_agent_v1 — 27,168 B of a
-# 38,388 B payload in the captured session). LiteLLM already drops all three, so
-# they never reach Ollama and never cost a prompt-eval token. A gateway that
-# counted them as "saved" would be claiming credit for work already done, and
-# would report a ~71% Codex reduction that does not exist at the model.
-#
-# Consequence worth naming: through Codex, the mcp__lsp and mcp__grepai
-# namespaces do not reach the local model at all. Codex being *configured* with
-# them is not the same as the model being able to call them.
-RESPONSES_DROPPED_TYPES = ("computer_use", "image_generation", "namespace",
-                           "shell")
-
-
-def reaches_backend(tool, route):
-    """Whether this entry survives LiteLLM's own translation to the backend.
-    Only /v1/responses does this filtering; the other two routes pass tools
-    through, so everything counts there."""
-    if route != "/v1/responses":
-        return True
-    if not isinstance(tool, dict):
-        return True
-    return tool.get("type") not in RESPONSES_DROPPED_TYPES
-
-
-def inventory(tools):
-    """[(name, bytes)] for every declared tool, in declaration order."""
-    return [(tool_name(t), tool_bytes(t)) for t in (tools or [])]
-
-
-# ── Client detection ─────────────────────────────────────────────────────────
-# Best-effort, and it says so. LiteLLM stashes the raw inbound request under
-# data["proxy_server_request"]; the headers there are the only honest signal
-# about who is calling. When they are absent or unrecognised the client is
-# "unknown" — never guessed from the model name, which is an alias any client
-# can request.
-
-def detect_client(data):
-    req = (data or {}).get("proxy_server_request") or {}
-    headers = {k.lower(): v for k, v in (req.get("headers") or {}).items()}
-    ua = str(headers.get("user-agent") or "").lower()
-    originator = str(headers.get("originator") or "").lower()
-
-    if "codex" in originator or "codex" in ua:
-        return "codex"
-    if "claude-cli" in ua or headers.get("x-app") == "cli":
-        return "claude-code"
-    if "continue" in ua:
-        return "continue"
-    if "vscode" in ua or "copilot" in ua:
-        return "copilot"
-    return "unknown"
-
-
-def detect_route(data, call_type):
-    """Which API dialect this arrived on. call_type is authoritative when it
-    distinguishes; the payload shape settles the OpenAI-family ambiguity."""
-    if call_type == "anthropic_messages":
-        return "/v1/messages"
-    if "input" in (data or {}):
-        return "/v1/responses"
-    return "/v1/chat/completions"
-
-
-# ── Token estimation ─────────────────────────────────────────────────────────
-
 def tokens_est(text, model=None):
-    """cl100k-proxy token estimate. Returns None rather than a fabricated
-    number when the counter is unavailable — a missing measurement and a
-    measurement of zero are not the same thing."""
+    """cl100k-proxy estimate. Returns None rather than a fabricated number when
+    the counter is unavailable: a missing measurement and a measurement of zero
+    are not the same thing."""
     try:
         import litellm
         return litellm.token_counter(model=model or "gpt-4o", text=text)
@@ -216,224 +158,126 @@ def tokens_est(text, model=None):
         return None
 
 
-# ── Policy ───────────────────────────────────────────────────────────────────
-
-class Policy:
-    """Allowlist loaded from config/tool-policy.yaml. Absent file == no policy,
-    which means the gateway reports inventory only and never claims savings."""
-
-    def __init__(self, path=POLICY_PATH):
-        self.path = path
-        self.loaded = False
-        # `state` distinguishes the three ways there can be no policy, because
-        # they demand different responses: "absent" is the expected default,
-        # "unavailable" is a broken image, "error" is a broken policy file.
-        # Collapsing them into one flag is how a corrupt policy gets mistaken
-        # for a deliberately empty one.
-        self.state = "absent"
-        self.error = None
-        self.groups = {}     # group name -> [tool name or prefix]
-        self.rules = []      # [{match:{client,capability}, allow:[group]}]
-        self._load()
-
-    def _load(self):
-        try:
-            import yaml
-        except ImportError:
-            self.state = "unavailable"
-            self.error = "PyYAML not importable"
-            emit({"event": "policy_load_failed", "path": self.path,
-                  "state": self.state, "error": self.error})
-            return
-        try:
-            with open(self.path, encoding="utf-8") as f:
-                doc = yaml.safe_load(f) or {}
-        except FileNotFoundError:
-            self.state = "absent"
-            return
-        except Exception as exc:
-            self.state = "error"
-            self.error = "%s: %s" % (type(exc).__name__, exc)
-            emit({"event": "policy_load_failed", "path": self.path,
-                  "state": self.state, "error": self.error})
-            return
-        self.groups = dict(doc.get("groups") or {})
-        self.rules = list(doc.get("rules") or [])
-        self.loaded = True
-        self.state = "loaded"
-
-    def allowed_names(self, client, capability):
-        """Resolved set of allowed tool names/prefixes for this combination, or
-        None when no rule matches — None means 'no opinion', which the caller
-        must treat as allow-all, not deny-all."""
-        if not self.loaded:
-            return None
-        for rule in self.rules:
-            match = rule.get("match") or {}
-            if match.get("client") not in (None, "*", client):
-                continue
-            if match.get("capability") not in (None, "*", capability):
-                continue
-            names = []
-            for group in rule.get("allow") or []:
-                names.extend(self.groups.get(group) or [])
-            return set(names)
-        return None
-
-    def permits(self, name, allowed):
-        """A tool is permitted if allowed is None (no opinion), if it is named
-        exactly, or if a listed entry ends in '*' and prefixes it.
-
-        Entries the gateway could not name — `<web_search>`, `<namespace>`,
-        `<unknown>` — are ALWAYS permitted. A policy is written in terms of tool
-        names, so it cannot have formed an intent about an entry that has none,
-        and dropping one would be acting on an opinion nobody expressed.
-
-        This is not hypothetical. Codex declares web search as a bare
-        {"type":"web_search"} with no name; it normalises to `<web_search>`, and
-        an earlier revision dropped it. That would have removed the tool
-        LiteLLM's websearch_interception rewrites into a SearXNG call — web
-        search would have failed silently, which is the worst possible failure
-        mode for a change sold as a performance optimisation. Caught by
-        replaying a real captured payload, not by a unit test."""
-        if allowed is None:
-            return True
-        if name.startswith("<") and name.endswith(">"):
-            return True
-        if name in allowed:
-            return True
-        return any(a.endswith("*") and name.startswith(a[:-1]) for a in allowed)
-
-
-# ── Capability resolution ────────────────────────────────────────────────────
-# Reuses the same alias -> capability mapping persona_injector.py relies on, for
-# the same reason: the requested model is a client-facing compat name, and the
-# policy has to key off the capability behind it.
-
-def load_alias_map(config_path=None):
-    path = config_path or os.environ.get(
-        "AILOCAL_CONFIG_PATH", "/app/config/config.yaml")
-    try:
-        import yaml
-        with open(path, encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
-        return dict((cfg.get("router_settings") or {}).get(
-            "model_group_alias") or {})
-    except Exception:
-        return {}
-
-
-def capability_of(model, alias):
-    name = alias.get(model, model) or ""
-    return name[len("ailocal-"):] if name.startswith("ailocal-") else name
-
-
-# ── The hook ─────────────────────────────────────────────────────────────────
-
 class ToolGateway(CustomLogger):
 
-    def __init__(self, policy=None, alias=None):
+    def __init__(self, registry=None):
         super().__init__()
-        self.policy = policy if policy is not None else Policy()
-        self.alias = alias if alias is not None else load_alias_map()
+        self.registry = registry if registry is not None else Registry()
+        emit({"event": "gateway_init", "registry": self.registry.describe()})
 
-    # -- measurement (pure; the tests call this directly) --------------------
-    def measure(self, data, call_type=None):
-        """Inventory the request's tool payload and compute what the policy
-        would remove. Pure: takes a request dict, returns a report, mutates
-        nothing. FILTER mode applies the result; REPORT mode only prints it."""
+    # ── negotiation (pure: takes a request, returns a decision) ─────────────
+    def negotiate(self, data, call_type=None):
+        """Decide which tools to forward. Mutates nothing; the caller applies.
+
+        Returns (report, keep) where keep is the list of surviving tool dicts in
+        declaration order.
+        """
+        reg = self.registry
         tools = (data or {}).get("tools") or []
         model = (data or {}).get("model")
-        client = detect_client(data)
-        route = detect_route(data, call_type)
-        capability = capability_of(model, self.alias)
 
-        items = inventory(tools)
-        total_bytes = sum(b for _, b in items)
+        headers = ((data or {}).get("proxy_server_request") or {}).get("headers")
+        client = reg.detect_client(headers)
+        route = reg.route_for_call_type(call_type, "input" in (data or {}))
+        capability = reg.capability_of(model)
+        model_class, _ = reg.model_class(model)
+        passthrough = reg.is_passthrough(model)
 
-        # Split off what LiteLLM discards on its own before attributing any
-        # saving to this gateway. `reachable` is the payload that actually costs
-        # the model prompt-eval time, and it is the only base against which a
-        # reduction claim means anything.
-        reachable = [(t, n, s) for t, (n, s) in zip(tools, items)
-                     if reaches_backend(t, route)]
-        reachable_bytes = sum(s for _, _, s in reachable)
-        prefiltered_bytes = total_bytes - reachable_bytes
+        names = [tool_name(t) for t in tools]
+        sizes = [tool_bytes(t) for t in tools]
+        total_bytes = sum(sizes)
 
-        allowed = self.policy.allowed_names(client, capability)
+        def reaches(tool):
+            """Whether LiteLLM forwards this entry to the backend on this route."""
+            ttype = tool.get("type") if isinstance(tool, dict) else None
+            return not reg.route_drops_type(route, ttype)
+
+        reachable_bytes = sum(s for t, s in zip(tools, sizes) if reaches(t))
+        prefiltered = total_bytes - reachable_bytes
+
+        # The decision. A tool is removed only when the model declares no tool
+        # support at all, or when its group is removable for this (client, model)
+        # pair AND it is not protected. Passthrough short-circuits everything.
+        removable = set() if passthrough else reg.removable_groups(client, model)
+        supports_tools = reg.supports(model, "tools")
+
         keep, drop = [], []
-        for tool, (name, size) in zip(tools, items):
-            (keep if self.policy.permits(name, allowed) else drop).append(
-                (name, size, tool))
+        for tool, name, size in zip(tools, names, sizes):
+            if passthrough:
+                verdict = True
+            elif supports_tools is False:
+                # A model that cannot use tools should not be sent schemas at
+                # all. Protected entries still survive: web search is rewritten
+                # by another layer before the model is involved.
+                verdict = reg.is_protected(name)
+            elif reg.is_protected(name):
+                verdict = True
+            else:
+                verdict = reg.group_of(name) not in removable
+            (keep if verdict else drop).append((name, size, tool))
 
         kept_bytes = sum(s for _, s, _ in keep)
-        # Only bytes that would otherwise have reached the backend count as a
-        # saving. Dropping something LiteLLM was going to drop anyway saves the
-        # model nothing.
-        dropped_bytes = sum(s for n, s, t in drop if reaches_backend(t, route))
-        dropped_bytes_moot = sum(s for n, s, t in drop
-                                 if not reaches_backend(t, route))
-
-        # Whole-array encodings, so the token estimate reflects the actual
-        # serialised payload rather than the sum of per-tool estimates (which
-        # would double-count nothing but round differently).
-        all_json = encode(tools)
-        kept_json = encode([t for _, _, t in keep])
+        dropped_bytes = sum(s for _, s, t in drop if reaches(t))
+        dropped_moot = sum(s for _, s, t in drop if not reaches(t))
 
         report = {
             "route": route,
             "client": client,
             "model": model,
             "capability": capability,
-            "policy": self.policy.state,
-            "tools_in": len(items),
+            "model_class": model_class,
+            "passthrough": passthrough,
+            "registry": reg.state,
+            "max_context": reg.max_context(model),
+            "removable_groups": sorted(removable),
+            "tools_in": len(tools),
             "bytes_in": total_bytes,
-            # What survives LiteLLM's own translation — the real cost base.
-            "tools_reachable": len(reachable),
+            "tools_reachable": sum(1 for t in tools if reaches(t)),
             "bytes_reachable": reachable_bytes,
-            "bytes_prefiltered_by_litellm": prefiltered_bytes,
+            "bytes_prefiltered_by_litellm": prefiltered,
             "tools_kept": len(keep),
             "tools_dropped": len(drop),
             "bytes_kept": kept_bytes,
-            # Saving attributable to THIS gateway (reachable bytes only)...
             "bytes_dropped": dropped_bytes,
-            # ...versus bytes it would drop that LiteLLM discards regardless.
-            "bytes_dropped_moot": dropped_bytes_moot,
-            "tokens_est_in": tokens_est(all_json, model),
-            "tokens_est_kept": tokens_est(kept_json, model),
+            "bytes_dropped_moot": dropped_moot,
+            "tokens_est_in": tokens_est(encode(tools), model),
+            "tokens_est_kept": tokens_est(encode([t for _, _, t in keep]), model),
             "tokenizer": "cl100k-proxy",
             "dropped_names": sorted(n for n, _, _ in drop),
-            # Per-tool inventory: the input to any policy decision. Sorted by
-            # cost, because that is the order in which trimming pays.
-            "largest": sorted(items, key=lambda p: -p[1])[:10],
+            "dropped_groups": sorted({reg.group_of(n) or "ungrouped"
+                                      for n, _, _ in drop}),
+            "largest": sorted(zip(names, sizes), key=lambda p: -p[1])[:10],
         }
-        if not self.policy.loaded:
-            # No policy: the inventory stands, the savings do not exist. Say so
-            # in the record itself so a downstream reader cannot mistake a
-            # zero-drop report for "measured, nothing to save".
-            report["savings_claim"] = "none — policy %s" % self.policy.state
+        if passthrough:
+            report["savings_claim"] = (
+                "none — model class is passthrough; measured and forwarded "
+                "unchanged by design")
+        elif not reg.loaded:
+            report["savings_claim"] = "none — registry %s" % reg.state
+        elif not removable and supports_tools is not False:
+            report["savings_claim"] = (
+                "none — no group is removable for this client/model pair")
         return report, keep
 
-    # -- capture -------------------------------------------------------------
+    # ── capture ────────────────────────────────────────────────────────────
     def capture(self, data, report):
-        """Write the raw tool payload to disk for offline analysis. This is how
-        real Claude Code / Codex payloads get into the test corpus — captured
-        from the live path, never hand-written to look plausible."""
+        """Dump the raw tool payload for offline analysis. This is how real
+        client payloads enter the test corpus — captured from the live path,
+        never hand-written to look plausible."""
         if not CAPTURE_DIR:
             return
         try:
             os.makedirs(CAPTURE_DIR, exist_ok=True)
             stamp = "%d-%s-%s" % (time.time() * 1000, report["client"],
                                   report["route"].strip("/").replace("/", "-"))
-            path = os.path.join(CAPTURE_DIR, stamp + ".json")
-            with open(path, "w", encoding="utf-8") as f:
+            with open(os.path.join(CAPTURE_DIR, stamp + ".json"), "w",
+                      encoding="utf-8") as f:
                 json.dump({"report": report, "tools": data.get("tools") or [],
-                           "model": data.get("model")}, f, indent=2,
-                          default=str)
+                           "model": data.get("model")}, f, indent=2, default=str)
         except Exception as exc:
             emit({"event": "capture_failed", "error": str(exc)})
 
-    # -- LiteLLM entrypoint --------------------------------------------------
+    # ── LiteLLM entrypoint ─────────────────────────────────────────────────
     async def async_pre_call_hook(self, user_api_key_dict, cache, data,
                                   call_type):
         current = mode()
@@ -443,16 +287,22 @@ class ToolGateway(CustomLogger):
             return data
 
         started = time.perf_counter()
-        report, keep = self.measure(data, call_type)
-        report["mode"] = current
-        report["overhead_ms"] = round(
-            (time.perf_counter() - started) * 1000, 3)
+        try:
+            report, keep = self.negotiate(data, call_type)
+        except Exception as exc:
+            # Negotiation failing must not fail the request.
+            emit({"event": "negotiate_failed",
+                  "error": "%s: %s" % (type(exc).__name__, exc)})
+            return data
 
-        if current == "filter" and report["tools_dropped"]:
+        report["mode"] = current
+        report["overhead_ms"] = round((time.perf_counter() - started) * 1000, 3)
+
+        applied = (current == "filter" and report["tools_dropped"] > 0
+                   and not report["passthrough"])
+        if applied:
             data["tools"] = [t for _, _, t in keep]
-            report["applied"] = True
-        else:
-            report["applied"] = False
+        report["applied"] = applied
 
         emit(report)
         self.capture(data, report)
