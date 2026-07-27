@@ -220,6 +220,12 @@ def gen_role_block(role, info):
             f"      max_tokens: {num_ctx}",
             f"      input_cost_per_token: 0",
             f"      output_cost_per_token: 0",
+            # Same reason as the chat branch: without these LiteLLM logs
+            # "not in built-in cost map ... cache cost fields will default to 0"
+            # at boot. Zero is the truthful value for a local model, not invented
+            # pricing. Cost accounting only; no effect on routing or inference.
+            f"      cache_creation_input_token_cost: 0",
+            f"      cache_read_input_token_cost: 0",
         ]
         return "\n".join(lines) + "\n"
 
@@ -277,6 +283,15 @@ def gen_role_block(role, info):
         f"      supports_system_messages: true",
         f"      supports_native_streaming: true",
         f"      supports_reasoning: {'true' if reasoning else 'false'}",
+        # Local models are free. Without these four fields LiteLLM's cost layer
+        # logs "not in built-in cost map ... cache cost fields will default to 0"
+        # for every model at boot. Purely cosmetic — it affects cost accounting
+        # only, never routing, tools, MCP, LSP or inference — but it buries real
+        # warnings in noise. Zeros are the truthful value here: nothing is billed.
+        f"      input_cost_per_token: 0",
+        f"      output_cost_per_token: 0",
+        f"      cache_creation_input_token_cost: 0",
+        f"      cache_read_input_token_cost: 0",
     ]
     if vision:
         mi += ["      supports_vision: true", "      supports_pdf_input: true"]

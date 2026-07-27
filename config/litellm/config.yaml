@@ -57,6 +57,10 @@ model_list:
       supports_system_messages: true
       supports_native_streaming: true
       supports_reasoning: false
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+      cache_creation_input_token_cost: 0
+      cache_read_input_token_cost: 0
       max_input_tokens: 65536
       max_output_tokens: 16384
       input_cost_per_token: 0
@@ -83,6 +87,10 @@ model_list:
       supports_system_messages: true
       supports_native_streaming: true
       supports_reasoning: false
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+      cache_creation_input_token_cost: 0
+      cache_read_input_token_cost: 0
       max_input_tokens: 16384
       max_output_tokens: 4096
       input_cost_per_token: 0
@@ -108,6 +116,10 @@ model_list:
       supports_system_messages: true
       supports_native_streaming: true
       supports_reasoning: true
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+      cache_creation_input_token_cost: 0
+      cache_read_input_token_cost: 0
       max_input_tokens: 16384
       max_output_tokens: 4096
       input_cost_per_token: 0
@@ -134,6 +146,10 @@ model_list:
       supports_system_messages: true
       supports_native_streaming: true
       supports_reasoning: false
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+      cache_creation_input_token_cost: 0
+      cache_read_input_token_cost: 0
       max_input_tokens: 4096
       max_output_tokens: 1024
       input_cost_per_token: 0
@@ -160,6 +176,10 @@ model_list:
       supports_system_messages: true
       supports_native_streaming: true
       supports_reasoning: false
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+      cache_creation_input_token_cost: 0
+      cache_read_input_token_cost: 0
       max_input_tokens: 32768
       max_output_tokens: 8192
       input_cost_per_token: 0
@@ -176,6 +196,8 @@ model_list:
       max_tokens: 8192
       input_cost_per_token: 0
       output_cost_per_token: 0
+      cache_creation_input_token_cost: 0
+      cache_read_input_token_cost: 0
 
   # >>> END GENERATED model_list <<<
 
