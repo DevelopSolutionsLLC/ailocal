@@ -56,11 +56,12 @@ architecture:
 # ── implementation — everyday working coder ──────────────────────────────────
 implementation:
   role: Daily coding
-  active: qwen3-coder:30b-a3b-q4_K_M
-  # Same MoE as architecture, smaller window. Deliberately NOT a second, weaker
-  # model: a "cheap coding tier" nobody routes to is complexity without benefit.
-  preferred: [qwen3-coder:30b-a3b-q4_K_M]
-  reasoning: false
+  active: qwen2.5-coder:14b-instruct-q4_K_M
+  # A genuinely separate tier from architecture: dedicated everyday coding at a
+  # smaller footprint, so the 64K MoE is not tied up on routine edits.
+  # VERIFIED capabilities: tools YES, insert YES, thinking NO.
+  preferred: [qwen2.5-coder:14b-instruct-q4_K_M, qwen3-coder:30b-a3b-q4_K_M]
+  reasoning: false         # VERIFIED: no `thinking` capability
   context: 16384
   temperature: 0.2
   num_predict: -1
