@@ -86,8 +86,14 @@ run_arm() {
   # produced a baseline row with bytes_reachable=0 (a value the current module
   # cannot emit) and went unnoticed until the field was cross-checked.
   start=$(python3 -c 'import time;print(time.time())')
-  zsh -ic "cd '$WORKDIR' && claude-local -p '$PROMPT' --max-turns 4" \
-    > "$log" 2>&1 || true
+  # --permission-mode acceptEdits: without it, a non-interactive `claude -p`
+  # cannot be granted write permission, so every mutating tool call returns
+  # "Claude requested permissions to write ... but you haven't granted it yet".
+  # That looked exactly like the model failing to edit — the tool calls were
+  # in fact perfectly formed. A benchmark of a coding agent that cannot write
+  # measures the wrong thing.
+  zsh -ic "cd '$WORKDIR' && claude-local -p '$PROMPT' --max-turns 4 \
+    --permission-mode acceptEdits" > "$log" 2>&1 || true
   end=$(python3 -c 'import time;print(time.time())')
   python3 -c "print(f'{$end-$start:.1f}')"
 }

@@ -230,6 +230,55 @@ content.
 
 ---
 
+## Session observation (Step 6)
+
+Two halves, deliberately split across the container boundary:
+
+- **`config/litellm/session_observer.py`** — proxy-side. Records what a session
+  asked for and which tools it called, to a ledger under
+  `data/tool-captures/sessions/`. Off unless `AILOCAL_SESSION_LEDGER` is set.
+  Purely observational: it never mutates a request and never touches client
+  conversation state.
+- **`scripts/verify-session.py`** — host-side. Pairs the ledger with the git
+  delta and an optional test command, and reports. The proxy container cannot
+  see the repository, so a verification layer living entirely there could only
+  check the model against its own claims.
+
+The mechanism that makes the observer small: agent clients are stateless over
+HTTP and re-send the whole conversation each turn, so **one pre-call
+observation carries the complete history**. No response hooks, no stream
+buffering, no turn correlation.
+
+Validated on real sessions, in both directions:
+
+| Session | Tools | Tree | Test | Verdict |
+|---|---|---|---|---|
+| no write permission granted | `Edit` ran, 2 errors | unchanged | fail | `SUSPICIOUS`, exit 2 |
+| permission granted | `Read`+`Edit`, 0 errors | 1 file changed | passes | no findings, exit 0 |
+
+Both runs had FILTER active (41 tools). The second completed the task in two
+clean tool calls — evidence that filtering does not regress tool execution.
+
+### What it refuses to conclude
+
+- **It does not claim causation.** A delta proves the tree changed while the
+  session ran, not that the session caused it.
+- **`SUSPICIOUS` and `INCONCLUSIVE` are distinct.** `Bash`/`exec_command` with
+  no delta is genuinely ambiguous — a session may legitimately only read.
+- **"Not a git repo" returns nothing, not an empty delta.** *Cannot verify*
+  must not render as *verified clean*.
+- **On `/v1/chat/completions`, a tool result's status is `None`, not success.**
+  That route has no error flag; absence of one is not evidence.
+
+That restraint paid for itself immediately. The first real session showed
+`Edit` running with an unchanged tree, which looks exactly like fabrication.
+The report offered alternatives rather than a verdict — and the true cause was
+a fourth one it had not listed: a non-interactive `claude -p` cannot be granted
+write permission, so the tool was blocked by the harness. The model's `Edit`
+call was correct on the first attempt, and it noticed the error and retried
+rather than narrating success. A tool that had asserted "the model fabricated
+this" would have been confidently wrong about both the model and the cause.
+
 ## Enabling FILTER
 
 It is off in the committed default on purpose: FILTER changes what the model
