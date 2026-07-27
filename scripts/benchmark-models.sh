@@ -167,6 +167,7 @@ make_fixture
 for model in ${MODELS//,/ }; do
   echo
   echo "── $model ──────────────────────────────────────────────────────────"
+  MEM_BEFORE=$(python3 "$ROOT/scripts/lib/bench_memory.py" snapshot)
   for run in $(seq 1 "$RUNS"); do
     make_fixture
 
@@ -211,16 +212,41 @@ for c in d['tool_calls']:
     STOP=$(printf '%s' "$r3" | python3 -c "import sys,json;print(json.load(sys.stdin)['stop_reason'])")
     TERM=$(printf '%s' "$r3" | python3 -c "import sys,json;print(json.load(sys.stdin)['stream_terminated'])")
 
+    MEM_AFTER=$(python3 "$ROOT/scripts/lib/bench_memory.py" snapshot)
+    BACKEND=$(python3 "$ROOT/scripts/sync-models.py" --resolve "${model#ailocal-}" 2>/dev/null || echo "")
+    MEM_MODEL=$(python3 "$ROOT/scripts/lib/bench_memory.py" model "$BACKEND" 2>/dev/null || echo '{}')
+    export MEM_BEFORE MEM_AFTER MEM_MODEL BACKEND
     python3 - "$model" "$run" "$wall1" "$EMITTED" "$ACCEPTED" "$EXECUTED" "$VERIFIED" "$STOP" "$TERM" "$RESULT" <<'PY'
 import json, sys
 (model, run, wall1, em, ac, ex, ve, stop, term, out) = sys.argv[1:11]
+import os
+def j(name):
+    try:
+        return json.loads(os.environ.get(name) or "{}")
+    except Exception:
+        return {}
+mb, ma, mm = j("MEM_BEFORE"), j("MEM_AFTER"), j("MEM_MODEL")
+vram = mm.get("size_vram_bytes")
+# Pageouts is cumulative; the DELTA across the run is the paging signal. A
+# larger model that pages is slower than a smaller one that fits, and paging
+# reproduces the exact silent-first-byte failure this project already fixed.
+po_b, po_a = mb.get("pageouts"), ma.get("pageouts")
+pageouts_delta = (po_a - po_b) if (po_a is not None and po_b is not None) else None
 rec = {"model": model, "run": int(run), "trivial_wall_s": float(wall1),
        "tool_emitted": int(em), "tool_accepted": int(ac),
        "tool_executed": int(ex), "fix_correct": int(ve),
-       "stop_reason": stop, "stream_terminated": term == "True"}
+       "stop_reason": stop, "stream_terminated": term == "True",
+       "backend_model": os.environ.get("BACKEND") or None,
+       "resident_vram_bytes": vram,
+       "context_length": mm.get("context_length"),
+       "all_models_vram_bytes": ma.get("loaded_vram_total_bytes"),
+       "free_pct_before": mb.get("free_pct"), "free_pct_after": ma.get("free_pct"),
+       "pageouts_delta": pageouts_delta}
 open(out, "a").write(json.dumps(rec) + "\n")
-print(f"  run {run}: {wall1}s trivial | tool E/A/X {em}/{ac}/{ex} | "
-      f"fix {'OK' if int(ve) else 'no'} | stop={stop} | term={term}")
+vs = f"{vram/1e9:.1f}GB" if vram else "?"
+pg = "" if not pageouts_delta else f" | \033[33mPAGED {pageouts_delta}\033[0m"
+print(f"  run {run}: {wall1}s trivial | {vs} resident | tool E/A/X {em}/{ac}/{ex} | "
+      f"fix {'OK' if int(ve) else 'no'} | stop={stop}{pg}")
 PY
   done
 done
