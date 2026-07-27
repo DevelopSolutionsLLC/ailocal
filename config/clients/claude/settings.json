@@ -8,12 +8,12 @@
     "",
     "All requests route through LiteLLM by ailocal-<capability> model id.",
     "Models: ailocal-architecture | ailocal-implementation | ailocal-fast | ailocal-review | ailocal-completion | ailocal-embeddings",
-    "Launch default = ailocal-implementation. At runtime /model lists every model (the wrapper sets",
+    "Launch default = ailocal-architecture. At runtime /model lists every model (the wrapper sets",
     "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1, so Claude Code GETs /v1/models).",
     "Built-in slots remap: Opus->ailocal-architecture, Sonnet->ailocal-implementation, Haiku->ailocal-fast, Fable->ailocal-review.",
     "Launch with: claude-local"
   ],
-  "model": "ailocal-implementation",
+  "model": "ailocal-architecture",
   "hooks": {
     "SessionStart": [
       {

@@ -9,7 +9,18 @@
 
 # Claude Code
 claude:
-  launch_default: implementation
+  # architecture, NOT implementation. Claude Code is an agentic client: its whole
+  # loop is read -> tool -> observe -> edit. Measured on this stack with the same
+  # task (add a zero-division guard to calc.py, "use the Edit tool"):
+  #   ailocal-implementation (qwen2.5-coder:14b) -- 2 turns, file UNCHANGED. It
+  #     described the edit and emitted the call as a fenced JSON block in prose,
+  #     which is not a tool_use block, so the client never executed it. This
+  #     matches the registry's local_nonagentic finding: it does not sustain a
+  #     multi-step tool loop. It is still a fine single-shot coder.
+  #   ailocal-architecture (qwen3-coder:30b-a3b) -- 3 turns, file ACTUALLY EDITED.
+  # Launching on the non-agentic tier meant claude-local could not do agentic work
+  # out of the box. Sonnet still maps to implementation for those who want it.
+  launch_default: architecture
   # built-in slot -> capability. Also emitted into model_group_alias so `model: opus`
   # in a subagent (or a background Opus/Sonnet/Haiku call) routes to the right tier.
   # haiku is deliberately NOT `completion`. Claude Code uses its haiku slot for real
