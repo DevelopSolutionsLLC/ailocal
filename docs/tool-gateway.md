@@ -1,5 +1,12 @@
 # The tool gateway
 
+> **Superseded as the architecture reference by**
+> [`local-agent-gateway.md`](local-agent-gateway.md), which documents the registry,
+> negotiator, task classification, verification pipeline and metrics.
+> This file is kept because it records HOW the numbers were established and
+> which measurement mistakes were made getting there — history the newer
+> document summarises but does not replace.
+
 The translation layer between a frontier agent protocol and a local model's
 actual capability. It measures — and optionally trims — the tool payload every
 client declares.
@@ -72,6 +79,11 @@ therefore validates against the post-filter list, which is correct — that is
 what the model was actually told about.
 
 ### The policy
+
+> HISTORICAL: `tool-policy.yaml` was superseded by
+> `config/litellm/registry.yaml` in Phase A/B and no longer exists. The rules
+> below describe the design at the time; the fail-open reasoning carried over
+> unchanged into the registry.
 
 `config/litellm/tool-policy.yaml`: named groups, and ordered `(client,
 capability) → allowed groups` rules. First match wins. It lives in

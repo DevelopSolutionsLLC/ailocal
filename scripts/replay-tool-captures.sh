@@ -17,5 +17,7 @@ docker cp "$ROOT/scripts/replay-tool-captures.py" \
 exec docker exec \
   -e AILOCAL_GATEWAY_MODULE=/app/config/tool_gateway.py \
   -e AILOCAL_CAPTURES=/app/captures \
-  -e AILOCAL_TOOL_POLICY=/app/config/tool-policy.yaml \
+  -e AILOCAL_REGISTRY=/app/config/registry.yaml \
+  -e AILOCAL_CONFIG_PATH=/app/config/config.yaml \
+  -e AILOCAL_CAPABILITIES_JSON=/app/ailocal-config/capabilities.generated.json \
   "$CONTAINER" python /tmp/replay-tool-captures.py
