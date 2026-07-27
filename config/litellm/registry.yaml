@@ -152,12 +152,30 @@ routes:
 # Completions wants. The gateway's pre-call hook runs BEFORE LiteLLM's drop, so
 # flattening them here makes them survive. No LiteLLM patch is needed.
 #
-# WHY THIS IS OFF BY DEFAULT
-# Flattening changes the NAME the model will emit, and Codex has to be able to
-# route that name back to the right MCP server. If the naming is wrong the model
-# emits calls Codex cannot dispatch, which is worse than not having the tools at
-# all. `name_template` must be validated against a real Codex session before this
-# is enabled — see scripts/validate-codex-e2e.sh.
+# MEASURED VERDICT [REAL], codex-cli 0.145.0, 2026-07-27: DO NOT ENABLE.
+#
+# The experiment ran (scripts/validate-codex-e2e.sh). Expansion worked exactly as
+# designed at the gateway: 3 bundles flattened (multi_agent_v1 5, mcp__grepai 11,
+# mcp__lsp 20), 48 tools / 35,731 B delivered, and the model DID emit a flattened
+# call — mcp__lsp__workspace_symbol_search. Codex then refused it:
+#
+#   ERROR codex_core::tools::router: error=unsupported call:
+#         mcp__lsp__workspace_symbol_search
+#
+# The model fell back to ripgrep and answered correctly, so the session was not
+# broken — but the LSP tool was strictly wasted context. This reproduces
+# openai/codex#20652: flattened MCP names fail resolution in Codex's dispatcher
+# when an OpenAI-compatible proxy delivers them. CLIProxyAPI#3298 is the same bug
+# from another proxy.
+#
+# There is NO config fix in this version. `--strict-config` rejects
+# experimental_use_flat_mcp_tool_names (and six other candidate names), and the
+# official config reference documents no field controlling namespace vs flat
+# presentation. Upstream PR #17556 ("Support flattened deferred MCP tool calls")
+# is the real fix and is not in 0.145.0.
+#
+# Re-run the experiment after a Codex upgrade. Until its verdict changes, enabling
+# this only spends context on tools the client will reject.
 #
 # COST
 # Expansion makes ~17 KB of previously-dropped schema REACHABLE, so it buys

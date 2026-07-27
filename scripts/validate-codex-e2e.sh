@@ -133,7 +133,13 @@ else
 fi
 
 run_codex() { # $1=slug $2=prompt
-  local slug="$1" prompt="$2" log="$RESULTS/$STAMP-codex-$slug.log"
+  # Declared separately: bash expands EVERY argument to `local` before assigning
+  # any of them, so `local a="$1" b="...$a"` leaves $a unbound under `set -u`.
+  # This is the SECOND time this pattern bit in this repo — it was fixed in
+  # benchmark-tool-gateway.sh and then reintroduced here from muscle memory.
+  local slug="$1"
+  local prompt="$2"
+  local log="$RESULTS/$STAMP-codex-$slug.log"
   rm -f "$LEDGERS"/*.json 2>/dev/null
   local start end
   start=$(python3 -c 'import time;print(time.time())')
@@ -239,23 +245,46 @@ PY
 
 echo
 info "verdict"
-# The decisive signals, in order of strength:
-#   1. the model emitted a flattened call AND got a usable result   -> routable
-#   2. the model emitted one and Codex errored                      -> NOT routable
-#   3. the model never tried                                        -> inconclusive
-if printf '%s' "$ON_TOOLS" | grep -q "mcp__lsp"; then
-  if grep -qiE 'unknown tool|no such tool|unsupported tool|tool not found|failed to (call|dispatch)' "$ON_LOG"; then
-    bad "ROUTING FAILS: the model called a flattened lsp tool and Codex could not dispatch it"
-    echo "         -> expansion must stay OFF; name_template is wrong or Codex"
-    echo "            cannot route flattened MCP names at all."
-  else
-    ok "ROUTING WORKS: a flattened mcp__lsp__* call was made and dispatched"
-    echo "         -> expansion is safe to enable for Codex."
-  fi
-else
-  note "INCONCLUSIVE: the model never attempted a flattened lsp call, so routing"
+# POSITIVE EVIDENCE ONLY.
+#
+# The first version of this check asked "did the model emit a flattened call, and
+# is none of my guessed error strings present?" It answered PASS — while the log
+# contained:
+#     ERROR codex_core::tools::router: error=unsupported call: mcp__lsp__...
+# because the pattern list said "unsupported tool" and Codex says "unsupported
+# call". One word, and a definitive failure read as success. The feature would
+# have been enabled on it.
+#
+# So the verdict is now driven by what Codex's own router logged about the exact
+# tool the model called, not by the absence of strings I thought to look for.
+CALLED_TOOL="$(printf '%s' "$ON_TOOLS" | tr ' ' '\n' | grep '^mcp__' | head -1)"
+ROUTER_ERROR=""
+if [ -n "$CALLED_TOOL" ]; then
+  ROUTER_ERROR="$(grep -F "$CALLED_TOOL" "$ON_LOG" | grep -iE 'ERROR|unsupported|unavailable|not found' | head -1)"
+fi
+
+if [ -z "$CALLED_TOOL" ]; then
+  note "INCONCLUSIVE: the model never attempted a flattened MCP call, so routing"
   note "is untested. Absence of an attempt is not evidence that routing works."
   note "Expansion stays OFF."
+elif [ -n "$ROUTER_ERROR" ]; then
+  ok "ROUTING CONFIRMED BROKEN for codex-cli $(zsh -ic 'command codex --version' 2>/dev/null | tail -1)"
+  echo "         the model called: $CALLED_TOOL"
+  echo "         Codex router said: $(printf '%s' "$ROUTER_ERROR" | tail -c 90)"
+  echo "         -> expansion MUST stay OFF. This reproduces openai/codex#20652:"
+  echo "            flattened MCP names fail resolution in Codex's dispatcher when"
+  echo "            an OpenAI-compatible proxy delivers them."
+  EXPANSION_VERDICT=broken
+else
+  # Even with no router error, require evidence the call RETURNED something.
+  if grep -qiE "tool_result|succeeded|symbol|result" "$ON_LOG"; then
+    ok "ROUTING WORKS: $CALLED_TOOL dispatched with no router error"
+    EXPANSION_VERDICT=works
+  else
+    note "INCONCLUSIVE: $CALLED_TOOL was emitted, no router error was logged, but"
+    note "no result is visible either. Not enough to enable expansion."
+    EXPANSION_VERDICT=unclear
+  fi
 fi
 
 echo
