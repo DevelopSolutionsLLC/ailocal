@@ -237,7 +237,12 @@ def gen_role_block(role, info):
         f"      api_base: os.environ/OLLAMA_URL",
         f"      num_ctx: {num_ctx}",
     ]
-    for key in ("temperature", "top_p", "top_k", "repetition_penalty", "num_predict"):
+    # repeat_penalty is OLLAMA's option name; repetition_penalty is LiteLLM's.
+    # Only the former reaches the backend, so both are forwarded and the profile
+    # decides which to set. A value of 1.0 means NO penalty and is set
+    # explicitly rather than relying on a backend default.
+    for key in ("temperature", "top_p", "top_k", "repetition_penalty",
+                "repeat_penalty", "num_predict"):
         if info.get(key) not in (None, ""):
             params.append(f"      {key}: {info[key]}")
     if ka is not None:

@@ -38,6 +38,16 @@ architecture:
   active: qwen3-coder:30b-a3b-q4_K_M
   # Rollback: qwen3-coder:30b-a3b-q4_K_M stays installed and listed here, so
   # reverting is a one-line `active:` change plus ./scripts/sync-models.sh.
+  # PROMPT EVAL, corrected [REAL]: 971 tok/s on a cold 4,013-token prompt, vs
+  # 353 for the dense 14b — ~2.75x faster, which is what matters because prompt
+  # eval is the mechanism behind the Claude first-byte timeout.
+  #
+  # An earlier figure of 1705 tok/s was WRONG: it came from a best-of-2 loop that
+  # selected the cached run. Re-sending an identical prompt reports the same
+  # prompt_eval_count with the duration collapsing 4134 ms -> 16.8 ms, i.e.
+  # 239,525 tok/s, because the KV cache is reused and nothing is evaluated.
+  # Any prompt-eval measurement must use a COLD, large prompt.
+  #
   # MEASURED: this is MoE — 128 experts, 8 used, ~3B ACTIVE params per token.
   # That is why it beats the dense qwen3.6:27b at 197 vs 90 chunks/s despite
   # being nominally larger. Daily coding velocity is the priority; the dense
@@ -45,14 +55,30 @@ architecture:
   preferred: [qwen3-coder:30b-a3b-q4_K_M]
   reasoning: false         # VERIFIED: no `thinking` capability on this model
   context: 65536
-  temperature: 0.2
+  temperature: 0.1
   num_predict: 16384
   keep_alive: -1
   persona: true
   purpose: [architecture, complex refactoring, multi-step debugging, design, repository-wide planning, large interactive/agent prompts]
   strengths: [large 64K input window shared across clients, holds a whole subsystem in view, strong code generation]
   weaknesses: [slower, higher resident memory (64K KV pinned), non-thinking (no <think> stream)]
-
+  top_p: 0.9
+  top_k: 20
+  repeat_penalty: 1.0
+  # SAMPLING RATIONALE
+  #   temperature 0.1 / top_p 0.9 / top_k 20 — this is the PRIMARY CODING and
+  #   agent model, not a separate design tier, so it wants determinism. An
+  #   earlier revision used 0.3/0.95/40 on the assumption that architecture work
+  #   wants exploration; that was the wrong reading of the role.
+  #   repeat_penalty 1.0 = NO penalty, set explicitly rather than left to a
+  #   backend default. Penalties hurt code, which legitimately repeats (imports,
+  #   boilerplate, closing braces, similar error handlers).
+  # THINKING
+  #   MEASURED: qwen3-coder:30b-a3b has NO `thinking` capability
+  #   (Ollama /api/show). Thinking cannot be enabled here at any setting. If
+  #   reasoning is wanted on architecture work, that needs a different model —
+  #   gpt-oss:20b reasons but its prompt eval is 261 vs 1705 tok/s, a 6.5x
+  #   regression on the metric behind the Claude timeout failure.
 # ── implementation — everyday working coder ──────────────────────────────────
 implementation:
   role: Daily coding
@@ -63,14 +89,21 @@ implementation:
   preferred: [qwen2.5-coder:14b-instruct-q4_K_M, qwen3-coder:30b-a3b-q4_K_M]
   reasoning: false         # VERIFIED: no `thinking` capability
   context: 16384
-  temperature: 0.2
+  temperature: 0.1
   num_predict: -1
   keep_alive: 20m
   persona: true
   purpose: [implementation, features, refactoring, tests, shell, python, typescript]
   strengths: [fast, low memory, excellent everyday code generation]
   weaknesses: [architecture, repository-wide planning]
-
+  top_p: 0.9
+  top_k: 20
+  repeat_penalty: 1.0
+  # SAMPLING RATIONALE
+  #   temperature 0.1 — daily coding wants determinism, not creativity.
+  #   ASSUMED starting point. No penalties, for the same reason as above.
+  # THINKING
+  #   MEASURED: qwen2.5-coder:14b has NO `thinking` capability. N/A here.
 # ── review — code review / bug & security detection ──────────────────────────
 review:
   role: Code review
@@ -78,14 +111,30 @@ review:
   preferred: [gpt-oss:20b, deepseek-coder-v2:16b-lite-instruct-q4_K_M]
   reasoning: true          # VERIFIED: thinking AND tools (deepseek had NO tools)
   context: 16384
-  temperature: 0.1
+  temperature: 0.2
   num_predict: 2048
   keep_alive: 20m
   persona: true
   purpose: [code review, bug detection, security review, alternative solutions]
   strengths: [careful analysis, security awareness, concrete findings]
   weaknesses: [slower than the implementation tier, not for bulk generation]
-
+  top_p: 0.9
+  top_k: 20
+  repeat_penalty: 1.0
+  # SAMPLING RATIONALE
+  #   temperature 0.2 — review should be reproducible; two runs over the same
+  #   diff should not disagree. ASSUMED starting point.
+  # THINKING: ON by default, and this is the ONLY tier where it is.
+  #   MEASURED: gpt-oss:20b reports `thinking`, and reasoning_content is
+  #   produced through the proxy. Reasoning is the point of a review tier and
+  #   latency is not critical there (307 ms ttft, 71.7 tok/s).
+  #
+  #   OVERRIDE CAVEAT [REAL]: reasoning_effort DOES reach the backend, but the
+  #   mapping is unreliable — `none` produced 120 reasoning chars while `high`
+  #   produced 54, i.e. inverted. This is BerriAI/litellm#15059 ("think
+  #   parameter for Ollama models are not mapped correctly"). Treat per-request
+  #   effort levels as UNRELIABLE until that lands; the per-role default below
+  #   is the control that actually works.
 # ── completion — inline autocomplete (FIM) ───────────────────────────────────
 # STANDBY — not in active use. Zero recorded requests across every trace, and the
 # only consumer (Continue) is not installed. Kept mapped so inline autocomplete
@@ -98,13 +147,19 @@ completion:
   active: qwen2.5-coder:3b-instruct-q4_K_M
   preferred: [qwen2.5-coder:3b-instruct-q4_K_M, qwen2.5-coder:1.5b]
   context: 4096
-  temperature: 0
+  temperature: 0.1
   num_predict: 128
   keep_alive: 20m
   purpose: [inline completion, FIM, quick syntax fixes, small transforms]
   strengths: [very fast, tiny footprint, native FIM tokens]
   weaknesses: [no deep reasoning, short context]
-
+  top_p: 0.9
+  top_k: 20
+  repeat_penalty: 1.0
+  # SAMPLING RATIONALE
+  #   temperature 0.1 — infill must match surrounding style, not invent.
+  # THINKING: N/A (no capability). num_predict stays small: this tier is
+  #   latency-bound, and a long completion is worse than a short correct one.
 # ── fast — lightweight tool-enabled agent (NOT autocomplete) ────────────────
 # Deliberately NOT the completion tier. qwen3.5:4b has no FIM/insert capability
 # (verified against Ollama metadata: no fim_prefix/fim_suffix/fim_middle markers,
@@ -129,14 +184,23 @@ fast:
   # must not think itself out of its budget.
   reasoning: false
   context: 32768
-  temperature: 0.2
+  temperature: 0.0
   num_predict: 4096
   keep_alive: 20m
   persona: true
   purpose: [task classification, doc summarisation, quick edits, tool-driven lookups]
   strengths: [tiny footprint, native tool calling, very long context, low latency]
   weaknesses: [no FIM/insert - cannot do inline autocomplete, weaker on large refactors]
-
+  top_p: 0.9
+  top_k: 20
+  repeat_penalty: 1.0
+  # SAMPLING RATIONALE
+  #   temperature 0.0 — this tier emits one word. Any sampling variance is pure
+  #   downside for a classifier.
+  # THINKING: OFF, permanently, despite the model supporting it.
+  #   MEASURED: with thinking enabled qwen3.5:2b emitted 19,056 reasoning
+  #   characters and returned EMPTY content at BOTH max_tokens 8 and 64
+  #   (finish_reason=length). It thinks past its budget and never answers.
 # ── embeddings — semantic retrieval (INFRASTRUCTURE) ─────────────────────────
 embeddings:
   role: Semantic retrieval
