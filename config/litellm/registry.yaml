@@ -259,6 +259,32 @@ model_classes:
       warmup: false
       notes: "Unmatched model — forwarded untouched by design."
 
+# ── Schema rewrites (Phase C) ───────────────────────────────────────────────
+# Reducing a tool's payload WITHOUT removing the tool. Applied only in filter
+# mode, only to non-passthrough models, and never to protected tools.
+#
+# MEASURED on the real 104,202 B Claude Code payload:
+#   descriptions          63,706 B  (61.1%)  <- the big prize, and the risky one
+#   input_schema          37,364 B  (35.9%)
+#     $schema              3,483 B           <- JSON Schema metadata
+#     additionalProperties 1,134 B           <- ditto
+#
+# strip_keys removes keys a MODEL never reads. $schema and additionalProperties
+# are validator metadata: they constrain a JSON Schema checker, not a language
+# model choosing a tool. Removing them cannot change which tool the model picks.
+#
+# The description limits are a different bet: descriptions are how a model knows
+# what a tool does, and truncating them could plausibly hurt tool selection in a
+# way byte counts will not show. They default to null (disabled) and must not be
+# enabled without an A/B on task success, not just on bytes.
+schema_rewrites:
+  defaults:
+    enabled: true
+    strip_keys: ["$schema", "additionalProperties"]
+    max_description_chars: null
+    max_param_description_chars: null
+    truncation_marker: " ..."
+
 # ── Client profiles ─────────────────────────────────────────────────────────
 # What each client sends and how it should be treated. `drop_groups` here is
 # intersected with the model's own denied_groups: a tool is removed only when
