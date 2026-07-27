@@ -192,10 +192,23 @@ def gen_role_block(role, info):
     ka = norm_keep_alive(info.get("keep_alive"))
 
     if role == "embeddings" or truthy(info.get("embedding", "false")) or backend.startswith("nomic") or "embed" in role:
+        # `ollama`, NOT `ollama_chat`. LiteLLM has no embeddings route for the
+        # ollama_chat provider: an /v1/embeddings call against it fails with
+        # "Unmapped LLM provider for this endpoint. You passed
+        # model=nomic-embed-text, custom_llm_provider=ollama_chat".
+        #
+        # Verified empirically in the 1.93.0 image, not inferred from docs:
+        #   litellm.embedding(model="ollama_chat/nomic-embed-text") -> BadRequest
+        #   litellm.embedding(model="ollama/nomic-embed-text")      -> OK, 768 dims
+        #
+        # This shipped broken: ailocal-embeddings was advertised in /v1/models and
+        # 400ed on every call. Cadence was unaffected because it talks to Ollama
+        # directly, which is why nobody noticed — a client configured to use the
+        # proxy for embeddings (Continue) would have failed.
         lines = [
             f"  - model_name: {mn(role)}",
             f"    litellm_params:",
-            f"      model: ollama_chat/{backend}",
+            f"      model: ollama/{backend}",
             f"      api_base: os.environ/OLLAMA_URL",
             f"      num_ctx: {num_ctx}",
         ]
