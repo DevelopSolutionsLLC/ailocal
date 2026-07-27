@@ -265,6 +265,7 @@ class Registry:
         the client must be able to route it."""
         cfg = dict(self.doc.get("namespace_expansion") or {})
         cfg.setdefault("enabled", False)
+        cfg.setdefault("source_type", "namespace")
         cfg.setdefault("name_template", "{namespace}__{tool}")
         cfg.setdefault("only_groups", [])
         cfg.setdefault("max_tools_per_namespace", 40)

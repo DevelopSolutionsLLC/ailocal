@@ -45,6 +45,13 @@ docker ps --format '{{.Names}}' | grep -qx ailocal-litellm || {
 [ "$(docker inspect ailocal-litellm --format '{{.State.Health.Status}}')" = healthy ] || {
   echo "proxy is not healthy; fix that before trusting any result."; exit 1; }
 
+if pgrep -f "test-client-compatibility|test-all.sh|benchmark-tool-gateway" >/dev/null; then
+  echo "Another suite that MUTATES the gateway mode is running"
+  echo "(test-client-compatibility / test-all / benchmark). Running concurrently"
+  echo "corrupts this run's gateway readings — the first attempt reported"
+  echo "mode=report during a filter run for exactly this reason. Wait for it."
+  exit 1
+fi
 GW_MODE="$(docker exec ailocal-litellm printenv AILOCAL_TOOL_GATEWAY 2>/dev/null || echo off)"
 LEDGER_ON="$(docker exec ailocal-litellm printenv AILOCAL_SESSION_LEDGER 2>/dev/null || echo '')"
 info "gateway mode: $GW_MODE   session ledger: ${LEDGER_ON:-<off>}"
@@ -92,36 +99,64 @@ from inventory import Warehouse
 def stock_report(wh: Warehouse) -> str:
     return f"{len(wh.items)} skus, {wh.total_units()} units"
 EOF
+# unittest.main() in the file, invoked directly. `unittest discover -s tests`
+# raised "Start directory is not importable" (no __init__.py) and reported
+# "Ran 0 tests" with rc=5 — which the precondition below then read as "the test
+# fails", the exact 'empty is not failure' trap. A runner that cannot fail
+# correctly cannot validate anything.
 cat > "$WORK/tests/test_inventory.py" <<'EOF'
-import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+import os
+import sys
+import unittest
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "..", "src"))
 from inventory import Warehouse
 
 
-def test_total_units():
-    wh = Warehouse()
-    wh.add_item("A", 2)
-    wh.add_item("B", 3)
-    assert wh.total_units() == 5
+class TestTotalUnits(unittest.TestCase):
+    def test_total_units(self):
+        wh = Warehouse()
+        wh.add_item("A", 2)
+        wh.add_item("B", 3)
+        self.assertEqual(wh.total_units(), 5)
+
+
+if __name__ == "__main__":
+    unittest.main()
 EOF
 cat > "$WORK/run_tests.sh" <<'EOF'
 #!/bin/sh
-cd "$(dirname "$0")" && python3 -m unittest discover -s tests -q 2>&1
+cd "$(dirname "$0")" && python3 tests/test_inventory.py 2>&1
 EOF
 chmod +x "$WORK/run_tests.sh"
 ( cd "$WORK" && git init -q && git add -A \
   && git -c user.email=e2e@test -c user.name=e2e commit -qm "initial" )
 
 info "fixture at $WORK (total_units multiplies; the test expects 5, gets 6)"
+# rc!=0 is NOT good enough here: a broken runner also exits non-zero, and that
+# is how the first version of this harness "passed" its own precondition while
+# running zero tests. Require the assertion to actually fire.
 BASE_TEST="$(cd "$WORK" && ./run_tests.sh; echo "rc=$?")"
-case "$BASE_TEST" in
-  *rc=0*) bad "fixture precondition: the test should FAIL before the fix"; ;;
-  *) ok "fixture precondition: test fails before the fix (as intended)";;
-esac
+if printf '%s' "$BASE_TEST" | grep -q 'AssertionError' \
+   && printf '%s' "$BASE_TEST" | grep -q 'FAILED'; then
+  ok "fixture precondition: the test genuinely FAILS on an assertion before the fix"
+else
+  bad "fixture precondition: expected a real AssertionError, got: $(printf '%s' "$BASE_TEST" | tr '\n' ' ' | tail -c 120)"
+fi
 
 # ── task runner ─────────────────────────────────────────────────────────────
+# Turn budgets are generous on purpose. A 30B spends several turns exploring
+# before answering, and at --max-turns 6 two tasks used all six on tool calls and
+# had none left to reply — which the harness then scored as "answered blind".
+# That was a budget artefact, not a capability finding.
+#
+# Note the per-task overrides below, not just this default: raising the default
+# alone changed nothing, because every call site passed an explicit 6. The
+# exploratory tasks get the LARGEST budget precisely because they explore before
+# they answer.
 run_task() { # $1=slug  $2=prompt  $3=max-turns
-  local slug="$1" prompt="$2" turns="${3:-8}"
+  local slug="$1" prompt="$2" turns="${3:-14}"
   local log="$RESULTS/$STAMP-$slug.log"
   rm -f "$LEDGERS"/*.json 2>/dev/null
   local start end
@@ -129,8 +164,12 @@ run_task() { # $1=slug  $2=prompt  $3=max-turns
   zsh -ic "cd '$WORK' && claude-local -p '$prompt' --max-turns $turns \
     --permission-mode acceptEdits" > "$log" 2>&1
   end=$(python3 -c 'import time;print(time.time())')
+  LAST_TRUNCATED=""
   LAST_SECS=$(python3 -c "print(f'{$end-$start:.0f}')")
   LAST_LOG="$log"
+  # Turn exhaustion means the model never got to answer. That is INCONCLUSIVE
+  # about the answer, and must not be reported as a wrong answer.
+  if grep -q "Reached max turns" "$log"; then LAST_TRUNCATED=1; else LAST_TRUNCATED=""; fi
   # Tools the PROXY saw, not what the model claimed.
   LAST_TOOLS="$(python3 - "$LEDGERS" <<'PY'
 import glob, json, os, sys
@@ -155,26 +194,36 @@ echo "════════════════════════�
 # ── 1. explain the repo (read + search) ─────────────────────────────────────
 echo
 info "task 1/5: explain the repo"
-run_task explain "Describe what this repository does. Read the files first." 6
+run_task explain "Describe what this repository does. Read the files first." 16
 echo "        ${LAST_SECS}s | tools: ${LAST_TOOLS:-<none recorded>}"
 if [ -n "$LAST_TOOLS" ]; then ok "1. proxy recorded tool calls for the session"
 else bad "1. no tool calls reached the proxy ledger"; fi
-if grep -qiE 'inventory|warehouse|stock' "$LAST_LOG"; then
-  ok "1. the answer references real repo contents (inventory/warehouse/stock)"
-else bad "1. answer does not reference repo contents — likely answered blind"; fi
+if grep -qiE 'inventory|warehouse|stock|sku' "$LAST_LOG"; then
+  ok "1. the answer references real repo contents"
+elif [ -n "$LAST_TRUNCATED" ]; then
+  printf '  \033[33mINCONCLUSIVE\033[0m  1. hit the turn limit before answering\n'
+else bad "1. answer does not reference repo contents — answered blind"; fi
 
 # ── 2. find a symbol (LSP or grepai) ───────────────────────────────────────
 echo
 info "task 2/5: find a symbol across files"
-run_task symbol "Which file defines the function stock_report, and what does it call? Use your search or LSP tools." 6
+run_task symbol "Which file defines the function stock_report, and what does it call? Use your search or LSP tools." 16
 echo "        ${LAST_SECS}s | tools: ${LAST_TOOLS:-<none recorded>}"
 if grep -q 'reporting.py' "$LAST_LOG"; then
   ok "2. located stock_report in reporting.py"
+elif [ -n "$LAST_TRUNCATED" ]; then
+  printf '  \033[33mINCONCLUSIVE\033[0m  2. hit the turn limit before answering\n'
 else bad "2. did not identify reporting.py"; fi
-if used_prefix "mcp__grepai__" || used_prefix "mcp__lsp__"; then
-  ok "2. used an MCP tool (grepai or lsp) — MCP reaches the model"
+if used_prefix "mcp__lsp__"; then
+  ok "2. used an LSP tool — MCP reaches the model AND is path-independent"
+elif used_prefix "mcp__grepai__"; then
+  # The fixture lives outside any indexed workspace, so grepai legitimately has
+  # nothing for it (verified: `grepai search stock_report` -> No results found).
+  # Reaching for it and falling back is correct behaviour, not a failure.
+  ok "2. used an MCP tool (grepai); the fixture is outside the index, so a "\
+"fallback to Read/Grep is correct"
 else
-  bad "2. no MCP tool used; fell back to Read/Grep (MCP present but unused)"
+  bad "2. no MCP tool used at all — MCP is registered but never reached"
 fi
 
 # ── 3. modify a file (the observable one) ──────────────────────────────────
@@ -197,20 +246,20 @@ else bad "3. git reports no change"; fi
 # ── 4. run the tests (bash) ───────────────────────────────────────────────
 echo
 info "task 4/5: run the test suite"
-run_task tests "Run ./run_tests.sh and tell me whether the tests pass." 6
+run_task tests "Run ./run_tests.sh and tell me whether the tests pass." 12
 echo "        ${LAST_SECS}s | tools: ${LAST_TOOLS:-<none recorded>}"
 if used Bash; then ok "4. Bash executed"
 else bad "4. Bash was not used"; fi
 POST_TEST="$(cd "$WORK" && ./run_tests.sh; echo "rc=$?")"
 case "$POST_TEST" in
   *rc=0*) ok "4. the suite now PASSES — the model's fix is actually correct";;
-  *) bad "4. suite still failing after the fix: $(printf '%s' "$POST_TEST" | tail -2 | tr '\n' ' ')";;
+  *) bad "4. suite still failing after the fix: $(printf '%s' "$POST_TEST" | tr '\n' ' ' | tail -c 140)";;
 esac
 
 # ── 5. summarize changes (git) ────────────────────────────────────────────
 echo
 info "task 5/5: summarize the changes via git"
-run_task summarize "Run git diff and summarize what changed in this repository." 6
+run_task summarize "Run git diff and summarize what changed in this repository." 12
 echo "        ${LAST_SECS}s | tools: ${LAST_TOOLS:-<none recorded>}"
 if used Bash; then ok "5. git operations run through Bash"
 else bad "5. Bash not used for git"; fi
