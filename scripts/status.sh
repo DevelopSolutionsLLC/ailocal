@@ -5,14 +5,93 @@
 # config/models.yaml by sync-models.py) and Ollama's /api/ps, and shows what is ACTUALLY
 # loaded right now, with keep-alive remaining. Real model names are shown, never hidden.
 #
-#   ./scripts/status.sh          verbose, per-capability   (ailocal status)
-#   ./scripts/status.sh --table  compact one-line-per-capability table (ailocal models)
+#   ./scripts/status.sh          UNIFIED DASHBOARD (ailocal status)
+#   ./scripts/status.sh --models verbose per-capability view (the previous default)
+#   ./scripts/status.sh --table  compact capability table    (ailocal models)
+#
+# Only the DEFAULT changed. --table is byte-identical to before, so
+# `ailocal models` and any existing muscle memory keep working. The default is
+# now the whole stack because "is my local AI working?" previously required four
+# separate commands.
+#
+# Every line in the dashboard is a LIVE probe, never a config read. A config
+# saying something is enabled proves nothing about whether it works.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 CAPS="$ROOT_DIR/config/capabilities.generated.json"
 OLLAMA_URL="${OLLAMA_HOST:-http://127.0.0.1:11434}"
-MODE="verbose"; [ "${1:-}" = "--table" ] && MODE="table"
+MODE="dashboard"
+case "${1:-}" in
+  --table)  MODE="table" ;;
+  --models) MODE="verbose" ;;
+  "")       MODE="dashboard" ;;
+  *) echo "usage: status.sh [--models|--table]" >&2; exit 1 ;;
+esac
+
+if [ "$MODE" = "dashboard" ]; then
+  C_OK=$'\033[32m'; C_BAD=$'\033[31m'; C_WARN=$'\033[33m'; C_DIM=$'\033[2m'; C_0=$'\033[0m'
+  ok()   { printf '  %s✓%s %s\n' "$C_OK" "$C_0" "$*"; }
+  bad()  { printf '  %s✗%s %s\n' "$C_BAD" "$C_0" "$*"; }
+  warn() { printf '  %s!%s %s\n' "$C_WARN" "$C_0" "$*"; }
+  dim()  { printf '  %s—%s %s\n' "$C_DIM" "$C_0" "$*"; }
+  hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
+  PROXY="${AILOCAL_PROXY_URL:-http://127.0.0.1:4000}"
+  TRACES="$ROOT_DIR/data/tool-captures/traces"
+
+  echo "══════════════════════════════════════════════════════════════════════"
+  echo " AILOCAL STATUS   $(date '+%Y-%m-%d %H:%M:%S')"
+  echo "══════════════════════════════════════════════════════════════════════"
+
+  hdr "Services"
+  curl -fsS -m 3 "$OLLAMA_URL/api/tags" >/dev/null 2>&1 \
+    && ok "Ollama        $OLLAMA_URL" || bad "Ollama        unreachable"
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx ailocal-litellm; then
+    H=$(docker inspect ailocal-litellm --format '{{.State.Health.Status}}' 2>/dev/null)
+    [ "$H" = healthy ] && ok "LiteLLM       healthy" || warn "LiteLLM       $H"
+  else bad "LiteLLM       not running"; fi
+  curl -fsS -m 3 "$PROXY/health/liveliness" >/dev/null 2>&1 \
+    && ok "Proxy         $PROXY" || bad "Proxy         not responding"
+  docker ps --format '{{.Names}}' 2>/dev/null | grep -qx ailocal-searxng \
+    && ok "SearXNG       running" || dim "SearXNG       not running"
+
+  hdr "Gateway"
+  GW=$(docker exec ailocal-litellm printenv AILOCAL_TOOL_GATEWAY 2>/dev/null || echo "?")
+  TN=$(docker exec ailocal-litellm printenv AILOCAL_TASK_NEGOTIATION 2>/dev/null || echo off)
+  TR=$(docker exec ailocal-litellm printenv AILOCAL_TRACE_DIR 2>/dev/null || echo "")
+  case "$GW" in
+    filter) ok "mode          filter — tools removed before the model" ;;
+    report) warn "mode          report — measuring only, nothing removed" ;;
+    off)    warn "mode          OFF — payloads not reduced. Measured: this is the"
+            echo "                  difference between ~90s and <1s to first byte." ;;
+    *)      bad "mode          unknown ($GW)" ;;
+  esac
+  [ "$TN" = on ] && ok "task negot.   on" || dim "task negot.   off"
+  [ -n "$TR" ] && ok "tracing       $TR" || dim "tracing       off"
+  docker logs --since 2h ailocal-litellm 2>/dev/null \
+    | python3 "$ROOT_DIR/scripts/lib/status_gateway.py" 2>/dev/null
+
+  hdr "Clients"
+  [ -f "$HOME/.config/ailocal/claude/.claude.json" ] \
+    && ok "Claude Code   configured, isolated from ~/.claude" \
+    || bad "Claude Code   not installed"
+  [ -f "$HOME/.config/ailocal/codex/config.toml" ] \
+    && ok "Codex CLI     configured  (MCP registered, NOT reachable: docs/runtime-issues.md)" \
+    || bad "Codex CLI     not installed"
+  if command -v code >/dev/null 2>&1 && code --list-extensions 2>/dev/null \
+       | grep -qix Gethnet.litellm-connector-copilot; then
+    ok "VS Code       connector installed  (chat turn unverified — needs GUI)"
+  else dim "VS Code       connector not installed"; fi
+
+  hdr "Recent requests"
+  if [ -d "$TRACES" ]; then
+    python3 "$ROOT_DIR/scripts/lib/status_traces.py" "$TRACES"
+  else
+    dim "tracing off — set AILOCAL_TRACE_DIR to diagnose intermittent failures"
+  fi
+
+  hdr "Models"
+fi
 
 [ -f "$CAPS" ] || { echo "capabilities.generated.json missing — run ./scripts/sync-models.sh" >&2; exit 1; }
 
