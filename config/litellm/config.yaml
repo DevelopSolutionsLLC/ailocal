@@ -219,6 +219,20 @@ litellm_settings:
     # Model-agnostic by design - keep it even after upstream lands a fix.
     - tool_repair.proxy_handler_instance
     - websearch_interception
+    # Tool-payload measurement, and (only when AILOCAL_TOOL_GATEWAY=filter)
+    # allowlist filtering of the tools a client declares. Default off: with the
+    # env unset this hook returns on its first line and touches nothing.
+    #
+    # Registered LAST on purpose. websearch_interception rewrites the client's
+    # web_search tool into a call against search_tools; if the gateway ran first
+    # and dropped that tool, interception would have nothing to rewrite and web
+    # search would fail silently. Running last means interception always sees
+    # the client's full, unmodified tool list.
+    #
+    # tool_repair reads request_data["tools"] to validate recovered calls. It
+    # therefore validates against the POST-filter list, which is correct — that
+    # is what the model was actually told about.
+    - tool_gateway.proxy_handler_instance
   # Rewrites a client's native web_search tool into a call against the
   # search_tools entry below.
   #

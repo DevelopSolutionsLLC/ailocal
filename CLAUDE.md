@@ -41,7 +41,7 @@ Also: `websearch_interception_params.enabled_providers` matches the **backend** 
 (`ollama_chat`), not the inbound API dialect — it read `anthropic` and silently disabled
 interception entirely. SearXNG itself is healthy; it is simply unreachable from that tool.
 
-## The four non-obvious mechanisms
+## The five non-obvious mechanisms
 
 Most of this repo's complexity is in these; change them carefully.
 
@@ -87,6 +87,19 @@ Most of this repo's complexity is in these; change them carefully.
    and is sourced from `.zshrc` between installer markers (`finalize.zsh` runs last).
    `CLAUDE_CONFIG_DIR` relocates `.claude.json` itself, so MCP registrations, history, and
    credentials are genuinely per-root — nothing leaks between local and cloud.
+
+5. **Tool gateway.** `config/litellm/tool_gateway.py` is a pre-call hook that measures (and
+   optionally trims) the tool payload clients declare. Measured: Claude Code sends **61 tools /
+   104KB / 24,448 real Qwen tokens** on every `/v1/messages` request; **70.8%** of it is
+   orchestration/scheduling/worktree machinery a local 30B cannot drive. Three modes via
+   `AILOCAL_TOOL_GATEWAY` — `off` (default, hook returns immediately), `report`, `filter`
+   (allowlist in `config/litellm/tool-policy.yaml`). Two traps the code encodes: it is registered
+   **last** so `websearch_interception` still sees the client's `web_search` tool, and it never
+   drops an entry it cannot name (Codex's bare `{"type":"web_search"}` normalises to
+   `<web_search>`; dropping it kills SearXNG silently). It also refuses to book Codex's
+   `namespace` tools as savings — LiteLLM already discards those before the backend, so Codex's
+   real gain is 18%, not 71%. Full detail, including the token calibration against Ollama's
+   `prompt_eval_count`, in `docs/tool-gateway.md`.
 
 ## Two shared boundaries with Cadence
 
