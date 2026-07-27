@@ -143,7 +143,11 @@ ailocal and Cadence are independent *installations*, not independent *content*. 
 
 ## Verify
 
-`./scripts/doctor.sh` (0=healthy, 2=degraded), `./scripts/smoke-test.sh`,
+`./scripts/test-all.sh` is the regression gate — ten checks (six suites plus
+sync idempotence, shell/python syntax, and "every registered hook imports inside
+the proxy image"). Run it before every commit; `--full` adds the end-to-end client
+benchmark. A stopped/unhealthy proxy fails the gate rather than silently reducing
+it. Then `./scripts/doctor.sh` (0=healthy, 2=degraded), `./scripts/smoke-test.sh`,
 `bash -n` any edited script, and `./scripts/sync-models.sh` must produce **zero diff**
 on a second run. After editing a persona `.md`, restart the proxy — the hook reads
 them at load.

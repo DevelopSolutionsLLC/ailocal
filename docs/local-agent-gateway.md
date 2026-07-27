@@ -270,6 +270,16 @@ interception always sees the client's full tool list.
 
 ## Verification
 
+**The gate:** `./scripts/test-all.sh` — ten checks, one exit code. Run it before
+every commit; add `--full` for the end-to-end client benchmark. A stopped or
+unhealthy proxy **fails** the gate rather than reducing it, because several suites
+need PyYAML and the registry, which exist only inside the image. It also asserts
+that every registered hook actually imports inside the proxy image — a
+registered-but-unimportable callback takes the container down at boot, which has
+happened here.
+
+Individual suites:
+
 ```
 ./scripts/test-capability-registry.sh      # registry + the no-hard-coding assertion
 ./scripts/test-tool-gateway.sh             # negotiator, byte accounting, modes
