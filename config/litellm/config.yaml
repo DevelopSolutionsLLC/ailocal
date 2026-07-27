@@ -233,6 +233,13 @@ litellm_settings:
     # therefore validates against the POST-filter list, which is correct — that
     # is what the model was actually told about.
     - tool_gateway.proxy_handler_instance
+    # Session observation (Step 6 of the gateway work). Records what a session
+    # asked for and which tools it actually called, to a ledger on disk. Purely
+    # observational: it never mutates the request and never touches client
+    # conversation state. Off unless AILOCAL_SESSION_LEDGER points somewhere
+    # writable. Paired with scripts/verify-session.py, which supplies the
+    # filesystem/git half that this container cannot see.
+    - session_observer.proxy_handler_instance
   # Rewrites a client's native web_search tool into a call against the
   # search_tools entry below.
   #
