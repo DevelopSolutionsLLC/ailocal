@@ -1,0 +1,159 @@
+# tool-policy.yaml — which tools each (client, capability) pair is allowed to
+# declare. Read by config/litellm/tool_gateway.py.
+#
+# This file has NO EFFECT unless AILOCAL_TOOL_GATEWAY=filter. In the default
+# "off" mode the hook never reads it; in "report" it is used only to compute
+# what a filter WOULD remove.
+#
+# ── Why this exists ─────────────────────────────────────────────────────────
+# Frontier agent clients declare their entire tool surface on turn 1, before
+# they know what the task needs. Measured on this machine (captures under
+# data/tool-captures/, gathered by running the real claude-local and
+# codex-local against qwen3-coder:30b-a3b-q4_K_M):
+#
+#   Claude Code  /v1/messages    61 tools   104,202 B   ~23,937 tok (cl100k-proxy)
+#   Codex        /v1/responses   16 tools    38,388 B    ~7,953 tok
+#
+# Grouping the Claude Code payload by what the tool is FOR:
+#
+#   orchestration (Workflow, Agent, Task*, Skill, …)  12 tools  49,622 B  47.6%
+#   scheduling    (Cron*, Monitor, ScheduleWakeup, …)  6 tools  17,639 B  16.9%
+#   worktree      (EnterWorktree, ExitWorktree)        2 tools   6,538 B   6.3%
+#   lsp           (mcp__lsp__*)                       20 tools  11,161 B  10.7%
+#   search        (mcp__grepai__*, Web*)              13 tools   9,582 B   9.2%
+#   edit_and_run  (Bash, Read, Edit, Write, Notebook)  5 tools   7,578 B   7.3%
+#   mcp_plumbing                                       3 tools   2,082 B   2.0%
+#
+# A single tool, `Workflow`, is 21,525 B — 20.7% of the payload on its own.
+#
+# ── The judgement being encoded ─────────────────────────────────────────────
+# The three denied groups are agent-runtime orchestration: spawning subagents,
+# scheduling cron wakeups, managing git worktrees, driving a task board. They
+# are 70.8% of the payload and they are the tools a local 30B coding model is
+# least able to drive correctly — multi-step delegation and scheduling are
+# exactly where a small model fabricates plausible calls. The retained groups
+# are what makes a coding session work: shell, filesystem, patching, search,
+# LSP.
+#
+# This is a judgement about capability, not a measurement. It is stated here so
+# it can be argued with, and it is reversible by editing one line.
+#
+# ── Two hazards, both load-bearing ──────────────────────────────────────────
+# 1. Do NOT deny WebSearch/web_search. LiteLLM's websearch_interception rewrites
+#    the client's web_search tool into a SearXNG call. Remove the tool and there
+#    is nothing to rewrite, and web search fails silently rather than loudly.
+#    (tool_gateway is registered after interception for the same reason.)
+# 2. Codex's savings here are largely ALREADY REALISED by LiteLLM. Its three
+#    biggest declarations (multi_agent_v1, mcp__lsp, mcp__grepai — 27,168 B of
+#    38,388) are `namespace`-typed, and LiteLLM discards those before the
+#    backend. The gateway reports them under bytes_prefiltered_by_litellm and
+#    refuses to count them as its own saving. Expect Codex gains to be small.
+#    A real consequence of the same fact: through Codex, mcp__lsp and
+#    mcp__grepai never reach the local model at all.
+
+# ── Groups ──────────────────────────────────────────────────────────────────
+# A trailing '*' is a prefix match; everything else is an exact tool name.
+# Names are the logical names the gateway normalises to, so the same entry
+# works across all three API dialects.
+
+groups:
+
+  # Shell, filesystem, patching. The irreducible core of a coding agent.
+  edit_and_run:
+    - Bash
+    - Read
+    - Edit
+    - Write
+    - NotebookEdit
+    - Glob
+    - Grep
+    # Codex equivalents (/v1/responses names differ from Claude Code's).
+    - exec_command
+    - write_stdin
+    - apply_patch
+    - view_image
+
+  # Semantic search and web. WebSearch/web_search MUST stay — see hazard 1.
+  search:
+    - "mcp__grepai__*"
+    - WebSearch
+    - WebFetch
+    - web_search
+
+  # Symbols, references, diagnostics. 20 tools but only 10.7% of bytes, and
+  # this is the capability that most improves a local model's accuracy: it
+  # replaces guessing about code with looking it up.
+  lsp:
+    - "mcp__lsp__*"
+
+  # MCP resource plumbing. Cheap, and removing it breaks MCP resource reads.
+  mcp_plumbing:
+    - ListMcpResourcesTool
+    - ReadMcpResourceTool
+    - ReadMcpResourceDirTool
+    - list_mcp_resources
+    - list_mcp_resource_templates
+    - read_mcp_resource
+
+  # Planning that stays inside one turn. Cheap and locally useful, unlike the
+  # multi-agent orchestration below.
+  planning:
+    - update_plan
+    - create_goal
+    - update_goal
+    - get_goal
+
+  # ── Denied by default below; defined so they can be re-allowed by name ─────
+
+  orchestration:
+    - Workflow          # 21,525 B — the single largest tool in the payload
+    - DesignSync
+    - Agent
+    - SendMessage
+    - Skill
+    - ReportFindings
+    - "Task*"
+    - multi_agent_v1
+
+  scheduling:
+    - "Cron*"
+    - Monitor
+    - ScheduleWakeup
+    - PushNotification
+
+  worktree:
+    - EnterWorktree
+    - ExitWorktree
+
+  interactive:
+    - request_user_input   # a non-interactive local run cannot answer it
+
+# ── Rules ───────────────────────────────────────────────────────────────────
+# Evaluated in order; the FIRST match wins. `match` omitted or "*" matches any.
+# A request matching no rule is left completely untouched (allow-all): the
+# gateway fails open by design, so a policy gap degrades to today's behaviour
+# rather than silently stripping a client's tools.
+
+rules:
+
+  # Autocomplete: FIM only, 4K context. It has no business holding tools at all,
+  # and anything routed here with a large payload is a misconfiguration.
+  - match: {client: "*", capability: completion}
+    allow: []
+
+  - match: {client: "*", capability: embeddings}
+    allow: []
+
+  # Claude Code against the local model: keep the coding surface, drop the
+  # agent-runtime surface. This is the 70.8% reduction.
+  - match: {client: claude-code, capability: "*"}
+    allow: [edit_and_run, search, lsp, mcp_plumbing, planning]
+
+  # Codex: same policy. Most of its orchestration weight is namespace-typed and
+  # already discarded by LiteLLM, so measured gains here will be modest.
+  - match: {client: codex, capability: "*"}
+    allow: [edit_and_run, search, lsp, mcp_plumbing, planning]
+
+  # Anything else — including client "unknown" — is deliberately NOT matched.
+  # Falling through means allow-all. An unrecognised client is a reason to
+  # change nothing, not a reason to guess at what it needs.
