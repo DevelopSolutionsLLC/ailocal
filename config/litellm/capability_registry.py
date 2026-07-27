@@ -153,6 +153,11 @@ class Registry:
     def group_members(self, group):
         return list((self.doc.get("groups") or {}).get(group) or [])
 
+    def all_groups(self):
+        """Every declared group name. Exposed so callers never have to reach
+        into `self.doc` — the registry's shape stays this module's business."""
+        return set(self.doc.get("groups") or {})
+
     def expand(self, groups):
         """Group names -> the set of tool names/patterns they contain."""
         out = set()
@@ -252,6 +257,33 @@ class Registry:
         client_drops = set(profile.get("drop_groups") or [])
         model_denies = set(spec.get("denied_groups") or [])
         return client_drops & model_denies
+
+    # ── task classification (Phase D) ───────────────────────────────────────
+    def classify_task(self, text):
+        """(class_name, groups, hits) for a request, or (None, None, 0).
+
+        Substring matching, case-insensitive, first class with enough hits wins.
+        Returns groups=None when unclassified, which the caller MUST treat as
+        "no opinion" and leave the Phase B allowlist alone. Returning an empty
+        set instead would mean "this task needs nothing", which is the dangerous
+        misreading — a misclassified task that loses its tools produces a stuck
+        agent, while an unnecessary tool only costs tokens.
+        """
+        spec = self.doc.get("task_classes") or {}
+        always = set(spec.get("always") or [])
+        if not text:
+            return None, None, 0
+        lowered = text.lower()
+        for cls in spec.get("classes") or []:
+            hits = sum(1 for pat in cls.get("patterns") or []
+                       if str(pat).lower() in lowered)
+            if hits >= int(cls.get("min_confidence_hits", 1) or 1):
+                return (cls.get("name"),
+                        always | set(cls.get("groups") or []), hits)
+        return None, None, 0
+
+    def task_always_groups(self):
+        return set((self.doc.get("task_classes") or {}).get("always") or [])
 
     # ── schema rewrites (Phase C) ───────────────────────────────────────────
     def rewrite_rules(self, client):

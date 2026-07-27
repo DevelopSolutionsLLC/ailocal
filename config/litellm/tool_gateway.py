@@ -58,6 +58,7 @@ Ref: https://docs.litellm.ai/docs/proxy/call_hooks
 
 import json
 import os
+import re
 import time
 
 from litellm.integrations.custom_logger import CustomLogger
@@ -145,6 +146,63 @@ def tool_name(tool):
 
 def tool_bytes(tool):
     return len(encode(tool).encode("utf-8"))
+
+
+TASK_ENV = "AILOCAL_TASK_NEGOTIATION"
+
+
+def task_negotiation_enabled():
+    """Phase D is opt-in. Keyword classification of natural language is a
+    heuristic, and the cost of a miss is asymmetric: dropping a tool the task
+    needed strands the agent, while keeping a spare tool only costs tokens."""
+    return (os.environ.get(TASK_ENV) or "").strip().lower() in ("1", "true", "on")
+
+
+def first_user_text(data):
+    """The task statement: the first user message, across all three dialects.
+
+    Reads ONLY the user's own request. Assistant turns and tool results are the
+    model's output, and letting those steer which tools remain available would
+    let a confused model narrow its own capabilities mid-loop.
+
+    Client-injected scaffolding (<system-reminder> blocks carrying CLAUDE.md and
+    similar) is stripped: measured, an unstripped first message began with the
+    entire contents of a global instructions file, which would classify every
+    session by whatever words happened to appear in it.
+    """
+    def text_of(content):
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return "\n".join(b.get("text") or "" for b in content
+                              if isinstance(b, dict) and b.get("type") == "text")
+        return ""
+
+    def strip_injected(text):
+        out, depth = [], 0
+        for chunk in re.split(r"(<system-reminder>|</system-reminder>)", text or ""):
+            if chunk == "<system-reminder>":
+                depth += 1
+            elif chunk == "</system-reminder>":
+                depth = max(0, depth - 1)
+            elif depth == 0:
+                out.append(chunk)
+        return "".join(out).strip()
+
+    for msg in (data or {}).get("messages") or []:
+        if isinstance(msg, dict) and msg.get("role") == "user":
+            got = strip_injected(text_of(msg.get("content")))
+            if got:
+                return got
+    items = (data or {}).get("input")
+    if isinstance(items, str):
+        return strip_injected(items)
+    for item in items or []:
+        if isinstance(item, dict) and item.get("role") == "user":
+            got = strip_injected(text_of(item.get("content")))
+            if got:
+                return got
+    return ""
 
 
 def _schema_of(tool):
@@ -301,6 +359,31 @@ class ToolGateway(CustomLogger):
         removable = set() if passthrough else reg.removable_groups(client, model)
         supports_tools = reg.supports(model, "tools")
 
+        # Phase D: automatic task negotiation, off unless explicitly enabled.
+        # A classification may only ADD to `removable` (i.e. subtract from what
+        # the model is sent) — never grant a group the client or model class
+        # disallowed. And it only ever narrows groups the client was already
+        # willing to drop, so a misread task cannot remove a tool that Phase B
+        # considered load-bearing.
+        task_class, task_hits, task_needed = None, 0, None
+        if (not passthrough) and task_negotiation_enabled():
+            task_class, task_needed, task_hits = reg.classify_task(
+                first_user_text(data))
+            if task_needed is not None:
+                # Candidates are ALL known groups, not just the ones the client
+                # profile already offered. Restricting them to the client's
+                # drop_groups made Phase D incapable of doing anything Phase B
+                # had not already done — "simple edit -> read + edit" cannot
+                # shed lsp if lsp was never a candidate. Caught by a test that
+                # asserted the shedding actually happens.
+                #
+                # Safety does not come from a narrow candidate set. It comes
+                # from: the registry's `always` floor, protected tools, an
+                # unmatched task being a no-op, passthrough models being exempt,
+                # and the whole feature being opt-in.
+                removable = removable | {g for g in reg.all_groups()
+                                         if g not in task_needed}
+
         keep, drop = [], []
         for tool, name, size in zip(tools, names, sizes):
             if passthrough:
@@ -351,6 +434,10 @@ class ToolGateway(CustomLogger):
             "registry": reg.state,
             "max_context": reg.max_context(model),
             "removable_groups": sorted(removable),
+            "task_negotiation": task_negotiation_enabled(),
+            "task_class": task_class,
+            "task_pattern_hits": task_hits,
+            "task_needed_groups": sorted(task_needed) if task_needed else None,
             "tools_in": len(tools),
             "bytes_in": total_bytes,
             "tools_reachable": sum(1 for t in tools if reaches(t)),

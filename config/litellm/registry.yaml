@@ -285,6 +285,79 @@ schema_rewrites:
     max_param_description_chars: null
     truncation_marker: " ..."
 
+# ── Task classes (Phase D) ──────────────────────────────────────────────────
+# Automatic negotiation: instead of one static allowlist per client, infer what
+# the TASK needs and send only that.
+#
+#   task -> classify -> required capabilities -> minimum viable tools
+#
+# HOW THE TASK IS READ, AND WHY THAT IS SAFE
+# The classifier reads the FIRST user message only, which the proxy already sees.
+# It never reads tool results or assistant turns: those are the model's own
+# output, and letting them steer which tools remain available would let a
+# confused model narrow its own capabilities mid-loop.
+#
+# WHY THIS IS OFF BY DEFAULT (AILOCAL_TASK_NEGOTIATION)
+# Keyword classification of a natural-language request is a HEURISTIC. It will
+# misread some tasks, and the cost of a miss is asymmetric: dropping a tool the
+# task genuinely needed produces a stuck agent, while keeping an unnecessary tool
+# only costs tokens. So:
+#   - an unmatched task keeps everything the client/model rules already allow
+#   - `always` groups are added to every classification, matched or not
+#   - a classification only ever SUBTRACTS from what Phase B already permitted;
+#     it can never grant a group the client or model disallows
+#
+# Patterns are matched case-insensitively as substrings, in listed order; the
+# first class with a hit wins. `min_confidence_hits` requires that many distinct
+# pattern matches before the class is accepted, so a single incidental word does
+# not reclassify a whole session.
+
+task_classes:
+
+  # Groups every task keeps regardless of classification. Reading and running
+  # things is the floor: a task that cannot read a file cannot be verified.
+  always: [edit_and_run, mcp_plumbing]
+
+  classes:
+
+    - name: simple_edit
+      min_confidence_hits: 1
+      patterns: ["fix the typo", "rename ", "change the ", "replace ",
+                 "add a comment", "update the string", "bump the version"]
+      groups: []          # `always` alone: read + edit + run
+      notes: >
+        A narrow, located change. The task already names the file and the edit,
+        so search and symbol tools add tokens without adding capability.
+
+    - name: explore
+      min_confidence_hits: 1
+      patterns: ["where is", "how does", "find the", "search for", "which file",
+                 "explain the", "trace ", "what calls", "look for"]
+      groups: [search, lsp]
+      notes: "Understanding existing code: semantic search plus symbols."
+
+    - name: architecture
+      min_confidence_hits: 1
+      patterns: ["design ", "architecture", "refactor", "restructure",
+                 "should we", "trade-off", "tradeoff", "migrate ", "plan the"]
+      groups: [search, lsp, planning]
+      notes: >
+        Needs the widest read surface plus planning. Deliberately still excludes
+        orchestration: spawning subagents is what local models drive worst.
+
+    - name: debug
+      min_confidence_hits: 1
+      patterns: ["bug", "failing", "error", "stack trace", "traceback",
+                 "why does", "broken", "crash", "regression"]
+      groups: [search, lsp]
+      notes: "Read widely, run tests, edit narrowly."
+
+    - name: review
+      min_confidence_hits: 1
+      patterns: ["review", "audit", "security", "vulnerability", "code smell"]
+      groups: [search, lsp]
+      notes: "Read-heavy; mutation is incidental but not forbidden."
+
 # ── Client profiles ─────────────────────────────────────────────────────────
 # What each client sends and how it should be treated. `drop_groups` here is
 # intersected with the model's own denied_groups: a tool is removed only when
