@@ -92,14 +92,20 @@ Most of this repo's complexity is in these; change them carefully.
    optionally trims) the tool payload clients declare. Measured: Claude Code sends **61 tools /
    104KB / 24,448 real Qwen tokens** on every `/v1/messages` request; **70.8%** of it is
    orchestration/scheduling/worktree machinery a local 30B cannot drive. Three modes via
-   `AILOCAL_TOOL_GATEWAY` — `off` (default, hook returns immediately), `report`, `filter`
-   (allowlist in `config/litellm/tool-policy.yaml`). Two traps the code encodes: it is registered
+   `AILOCAL_TOOL_GATEWAY` — `off` (default, hook returns immediately), `report`, `filter`.
+   ALL facts about models/clients/routes/tools live in `config/litellm/registry.yaml` (the
+   capability registry); the negotiator contains no such literal and a test enforces that by
+   grepping its code. `tool-policy.yaml` was superseded by the registry and removed. Frontier
+   models are `passthrough` — measured, forwarded untouched, and feature flags cannot override it.
+   Two traps the code encodes: it is registered
    **last** so `websearch_interception` still sees the client's `web_search` tool, and it never
    drops an entry it cannot name (Codex's bare `{"type":"web_search"}` normalises to
    `<web_search>`; dropping it kills SearXNG silently). It also refuses to book Codex's
    `namespace` tools as savings — LiteLLM already discards those before the backend, so Codex's
    real gain is 18%, not 71%. Full detail, including the token calibration against Ollama's
-   `prompt_eval_count`, in `docs/tool-gateway.md`.
+   `prompt_eval_count`, in `docs/local-agent-gateway.md` (full architecture: registry,
+   negotiation, verification, metrics, client profiles, flags, recovery). Phase-2 history
+   and the measurement discipline behind the numbers is in `docs/tool-gateway.md`.
 
 ## Two shared boundaries with Cadence
 
