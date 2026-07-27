@@ -240,6 +240,11 @@ litellm_settings:
     # writable. Paired with scripts/verify-session.py, which supplies the
     # filesystem/git half that this container cannot see.
     - session_observer.proxy_handler_instance
+    # Per-request timeline: request id, ttfb, total, finish/stop reason, and the
+    # exception + traceback on failure. Off unless AILOCAL_TRACE_DIR is set.
+    # Exists because the Claude "API error" was invisible to every component:
+    # each one succeeded while the client timed out on a ~90 s silence.
+    - request_trace.proxy_handler_instance
   # Rewrites a client's native web_search tool into a call against the
   # search_tools entry below.
   #
