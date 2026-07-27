@@ -253,6 +253,25 @@ class Registry:
         model_denies = set(spec.get("denied_groups") or [])
         return client_drops & model_denies
 
+    # ── schema rewrites (Phase C) ───────────────────────────────────────────
+    def rewrite_rules(self, client):
+        """Effective rewrite rules for a client: defaults overlaid by the
+        client's own `schema_rewrites` block, if any.
+
+        Returns a dict with enabled/strip_keys/max_description_chars/
+        max_param_description_chars/truncation_marker. When the registry says
+        nothing, `enabled` is False — a rewrite the operator never configured
+        must not happen."""
+        block = self.doc.get("schema_rewrites") or {}
+        rules = dict(block.get("defaults") or {})
+        rules.update(dict(self.client_profile(client).get("schema_rewrites") or {}))
+        rules.setdefault("enabled", False)
+        rules.setdefault("strip_keys", [])
+        rules.setdefault("max_description_chars", None)
+        rules.setdefault("max_param_description_chars", None)
+        rules.setdefault("truncation_marker", " ...")
+        return rules
+
     def mutating_tools(self):
         """(definite, ambiguous) name sets for the verification pipeline."""
         spec = self.doc.get("mutating_tools") or {}

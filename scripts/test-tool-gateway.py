@@ -201,6 +201,89 @@ check(rr["bytes_dropped"] == 0,
       "no reachable bytes were saved here, so no saving is claimed")
 check(rr["bytes_dropped"] + rr["bytes_dropped_moot"] + rr["bytes_kept"]
       == rr["bytes_in"], "saving + moot + kept == in")
+# The field that makes before/after ratios honest. bytes_kept counts kept tools
+# INCLUDING ones LiteLLM discards on this route, so comparing it against
+# bytes_reachable produced a -133.7% "reduction" on a real Codex capture.
+check(rr["bytes_kept_reachable"] <= rr["bytes_kept"],
+      "bytes_kept_reachable excludes kept-but-unreachable entries")
+check(rr["bytes_kept_reachable"] <= rr["bytes_reachable"],
+      "the model never receives more than the route forwards — any ratio "
+      "against bytes_reachable must use this field")
+ns_kept = {"type": "namespace", "name": "mcp__lsp", "description": "bundle",
+           "tools": [{"name": "hover"}]}
+rk, _ = gw.negotiate(dict(CODEX_HEADERS, model="ailocal-architecture",
+                          input="", tools=[ns_kept]), "aresponses")
+check(rk["tools_dropped"] == 0, "an ungrouped namespace bundle is kept...")
+check(rk["bytes_kept"] > 0 and rk["bytes_kept_reachable"] == 0,
+      "...but contributes ZERO to what the model receives")
+
+print("\nSCHEMA REWRITES (Phase C): shrink without removing")
+rules = reg.rewrite_rules("claude-code")
+check(rules["enabled"] is True, "rewrites enabled by default for claude-code")
+check("$schema" in rules["strip_keys"], "$schema is stripped")
+check(rules["max_description_chars"] is None,
+      "description truncation is DISABLED by default — it is a bet on model "
+      "behaviour, not a free byte win")
+
+fat = {"name": "Thing", "description": "d" * 200,
+       "input_schema": {"$schema": "https://json-schema.org/draft/2020-12/schema",
+                        "type": "object", "additionalProperties": False,
+                        "properties": {"p": {"type": "string",
+                                             "description": "x" * 100,
+                                             "additionalProperties": True}}}}
+before = tg.tool_bytes(fat)
+out = tg.rewrite_tool(fat, rules)
+check(tg.encode(out).find("$schema") == -1, "$schema removed from the schema")
+check(tg.encode(out).find("additionalProperties") == -1,
+      "additionalProperties removed recursively, at every depth")
+check(out["description"] == "d" * 200,
+      "the tool description is untouched while truncation is disabled")
+check(tg.tool_bytes(out) < before, "the rewritten tool is smaller")
+check(fat["input_schema"].get("$schema") is not None,
+      "the ORIGINAL tool is not mutated — REPORT mode must measure without "
+      "performing the rewrite")
+check("function" not in out,
+      "an Anthropic-shaped tool does not acquire a bogus function key "
+      "(regression: an identity check against the copy instead of the original)")
+
+nested = {"type": "function",
+          "function": {"name": "T", "description": "d" * 200,
+                       "parameters": {"$schema": "x", "type": "object"}}}
+out_n = tg.rewrite_tool(nested, rules)
+check("$schema" not in tg.encode(out_n), "openai-nested schema is stripped too")
+check(out_n["function"]["name"] == "T", "the nested function survives intact")
+check(tg.tool_name(out_n) == "T", "and is still nameable afterwards")
+
+trunc = dict(rules, max_description_chars=20, max_param_description_chars=10)
+out_t = tg.rewrite_tool(fat, trunc)
+check(out_t["description"].endswith("..."), "truncation adds a marker")
+check(len(out_t["description"]) <= 24, "the tool description is truncated")
+check(out_t["input_schema"]["properties"]["p"]["description"].endswith("..."),
+      "nested parameter descriptions are truncated independently")
+
+off = dict(rules, enabled=False)
+check(tg.rewrite_tool(fat, off) is fat,
+      "disabled rewrites return the tool unchanged, by identity")
+
+# Reported as its own figure, never merged into the drop saving.
+rw = dict(CLAUDE_HEADERS, model="ailocal-architecture",
+          tools=[fat, json.loads(WORKFLOW)])
+rr2, kk2 = gw.negotiate(rw, "anthropic_messages")
+check(rr2["rewrite_enabled"] is True, "the report says rewrites were considered")
+check(rr2["bytes_saved_by_rewrite"] > 0, "rewrite saving is reported")
+check(rr2["bytes_kept"] < rr2["bytes_kept_before_rewrite"],
+      "bytes_kept reflects the post-rewrite payload")
+check(rr2["bytes_kept_before_rewrite"] + rr2["bytes_dropped"]
+      == rr2["bytes_in"],
+      "the DROP accounting still closes against the pre-rewrite figure, so the "
+      "two kinds of reduction are never conflated")
+
+fr3, _ = gw.negotiate(dict(CLAUDE_HEADERS, model="claude-3-5-sonnet-2024-10-22",
+                           tools=[fat]), "anthropic_messages")
+check(fr3["rewrite_enabled"] is False,
+      "a passthrough model is never rewritten either")
+check(fr3["bytes_kept"] == tg.tool_bytes(fat),
+      "and its payload is byte-identical to what the client sent")
 
 print("\nFAIL OPEN")
 empty = cr.Registry(path="/nonexistent", caps_json="/nonexistent",

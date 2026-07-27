@@ -147,6 +147,106 @@ def tool_bytes(tool):
     return len(encode(tool).encode("utf-8"))
 
 
+def _schema_of(tool):
+    """(container, key) for a tool's parameter schema, whichever dialect it is.
+    Returns (None, None) when there is none to rewrite."""
+    if not isinstance(tool, dict):
+        return None, None
+    fn = tool.get("function")
+    if isinstance(fn, dict):
+        for key in ("parameters", "input_schema"):
+            if isinstance(fn.get(key), dict):
+                return fn, key
+    for key in ("input_schema", "parameters"):
+        if isinstance(tool.get(key), dict):
+            return tool, key
+    return None, None
+
+
+def _strip_keys(node, keys):
+    """Recursively drop `keys` from a schema. Returns a new structure; the
+    caller's original tool dict is never mutated, because REPORT mode must be
+    able to measure a rewrite without performing one."""
+    if isinstance(node, dict):
+        return {k: _strip_keys(v, keys) for k, v in node.items()
+                if k not in keys}
+    if isinstance(node, list):
+        return [_strip_keys(v, keys) for v in node]
+    return node
+
+
+def _truncate_descriptions(node, limit, marker, top_level=True):
+    """Recursively shorten `description` fields inside a schema."""
+    if isinstance(node, dict):
+        out = {}
+        for k, v in node.items():
+            if (k == "description" and isinstance(v, str) and limit
+                    and len(v) > limit):
+                out[k] = v[:limit].rstrip() + marker
+            else:
+                out[k] = _truncate_descriptions(v, limit, marker, False)
+        return out
+    if isinstance(node, list):
+        return [_truncate_descriptions(v, limit, marker, False) for v in node]
+    return node
+
+
+def rewrite_tool(tool, rules):
+    """Apply the registry's rewrite rules to one tool. Pure: returns a new dict.
+
+    Order matters only in that stripping first means truncation never has to
+    consider keys that are about to disappear.
+    """
+    if not rules.get("enabled") or not isinstance(tool, dict):
+        return tool
+    marker = rules.get("truncation_marker") or " ..."
+    out = dict(tool)
+
+    strip = set(rules.get("strip_keys") or [])
+    if strip:
+        container, key = _schema_of(out)
+        if container is not None:
+            # Rebuild the containing dict rather than mutating the caller's.
+            #
+            # The identity test must be against the ORIGINAL container, not the
+            # copy: `dict(container)` is always a new object, so comparing the
+            # copy was unconditionally true and injected a bogus "function" key
+            # into Anthropic-shaped tools — corrupting the schema and inflating
+            # the byte count. Caught by the kept+dropped==in accounting test.
+            at_top = container is out
+            new_container = dict(container)
+            new_container[key] = _strip_keys(container[key], strip)
+            if at_top:
+                out = new_container
+            else:
+                out["function"] = new_container
+
+    limit = rules.get("max_description_chars")
+    if limit and isinstance(out.get("description"), str) \
+            and len(out["description"]) > limit:
+        out["description"] = out["description"][:limit].rstrip() + marker
+    fn = out.get("function")
+    if limit and isinstance(fn, dict) and isinstance(fn.get("description"), str) \
+            and len(fn["description"]) > limit:
+        fn = dict(fn)
+        fn["description"] = fn["description"][:limit].rstrip() + marker
+        out["function"] = fn
+
+    param_limit = rules.get("max_param_description_chars")
+    if param_limit:
+        container, key = _schema_of(out)
+        if container is not None:
+            at_top = container is out
+            new_container = dict(container)
+            new_container[key] = _truncate_descriptions(
+                container[key], param_limit, marker)
+            if at_top:
+                out = new_container
+            else:
+                out["function"] = new_container
+    return out
+
+
 def tokens_est(text, model=None):
     """cl100k-proxy estimate. Returns None rather than a fabricated number when
     the counter is unavailable: a missing measurement and a measurement of zero
@@ -216,9 +316,30 @@ class ToolGateway(CustomLogger):
                 verdict = reg.group_of(name) not in removable
             (keep if verdict else drop).append((name, size, tool))
 
+        # Schema rewrites (Phase C): shrink what survives, without removing it.
+        # Never applied to a passthrough model or a protected tool — a frontier
+        # model must be untouched, and a protected tool is one whose exact shape
+        # another layer depends on.
+        rules = {} if passthrough else reg.rewrite_rules(client)
+        rewritten = []
+        for name, size, tool in keep:
+            if rules.get("enabled") and not reg.is_protected(name):
+                new_tool = rewrite_tool(tool, rules)
+                rewritten.append((name, tool_bytes(new_tool), new_tool))
+            else:
+                rewritten.append((name, size, tool))
+
         kept_bytes = sum(s for _, s, _ in keep)
+        rewritten_bytes = sum(s for _, s, _ in rewritten)
+        # What the MODEL actually receives: kept tools minus the ones LiteLLM
+        # discards on this route anyway. bytes_kept alone is not comparable with
+        # bytes_reachable — on /v1/responses it counts namespace bundles that
+        # never reach a backend, which made a real measurement read as a -133%
+        # "reduction". Any before/after ratio must use this field.
+        kept_reachable = sum(s for _, s, t in rewritten if reaches(t))
         dropped_bytes = sum(s for _, s, t in drop if reaches(t))
         dropped_moot = sum(s for _, s, t in drop if not reaches(t))
+        keep = rewritten
 
         report = {
             "route": route,
@@ -237,7 +358,15 @@ class ToolGateway(CustomLogger):
             "bytes_prefiltered_by_litellm": prefiltered,
             "tools_kept": len(keep),
             "tools_dropped": len(drop),
-            "bytes_kept": kept_bytes,
+            "bytes_kept": rewritten_bytes,
+            "bytes_kept_reachable": kept_reachable,
+            # Kept-before-rewrite vs after, so the two reductions (dropping a
+            # tool, shrinking a tool) are never conflated into one figure.
+            "bytes_kept_before_rewrite": kept_bytes,
+            "bytes_saved_by_rewrite": kept_bytes - rewritten_bytes,
+            "rewrite_enabled": bool(rules.get("enabled")),
+            "rewrite_rules": {k: v for k, v in rules.items()
+                              if k != "truncation_marker"} or None,
             "bytes_dropped": dropped_bytes,
             "bytes_dropped_moot": dropped_moot,
             "tokens_est_in": tokens_est(encode(tools), model),
