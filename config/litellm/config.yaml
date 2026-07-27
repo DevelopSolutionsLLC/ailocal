@@ -42,7 +42,10 @@ model_list:
       model: ollama_chat/qwen3-coder:30b-a3b-q4_K_M
       api_base: os.environ/OLLAMA_URL
       num_ctx: 65536
-      temperature: 0.2
+      temperature: 0.1
+      top_p: 0.9
+      top_k: 20
+      repeat_penalty: 1.0
       num_predict: 16384
       keep_alive: -1
       additional_drop_params: ["thinking", "reasoning_effort"]
@@ -65,7 +68,10 @@ model_list:
       model: ollama_chat/qwen2.5-coder:14b-instruct-q4_K_M
       api_base: os.environ/OLLAMA_URL
       num_ctx: 16384
-      temperature: 0.2
+      temperature: 0.1
+      top_p: 0.9
+      top_k: 20
+      repeat_penalty: 1.0
       num_predict: -1
       keep_alive: 20m
       additional_drop_params: ["thinking", "reasoning_effort"]
@@ -88,7 +94,10 @@ model_list:
       model: ollama_chat/gpt-oss:20b
       api_base: os.environ/OLLAMA_URL
       num_ctx: 16384
-      temperature: 0.1
+      temperature: 0.2
+      top_p: 0.9
+      top_k: 20
+      repeat_penalty: 1.0
       num_predict: 2048
       keep_alive: 20m
       think: true
@@ -110,7 +119,10 @@ model_list:
       model: ollama_chat/qwen2.5-coder:3b-instruct-q4_K_M
       api_base: os.environ/OLLAMA_URL
       num_ctx: 4096
-      temperature: 0
+      temperature: 0.1
+      top_p: 0.9
+      top_k: 20
+      repeat_penalty: 1.0
       num_predict: 128
       keep_alive: 20m
       additional_drop_params: ["thinking", "reasoning_effort"]
@@ -133,7 +145,10 @@ model_list:
       model: ollama_chat/qwen3.5:2b
       api_base: os.environ/OLLAMA_URL
       num_ctx: 32768
-      temperature: 0.2
+      temperature: 0.0
+      top_p: 0.9
+      top_k: 20
+      repeat_penalty: 1.0
       num_predict: 4096
       keep_alive: 20m
       additional_drop_params: ["thinking", "reasoning_effort"]
