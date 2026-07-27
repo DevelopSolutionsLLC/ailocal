@@ -72,6 +72,10 @@ run "verification classification (+ exit codes)" \
     ./scripts/test-verify-session.sh
 run "persona injection" \
     python3 scripts/test-persona-injection.py
+# Both directions matter: a repair layer that fires on a tutorial fence would
+# execute commands the model never intended.
+run "tool-call repair (repairs real calls, refuses examples)" \
+    python3 scripts/test-tool-repair.py
 
 echo
 echo "INTEGRATION"

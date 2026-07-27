@@ -300,6 +300,47 @@ def recover(content, declared_tools, ctx=None):
                 spans.append(m.group(0))
 
     if not calls:
+        # THIRD format: the whole reply is ONE fenced JSON tool call.
+        #
+        # _strip_code() deletes fenced blocks before scanning, deliberately —
+        # fences usually hold tutorial examples, and executing those would run
+        # commands the model never intended. That is still right.
+        #
+        # But it also deleted the case observed in a real Claude Code session,
+        # where qwen3-coder's ENTIRE response was:
+        #     ```json
+        #     {"name": "Read", "arguments": {"file_path": "..."}}
+        #     ```
+        # A genuine call, dropped because of where it sat. The session stalled:
+        # the model described a tool call and the client never executed one.
+        #
+        # The distinction that makes this safe is CONTEXT, not content: a
+        # tutorial fence is surrounded by prose, whereas a real call IS the whole
+        # reply. So this accepts a fenced call only when
+        #   - there is exactly ONE fenced block, and
+        #   - removing it leaves nothing but whitespace, and
+        #   - the blob validates against a DECLARED tool.
+        # An explanation with an example fence fails the second test and is left
+        # alone, which is the behaviour the multi-fence support was rejected for.
+        fences = FENCE_RE.findall(content)
+        if len(fences) == 1 and not _strip_code(content).strip():
+            body = fences[0].strip("`")
+            if body.lower().startswith("json"):
+                body = body[4:]
+            for m in JSON_BLOB_RE.finditer(body):
+                try:
+                    raw = json.loads(m.group(2))
+                except Exception:  # noqa: BLE001
+                    continue
+                call = _validate(m.group(1), raw, tool_index)
+                if call:
+                    calls.append(call)
+            if calls:
+                record("repaired", reason="sole_fenced_json",
+                       tool=calls[0]["function"]["name"], **(ctx or {}))
+                return calls, None
+
+    if not calls:
         # Tool syntax was present but nothing survived validation.
         _reject("no_valid_call_in_text", ctx=ctx)
         return None, content
