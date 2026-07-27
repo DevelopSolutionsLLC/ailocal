@@ -130,7 +130,7 @@ model_list:
 
   - model_name: ailocal-embeddings
     litellm_params:
-      model: ollama_chat/nomic-embed-text
+      model: ollama/nomic-embed-text
       api_base: os.environ/OLLAMA_URL
       num_ctx: 8192
       keep_alive: -1
