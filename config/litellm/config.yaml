@@ -36,76 +36,73 @@ model_list:
 
   # >>> BEGIN GENERATED model_list (sync-models.py) — do not edit <<<
 
-  # ailocal-architecture — Lead architect (qwen3-coder:30b-a3b-q4_K_M)
+  # ailocal-architecture — Lead architect (qwen3.6:27b)
   - model_name: ailocal-architecture
     litellm_params:
-      model: ollama_chat/qwen3-coder:30b-a3b-q4_K_M
+      model: ollama_chat/qwen3.6:27b
       api_base: os.environ/OLLAMA_URL
       num_ctx: 65536
       temperature: 0.2
       num_predict: 16384
       keep_alive: -1
-      additional_drop_params: ["thinking", "reasoning_effort"]
-      think: false
+      think: true
     model_info:
       supports_function_calling: true
       supports_tool_choice: true
-      supports_parallel_function_calling: true
+      supports_parallel_function_calling: false
       supports_system_messages: true
       supports_native_streaming: true
-      supports_reasoning: false
+      supports_reasoning: true
       max_input_tokens: 65536
       max_output_tokens: 16384
       input_cost_per_token: 0
       output_cost_per_token: 0
 
-  # ailocal-implementation — Daily coding (qwen2.5-coder:14b-instruct-q4_K_M)
+  # ailocal-implementation — Daily coding (qwen3.5:4b)
   - model_name: ailocal-implementation
     litellm_params:
-      model: ollama_chat/qwen2.5-coder:14b-instruct-q4_K_M
+      model: ollama_chat/qwen3.5:4b
       api_base: os.environ/OLLAMA_URL
       num_ctx: 16384
       temperature: 0.2
       num_predict: -1
       keep_alive: 20m
-      additional_drop_params: ["thinking", "reasoning_effort"]
-      think: false
+      think: true
     model_info:
       supports_function_calling: true
       supports_tool_choice: true
-      supports_parallel_function_calling: true
+      supports_parallel_function_calling: false
       supports_system_messages: true
       supports_native_streaming: true
-      supports_reasoning: false
+      supports_reasoning: true
       max_input_tokens: 16384
       max_output_tokens: 4096
       input_cost_per_token: 0
       output_cost_per_token: 0
 
-  # ailocal-review — Code review (deepseek-coder-v2:16b-lite-instruct-q4_K_M)
+  # ailocal-review — Code review (gpt-oss:20b)
   - model_name: ailocal-review
     litellm_params:
-      model: ollama_chat/deepseek-coder-v2:16b-lite-instruct-q4_K_M
+      model: ollama_chat/gpt-oss:20b
       api_base: os.environ/OLLAMA_URL
       num_ctx: 16384
       temperature: 0.1
       num_predict: 2048
       keep_alive: 20m
-      additional_drop_params: ["thinking", "reasoning_effort"]
-      think: false
+      think: true
     model_info:
       supports_function_calling: true
       supports_tool_choice: true
-      supports_parallel_function_calling: true
+      supports_parallel_function_calling: false
       supports_system_messages: true
       supports_native_streaming: true
-      supports_reasoning: false
+      supports_reasoning: true
       max_input_tokens: 16384
       max_output_tokens: 4096
       input_cost_per_token: 0
       output_cost_per_token: 0
 
-  # ailocal-completion — Autocomplete (qwen2.5-coder:3b-instruct-q4_K_M)
+  # ailocal-completion — Autocomplete (standby) (qwen2.5-coder:3b-instruct-q4_K_M)
   - model_name: ailocal-completion
     litellm_params:
       model: ollama_chat/qwen2.5-coder:3b-instruct-q4_K_M
@@ -113,7 +110,7 @@ model_list:
       num_ctx: 4096
       temperature: 0
       num_predict: 128
-      keep_alive: -1
+      keep_alive: 20m
       additional_drop_params: ["thinking", "reasoning_effort"]
       think: false
     model_info:
@@ -125,6 +122,28 @@ model_list:
       supports_reasoning: false
       max_input_tokens: 4096
       max_output_tokens: 1024
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+
+  # ailocal-fast — Fast agent (qwen3.5:2b)
+  - model_name: ailocal-fast
+    litellm_params:
+      model: ollama_chat/qwen3.5:2b
+      api_base: os.environ/OLLAMA_URL
+      num_ctx: 32768
+      temperature: 0.2
+      num_predict: 4096
+      keep_alive: 20m
+      think: true
+    model_info:
+      supports_function_calling: true
+      supports_tool_choice: true
+      supports_parallel_function_calling: false
+      supports_system_messages: true
+      supports_native_streaming: true
+      supports_reasoning: true
+      max_input_tokens: 32768
+      max_output_tokens: 8192
       input_cost_per_token: 0
       output_cost_per_token: 0
 

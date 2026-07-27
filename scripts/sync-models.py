@@ -245,8 +245,24 @@ def gen_role_block(role, info):
     if merge:
         params.append("      merge_reasoning_content_in_choices: true")
     if not reasoning:
+        # Suppress reasoning ONLY for models that cannot do it.
+        #
+        # This was unconditionally correct when no installed model could think:
+        # Claude Code sends `thinking` on every request and a non-thinking
+        # backend 400s on it, and a backend defaulting to reasoning hung VS Code.
+        #
+        # It is now WRONG for qwen3.5, qwen3.6 and gpt-oss, which all report
+        # `thinking` in their Ollama capabilities. Emitting think:false for those
+        # would suppress the single biggest capability the migration buys. The
+        # `reasoning` flag in config/profiles/<tier>.yaml now drives this per
+        # capability rather than applying to everything.
         params.append('      additional_drop_params: ["thinking", "reasoning_effort"]')
         params.append("      think: false")
+    else:
+        # A thinking-capable model: do NOT drop the client's thinking params and
+        # do NOT force think:false. Verified against Ollama /api/show — the
+        # capability list is the source of truth, not the model name.
+        params.append("      think: true")
 
     mi = [
         f"    model_info:",

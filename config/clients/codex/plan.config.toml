@@ -3,7 +3,7 @@
 # Overlays the base config.toml (provider/base_url stay ailocal/LiteLLM).
 
 model = "ailocal-architecture"
-# `architecture` (qwen3-coder:30b) is NOT a chain-of-thought reasoner — no installed model emits
+# `architecture` (qwen3-coder:30b-a3b-q4_K_M) is NOT a chain-of-thought reasoner — no installed model emits
 # <think>. So reasoning effort is kept at "medium", not "high": a high setting here would imply a
 # reasoning tier that does not exist. Raise this only if a true reasoning backend is added.
 model_reasoning_effort = "medium"

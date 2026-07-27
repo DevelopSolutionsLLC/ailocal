@@ -30,13 +30,16 @@ disk_gb: 40
 # ── architecture — shared large-context coding/reasoning tier ─────────────────
 # The one big-context capability every client shares (Claude Code, Codex, VS Code):
 # design, deep reasoning, AND large interactive/agent prompts. 65536 num_ctx gives clients
-# a genuinely large input window; qwen3-coder:30b supports 262144, so 128K is a future
+# a genuinely large input window; qwen3-coder:30b-a3b-q4_K_M supports 262144, so 128K is a future
 # "architecture-deep" capability, not this one (a resident -1 model carries its full KV,
 # so 64K is the balance between input capacity and permanent memory).
 architecture:
   role: Lead architect
-  active: qwen3-coder:30b
-  preferred: [qwen3-coder:30b, qwen4-coder:32b, deepseek-r2:32b]
+  active: qwen3.6:27b
+  # Rollback: qwen3-coder:30b-a3b-q4_K_M stays installed and listed here, so
+  # reverting is a one-line `active:` change plus ./scripts/sync-models.sh.
+  preferred: [qwen3.6:27b, qwen3-coder:30b-a3b-q4_K_M]
+  reasoning: true          # VERIFIED: capabilities include `thinking`
   context: 65536
   temperature: 0.2
   num_predict: 16384
@@ -49,8 +52,9 @@ architecture:
 # ── implementation — everyday working coder ──────────────────────────────────
 implementation:
   role: Daily coding
-  active: qwen2.5-coder:14b-instruct-q4_K_M
-  preferred: [qwen2.5-coder:14b-instruct-q4_K_M, qwen3-coder:14b]
+  active: qwen3.5:4b
+  preferred: [qwen3.5:4b, qwen2.5-coder:14b-instruct-q4_K_M]
+  reasoning: true          # VERIFIED: capabilities include `thinking`
   context: 16384
   temperature: 0.2
   num_predict: -1
@@ -63,8 +67,9 @@ implementation:
 # ── review — code review / bug & security detection ──────────────────────────
 review:
   role: Code review
-  active: deepseek-coder-v2:16b-lite-instruct-q4_K_M
-  preferred: [deepseek-coder-v2:16b-lite-instruct-q4_K_M, qwen2.5-coder:32b]
+  active: gpt-oss:20b
+  preferred: [gpt-oss:20b, deepseek-coder-v2:16b-lite-instruct-q4_K_M]
+  reasoning: true          # VERIFIED: thinking AND tools (deepseek had NO tools)
   context: 16384
   temperature: 0.1
   num_predict: 2048
@@ -75,17 +80,48 @@ review:
   weaknesses: [slower than the implementation tier, not for bulk generation]
 
 # ── completion — inline autocomplete (FIM) ───────────────────────────────────
+# STANDBY — not in active use. Zero recorded requests across every trace, and the
+# only consumer (Continue) is not installed. Kept mapped so inline autocomplete
+# works the moment Continue is installed, but no longer PINNED: keep_alive -1 was
+# reserving memory permanently on a machine where paging is the known failure
+# mode. qwen2.5-coder:3b remains the right model here — it is the only small one
+# with BOTH `insert` (FIM) and `tools`, verified across six candidates.
 completion:
-  role: Autocomplete
+  role: Autocomplete (standby)
   active: qwen2.5-coder:3b-instruct-q4_K_M
   preferred: [qwen2.5-coder:3b-instruct-q4_K_M, qwen2.5-coder:1.5b]
   context: 4096
   temperature: 0
   num_predict: 128
-  keep_alive: -1
+  keep_alive: 20m
   purpose: [inline completion, FIM, quick syntax fixes, small transforms]
   strengths: [very fast, tiny footprint, native FIM tokens]
   weaknesses: [no deep reasoning, short context]
+
+# ── fast — lightweight tool-enabled agent (NOT autocomplete) ────────────────
+# Deliberately NOT the completion tier. qwen3.5:4b has no FIM/insert capability
+# (verified against Ollama metadata: no fim_prefix/fim_suffix/fim_middle markers,
+# capabilities are completion/vision/tools/thinking with NO `insert`), so it
+# cannot serve inline autocomplete. Putting it there would break Continue/VS Code
+# infill *quietly* — the model would still answer, just never as a correct infill.
+#
+# What it IS good for: 262K context, native tool calling, and thinking, at 3.4 GB.
+# That makes it the right home for cheap agentic work that currently runs on a
+# far larger model — task classification, doc summarisation, quick single-file
+# edits — freeing implementation/architecture for real coding.
+fast:
+  role: Fast agent
+  active: qwen3.5:2b
+  preferred: [qwen3.5:2b, qwen3.5:4b]
+  reasoning: true          # VERIFIED: capabilities include `thinking`
+  context: 32768
+  temperature: 0.2
+  num_predict: 4096
+  keep_alive: 20m
+  persona: true
+  purpose: [task classification, doc summarisation, quick edits, tool-driven lookups]
+  strengths: [tiny footprint, native tool calling, very long context, low latency]
+  weaknesses: [no FIM/insert - cannot do inline autocomplete, weaker on large refactors]
 
 # ── embeddings — semantic retrieval (INFRASTRUCTURE) ─────────────────────────
 embeddings:

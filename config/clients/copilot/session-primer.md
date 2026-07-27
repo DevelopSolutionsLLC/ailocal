@@ -75,7 +75,7 @@ cat file.txt
 
 | Capability | Backend | For |
 |---|---|---|
-| `architecture` | qwen3-coder:30b (32k) | design, complex refactor, multi-step debug |
+| `architecture` | qwen3-coder:30b-a3b-q4_K_M (64k) | design, complex refactor, multi-step debug |
 | `implementation` | qwen2.5-coder:14b (16k) | everyday coding, features, tests |
 | `review` | deepseek-coder-v2:16b-lite (16k) | code review, bug & security |
 | `completion` | qwen2.5-coder:3b (4k) | fast/small tasks, autocomplete |
