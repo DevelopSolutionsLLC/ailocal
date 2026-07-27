@@ -285,6 +285,88 @@ check(fr3["rewrite_enabled"] is False,
 check(fr3["bytes_kept"] == tg.tool_bytes(fat),
       "and its payload is byte-identical to what the client sent")
 
+print("\nTASK NEGOTIATION (Phase D) — off by default, subtractive only")
+os.environ.pop(tg.TASK_ENV, None)
+check(tg.task_negotiation_enabled() is False, "disabled unless explicitly on")
+
+check(tg.first_user_text({"messages": [{"role": "user", "content": "fix the typo"}]})
+      == "fix the typo", "first user text, anthropic/openai string content")
+check(tg.first_user_text({"messages": [
+    {"role": "user", "content": [{"type": "text", "text": "where is X"}]}]})
+      == "where is X", "block content is flattened")
+check(tg.first_user_text({"input": [
+    {"type": "message", "role": "user", "content": "explain the parser"}]})
+      == "explain the parser", "responses-route input[] is read")
+check(tg.first_user_text({"messages": [
+    {"role": "user", "content": "<system-reminder>refactor everything"
+                                "</system-reminder>fix the typo"}]})
+      == "fix the typo",
+      "injected scaffolding is stripped — otherwise every session is classified "
+      "by whatever words appear in CLAUDE.md")
+check(tg.first_user_text({"messages": [
+    {"role": "assistant", "content": "I will refactor"},
+    {"role": "user", "content": "where is X"}]}) == "where is X",
+      "assistant turns never contribute — a model must not narrow its own tools")
+check(tg.first_user_text({}) == "", "no messages -> empty, not a crash")
+
+cls, groups, hits = reg.classify_task("fix the typo in parser.py")
+check(cls == "simple_edit", f"a located edit classifies as simple_edit ({cls})")
+check("edit_and_run" in groups, "the always-groups floor is included")
+check("lsp" not in groups and "search" not in groups,
+      "a simple edit does not need symbols or semantic search")
+
+cls2, g2, _ = reg.classify_task("where is the retry logic handled?")
+check(cls2 == "explore", f"a question classifies as explore ({cls2})")
+check("search" in g2 and "lsp" in g2, "explore needs search + lsp")
+check("edit_and_run" in g2, "but can still read and run")
+
+cls3, g3, _ = reg.classify_task("design the sync service architecture")
+check(cls3 == "architecture", f"design work -> architecture ({cls3})")
+check("planning" in g3, "architecture gets planning")
+check("orchestration" not in g3,
+      "architecture still does NOT get orchestration — subagent spawning is "
+      "what local models drive worst")
+
+cls4, g4, _ = reg.classify_task("hello there")
+check(cls4 is None and g4 is None,
+      "an unclassifiable task returns None, NOT an empty set — 'no opinion' "
+      "and 'needs nothing' must not be confused")
+
+os.environ[tg.TASK_ENV] = "1"
+check(tg.task_negotiation_enabled() is True, "enabled by env")
+
+# A simple edit should now also shed lsp/search, which Phase B alone kept.
+edit_req = dict(CLAUDE_HEADERS, model="ailocal-architecture", tools=list(TOOLS),
+                messages=[{"role": "user", "content": "fix the typo in a.py"}])
+re1, k1 = gw.negotiate(edit_req, "anthropic_messages")
+check(re1["task_class"] == "simple_edit", "the report names the task class")
+check("mcp__lsp__get_hover" in re1["dropped_names"],
+      "task negotiation sheds lsp for a simple edit, beyond Phase B's drops")
+check("Read" not in re1["dropped_names"], "reading is never shed")
+
+explore_req = dict(CLAUDE_HEADERS, model="ailocal-architecture", tools=list(TOOLS),
+                   messages=[{"role": "user", "content": "where is the parser?"}])
+re2, _ = gw.negotiate(explore_req, "anthropic_messages")
+check(re2["task_class"] == "explore", "explore classified")
+check("mcp__lsp__get_hover" not in re2["dropped_names"],
+      "lsp is KEPT for an exploration task")
+
+# The safety property: classification may only subtract.
+unmatched = dict(CLAUDE_HEADERS, model="ailocal-architecture", tools=list(TOOLS),
+                 messages=[{"role": "user", "content": "hello there"}])
+re3, _ = gw.negotiate(unmatched, "anthropic_messages")
+check(re3["task_class"] is None, "unmatched task")
+check(re3["dropped_names"] == ["Workflow"],
+      "an unmatched task falls back to Phase B exactly — no extra removal")
+
+fr4, _ = gw.negotiate(dict(CLAUDE_HEADERS, model="claude-3-5-sonnet-2024-10-22",
+                           tools=list(TOOLS),
+                           messages=[{"role": "user", "content": "fix the typo"}]),
+                      "anthropic_messages")
+check(fr4["task_class"] is None and fr4["tools_dropped"] == 0,
+      "a passthrough model is never task-negotiated")
+os.environ.pop(tg.TASK_ENV, None)
+
 print("\nFAIL OPEN")
 empty = cr.Registry(path="/nonexistent", caps_json="/nonexistent",
                     config_path="/nonexistent")
