@@ -139,6 +139,43 @@ routes:
     drops_tool_types: [computer_use, image_generation, namespace, shell]
     result_status: heuristic       # inspect function_call_output text
 
+# ── Namespace expansion (usability phase) ───────────────────────────────────
+# Codex declares its MCP servers to the model as `namespace` bundles:
+#   {"type":"namespace","name":"mcp__lsp","tools":[{...20 function tools...}]}
+# LiteLLM discards every namespace-typed entry when translating /v1/responses
+# down to Chat Completions, so the MODEL never learns those tools exist — even
+# though Codex is running the servers perfectly well. Measured: 27,168 B of
+# Codex's 38,388 B payload, including all of mcp__lsp and mcp__grepai.
+#
+# The bundles' sub-tools are ALREADY fully-formed function tools
+# ({type, name, description, strict, parameters}), i.e. exactly the shape Chat
+# Completions wants. The gateway's pre-call hook runs BEFORE LiteLLM's drop, so
+# flattening them here makes them survive. No LiteLLM patch is needed.
+#
+# WHY THIS IS OFF BY DEFAULT
+# Flattening changes the NAME the model will emit, and Codex has to be able to
+# route that name back to the right MCP server. If the naming is wrong the model
+# emits calls Codex cannot dispatch, which is worse than not having the tools at
+# all. `name_template` must be validated against a real Codex session before this
+# is enabled — see scripts/validate-codex-e2e.sh.
+#
+# COST
+# Expansion makes ~17 KB of previously-dropped schema REACHABLE, so it buys
+# capability by spending context. That is why `only_groups` exists: combined with
+# task negotiation, a task that needs lsp gets lsp and a simple edit does not.
+namespace_expansion:
+  enabled: false
+  # {namespace} is the bundle's own name (already "mcp__lsp"), {tool} the
+  # sub-tool. The default reproduces the mcp__<server>__<tool> convention Claude
+  # Code uses, which is the only convention observed in this stack.
+  name_template: "{namespace}__{tool}"
+  # Expand only bundles whose flattened tools land in these groups. Empty = all.
+  only_groups: []
+  # Never expand a bundle into more than this many tools; a runaway server with
+  # hundreds of tools would otherwise reintroduce the payload problem being
+  # solved.
+  max_tools_per_namespace: 40
+
 # ── Model classes ───────────────────────────────────────────────────────────
 # Matched against the RESOLVED capability (via model_group_alias) first, then
 # against the raw requested model name by pattern. First match wins.

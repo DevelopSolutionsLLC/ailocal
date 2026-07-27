@@ -258,6 +258,18 @@ class Registry:
         model_denies = set(spec.get("denied_groups") or [])
         return client_drops & model_denies
 
+    # ── namespace expansion ─────────────────────────────────────────────────
+    def namespace_expansion(self):
+        """Config for flattening namespace bundles into function tools.
+        `enabled` defaults False: flattening changes the name the model emits and
+        the client must be able to route it."""
+        cfg = dict(self.doc.get("namespace_expansion") or {})
+        cfg.setdefault("enabled", False)
+        cfg.setdefault("name_template", "{namespace}__{tool}")
+        cfg.setdefault("only_groups", [])
+        cfg.setdefault("max_tools_per_namespace", 40)
+        return cfg
+
     # ── task classification (Phase D) ───────────────────────────────────────
     def classify_task(self, text):
         """(class_name, groups, hits) for a request, or (None, None, 0).
