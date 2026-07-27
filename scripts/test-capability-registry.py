@@ -1,0 +1,230 @@
+#!/usr/bin/env python3
+"""test-capability-registry.py — tests for config/litellm/capability_registry.py
+and the shipped config/litellm/registry.yaml.
+
+Two kinds of check here, and the second matters more:
+
+1. The registry answers correctly for the real models, clients and routes.
+2. The registry is the ONLY place those facts live. There is a source-level
+   assertion that the negotiator contains no model/client/tool literals, because
+   "no hard-coded conditionals" is an architectural property that decays the
+   moment someone adds one convenient `if`.
+
+Run: python3 scripts/test-capability-registry.py   (needs PyYAML -> container)
+"""
+
+import os
+import sys
+import importlib.util
+import re
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REG_PY = os.environ.get("AILOCAL_REGISTRY_MODULE",
+                        os.path.join(ROOT, "config/litellm/capability_registry.py"))
+REG_YAML = os.environ.get("AILOCAL_REGISTRY",
+                          os.path.join(ROOT, "config/litellm/registry.yaml"))
+CAPS = os.environ.get("AILOCAL_CAPABILITIES_JSON",
+                      os.path.join(ROOT, "config/capabilities.generated.json"))
+CONF = os.environ.get("AILOCAL_CONFIG_PATH",
+                      os.path.join(ROOT, "config/litellm/config.yaml"))
+# Overridable: inside the container ROOT resolves from /tmp, so the default
+# would not find it. A missing file FAILS rather than passing vacuously —
+# this is the check that keeps the architecture honest, so it must run.
+GATEWAY_PY = os.environ.get("AILOCAL_GATEWAY_SOURCE",
+                            os.path.join(ROOT, "config/litellm/tool_gateway.py"))
+
+_spec = importlib.util.spec_from_file_location("capability_registry", REG_PY)
+cr = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(cr)
+
+fails = 0
+def check(cond, name):
+    global fails
+    print(f"  {'PASS' if cond else 'FAIL'}  {name}")
+    if not cond:
+        fails += 1
+
+try:
+    import yaml  # noqa: F401
+except ImportError:
+    print("\nSKIPPED: PyYAML absent on this interpreter. Run inside the proxy "
+          "image (scripts/test-capability-registry.sh). Exiting non-zero so an "
+          "incomplete run is never mistaken for a passing one.")
+    sys.exit(1)
+
+reg = cr.Registry(path=REG_YAML, caps_json=CAPS, config_path=CONF)
+
+print("\nLOADING")
+check(reg.loaded, f"registry.yaml loads ({reg.state}) {reg.error or ''}")
+d = reg.describe()
+check(d["groups"] >= 8, f"groups present ({d['groups']})")
+check(d["model_classes"] >= 5, f"model classes present ({d['model_classes']})")
+check(d["routes"] == 3, f"all three routes described ({d['routes']})")
+check(d["contexts_from_generated"] >= 5,
+      f"context windows come from the GENERATED file, not the registry "
+      f"({d['contexts_from_generated']} found)")
+check(d["aliases"] > 0, f"model_group_alias loaded ({d['aliases']})")
+
+print("\nMODEL CLASSIFICATION")
+name, _ = reg.model_class("ailocal-architecture")
+check(name == "local_agentic", f"ailocal-architecture -> local_agentic (got {name})")
+name, _ = reg.model_class("ailocal-implementation")
+check(name == "local_nonagentic",
+      f"ailocal-implementation -> local_nonagentic (got {name})")
+name, _ = reg.model_class("ailocal-completion")
+check(name == "local_completion", f"ailocal-completion -> local_completion (got {name})")
+
+# The trap this ordering exists to avoid: compat aliases LOOK frontier.
+name, _ = reg.model_class("claude-sonnet-4-6")
+check(name in ("local_agentic", "local_nonagentic"),
+      f"claude-sonnet-4-6 resolves via alias to a LOCAL class, not frontier "
+      f"(got {name})")
+check(reg.is_passthrough("claude-sonnet-4-6") is False,
+      "a compat alias pointing at a local capability is NOT passthrough")
+check(reg.capability_of("claude-sonnet-4-6") in
+      ("implementation", "architecture", "review"),
+      "capability_of resolves the compat alias")
+
+# A genuine frontier id (not in this deployment's alias map) passes through.
+name, _ = reg.model_class("claude-3-5-sonnet-2024-10-22")
+check(name == "frontier_passthrough",
+      f"a dated frontier model id -> frontier_passthrough (got {name})")
+check(reg.is_passthrough("claude-3-5-sonnet-2024-10-22") is True,
+      "frontier models are passthrough")
+check(reg.is_passthrough("some-model-nobody-registered") is True,
+      "an unmatched model is passthrough — fail open, never filter blindly")
+
+print("\nCAPABILITY FLAGS")
+check(reg.supports("ailocal-architecture", "tools") is True,
+      "local_agentic supports tools")
+check(reg.supports("ailocal-architecture", "reasoning") is False,
+      "local_agentic declares NO reasoning (qwen3-coder emits no <think>)")
+check(reg.supports("ailocal-completion", "tools") is False,
+      "the FIM tier declares no tool support at all")
+check(reg.supports("ailocal-implementation", "mcp") is False,
+      "the measured non-agentic tier declares no MCP")
+check(reg.supports("ailocal-architecture", "nonexistent_feature") is None,
+      "an unknown feature returns None, not False — unknown != unsupported")
+
+print("\nCONTEXT WINDOWS (generated, not restated)")
+check(reg.max_context("ailocal-architecture") == 65536,
+      f"architecture 65536 (got {reg.max_context('ailocal-architecture')})")
+check(reg.max_context("ailocal-completion") == 4096,
+      f"completion 4096 (got {reg.max_context('ailocal-completion')})")
+check(reg.max_context("claude-3-5-sonnet-2024-10-22") == 200000,
+      "a cloud class falls back to its declared max_context")
+
+print("\nROUTES")
+check(reg.route_for_call_type("anthropic_messages") == "/v1/messages",
+      "anthropic_messages -> /v1/messages")
+check(reg.route_for_call_type("acompletion") == "/v1/chat/completions",
+      "acompletion -> /v1/chat/completions")
+check(reg.route_for_call_type(None, has_input_key=True) == "/v1/responses",
+      "an unknown call_type with an `input` key -> /v1/responses")
+check(reg.route_drops_type("/v1/responses", "namespace") is True,
+      "/v1/responses drops namespace (LiteLLM's own behaviour)")
+for t in ("computer_use", "image_generation", "shell"):
+    check(reg.route_drops_type("/v1/responses", t) is True,
+          f"/v1/responses drops {t}")
+check(reg.route_drops_type("/v1/responses", "function") is False,
+      "/v1/responses does NOT drop function tools")
+check(reg.route_drops_type("/v1/messages", "namespace") is False,
+      "the drop rule is route-specific, not global")
+check(reg.result_status_mode("/v1/chat/completions") == "unknown",
+      "the OpenAI route reports UNKNOWN result status — it has no error flag")
+check(reg.result_status_mode("/v1/messages") == "explicit",
+      "the Anthropic route has explicit is_error")
+
+print("\nCLIENT DETECTION")
+check(reg.detect_client({"user-agent": "claude-cli/2.0.0"}) == "claude-code",
+      "claude-cli user-agent")
+check(reg.detect_client({"User-Agent": "CLAUDE-CLI/2"}) == "claude-code",
+      "header name and value matching is case-insensitive")
+check(reg.detect_client({"originator": "codex_cli_rs"}) == "codex", "codex originator")
+check(reg.detect_client({"user-agent": "vscode/1.9"}) == "vscode", "vscode")
+check(reg.detect_client({"x-app": "cli"}) == "claude-code", "header-value match")
+check(reg.detect_client({}) == "unknown", "no headers -> unknown")
+check(reg.detect_client({"user-agent": "curl/8"}) == "unknown",
+      "an unrecognised agent is unknown, never guessed")
+
+print("\nNEGOTIATION RULE (both sides must agree)")
+rm = reg.removable_groups("claude-code", "ailocal-architecture")
+check("orchestration" in rm and "scheduling" in rm and "worktree" in rm,
+      "claude-code + local_agentic: orchestration/scheduling/worktree removable")
+check("edit_and_run" not in rm and "search" not in rm and "lsp" not in rm,
+      "the coding surface is never removable")
+check(reg.removable_groups("unknown", "ailocal-architecture") == set(),
+      "an unknown CLIENT yields nothing removable")
+check(reg.removable_groups("claude-code", "totally-unknown-model") == set(),
+      "an unknown MODEL yields nothing removable")
+# Intersection, not union: claude-code does not list `interactive`, so even
+# though local_agentic denies it, it stays.
+check("interactive" not in rm,
+      "a group only one side objects to is NOT removable (intersection)")
+
+print("\nPROTECTED TOOLS")
+check(reg.is_protected("web_search") is True, "web_search is protected")
+check(reg.is_protected("WebSearch") is True, "WebSearch is protected")
+check(reg.is_protected("<web_search>") is True,
+      "an unnamed entry is protected implicitly")
+check(reg.is_protected("<namespace>") is True, "so is <namespace>")
+check(reg.is_protected("Workflow") is False, "an ordinary tool is not protected")
+
+print("\nGROUP LOOKUP")
+check(reg.group_of("Workflow") == "orchestration", "Workflow -> orchestration")
+check(reg.group_of("mcp__lsp__get_hover") == "lsp", "prefix pattern -> lsp")
+check(reg.group_of("mcp__grepai__grepai_search") == "search", "grepai -> search")
+check(reg.group_of("TaskCreate") == "orchestration", "Task* prefix -> orchestration")
+check(reg.group_of("CronList") == "scheduling", "Cron* prefix -> scheduling")
+check(reg.group_of("some_unknown_tool") is None, "an unknown tool has no group")
+
+definite, ambiguous = reg.mutating_tools()
+check("Edit" in definite and "apply_patch" in definite,
+      "mutating tools come from the registry, not verify-session.py")
+check("Bash" in ambiguous,
+      "Bash is AMBIGUOUS — it can legitimately be read-only")
+check(not (definite & ambiguous), "the two sets are disjoint")
+
+print("\nFAIL-OPEN BEHAVIOUR")
+missing = cr.Registry(path="/nonexistent", caps_json="/nonexistent",
+                      config_path="/nonexistent")
+check(missing.state == "absent", "a missing registry reports 'absent'")
+check(missing.is_passthrough("anything") is True,
+      "with no registry, EVERY model is passthrough (nothing gets filtered)")
+check(missing.removable_groups("claude-code", "ailocal-architecture") == set(),
+      "with no registry, nothing is removable")
+check(missing.detect_client({"user-agent": "claude-cli"}) == "unknown",
+      "with no registry, no client is claimed to be identified")
+
+import tempfile
+bad = os.path.join(tempfile.mkdtemp(), "bad.yaml")
+open(bad, "w").write("groups: [unclosed\n")
+broken = cr.Registry(path=bad, caps_json="/nonexistent", config_path="/nonexistent")
+check(broken.state == "error", "a malformed registry reports 'error', not 'absent'")
+check(broken.is_passthrough("anything") is True,
+      "a malformed registry also fails open")
+
+# ── the architectural assertion ─────────────────────────────────────────────
+print("\nNO HARD-CODED CONDITIONALS IN THE NEGOTIATOR")
+if os.path.exists(GATEWAY_PY):
+    src = open(GATEWAY_PY, encoding="utf-8").read()
+    # Strip comments and docstrings: prose may name models freely (and should),
+    # it is executable literals that would re-introduce the coupling.
+    code = re.sub(r'"""(?:.|\n)*?"""', "", src)
+    code = re.sub(r"#.*", "", code)
+    forbidden = ["qwen", "deepseek", "claude-cli", "codex_cli", "Workflow",
+                 "mcp__lsp", "mcp__grepai", "namespace", "ailocal-architecture"]
+    hits = [tok for tok in forbidden if tok in code]
+    check(not hits,
+          f"tool_gateway.py executable code names no model/client/tool "
+          f"literal (found: {hits})")
+    check("registry" in code,
+          "tool_gateway.py consults the registry")
+else:
+    check(False, f"{GATEWAY_PY} missing")
+
+print()
+if fails:
+    print(f"CAPABILITY REGISTRY TESTS: {fails} FAILED")
+    sys.exit(1)
+print("CAPABILITY REGISTRY TESTS: OK")
