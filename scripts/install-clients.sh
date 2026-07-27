@@ -214,6 +214,18 @@ ensure_ailocal_shell_sourcing
 if has_target "vscode"; then
   step "Configuring VS Code Copilot Chat"
 
+  # The provider group and the deprecated-settings cleanup live in ONE place:
+  # scripts/install-vscode.sh. It is the per-client installer, matching the
+  # config/clients/vscode/ layout and the install-*.sh naming used elsewhere.
+  # Delegating rather than duplicating means the researched details (which
+  # settings VS Code still honours, and that the SecretStorage apiKey reference
+  # must be preserved) are not maintained in two files that can drift.
+  if [ -x "$ROOT_DIR/scripts/install-vscode.sh" ]; then
+    "$ROOT_DIR/scripts/install-vscode.sh" || warn "install-vscode.sh reported a problem"
+  else
+    warn "scripts/install-vscode.sh missing — provider group not configured"
+  fi
+
   # VS Code connects through the litellm-connector-copilot extension, which
   # stores the Base URL + API key in VS Code's encrypted SecretStorage. That is
   # a security boundary no script/file can write — the key must be entered once
