@@ -45,6 +45,7 @@ every rule below biases toward doing nothing:
   - arguments are never invented or defaulted
 """
 
+import collections
 import json
 import logging
 import os
@@ -75,6 +76,81 @@ def attribute(**fields):
         print("AILOCAL_ATTRIB " + json.dumps(fields, default=str), flush=True)
     except Exception:  # noqa: BLE001 - telemetry must never break a response
         pass
+
+
+# ── Counters ────────────────────────────────────────────────────────────────
+# Deliberately NOT gated behind AILOCAL_TOOL_REPAIR_DEBUG. Gating the only signal
+# behind a flag that production does not set meant "repair never fired" and "repair
+# fired and the client ignored it" looked identical in the logs — a real incident
+# that cost two container swaps to disambiguate. Counters are cheap; emit always.
+#
+# `reason` is the diagnostic that was missing entirely: a rejected candidate used to
+# vanish silently, so a false negative was invisible.
+_COUNTS = collections.Counter()
+
+
+def record(outcome, reason=None, tool=None, route=None, model=None, turn=None):
+    """Count one repair decision. outcome: attempted|repaired|rejected|native."""
+    try:
+        _COUNTS[(outcome, reason or "-", tool or "-")] += 1
+        # print(), NOT log.info() — LiteLLM filters third-party loggers, so log.info is
+        # invisible in `docker logs`. The module docstring already records this; routing
+        # the new counters through log.info reproduced the exact blindness they exist to
+        # remove, and the first smoke run surfaced zero metrics because of it.
+        print("tool_repair_metric " + json.dumps({
+            "outcome": outcome, "reason": reason or "-", "tool": tool or "-",
+            "route": route or "-", "model": model or "-", "turn": turn,
+            "total": _COUNTS[(outcome, reason or "-", tool or "-")],
+        }, default=str), flush=True)
+    except Exception:  # noqa: BLE001 - telemetry must never break a response
+        pass
+
+
+def _turn_of(request_data):
+    """Best-available turn index: how many assistant replies are already in play.
+
+    LiteLLM does not hand the hook a turn counter, but every agent round-trip appends
+    to the conversation, so the assistant-message count IS the turn number. Works for
+    all three routes because each carries its history under a known key.
+    """
+    try:
+        d = request_data or {}
+        msgs = d.get("messages") or d.get("input") or []
+        if isinstance(msgs, str):
+            return 1
+        n = sum(1 for m in msgs
+                if isinstance(m, dict) and m.get("role") == "assistant")
+        return n + 1
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _route_of(request_data, hint=None):
+    """Which API dialect this request arrived on. `hint` wins when the caller knows."""
+    if hint:
+        return hint
+    d = request_data or {}
+    if "input" in d:
+        return "/v1/responses"
+    return "/v1/chat/completions"
+
+
+def _ctx(request_data, route=None):
+    """Dimensions attached to every metric: route, model, turn."""
+    d = request_data or {}
+    return {"route": _route_of(d, route), "model": d.get("model"),
+            "turn": _turn_of(d)}
+
+
+def _reject(reason, tool=None, ctx=None):
+    """Record a rejected repair candidate and return None (the caller's sentinel)."""
+    record("rejected", reason=reason, tool=tool, **(ctx or {}))
+    return None
+
+
+def counters():
+    """Snapshot for tests/introspection: {(outcome, reason, tool): n}."""
+    return dict(_COUNTS)
 
 # ── Format recognisers ──────────────────────────────────────────────────────
 FENCE_RE = re.compile(r"```.*?```", re.S)
@@ -120,9 +196,23 @@ def _strip_code(text):
 
 
 def _coerce(value, spec):
-    """Coerce to the schema's declared type; never fail a call over coercion."""
-    v = value.strip()
+    """Coerce to the schema's declared type; never fail a call over coercion.
+
+    Accepts ALREADY-TYPED values, not just strings. The Responses branch used to
+    stringify every argument before validation, which corrupted arrays/bools/ints
+    into their repr; it now passes raw JSON values through, so a bool arrives as a
+    bool. A value that already matches its declared type is returned untouched.
+    """
     t = (spec or {}).get("type")
+    if not isinstance(value, str):
+        # Already structured (from parsed JSON). Trust it if the type lines up,
+        # and never call string methods on it.
+        py = {"integer": int, "number": (int, float), "boolean": bool,
+              "object": dict, "array": list, "string": str}.get(t)
+        if py is None or isinstance(value, py):
+            return value
+        return value  # mismatched but structured: let the client reject it, don't mangle
+    v = value.strip()
     try:
         if t == "integer":
             return int(v)
@@ -168,15 +258,23 @@ def _validate(name, args, tool_index):
     }
 
 
-def recover(content, declared_tools):
-    """(tool_calls | None, leftover_text). Pure function — unit-testable."""
+def recover(content, declared_tools, ctx=None):
+    """(tool_calls | None, leftover_text). Pure function — unit-testable.
+
+    `ctx` is metrics-only (route/model/turn) and never affects the decision. Without
+    it the Anthropic and chat routes reported nothing, so a rejection there was as
+    invisible as the Responses rejections used to be.
+    """
     if not content or not declared_tools:
         return None, content
     if not any(h in content for h in HINTS):
+        # No tool syntax at all -> the model never attempted a call. Distinct from a
+        # rejected attempt, and the two were previously indistinguishable.
+        record("no_attempt", **(ctx or {}))
         return None, content
     tool_index = _index_tools(declared_tools)
     if not tool_index:
-        return None, content
+        return _reject("no_declared_tools", ctx=ctx), content
 
     scan = _strip_code(content)
     calls, spans = [], []
@@ -194,14 +292,19 @@ def recover(content, declared_tools):
                 raw = json.loads(m.group(2))
             except Exception:  # noqa: BLE001
                 continue
-            call = _validate(m.group(1), {k: str(v) for k, v in raw.items()}, tool_index)
+            # Raw values, not str() — same corruption bug fixed in the Responses
+            # branch: stringifying here turned arrays/bools/ints into their repr.
+            call = _validate(m.group(1), raw, tool_index)
             if call:
                 calls.append(call)
                 spans.append(m.group(0))
 
     if not calls:
+        # Tool syntax was present but nothing survived validation.
+        _reject("no_valid_call_in_text", ctx=ctx)
         return None, content
 
+    record("repaired", tool=calls[0]["function"]["name"], **(ctx or {}))
     leftover = scan
     for s in spans:
         leftover = leftover.replace(s, "")
@@ -228,7 +331,7 @@ TERMINAL_FENCE_RE = re.compile(
     r'```(?:json)?[ \t]*\n((?:(?!```).)*?)\n?[ \t]*```[ \t\r\n]*\Z', re.S)
 
 
-def responses_fence_candidate(text, declared_tools):
+def responses_fence_candidate(text, declared_tools, ctx=None):
     """Recover a tool call from output_text — Responses route only.
 
     Deliberately NOT `recover()`: that strips fenced blocks as a safety measure,
@@ -265,27 +368,40 @@ def responses_fence_candidate(text, declared_tools):
     remain authoritative.
     """
     if not text or not declared_tools:
-        return None
+        return _reject("no_text_or_tools", ctx=ctx)
     if text.count("```") > 2:
-        return None                      # more than one fence -> multiple objects
+        return _reject("multiple_fences", ctx=ctx)
     m = TERMINAL_FENCE_RE.search(text)
     if not m:
-        return None                      # no fence, or content follows it
+        return _reject("no_terminal_fence", ctx=ctx)  # no fence, or text follows
     inner = m.group(1).strip()
     if not inner.startswith("{") or not inner.endswith("}"):
-        return None
+        return _reject("fence_not_json_object", ctx=ctx)
     try:
         obj = json.loads(inner)          # must be exactly one JSON object
     except Exception:                    # noqa: BLE001
-        return None
+        return _reject("malformed_json", ctx=ctx)
     if not isinstance(obj, dict):
-        return None
+        return _reject("not_an_object", ctx=ctx)
     name = obj.get("name")
     args = obj.get("arguments")
     if not isinstance(name, str) or not isinstance(args, dict):
-        return None
-    call = _validate(name, {k: str(v) for k, v in args.items()}, _index_tools(declared_tools))
-    return [call] if call else None
+        return _reject("missing_name_or_arguments", ctx=ctx)
+    # Pass values RAW. _validate() -> _coerce() knows each argument's declared type;
+    # stringifying here first turned arrays/bools/ints into their repr (prefix_rule
+    # ["rg","grep"] became the string "['rg', 'grep']"), which the schema then had to
+    # un-corrupt and could not. Measured on a real Codex exec_command payload.
+    index = _index_tools(declared_tools)
+    if name not in index:
+        # Distinguished from a schema failure on purpose: an undeclared name means the
+        # model invented a tool, a schema failure means it called a real one wrongly.
+        # Those need different responses and used to be indistinguishable.
+        return _reject("undeclared_tool", tool=name, ctx=ctx)
+    call = _validate(name, args, index)
+    if not call:
+        return _reject("schema_validation_failed", tool=name, ctx=ctx)
+    record("repaired", tool=name, **(ctx or {}))
+    return [call]
 
 
 def _responses_function_call_events(call, output_index):
@@ -372,7 +488,7 @@ class ToolRepair(CustomLogger):
             if btype != "text" or not text:
                 new_blocks.append(b)
                 continue
-            calls, leftover = recover(text, data.get("tools"))
+            calls, leftover = recover(text, data.get("tools"), _ctx(data, "/v1/messages"))
             if not calls:
                 new_blocks.append(b)
                 continue
@@ -416,7 +532,8 @@ class ToolRepair(CustomLogger):
                 msg = getattr(choice, "message", None)
                 if msg is None or getattr(msg, "tool_calls", None):
                     continue  # native tool calls present -> never touch
-                calls, leftover = recover(getattr(msg, "content", None), data.get("tools"))
+                calls, leftover = recover(getattr(msg, "content", None), data.get("tools"),
+                                      _ctx(data, "/v1/chat/completions"))
                 if not calls:
                     continue
                 msg.tool_calls = calls
@@ -495,7 +612,7 @@ class ToolRepair(CustomLogger):
         if etype == "content_block_stop" and state.get("buffering"):
             state["buffering"] = False
             buf = state["buf"] + [raw]
-            calls, leftover = recover(state.get("accum") or "", tools)
+            calls, leftover = recover(state.get("accum") or "", tools, state.get("ctx"))
             if not calls:
                 return buf  # ordinary text — emit exactly as received
             idx = state.get("index", 0)
@@ -606,6 +723,7 @@ class ToolRepair(CustomLogger):
         # the two branches cannot interfere.
         rs = {"buf": [], "text": "", "native": False, "index": 0, "done": False}
         sse_state = {"saw_tool_use": False,
+                     "ctx": _ctx(request_data, "/v1/messages"),
                      "model": (request_data or {}).get("model"),
                      "ntools": len(tools or [])}
         if AILOCAL_DEBUG:
@@ -645,7 +763,8 @@ class ToolRepair(CustomLogger):
                         continue
                     if ev == "response.output_text.done":
                         rs["buf"].append(chunk)
-                        calls = responses_fence_candidate(rs["text"], tools)
+                        calls = responses_fence_candidate(rs["text"], tools,
+                                                          _ctx(request_data, "/v1/responses"))
                         if calls:
                             rs["done"] = True
                             attribute(route="/v1/responses", stream=True, native=False,
@@ -734,7 +853,7 @@ class ToolRepair(CustomLogger):
                     buffered = []
 
             if suspect and not native_seen:
-                calls, leftover = recover(text, tools)
+                calls, leftover = recover(text, tools, _ctx(request_data, "/v1/chat/completions"))
                 if calls:
                     last = buffered[-1]
                     d = last.choices[0].delta
