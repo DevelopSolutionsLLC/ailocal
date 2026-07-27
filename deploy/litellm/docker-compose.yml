@@ -66,6 +66,8 @@ services:
       # session_observer.py — ledger of what each session asked for and which
       # tools it called. Empty = off. Paired with scripts/verify-session.py.
       - AILOCAL_SESSION_LEDGER=${AILOCAL_SESSION_LEDGER:-}
+      # request_trace.py — one JSONL record per request. Empty = off.
+      - AILOCAL_TRACE_DIR=${AILOCAL_TRACE_DIR:-}
       # capability_registry.py — the Local Agent Gateway's registry (Phase A).
       - AILOCAL_REGISTRY=/app/config/registry.yaml
       # Phase D task negotiation: infer the tools a task needs from the first
