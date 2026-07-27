@@ -28,7 +28,11 @@ USAGE
     scripts/verify-session.py --repo . [--ledger <file>] [--test "pytest -q"]
     scripts/verify-session.py --repo . --list
 
-Exit codes:  0 nothing suspicious   1 usage/IO error   2 suspicious pattern
+Exit codes:  0 VERIFIED or PARTIALLY_VERIFIED
+             1 usage/IO error
+             2 SUSPICIOUS
+             3 UNVERIFIED  (deliberately non-zero: "could not check" must not
+                            be scriptable as success)
 """
 
 import argparse
@@ -193,60 +197,153 @@ def main():
             print(f"    {line}")
         print(f"    exit {test_rc}")
 
-    # ── findings ────────────────────────────────────────────────────────────
+    # ── classification (Phase E) ────────────────────────────────────────────
+    # Four outcomes, deliberately including two that are NOT verdicts:
+    #
+    #   VERIFIED            evidence that the work happened AND holds
+    #   PARTIALLY_VERIFIED  it happened, but something is unresolved
+    #   UNVERIFIED          no evidence either way — the checks could not run
+    #   SUSPICIOUS          positive evidence of a claim without substance
+    #
+    # UNVERIFIED exists so that "we could not check" never renders as "clean".
+    # That distinction is the whole point of this pipeline: a verification layer
+    # whose failure mode looks like success is worse than no layer at all.
     print()
     findings = []
+    signals = []          # (name, outcome) for the evidence table
+
     called = set(led.get("tool_calls_by_name") or {})
     definite_set, ambiguous_set, mut_source = mutating_sets()
     mutators = called & (definite_set | ambiguous_set)
     definite = mutators & definite_set
-    print(f"mutating-tool source: {mut_source}")
+    ambiguous_only = mutators - definite_set
 
-    if git is not None and git["changed_paths"] == 0:
-        if definite:
-            findings.append(
-                f"SUSPICIOUS: {sorted(definite)} ran, but nothing in the tree "
-                f"differs from HEAD. Either the edits were reverted, they "
-                f"targeted a path outside {args.repo}, or they did not happen.")
-        elif mutators:
-            findings.append(
-                f"INCONCLUSIVE: {sorted(mutators)} ran and nothing changed. "
-                f"These can be read-only (a Bash that only greps), so this is "
-                f"not evidence of fabrication.")
+    errored = led.get("tool_results_errored") or 0
+    unknown = led.get("tool_results_unknown_status") or 0
+    total_calls = led.get("tool_calls_total") or 0
 
-    if led.get("tool_calls_total") == 0:
-        findings.append(
-            "No tool calls recorded. For a task that required tools, the model "
-            "answered from its own assumptions.")
-
-    if led.get("tool_results_errored"):
-        findings.append(
-            f"{led['tool_results_errored']} tool call(s) returned errors. Check "
-            f"whether the model noticed, or narrated success over them.")
-
-    if led.get("tool_results_unknown_status"):
-        findings.append(
-            f"{led['tool_results_unknown_status']} result(s) have no success/"
-            f"failure signal on this route — absence of an error flag is not "
-            f"success.")
-
-    if test_rc not in (None, 0):
-        findings.append(f"Test command exited {test_rc}.")
-
-    if findings:
-        print("FINDINGS")
-        for f in findings:
-            print(f"  - {f}")
+    # ── signal: did anything change on disk ─────────────────────────────────
+    if git is None:
+        signals.append(("filesystem", "unavailable"))
+    elif git["changed_paths"] > 0:
+        signals.append(("filesystem", "changed"))
     else:
-        print("FINDINGS  none of the checked patterns present.")
+        signals.append(("filesystem", "unchanged"))
+
+    # ── signal: were mutating tools used ────────────────────────────────────
+    if definite:
+        signals.append(("mutating tools", "definite: " + ", ".join(sorted(definite))))
+    elif ambiguous_only:
+        signals.append(("mutating tools", "ambiguous only: "
+                        + ", ".join(sorted(ambiguous_only))))
+    elif total_calls:
+        signals.append(("mutating tools", "none (read-only session)"))
+    else:
+        signals.append(("mutating tools", "no tool calls at all"))
+
+    # ── signal: tool failures ───────────────────────────────────────────────
+    if errored:
+        signals.append(("tool errors", f"{errored} errored"))
+    elif unknown:
+        signals.append(("tool errors", f"unknown for {unknown} result(s) — this "
+                        f"route carries no error flag"))
+    else:
+        signals.append(("tool errors", "none reported"))
+
+    # ── signal: tests ───────────────────────────────────────────────────────
+    if args.test is None:
+        signals.append(("tests", "not run (no --test given)"))
+    elif test_rc == 0:
+        signals.append(("tests", "passed"))
+    else:
+        signals.append(("tests", f"FAILED (exit {test_rc})"))
+
+    print("EVIDENCE")
+    for name, outcome in signals:
+        print(f"    {name:16} {outcome}")
+    print(f"    {'mutating source':16} {mut_source}")
+
+    # ── the classification ──────────────────────────────────────────────────
+    # Ordered most-severe first; the first matching rule decides.
+    changed = bool(git and git["changed_paths"] > 0)
+    cannot_see_tree = git is None
+
+    if definite and not changed and not cannot_see_tree:
+        verdict = "SUSPICIOUS"
+        why = (f"{sorted(definite)} ran but the tree is identical to HEAD. The "
+               f"edits were reverted, targeted a path outside {args.repo}, were "
+               f"blocked by a permission or sandbox layer, or did not happen. "
+               f"Note the last two are indistinguishable from here — this is not "
+               f"proof the model fabricated anything.")
+    elif total_calls == 0:
+        verdict = "UNVERIFIED"
+        why = ("No tool calls were recorded, so there is nothing to verify. For "
+               "a task that needed tools, the model answered from assumption.")
+    elif cannot_see_tree:
+        verdict = "UNVERIFIED"
+        why = (f"{args.repo} is not a git repository, so no delta is available. "
+               f"Cannot verify is NOT the same as verified clean.")
+    elif test_rc not in (None, 0):
+        verdict = "PARTIALLY_VERIFIED"
+        why = (f"Work reached the filesystem, but the test command exited "
+               f"{test_rc}. Something happened; it does not yet hold.")
+    elif errored:
+        verdict = "PARTIALLY_VERIFIED"
+        why = (f"{errored} tool call(s) errored. Check whether the model noticed "
+               f"or narrated success over them.")
+    elif changed and test_rc == 0:
+        verdict = "VERIFIED"
+        why = ("Mutating tools ran, the tree changed, and the supplied test "
+               "passed. This is the only combination that earns VERIFIED.")
+    elif changed:
+        verdict = "PARTIALLY_VERIFIED"
+        why = ("The tree changed and no tool errored, but no test was run, so "
+               "correctness is unestablished. Pass --test to reach VERIFIED.")
+    elif unknown:
+        verdict = "UNVERIFIED"
+        why = (f"{unknown} result(s) have no success/failure signal on this "
+               f"route, and the tree did not change. Absence of an error flag "
+               f"is not success.")
+    else:
+        verdict = "UNVERIFIED"
+        why = ("A read-only session with no tree change. Nothing was claimed to "
+               "change, so there is nothing to confirm.")
+
+    print()
+    print(f"CLASSIFICATION  {verdict}")
+    for line in _wrap(why):
+        print(f"    {line}")
+
+    if ambiguous_only and not changed:
+        print()
+        print("    Not counted as suspicious: the only mutating tools used "
+              "were ambiguous ones")
+        print("    (a shell command can legitimately be read-only).")
 
     print()
     print("This compares a claim against a tree state. It does not establish "
-          "that this session caused the delta, nor that the change was "
-          "correct — only whether something plausibly happened at all.")
+          "that this")
+    print("session caused the delta, nor that the change was correct — only "
+          "whether")
+    print("something plausibly happened at all.")
 
-    suspicious = any(f.startswith(("SUSPICIOUS", "No tool calls")) for f in findings)
-    return 2 if suspicious else 0
+    # Exit codes are stable for scripting: 0 verified-ish, 2 suspicious,
+    # 3 unverified. UNVERIFIED is NOT 0 — a caller that treats "could not
+    # check" as success is the failure this whole file exists to prevent.
+    return {"VERIFIED": 0, "PARTIALLY_VERIFIED": 0,
+            "SUSPICIOUS": 2, "UNVERIFIED": 3}[verdict]
+
+
+def _wrap(text, width=68):
+    words, line, out = text.split(), "", []
+    for w in words:
+        if len(line) + len(w) + 1 > width:
+            out.append(line); line = w
+        else:
+            line = (line + " " + w).strip()
+    if line:
+        out.append(line)
+    return out
 
 
 if __name__ == "__main__":
