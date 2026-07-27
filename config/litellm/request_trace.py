@@ -43,6 +43,24 @@ import uuid
 
 from litellm.integrations.custom_logger import CustomLogger
 
+
+def _load_registry():
+    """Reuse capability_registry rather than re-deriving capability/client/route.
+    A second implementation would drift from the gateway's, and then a trace and
+    a gateway metric for the SAME request could disagree about what it was."""
+    import importlib.util
+    import sys as _sys
+    if "capability_registry" in _sys.modules:
+        return _sys.modules["capability_registry"]
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "capability_registry.py")
+    spec = importlib.util.spec_from_file_location("capability_registry", path)
+    mod = importlib.util.module_from_spec(spec)
+    _sys.modules["capability_registry"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
 TRACE_DIR = os.environ.get("AILOCAL_TRACE_DIR") or ""
 # Correlation id lives here in the request dict. LiteLLM passes `data` through to
 # every hook for the same request, so this is the join key across hooks without
@@ -61,6 +79,13 @@ class RequestTrace(CustomLogger):
 
     def __init__(self):
         super().__init__()
+        try:
+            self.registry = _load_registry().Registry()
+        except Exception as exc:
+            # Tracing must survive a registry problem: a trace with fewer fields
+            # is far better than a hook that breaks the request path.
+            emit({"event": "registry_unavailable", "error": str(exc)})
+            self.registry = None
         self.dir = TRACE_DIR
         if self.dir:
             try:
@@ -97,10 +122,35 @@ class RequestTrace(CustomLogger):
 
     def _base(self, data, call_type=None):
         st = self._state(data) or {}
+        call_type = call_type or st.get("call_type")
         headers = self._headers(data)
         ua = str(headers.get("user-agent") or "")
         tools = (data or {}).get("tools") or []
+        model = (data or {}).get("model")
+        capability = client = model_class = backend = None
+        route = None
+        if self.registry is not None:
+            try:
+                capability = self.registry.capability_of(model)
+                client = self.registry.detect_client(headers)
+                route = self.registry.route_for_call_type(
+                    call_type, "input" in (data or {}))
+                model_class, _spec = self.registry.model_class(model)
+            except Exception:
+                pass
+        # The REAL backend tag behind the alias. Benchmarking a capability is
+        # meaningless without knowing which model actually served it.
+        try:
+            backend = ((data or {}).get("litellm_params") or {}).get("model") \
+                      or (data or {}).get("_backend_model")
+        except Exception:
+            backend = None
         return {
+            "capability": capability,
+            "client": client,
+            "route": route,
+            "model_class": model_class,
+            "backend_model": backend,
             "request_id": st.get("request_id"),
             "ts": st.get("t_start"),
             "call_type": call_type,
@@ -121,7 +171,13 @@ class RequestTrace(CustomLogger):
         if not self.dir:
             return data
         try:
-            self._state(data)
+            st = self._state(data)
+            # The streaming iterator hook is not given call_type. Without this
+            # the route defaulted to /v1/chat/completions and a /v1/messages
+            # request was traced as the wrong route — a trace that lies about
+            # what it observed is worse than one missing the field.
+            if st is not None and call_type:
+                st["call_type"] = call_type
         except Exception:
             pass
         return data
@@ -146,13 +202,27 @@ class RequestTrace(CustomLogger):
                 yield item
         finally:
             rec = self._base(request_data)
+            total_ms = (round((time.time() - st["t_start"]) * 1000, 1)
+                        if st.get("t_start") else None)
+            ttfb_ms = (round((first - st["t_start"]) * 1000, 1)
+                       if first and st.get("t_start") else None)
+            # Decode phase, separated from the wait before the first token. These
+            # two are driven by different things — prompt size vs model speed —
+            # and a benchmark that merges them cannot tell a slow model from a
+            # large prompt.
+            gen_ms = (round(total_ms - ttfb_ms, 1)
+                      if (total_ms is not None and ttfb_ms is not None) else None)
             rec.update({
                 "phase": "stream_end",
-                "ttfb_ms": round((first - st["t_start"]) * 1000, 1)
-                           if first and st.get("t_start") else None,
-                "total_ms": round((time.time() - st["t_start"]) * 1000, 1)
-                            if st.get("t_start") else None,
+                "ttfb_ms": ttfb_ms,
+                "total_ms": total_ms,
+                "generation_ms": gen_ms,
                 "chunks": n,
+                # Chunks/sec is a throughput signal available even when the
+                # provider gives no token usage on the streaming path. Labelled
+                # as chunks, NOT tokens, because they are not the same thing.
+                "chunks_per_sec": (round(n / (gen_ms / 1000.0), 2)
+                                   if gen_ms and gen_ms > 0 else None),
                 # A stream that produced zero chunks is NOT a success, whatever
                 # the HTTP status was.
                 "outcome": "streamed" if n else "empty_stream",
