@@ -127,8 +127,21 @@ architecture may delegate; risky change → implementation + review.
 
 ### LSP
 
-Registered for `claude-local` and `codex-local` only. VS Code is excluded on
-purpose: it has native language servers, and a bridge would duplicate them.
+**Claude uses NATIVE LSP** (since 2026-07-28) — `ENABLE_LSP_TOOL=1` in the
+deployed `settings.json` plus official `*-lsp` plugins, provisioned into BOTH
+`~/.claude` and `~/.config/ailocal/claude` by `install-clients.sh`. One `LSP`
+tool, nine operations, and automatic diagnostics after every edit.
+
+The mcpls MCP bridge now serves **codex-local only** (Codex has no native LSP).
+It was 20 tools / 10,021 B against native's 1 tool / 2,224 B for the same
+operations; removing it took the claude-local payload from 49 to 26 tools.
+
+VS Code is excluded from both: it has native language servers.
+
+Two dead ends, measured, so nobody retries them: a settings-level `lspServers`
+block is ignored (only plugin manifests declare servers; the field is
+`extensionToLanguage`), and there is no official shell plugin — so `.sh`/`.zsh`
+have no native coverage. Read/Grep and running shellcheck directly still work.
 
 | Language | Server | Status |
 |---|---|---|

@@ -29,6 +29,18 @@ regression signal exists.
 
 ## Soon
 
+**Author a Cadence-owned bash/shell LSP plugin.**
+*Why:* Claude's native LSP has no official shell plugin, and a settings-level
+`lspServers` block is ignored — measured, it answers "No LSP server available
+for file type: .sh". These repos are shell-heavy, so Claude lost symbol lookup
+and shellcheck diagnostics for `.sh`/`.bash`/`.zsh` when the mcpls bridge was
+descoped from Claude clients.
+*Blocker:* none technical. Servers are declared in a plugin marketplace manifest
+(`lspServers` with `command`/`args`/`extensionToLanguage`), so Cadence can ship
+one; it just needs a marketplace entry to maintain.
+*Trigger:* when shell navigation is missed in daily use, or if Anthropic ships an
+official shell plugin first (check the marketplace before building one).
+
 **Measure unprompted delegation.**
 *Why:* delegation is verified only when explicitly requested ("delegate this
 to the reviewer"). Whether the 30B reaches for `Agent` on a task that merely

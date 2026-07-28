@@ -1,4 +1,49 @@
-# ADR 008 — LSP via the mcpls bridge
+# ADR 008 — LSP: native first, mcpls only where native cannot reach
+
+**Status:** SUPERSEDED IN PART, 2026-07-28 · **Owner:** Cadence
+
+> **Claude Code now ships native LSP.** For Claude clients the mcpls bridge is
+> retired; it remains only for codex-local. The original bridge reasoning is kept
+> below because it still governs that client, and because the measurements are
+> the record of how we got here.
+>
+> **Native LSP (the officially supported path).** Enable with env
+> `ENABLE_LSP_TOOL=1` (carried in the deployed `settings.json`) plus one official
+> `*-lsp` plugin per language. Installed and enabled by `install-clients.sh` for
+> BOTH `~/.config/ailocal/claude` and `~/.claude`, so hosted and local Claude use
+> one mechanism — the "one source of truth" goal, finally reachable.
+>
+> Measured on Claude Code 2.1.220:
+>
+> | | tools | bytes |
+> |---|---|---|
+> | native `LSP` | 1 | 2,224 |
+> | mcpls bridge | 20 | 10,021 |
+>
+> Same nine operations (goToDefinition, findReferences, goToImplementation,
+> hover, rename, documentSymbol, workspaceSymbol, incomingCalls, outgoingCalls),
+> **plus automatic diagnostics after every edit**, which the bridge cannot do.
+> Whole-payload effect once the bridge was descoped: **49 tools / 43,403 B → 26
+> tools / 31,555 B**. Verified answering through a custom `ANTHROPIC_BASE_URL` —
+> it is client-side, unlike tool search (ADR 001).
+>
+> **Two things that do not work, both measured, so nobody retries them:**
+> 1. A settings-level `lspServers` block is IGNORED. Only plugin manifests
+>    declare servers. With `bash-language-server` configured that way the tool
+>    still answers `No LSP server available for file type: .sh` — and the
+>    manifest field is `extensionToLanguage`, not `extensions`.
+> 2. Therefore **shell (.sh/.bash/.zsh) has no native coverage**, because no
+>    official shell plugin exists. Accepted cost: Read/Grep still work and
+>    shellcheck can be run directly. Authoring a Cadence-owned bash LSP plugin
+>    would close it — recorded as future work.
+>
+> **Why not keep both?** Running native and bridge together was two competing
+> symbol paths for the same languages at 10 KB of duplicate schema — the exact
+> risk the original scope note worried about, which had quietly arrived.
+
+---
+
+## Original decision (still governs codex-local)
 
 **Status:** Accepted · **Date:** 2026-07 · **Owner:** Cadence
 

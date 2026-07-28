@@ -19,8 +19,8 @@ Versions: Claude Code 2.1.220 · codex-cli 0.145.0 · LiteLLM 1.93.0 · mcpls 0.
 
 | Client | Routes via LiteLLM | MCP | grepai | LSP | Web search | Delegation | Personas | Tool gating |
 |---|---|---|---|---|---|---|---|---|
-| **Claude Code** (hosted) | no | OK | OK | N/A | OK (native) | OK | N/A | N/A |
-| **claude-local** (LiteLLM) | yes | **OK** | **OK** | **OK** | CAVEAT | **OK** | OK | OK |
+| **Claude Code** (hosted) | no | OK | OK | **OK (native)** | OK (native) | OK | N/A | N/A |
+| **claude-local** (LiteLLM) | yes | **OK** | **OK** | **OK (native)** | CAVEAT | **OK** | OK | OK |
 | **Codex** (hosted) | no | ? | ? | N/A | ? | N/A | N/A | N/A |
 | **codex-local** (LiteLLM) | yes | **BLOCKED** | BLOCKED | BLOCKED | CAVEAT | N/A | OK | OK |
 | **VS Code** | yes | OK | OK | N/A (native) | N/A | N/A | OK | OK |
@@ -67,6 +67,15 @@ model narrates instead of emitting a `web_search` tool_use even under
 `tool_choice` forcing. Interception is verified **configured**, not verified end
 to end. See ADR 010.
 
+**LSP is NATIVE on both Claude surfaces since 2026-07-28.** `ENABLE_LSP_TOOL=1`
+plus the official `pyright-lsp`/`typescript-lsp`/`gopls-lsp`/`clangd-lsp` plugins,
+installed into both roots by `install-clients.sh`. One `LSP` tool (2,224 B)
+replaced the 20-tool mcpls bridge (10,021 B); payload went 49 → 26 tools. Hosted
+Claude previously had **no** LSP at all — that gap is closed, and both surfaces
+now share one mechanism. Verified: the model called `LSP goToDefinition` and
+`findReferences` and reported correct lines. Shell (.sh/.bash/.zsh) is the one
+gap — no official plugin, and settings-level `lspServers` is ignored.
+
 **VS Code — LSP is N/A by design**, not missing: it has native language servers
 and a bridge would duplicate them (ADR 007). Model routing via the
 `litellm-connector` extension; instructions layered global + repo.
@@ -78,11 +87,11 @@ and a bridge would duplicate them (ADR 007). Model routing via the
 
 | Language | Server | Status |
 |---|---|---|
-| Python | pyright-langserver | OK — verified answering |
+| Python | pyright-lsp (native) / pyright-langserver | OK — verified answering |
 | TypeScript / JavaScript | typescript-language-server | OK — verified answering |
 | Go | gopls 0.23.0 | OK — verified in a real module |
-| Bash / POSIX sh | bash-language-server 5.6.0 | OK — verified answering |
-| zsh | bash-language-server | CAVEAT — navigation only, no shellcheck |
+| Bash / POSIX sh | bash-language-server (mcpls, **codex-local only**) | CAVEAT — no native plugin exists |
+| zsh | bash-language-server (mcpls, **codex-local only**) | CAVEAT — navigation only, no shellcheck |
 | C / C++ | clangd | EXP — configured, not exercised |
 | Rust | rust-analyzer | N/A — not installed, deliberately not declared |
 

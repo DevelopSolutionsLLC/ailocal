@@ -9,6 +9,7 @@ Run AI coding tools — Claude Code, Codex, VS Code Copilot Chat — against loc
 | **Supported clients?** | `claude-local`, `codex-local`, VS Code, plus hosted Claude/Codex untouched alongside. Per-client state: [compatibility matrix](docs/compatibility-matrix.md) |
 | **Which model?** | `architecture` for anything agentic (default), `implementation` for edits, `review` for critique, `fast` for background work. `completion` is FIM autocomplete **only** — it hard-400s on a chat turn |
 | **Which tools do I get?** | Automatic. The gateway classifies each request: a plain question gets no tools, a refactor gets search + LSP + delegation. Nothing to switch on. (Known: the no-tools case holds for the first turn only — [ADR 004](docs/adr/004-tool-gateway.md)) |
+| **LSP?** | Native Claude Code LSP, on for hosted *and* local — `ENABLE_LSP_TOOL` + official `*-lsp` plugins, installed by `install-clients.sh`. Shell has no native plugin |
 | **grepai or LSP?** | grepai for *concepts* ("where is retry handled"), LSP for *exact* ("where is this defined, what calls it"). Prefer LSP's document-scoped tools |
 | **Something's wrong** | `./scripts/doctor.sh` → `./scripts/validate-deployment.sh` → `./scripts/test-all.sh`. Run them **idle**; contention causes phantom failures |
 | **Why is it built this way?** | [ADRs](docs/adr/) — one per decision, with the measurements behind it |
