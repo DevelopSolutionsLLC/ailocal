@@ -26,7 +26,19 @@ services:
 
   litellm:
     # Docs: https://docs.litellm.ai/docs/proxy/docker_quick_start
-    image: ghcr.io/berriai/litellm:main-stable
+    # PINNED BY DIGEST to the exact image validated by the streaming
+    # investigation (2026-07-28). LiteLLM 1.93.0.
+    #
+    # `main-stable` is a FLOATING tag: it moved under us, so the runtime was
+    # 1.93.0 while CLAUDE.md still claimed 1.92.0 -- and the persona-injection
+    # behaviour recorded as "verified on 1.92.0" had been verified against a
+    # version we were no longer running. Documentation, validation environment
+    # and runtime must name the same release.
+    #
+    # To upgrade: pull the new digest, re-run scripts/test-all.sh and
+    # scripts/streaming-ab.py, then update this digest, AILOCAL_LITELLM_VERSION
+    # below, and the version in CLAUDE.md together.
+    image: ghcr.io/berriai/litellm@sha256:a1745e629abfb17d434426ff48b115f54f4f4c4a0f5af241de569e93c63c411e
     container_name: ailocal-litellm
     restart: unless-stopped
     mem_limit: 2g
@@ -67,6 +79,10 @@ services:
       # tools it called. Empty = off. Paired with scripts/verify-session.py.
       - AILOCAL_SESSION_LEDGER=${AILOCAL_SESSION_LEDGER:-}
       # request_trace.py — one JSONL record per request. Empty = off.
+      # The version this stack was VALIDATED against. scripts/doctor.sh compares
+      # it to the running library and fails loudly on drift, so a floating tag or
+      # a manual pull can never again leave docs and runtime disagreeing.
+      - AILOCAL_LITELLM_VERSION=1.93.0
       - AILOCAL_TRACE_DIR=${AILOCAL_TRACE_DIR:-}
       # capability_registry.py — the Local Agent Gateway's registry (Phase A).
       - AILOCAL_REGISTRY=/app/config/registry.yaml

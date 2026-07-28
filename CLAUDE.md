@@ -83,10 +83,12 @@ Most of this repo's complexity is in these; change them carefully.
    `messages[]`) and Anthropic `/v1/messages` (`call_type anthropic_messages` — system is
    the **top-level `system`** field), which is the route Claude Code uses. Reasoners get
    **no** persona (DeepSeek's guidance), temp 0.6 / top-p 0.95. LiteLLM issue #27518 (hook
-   bypassed on `/v1/messages`) was filed against **v1.83.10**; on the **1.92.0** we run,
+   bypassed on `/v1/messages`) was filed against **v1.83.10**; on the **1.93.0** we run,
    the hook fires AND its mutation reaches the backend on both routes — measured, not
-   assumed (persona marker + the propagation probe). Re-verify only after a LiteLLM
-   downgrade. Coupling: injection depends on model names resolving back to a
+   assumed (persona marker + the propagation probe). Re-verify only after a LiteLLM version change — the image is now PINNED BY DIGEST
+   (`deploy/litellm/docker-compose.yml`) and `scripts/check-litellm-version.sh` fails the
+   regression gate on drift, because `main-stable` is a floating tag that already moved us
+   from 1.92.0 to 1.93.0 with the docs left claiming the old version. Coupling: injection depends on model names resolving back to a
    capability key. The hook resolves the requested model through `model_group_alias` and
    uses that capability key to load `config/instructions/<capability>.md`. Any future change
    to canonical model names, aliases, or routing layers must preserve this mapping or
@@ -135,6 +137,18 @@ Most of this repo's complexity is in these; change them carefully.
    working once `Agent` reached the model: it called `Agent`, and the reviewer subagent ran on
    `review` (`claude-fable-5 → review` in request_trace) while the parent stayed on `architecture`.
    The token argument never applied: Workflow alone is 21,525 B, `Agent` is ~1 KB.
+   **MEASURED 2026-07-28 — Codex cannot use MCP tools at all, by either route.** Per-client
+   gateway metrics show Claude Code receiving `mcp__lsp__get_hover` (flat function tools, which
+   survive the `search`/`lsp` groups) while Codex's payload contains only
+   `exec_command / multi_agent_v1 / apply_patch / <web_search>` — **no `mcp__*` entry**, with 104 B
+   pre-filtered by LiteLLM before the gateway saw it. Codex declares MCP servers as `namespace`
+   BUNDLES, which LiteLLM discards before the backend; enabling `namespace_expansion` instead makes
+   the model emit flattened names that Codex's own dispatcher then refuses
+   (`unsupported call: mcp__lsp__workspace_symbol_search`, openai/codex#20652). Both paths dead-end.
+   So MCP-delivered capability — grepai, the LSP bridge, and Cadence's intelligence server — is
+   reachable from Claude Code and VS Code but NOT from Codex, regardless of registration. Do not
+   "fix" this at the proxy; it is a client limitation with an upstream issue.
+
    ALL facts about models/clients/routes/tools live in `config/litellm/registry.yaml` (the
    capability registry); the negotiator contains no such literal and a test enforces that by
    grepping its code. `tool-policy.yaml` was superseded by the registry and removed. Frontier
