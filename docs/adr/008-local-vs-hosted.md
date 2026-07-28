@@ -1,4 +1,4 @@
-# ADR 011 — Local and hosted models side by side
+# ADR 008 — Local and hosted models side by side
 
 **Status:** Accepted · **Date:** 2026-07
 
@@ -36,7 +36,7 @@ forget you are in: the command name *is* the mode.
 - Two config roots to install into (hence the generation pipelines in ADR 002
   and 007).
 - Cadence must install into both roots, and ailocal's installer must not clobber
-  what Cadence wrote there (see ADR 007).
+  what Cadence wrote there.
 
 ## What this means for every other decision here
 

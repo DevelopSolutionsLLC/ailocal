@@ -64,7 +64,7 @@ than resolved in the docs' favour.
 and forwards only function/mcp/web_search tools" — matches our
 `routes./v1/responses.drops_tool_types`, which was read from LiteLLM's
 transformation source rather than inferred. This is the mechanism behind the
-Codex MCP blocker (ADR 007).
+Codex MCP blocker: LiteLLM discards Codex's namespace-typed tools.
 
 **Disagrees.** BerriAI/litellm [#5524](https://github.com/BerriAI/litellm/issues/5524)
 and [#19217](https://github.com/BerriAI/litellm/issues/19217) report that

@@ -1,4 +1,4 @@
-# ADR 012 — Per-client support levels
+# ADR 009 — Per-client support levels
 
 **Status:** Accepted · **Date:** 2026-07-28
 
@@ -18,9 +18,10 @@ See `docs/compatibility-matrix.md` for the current state of each surface.
 
 ## Per-client reasoning
 
-**Claude Code (hosted)** — full capability, does not route through LiteLLM. Gets
-grepai only: it may ship native LSP, and registering a bridge before confirming
-risks two competing symbol paths.
+**Claude Code (hosted)** — full capability, does not route through LiteLLM. It
+DOES ship native LSP (confirmed 2026-07-28), so it uses that plus grepai. The
+earlier caution here — "it may ship native LSP, so do not register a bridge" —
+turned out to be correct, and the bridge was never added for it.
 
 **Claude Code via LiteLLM (`claude-local`)** — the primary target and the only
 surface where the whole stack is exercised. MCP (grepai + lsp), personas,
@@ -33,9 +34,9 @@ Labelled as inference, not measurement.
 **Codex local** — the one real capability gap. MCP servers are registered and
 running, and the model still cannot call them: LiteLLM discards Codex's
 `namespace`-typed tools, measured `bytes_prefiltered_by_litellm: 27239`.
-Blocked upstream (openai/codex#20652; PR #17556 unreleased). See ADR 007.
+Blocked upstream (openai/codex#20652; PR #17556 unreleased).
 
-**VS Code** — grepai only, **deliberately no LSP**: VS Code has native language
+**VS Code** — grepai plus its own language extensions, **deliberately no bridge**: VS Code has native language
 servers and a bridge would duplicate them. Model routing via the
 `litellm-connector` extension. Instructions are layered global
 (`~/.copilot/instructions/`, `applyTo: "**"`) plus repo `.github/`

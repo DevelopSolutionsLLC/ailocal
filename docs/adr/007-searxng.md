@@ -1,4 +1,4 @@
-# ADR 010 — SearXNG for web search
+# ADR 007 — SearXNG for web search
 
 **Status:** Accepted · **Date:** 2026-07
 
@@ -177,7 +177,7 @@ where one exists, engine rotation, and querying less.
 ### Result size: no cap is available (upstream)
 
 A search returns ~62 results / 17,939 B / **~4,484 tokens**. Since prompt eval
-dominates latency (ADR 013), that is ~7.5 s of prompt eval per search, and it
+dominates latency (ADR 010), that is ~7.5 s of prompt eval per search, and it
 persists in context for later turns. Capping would be a genuine win — and it
 cannot be done from our side:
 
