@@ -64,6 +64,21 @@ groups:
     - update_goal
     - get_goal
 
+  # Subagent delegation, split OUT of `orchestration` on 2026-07-27.
+  #
+  # `Task` was grouped with Workflow/DesignSync/Cron and therefore denied to every
+  # local model. With AILOCAL_TOOL_GATEWAY=filter (which .env sets), that stripped
+  # Task from the payload before the model ever saw it — so claude-local could not
+  # delegate to the five subagents this repo ships and documents. The behaviour was
+  # measured and initially mis-attributed to the model "not reaching for
+  # delegation"; it had no such tool to reach for.
+  #
+  # The token argument for denying orchestration does not apply here: Workflow
+  # alone is 21,525 B, while Task is ~1 KB. Keeping them in one group traded the
+  # entire delegation workflow for savings that came almost entirely from Workflow.
+  delegation:
+    - "Task*"
+
   orchestration:
     - Workflow            # measured 21,525 B — the largest single tool observed
     - DesignSync
@@ -71,7 +86,6 @@ groups:
     - SendMessage
     - Skill
     - ReportFindings
-    - "Task*"
     - multi_agent_v1
 
   scheduling:
@@ -220,7 +234,10 @@ model_classes:
     supports_parallel_tools: true
     supports_structured_output: true
     supports_reasoning: false      # Qwen's non-thinking variant; emits no <think>
-    preferred_groups: [edit_and_run, search, lsp, mcp_plumbing, planning]
+    preferred_groups: [edit_and_run, search, lsp, mcp_plumbing, planning, delegation]
+    # `delegation` is deliberately NOT denied: this is the one local tier measured
+    # able to drive a multi-step tool loop, so it is the only one that can usefully
+    # act as a parent agent. Heavy orchestration stays denied.
     denied_groups: [orchestration, scheduling, worktree, interactive]
     routing_hints:
       warmup: true                 # keep_alive -1; worth pre-warming
@@ -239,8 +256,8 @@ model_classes:
     supports_structured_output: false
     supports_reasoning: false
     preferred_groups: [edit_and_run, search]
-    denied_groups: [orchestration, scheduling, worktree, interactive, lsp,
-                    mcp_plumbing, planning]
+    denied_groups: [orchestration, delegation, scheduling, worktree, interactive,
+                    lsp, mcp_plumbing, planning]
     routing_hints:
       warmup: false
       notes: >
@@ -273,8 +290,8 @@ model_classes:
     supports_reasoning: false       # capable of it, but disabled: it thinks past
                                     # its budget and returns empty content
     preferred_groups: [search]
-    denied_groups: [orchestration, scheduling, worktree, interactive, lsp,
-                    mcp_plumbing, planning, edit_and_run]
+    denied_groups: [orchestration, delegation, scheduling, worktree, interactive,
+                    lsp, mcp_plumbing, planning, edit_and_run]
     routing_hints:
       warmup: false
       notes: >
@@ -409,6 +426,38 @@ task_classes:
 
   classes:
 
+    # MUST stay first: first class with enough hits wins.
+    #
+    # The problem this solves, observed in codex-local: "show me an example of
+    # hello world in c++" made the agent inspect repository files, search the
+    # filesystem and read cadence scripts before answering. Nothing was broken —
+    # the `always` floor handed it Read/Glob/Grep/Bash, and an engineering
+    # persona with file tools in hand investigates. The request never needed the
+    # repository at all.
+    #
+    # `override_always: true` is what makes this class different from every
+    # other: it drops BELOW the floor to no tools, so a general knowledge
+    # question is answered from the model's own knowledge, immediately.
+    #
+    # PRECISION OVER RECALL, deliberately. A misclassified conversational task
+    # only wastes tokens; a misclassified ENGINEERING task loses its tools and
+    # produces a stuck agent, which is far worse. So these patterns are phrasing
+    # that a repository task would not use — asking to be shown or taught
+    # something generic. Anything mentioning this repo, a file, or a fix falls
+    # through to the classes below and keeps its full toolset.
+    - name: conversational
+      min_confidence_hits: 1
+      override_always: true
+      patterns: ["hello world", "show me an example", "give me an example",
+                 "what is the difference between", "what's the difference between",
+                 "how do i write a", "how do you write a", "write a simple example",
+                 "explain the concept", "what does the keyword", "syntax for"]
+      groups: []
+      notes: >
+        General knowledge question. No repository access, no MCP, no LSP, no
+        search — answer directly. Verified: this is the difference between an
+        instant answer and a filesystem crawl.
+
     - name: simple_edit
       min_confidence_hits: 1
       patterns: ["fix the typo", "rename ", "change the ", "replace ",
@@ -429,10 +478,14 @@ task_classes:
       min_confidence_hits: 1
       patterns: ["design ", "architecture", "refactor", "restructure",
                  "should we", "trade-off", "tradeoff", "migrate ", "plan the"]
-      groups: [search, lsp, planning]
+      groups: [search, lsp, planning, delegation]
       notes: >
-        Needs the widest read surface plus planning. Deliberately still excludes
-        orchestration: spawning subagents is what local models drive worst.
+        Needs the widest read surface plus planning, and it is the one task class
+        where handing off to a subagent is the point — so `delegation` (Task) is
+        included. Heavy `orchestration` (Workflow, Cron, worktree) stays excluded:
+        that machinery is what local models drive worst, and Workflow alone is
+        21,525 B. Splitting Task out of orchestration is what makes this
+        distinction expressible at all.
 
     - name: debug
       min_confidence_hits: 1

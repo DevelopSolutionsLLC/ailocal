@@ -174,7 +174,14 @@ print("\nGROUP LOOKUP")
 check(reg.group_of("Workflow") == "orchestration", "Workflow -> orchestration")
 check(reg.group_of("mcp__lsp__get_hover") == "lsp", "prefix pattern -> lsp")
 check(reg.group_of("mcp__grepai__grepai_search") == "search", "grepai -> search")
-check(reg.group_of("TaskCreate") == "orchestration", "Task* prefix -> orchestration")
+check(reg.group_of("TaskCreate") == "delegation", "Task* prefix -> delegation")
+# Delegation is a SEPARATE group from orchestration on purpose. Grouped together,
+# denying orchestration to local models also stripped Task, so claude-local could
+# not reach the subagents this repo ships — measured, and initially misread as the
+# model declining to delegate. Splitting them keeps the 21,525 B Workflow tool
+# dropped while leaving ~1 KB of Task in place.
+check(reg.group_of("Workflow") != reg.group_of("TaskCreate"),
+      "Workflow and Task are in different groups")
 check(reg.group_of("CronList") == "scheduling", "Cron* prefix -> scheduling")
 check(reg.group_of("some_unknown_tool") is None, "an unknown tool has no group")
 
@@ -184,6 +191,34 @@ check("Edit" in definite and "apply_patch" in definite,
 check("Bash" in ambiguous,
       "Bash is AMBIGUOUS — it can legitimately be read-only")
 check(not (definite & ambiguous), "the two sets are disjoint")
+
+print("\nTASK CLASSIFICATION")
+# The conversational class is the only one allowed below the `always` floor. It
+# exists because "show me an example of hello world in c++" arrived holding
+# Read/Glob/Grep/Bash and the agent went spelunking through the repo before
+# answering a general knowledge question.
+name, groups, _ = reg.classify_task("show me an example of hello world in c++")
+check(name == "conversational", "a general question classifies as conversational")
+check(groups == set(), "conversational sheds EVERY group, including the always-floor")
+
+# Every other class must keep the floor: losing tools mid-task strands an agent,
+# which is far worse than carrying a few unnecessary schemas.
+floor = reg.task_always_groups()
+for text, expected in [("fix the typo in README.md", "simple_edit"),
+                       ("where is the persona injector defined", "explore"),
+                       ("why does the build keep failing", "debug"),
+                       ("refactor the sync-models generator", "architecture")]:
+    name, groups, _ = reg.classify_task(text)
+    check(name == expected, f"{expected!r} classification")
+    check(floor <= groups, f"{expected!r} keeps the always-floor")
+
+name, groups, _ = reg.classify_task("refactor the sync-models generator")
+check("delegation" in groups,
+      "architecture keeps delegation — handing off is the point of that class")
+check("orchestration" not in groups,
+      "architecture still sheds heavy orchestration (Workflow is 21,525 B)")
+
+check(reg.classify_task("")[0] is None, "empty text is unclassified, not conversational")
 
 print("\nFAIL-OPEN BEHAVIOUR")
 missing = cr.Registry(path="/nonexistent", caps_json="/nonexistent",

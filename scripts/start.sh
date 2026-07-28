@@ -89,7 +89,12 @@ dc up -d --remove-orphans
 # restarted explicitly — `up -d` will not do it.
 CONFIG_STAMP="$ROOT_DIR/data/.litellm-config.sha"
 mkdir -p "$(dirname "$CONFIG_STAMP")"
+# registry.yaml is in this list deliberately: it is the tool gateway's capability
+# registry, it is mounted, and it is read once at gateway_init. A registry edit
+# with no restart leaves the OLD tool policy in force — which is how a change to
+# tool-group membership can appear to do nothing at all.
 current_sha=$(cat "$ROOT_DIR/config/litellm/config.yaml" \
+                  "$ROOT_DIR/config/litellm/registry.yaml" \
                   "$ROOT_DIR"/config/litellm/*.py \
                   "$ROOT_DIR"/config/instructions/*.md 2>/dev/null | shasum -a 256 | cut -d' ' -f1)
 previous_sha=$(cat "$CONFIG_STAMP" 2>/dev/null || echo "")

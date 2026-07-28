@@ -158,6 +158,34 @@ def task_negotiation_enabled():
     return (os.environ.get(TASK_ENV) or "").strip().lower() in ("1", "true", "on")
 
 
+def _is_first_turn(data):
+    """True when the request carries exactly one user turn and no assistant turn.
+
+    Used only to bound the conversational class (see the call site): stripping
+    every tool is safe for a one-shot question and unsafe the moment the session
+    has history, because classification always reads the FIRST user message.
+    Counts across all three dialects; anything unrecognised returns False, so the
+    override fails CLOSED and tools are kept.
+    """
+    msgs = (data or {}).get("messages")
+    if isinstance(msgs, list) and msgs:
+        users = sum(1 for m in msgs if isinstance(m, dict) and m.get("role") == "user")
+        assistants = sum(1 for m in msgs
+                         if isinstance(m, dict) and m.get("role") == "assistant")
+        return users == 1 and assistants == 0
+
+    items = (data or {}).get("input")
+    if isinstance(items, str):
+        return True          # Responses API with a bare prompt string
+    if isinstance(items, list) and items:
+        users = sum(1 for i in items if isinstance(i, dict) and i.get("role") == "user")
+        others = sum(1 for i in items if isinstance(i, dict)
+                     and i.get("role") in ("assistant", "tool")
+                     or (isinstance(i, dict) and "function_call" in i))
+        return users == 1 and others == 0
+    return False
+
+
 def first_user_text(data):
     """The task statement: the first user message, across all three dialects.
 
@@ -442,6 +470,18 @@ class ToolGateway(CustomLogger):
         if (not passthrough) and task_negotiation_enabled():
             task_class, task_needed, task_hits = reg.classify_task(
                 first_user_text(data))
+
+            # The conversational class strips tools to nothing, and classification
+            # reads the FIRST user message — which never changes as a session
+            # grows. Left alone, a session that opened with "what is the
+            # difference between X and Y" would stay permanently tool-less, so
+            # the follow-up "now fix this file" could never touch anything.
+            # Restrict the override to a genuine one-shot: a single user turn and
+            # no assistant turn yet. Any real conversation falls through to the
+            # normal floor.
+            if task_class == "conversational" and not _is_first_turn(data):
+                task_class, task_needed, task_hits = None, None, 0
+
             if task_needed is not None:
                 # Candidates are ALL known groups, not just the ones the client
                 # profile already offered. Restricting them to the client's
