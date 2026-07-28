@@ -628,8 +628,21 @@ class ToolGateway(CustomLogger):
                                   report["route"].strip("/").replace("/", "-"))
             with open(os.path.join(CAPTURE_DIR, stamp + ".json"), "w",
                       encoding="utf-8") as f:
+                # `classified_text` is what first_user_text() actually handed the
+                # classifier, truncated. Without it a wrong task_class is
+                # uninvestigable: you can see the verdict but not the input, and
+                # the input is the part that drifts across a multi-turn session.
+                # Capture is opt-in (AILOCAL_TOOL_GATEWAY_CAPTURE) and off by
+                # default, which is why it is safe to record request text here
+                # and NOT in the always-on metric line.
                 json.dump({"report": report, "tools": data.get("tools") or [],
-                           "model": data.get("model")}, f, indent=2, default=str)
+                           "model": data.get("model"),
+                           "classified_text": (first_user_text(data) or "")[:400],
+                           "user_turns": sum(
+                               1 for m in (data.get("messages") or [])
+                               if isinstance(m, dict) and m.get("role") == "user"),
+                           "single_user_turn": _single_user_turn(data)},
+                          f, indent=2, default=str)
         except Exception as exc:
             emit({"event": "capture_failed", "error": str(exc)})
 
