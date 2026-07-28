@@ -125,12 +125,16 @@ Most of this repo's complexity is in these; change them carefully.
    that guard a session opening with a chat question would stay tool-less forever.
    `mention_overrides` re-adds a group the user names explicitly; classification matches on TOPIC
    and is blind to instructions about HOW to work, so "delegate this to the reviewer subagent"
-   matched `review` on the word "security" and lost the very Task tool it asked for.
+   matched `review` on the word "security" and lost the very delegation tool it asked for.
 
-   **`Task` lives in its own `delegation` group, NOT `orchestration`.** Grouped together, denying
-   orchestration to local models also stripped Task, so claude-local could not reach the subagents
-   this repo ships — and that was initially misread as the model declining to delegate. The token
-   argument never applied: Workflow alone is 21,525 B, Task is ~1 KB.
+   **The subagent tool is `Agent`, and it lives in `delegation`, NOT `orchestration`.** Claude Code
+   renamed it from `Task` in v2.1.63; the live `Task*` names are BACKGROUND-TASK management
+   (`TaskCreate`/`TaskGet`/…), not delegation. `Agent` sat in `orchestration`, which every local
+   class denies, so the gateway dropped it on every request — misread twice, first as "the model
+   won't delegate" and then as "headless mode has no subagents". Both were the gateway. Verified
+   working once `Agent` reached the model: it called `Agent`, and the reviewer subagent ran on
+   `review` (`claude-fable-5 → review` in request_trace) while the parent stayed on `architecture`.
+   The token argument never applied: Workflow alone is 21,525 B, `Agent` is ~1 KB.
    ALL facts about models/clients/routes/tools live in `config/litellm/registry.yaml` (the
    capability registry); the negotiator contains no such literal and a test enforces that by
    grepping its code. `tool-policy.yaml` was superseded by the registry and removed. Frontier

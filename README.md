@@ -54,6 +54,36 @@ LiteLLM exposes capability names only — the router owns the backend, context, 
 | `completion` | qwen2.5-coder:3b | 4K / 20m — inline autocomplete (FIM) **only**; never a chat tier |
 | `embeddings` | nomic-embed-text | 8K / resident — retrieval infrastructure |
 
+Order in the `/model` picker follows the key order of `config/profiles/64gb.yaml`.
+
+**Which model for which task.** `architecture` is the only tier measured able to
+sustain a multi-step tool loop, so it is the launch default and the one that can
+act as a parent agent; `implementation` is a strong single-shot coder but does
+not drive loops; `review` is the only reasoning tier; `fast` handles background
+summarisation; `completion` is FIM autocomplete **only** and hard-400s on any
+chat turn.
+
+**Tool activation is automatic.** The gateway classifies each request: a general
+question gets no tools at all (measured 61 → 1), a small edit gets read/edit/run,
+and only architecture/debug/review-class work gets search, LSP and delegation.
+Nothing to switch on.
+
+**grepai vs LSP.** grepai (semantic) answers "where is X handled" and concept
+questions; LSP answers exact ones — where a symbol is defined, what references
+it. Prefer LSP's document-scoped tools: `workspace_symbol_search` only answers
+for one language at a time and returns empty for the rest, which looks exactly
+like "not found".
+
+**Common mistakes:** editing a generated region instead of the two source files;
+expecting `docker compose up -d` to pick up a config change (it will not — the
+config is bind-mounted and parsed once at boot, so use `./scripts/start.sh`);
+reading `content[0].text` on a `review` response and seeing empty (it returns a
+`thinking` block first); and treating an empty LSP or grepai result as proof of
+absence.
+
+Deeper detail, per-client differences and debugging commands:
+[`docs/environment-cheatsheet.md`](docs/environment-cheatsheet.md).
+
 Change a backend in `config/profiles/64gb.yaml`, run `./scripts/sync-models.sh`, and every generated client config regenerates. `architecture`/`implementation`/`review` get a server-side engineering persona (`config/instructions/<capability>.md`), injected on both the OpenAI and Anthropic routes. Use capability names only — never raw model tags.
 
 ## Clients
