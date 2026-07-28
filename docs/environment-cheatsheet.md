@@ -223,7 +223,23 @@ SearXNG on `127.0.0.1:8080`, reachable from LiteLLM as `http://searxng:8080`
 (verified from inside the container: 60–70 results).
 
 **Engines** (`deploy/searxng/settings.yml`, `keep_only` decides what loads at
-all): `google cse`, `duckduckgo`, `github`, `stackoverflow`, `wikipedia`.
+all). Default-queried, all API-backed: `github`, `stackoverflow`, `mdn`,
+`docker hub`, `pypi`, `npm`, `askubuntu`, `superuser`, `wikipedia`.
+Opt-in via bang only: `google cse` (`!gcse`), `duckduckgo` (`!ddg`).
+
+**Why the scraped ones are demoted.** Measured: google cse 10%→0%
+("too many requests"), duckduckgo 30%→0% (CAPTCHA), while API-backed engines
+ran 90–100%. SearXNG scrapes, so upstream classifies it as a bot — that is
+upstream's judgement of our OUTBOUND traffic, and no header or limiter setting
+touches it. Demoting them kept results identical (52.1/query, zero empty),
+halved latency (1.46s → 0.73s) and took engine errors to zero.
+
+**API-backed is not immunity** — github fell to 20% once unauthenticated API
+quota was exhausted by measurement bursts. It removes bot detection, not rate
+limits.
+
+Check health with a burst, never a single query: `./scripts/search-health.sh`.
+The signal to act on is **zero-result queries**, not an individual engine at 0%.
 Audited 2026-07-28 — availability drifts, so re-measure rather than trusting any
 list:
 

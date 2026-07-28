@@ -342,6 +342,30 @@ search_tools:
     litellm_params:
       search_provider: searxng
       api_base: http://searxng:8080
+      # NO RESULT CAP IS AVAILABLE HERE — measured, then confirmed in source.
+      #
+      # A search returns 62 results = 17,939 B = ~4,484 tokens. Prompt eval is
+      # the dominant latency term on this stack (ADR 013: ~600 tok/s at 16K on
+      # the 30B), so an uncapped search costs ~7.5 s of prompt eval, and the
+      # results persist in context for later turns, so it compounds. Capping
+      # would be a real win.
+      #
+      # It cannot be done from here. LiteLLM's SearXNG transformer takes
+      # `max_results` and explicitly discards it:
+      #
+      #   # Note: We could calculate pageno based on max_results, but for now
+      #   # we'll ignore this and let SearXNG return its default results
+      #   pass
+      #     -- llms/searxng/search/transformation.py, LiteLLM 1.93.0
+      #
+      # Measured before reading that: setting max_results: 10 changed the
+      # response by zero bytes. An `engines:` passthrough (the transformer does
+      # forward unknown params) also changed nothing.
+      #
+      # The lever that DOES work is the SearXNG-side engine set in
+      # deploy/searxng/settings.yml — result count is a function of how many
+      # engines answer. Do not re-add max_results here expecting an effect;
+      # re-check the transformer after a LiteLLM upgrade instead.
 
 # ── Cloud fallbacks (disabled by default) ────────────────────────────────────
 # To enable: set the API key in .env and add a second model_list entry for the

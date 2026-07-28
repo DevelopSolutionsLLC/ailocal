@@ -85,14 +85,41 @@ use_default_settings:
       - github
       - stackoverflow
       - wikipedia
+      - askubuntu
+      - superuser
+      - mdn
+      - pypi
+      - npm
+      - docker hub
 
 engines:
-  # Carries the general-web result set, but rate-limits: it is not the keyed
-  # Custom Search API (require_api_key is False upstream), so there is no quota
-  # to buy and 429s are inherent. Its "unusual traffic" errors are left visible
-  # rather than silenced — duckduckgo covers the suspension window.
+  # ── Scraped general-web: OPT-IN ONLY (`disabled: true`), 2026-07-28 ───────
+  # `disabled: true` does NOT remove an engine. It stops SearXNG querying it on
+  # every search while leaving it reachable on demand via its bang (!gcse, !ddg).
+  # That is the "fallback only" shape, and it is the correct answer here.
+  #
+  # MEASURED over 10 agent-style queries, twice:
+  #                    run 1        run 2 (after sustained use)
+  #   google cse        10%           0%   "Suspended: too many requests"
+  #   duckduckgo        30%           0%   "CAPTCHA (wt-wt)"
+  #   github/stackoverflow/mdn/docker hub/pypi/npm/askubuntu/superuser: 90-100%
+  #
+  # With BOTH of these at 0%, the instance still returned 52.1 results/query and
+  # ZERO empty queries — the API-backed engines carry the whole workload. So the
+  # scraped pair contributed no reliable coverage while generating every error
+  # line in the log and every retry of latency.
+  #
+  # WHY THIS IS NOT FIXABLE BY CONFIG: SearXNG scrapes, so upstream classifies it
+  # as a bot and rate-limits it — upstream's own docs say exactly this. Headers,
+  # limiter settings and trusted_proxies change nothing about it; they govern
+  # OUR bot detection of INBOUND requests, not upstream's of our OUTBOUND ones.
+  # The documented mitigations are a keyed API, rotation, or more source IPs.
+  # Engine selection is the lever we actually have.
+  #
+  # Querying them less is also the only thing that helps them recover: the
+  # suspensions are volume-triggered, so an agent burst is what causes them.
   - name: google cse
-    disabled: false
+    disabled: true
 
   # Second general-web source, so a google cse 429 does not mean zero results.
   #
@@ -111,7 +138,7 @@ engines:
   # zero results as one.
   - name: duckduckgo
     shortcut: ddg
-    disabled: false
+    disabled: true
 
   # API-backed, no CAPTCHA, directly useful for coding queries.
   - name: github
@@ -129,6 +156,44 @@ engines:
   - name: wikipedia
     shortcut: wp
     categories: [general]
+    disabled: false
+
+  # ── API-backed engines, added 2026-07-28 after measurement ────────────────
+  # Measured over 10 queries BEFORE this block:
+  #   github 100%  stackoverflow 100%  duckduckgo 30% (CAPTCHA)  google cse 10%
+  #   ("Suspended: too many requests")
+  # The split is not incidental. SearXNG scrapes, so upstream classifies it as a
+  # bot and rate-limits it -- upstream's own docs say so. Engines with a real API
+  # never hit that path, which is exactly why the two 100% engines are the two
+  # API-backed ones. No amount of header or limiter tuning changes a scraped
+  # engine's CAPTCHA rate; only engine SELECTION does.
+  #
+  # These are all API-backed and all relevant to this stack's actual queries
+  # (python/go/ts/shell/docker/packaging), so they add reliable coverage where
+  # google cse and duckduckgo are unreliable.
+  - name: askubuntu
+    shortcut: ubuntu
+    categories: [general, it]
+    disabled: false
+  - name: superuser
+    shortcut: su
+    categories: [general, it]
+    disabled: false
+  - name: mdn
+    shortcut: mdn
+    categories: [general, it]
+    disabled: false
+  - name: pypi
+    shortcut: pypi
+    categories: [general, it]
+    disabled: false
+  - name: npm
+    shortcut: npm
+    categories: [general, it]
+    disabled: false
+  - name: docker hub
+    shortcut: dh
+    categories: [general, it]
     disabled: false
 
 ui:
