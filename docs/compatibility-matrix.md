@@ -24,7 +24,7 @@ Versions: Claude Code 2.1.220 · codex-cli 0.145.0 · LiteLLM 1.93.0 · mcpls 0.
 | **Codex** (hosted) | no | ? | ? | N/A | ? | N/A | N/A | N/A |
 | **codex-local** (LiteLLM) | yes | **BLOCKED** | BLOCKED | BLOCKED | CAVEAT | N/A | OK | OK |
 | **VS Code** | yes | OK | OK | N/A (native) | N/A | N/A | OK | OK |
-| *New client (template)* | — | see ADR 012 | — | — | — | — | — | — |
+| *New client (template)* | — | see ADR 009 | — | — | — | — | — | — |
 
 ## Notes per cell
 
@@ -65,7 +65,7 @@ results; `/v1/search` via `searxng-search` passes). But Claude Code's native
 `WebSearch` is a *client-side* tool and never reaches SearXNG, and the local
 model narrates instead of emitting a `web_search` tool_use even under
 `tool_choice` forcing. Interception is verified **configured**, not verified end
-to end. See ADR 010.
+to end. See ADR 007.
 
 **LSP is NATIVE on both Claude surfaces since 2026-07-28.** `ENABLE_LSP_TOOL=1`
 plus the official `pyright-lsp`/`typescript-lsp`/`gopls-lsp`/`clangd-lsp` plugins,
@@ -80,7 +80,7 @@ now share one mechanism. Verified: the model called `LSP goToDefinition` and
 gap — no official plugin, and settings-level `lspServers` is ignored.
 
 **VS Code — LSP is N/A by design**, not missing: it has native language servers
-and a bridge would duplicate them (ADR 007). Model routing via the
+and a bridge would duplicate them. Model routing via the
 `litellm-connector` extension; instructions layered global + repo.
 
 **Delegation exists only on Claude Code.** Codex gets prompts

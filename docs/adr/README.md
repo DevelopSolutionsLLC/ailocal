@@ -17,12 +17,10 @@ regardless of how confident it sounds.
 | [004](004-tool-gateway.md) | Tool gateway + task classification | Accepted |
 | [005](005-model-hierarchy.md) | Five-tier model hierarchy | Accepted |
 | [006](006-delegation.md) | Subagent delegation | Accepted |
-| [007](007-mcp-architecture.md) | MCP registration fan-out | Accepted |
-| [008](008-lsp-bridge.md) | LSP via the mcpls bridge | Accepted |
-| [009](009-grepai-qdrant.md) | grepai + Qdrant for repo intelligence | Accepted |
-| [010](010-searxng.md) | SearXNG for web search | Accepted |
-| [011](011-local-vs-hosted.md) | Local and hosted side by side | Accepted |
-| [012](012-client-support.md) | Per-client support levels | Accepted |
+| [007](007-searxng.md) | SearXNG for web search | Accepted |
+| [008](008-local-vs-hosted.md) | Local and hosted side by side | Accepted |
+| [009](009-client-support.md) | Per-client support levels | Accepted |
+| [010](010-latency-profile.md) | Where latency actually comes from | Accepted |
 
 ## The rule that produced most of these
 

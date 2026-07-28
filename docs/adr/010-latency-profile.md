@@ -1,4 +1,4 @@
-# ADR 013 — Where latency actually comes from
+# ADR 010 — Where latency actually comes from
 
 **Status:** Accepted · **Date:** 2026-07-28 · **Measured, not modelled**
 

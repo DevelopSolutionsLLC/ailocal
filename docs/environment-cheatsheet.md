@@ -335,7 +335,7 @@ VS Code: MCP `grepai`, `litellm-connector` extension for model routing, native
 LSP. Instructions are layered, not duplicated — `~/.copilot/instructions/`
 (global, `applyTo: "**"`) plus the repo's `.github/copilot-instructions.md`.
 
-## Latency: what to expect (measured, ADR 013)
+## Latency: what to expect (measured, ADR 010)
 
 TTFB is **prompt evaluation**, not the proxy and not model loading.
 

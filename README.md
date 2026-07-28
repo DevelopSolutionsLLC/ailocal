@@ -2,6 +2,29 @@
 
 Run AI coding tools — Claude Code, Codex, VS Code Copilot Chat — against local models on Apple Silicon. No cloud costs, no data leaving your machine, no changes to the tools: Ollama runs the models natively (Metal/MLX GPU) and LiteLLM fronts them as an OpenAI/Anthropic-compatible proxy on `localhost:4000` that exposes **capability names** (`architecture`, `implementation`, `review`, `fast`, `completion`, `embeddings`) instead of raw model tags. Point a tool at the proxy instead of Anthropic/OpenAI — everything else stays the same.
 
+## What this is, and what it is not
+
+**ailocal is infrastructure: local inference and routing.** It runs Ollama, fronts
+it with LiteLLM, and owns everything about *which model answers and how* —
+capability routing, personas, the tool gateway, token optimisation, SearXNG
+integration. That is the whole job.
+
+It does **not** own developer tooling. MCP registration, LSP provisioning,
+repository intelligence (grepai/Qdrant), client installation and validation
+belong to **[Cadence](https://github.com/DevelopSolutionsLLC/cadence)**, which
+enhances any AI client whether or not ailocal is installed.
+
+The two compose but do not depend on each other in both directions:
+
+- **Cadence without ailocal** — fully supported. MCP, LSP and grepai work
+  against hosted Claude or hosted Codex with no LiteLLM anywhere.
+- **ailocal without Cadence** — works. You get local models through the proxy,
+  without repository intelligence.
+- **Both** — Cadence detects ailocal and enables the LiteLLM-backed extras
+  (local search routing, capability-aware tooling).
+
+If you do not use LiteLLM, you do not need this repo.
+
 ## Start here
 
 | Question | Answer |
