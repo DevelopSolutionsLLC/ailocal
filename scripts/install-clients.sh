@@ -505,57 +505,27 @@ if has_target "claude"; then
   echo "  Plain 'claude' in this or any other shell is untouched — still the cloud session."
 fi
 
-# ── Native LSP (the officially supported path) ─────────────────────────────
-# Claude Code ships native LSP: one `LSP` tool exposing goToDefinition,
-# findReferences, goToImplementation, hover, rename, documentSymbol,
-# workspaceSymbol, incomingCalls and outgoingCalls, plus automatic diagnostics
-# after every edit. It is off by default and needs TWO things: env
-# ENABLE_LSP_TOOL (carried in the deployed settings.json) and a language server
-# plugin per language.
+# ── Language servers: delegated to Cadence ─────────────────────────────────
+# LSP provisioning used to live here. That was the wrong home and it is now
+# `cadence lsp install`.
 #
-# This replaced the mcpls MCP bridge for Claude clients. Measured on 2.1.220:
-# native is 1 tool / 2,224 B against the bridge's 20 tools / 10,021 B for the
-# same operations, and the payload dropped 49 -> 26 tools once the bridge was
-# descoped. The bridge remains for codex-local, which has no native LSP.
+# The tell: a user on hosted Claude with no LiteLLM never runs this installer,
+# so they would never get LSP — even though nothing about language servers is
+# specific to local inference. Cadence already owned the other half (mcpls.toml
+# for the codex-local bridge), so both halves now sit in one place.
 #
-# Language servers themselves are NOT installed here — the plugin only wires up
-# a binary the user already has (pyright, typescript-language-server, gopls,
-# clangd). A plugin whose binary is missing simply reports no server for that
-# file type, which is the same fail-quiet shape we avoid elsewhere; hence the
-# presence check below.
-install_claude_lsp_plugins() {
-  local root="$1" p bin
-  command -v claude >/dev/null 2>&1 || { skip "claude not on PATH — skipping LSP plugins"; return 0; }
-  CLAUDE_CONFIG_DIR="$root" claude plugin marketplace update claude-plugins-official \
-    >/dev/null 2>&1 || true
-  # plugin:binary — only install a plugin whose language server is actually present.
-  for p in pyright-lsp:pyright-langserver \
-           typescript-lsp:typescript-language-server \
-           gopls-lsp:gopls \
-           clangd-lsp:clangd; do
-    bin="${p#*:}"; p="${p%%:*}"
-    if ! command -v "$bin" >/dev/null 2>&1; then
-      skip "$p — $bin not installed"
-      continue
-    fi
-    if CLAUDE_CONFIG_DIR="$root" claude plugin install "${p}@claude-plugins-official" \
-         >/dev/null 2>&1; then
-      info "$p enabled"
-    else
-      warn "$p install failed (native LSP for that language will be unavailable)"
-    fi
-  done
-}
-
-if has_target "claude"; then
-  step "Native LSP plugins (Claude Code)"
-  install_claude_lsp_plugins "$CLAUDE_HOME_DIR"
-  # The cloud root benefits identically and shares the same official mechanism —
-  # this is the one place ailocal touches ~/.claude, and it only adds plugins.
-  if [ "${AILOCAL_LSP_CLOUD:-1}" = "1" ] && [ -d "$HOME/.claude" ]; then
-    install_claude_lsp_plugins "$HOME/.claude"
-    echo "     (set AILOCAL_LSP_CLOUD=0 to leave the cloud root alone)"
+# ailocal owns local inference: LiteLLM, Ollama, routing, personas, capabilities,
+# the gateway. It does not own developer tooling. Same reasoning as the MCP
+# delegation immediately below.
+if has_target "claude" && command -v cadence >/dev/null 2>&1; then
+  step "Language servers (delegated to Cadence)"
+  if cadence lsp install >/tmp/ailocal-lsp-install.log 2>&1; then
+    info "cadence lsp install completed"
+  else
+    warn "cadence lsp install failed — see /tmp/ailocal-lsp-install.log"
   fi
+elif has_target "claude"; then
+  skip "cadence not on PATH — LSP not provisioned (install Cadence, then: cadence lsp install)"
 fi
 
 # ── Re-apply Cadence-owned MCP registrations ───────────────────────────────
