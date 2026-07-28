@@ -159,10 +159,48 @@ then silently return results **from other projects**. Never delete
 ### Web search
 
 SearXNG on `127.0.0.1:8080`, reachable from LiteLLM as `http://searxng:8080`
-(verified from inside the container, 60 results). Claude Code's native
-`WebSearch` is client-side and never reaches SearXNG — LiteLLM's interception
-accepts only `litellm_web_search` and bare `web_search`, and refuses a
-`WebSearch` carrying an `input_schema` so it cannot hijack the client's handler.
+(verified from inside the container: 60–70 results).
+
+**Engines** (`deploy/searxng/settings.yml`, `keep_only` decides what loads at
+all): `google cse`, `duckduckgo`, `github`, `stackoverflow`, `wikipedia`.
+Audited 2026-07-28 — availability drifts, so re-measure rather than trusting any
+list:
+
+- `mojeek` **removed**: HTTP 403 on 3/3 direct requests, "Suspended: access
+  denied" with 0 results via SearXNG. It 403'd on the first query of every fresh
+  container and contributed only error noise.
+- `duckduckgo` **added** in its place: previously excluded for CAPTCHA, now
+  serving 2 of 3 queries. Strictly better than the 0/3 it replaced, and SearXNG
+  degrades cleanly (44 results from the remaining engines when ddg CAPTCHAs).
+- `qwant` stays excluded. Its CAPTCHA lines in older logs **predate** the
+  `keep_only` list — it is no longer loaded and cannot fail. Check timestamps
+  before acting on log lines; much of what looks live is history.
+
+**Log noise, settled.** `deploy/searxng/limiter.toml` exists solely to quiet
+bot-detection startup messages; it does **not** enable the limiter
+(`server.limiter: false` governs that). Use
+`botdetection.trusted_proxies`, not the deprecated `[real_ip] x_for`, which
+emits its own deprecation errors on 2026.7.24. One line remains and is expected:
+
+```
+ERROR:searx.botdetection: X-Forwarded-For nor X-Real-IP header is set!
+```
+
+It fires **once per container start and never per request** (measured: 8
+searches produced zero additional lines) and blocks nothing, because the limiter
+is off. Do not "fix" it by injecting forwarded headers from LiteLLM — that turns
+on machinery this private, loopback-bound instance does not need.
+
+**Which path actually reaches SearXNG.** Claude Code's native `WebSearch` is a
+*client-side* tool and never does. LiteLLM's interception accepts only
+`litellm_web_search` and bare `web_search`, and deliberately refuses a
+`WebSearch` carrying an `input_schema` so it cannot hijack the client's own
+handler. Interception is verified *configured* — `search_tools: searxng-search`
+registers at boot, `enabled_providers: [ollama_chat]` matches the backend, and
+the `web_search` tool passes the gateway ungated (kept 1, dropped 0). It is
+**not** verified end to end: the local model narrates instead of emitting a
+`web_search` tool_use, even with `tool_choice` forcing it. SearXNG itself is
+proven healthy; the unproven link is the model's tool emission.
 
 ### Which system answers which question
 
@@ -180,8 +218,36 @@ accepts only `litellm_web_search` and bare `web_search`, and refuses a
 |---|---|---|---|---|---|
 | Routes via LiteLLM | yes | **no** | yes | **no** | yes |
 | Tool gating applies | yes | no | yes | no | yes |
-| MCP | grepai + lsp | grepai | grepai + lsp | grepai | grepai only |
-| Subagents | defined, see status above | yes | prompts only | prompts only | no |
+| MCP registered | grepai + lsp | grepai | grepai + lsp | grepai | grepai only |
+| MCP **usable by the model** | **yes** (measured) | yes | **NO** — see below | expected yes (untested) | yes |
+| Subagents | see status above | yes | prompts only | prompts only | no |
+
+### The Codex divergence (measured 2026-07-28, the one real capability gap)
+
+`codex-local` has grepai and lsp registered and running (`codex mcp list` shows
+both enabled) — **and the model still cannot call either.**
+
+Codex declares MCP servers to the model as `namespace` bundles
+(`{"type":"namespace","name":"mcp__lsp","tools":[...]}`). LiteLLM discards every
+namespace-typed entry when translating `/v1/responses` down to Chat Completions.
+Measured on a real `codex exec` run: `bytes_prefiltered_by_litellm: 27239` — all
+of `mcp__lsp` and `mcp__grepai` — after which the model reported "there are no
+MCP resources or resource templates available".
+
+Flattening the bundles at the gateway is implemented (`namespace_expansion`) and
+is deliberately **disabled**: Codex's own dispatcher then rejects the flattened
+names (`unsupported call: mcp__lsp__workspace_symbol_search`,
+openai/codex#20652), so enabling it only spends context on tools the client will
+refuse. Upstream PR #17556 is the fix and is not in codex-cli 0.145.0.
+
+Consequence for the "one client-agnostic stack" goal: it holds for Claude Code
+(local and hosted) and VS Code, and does **not** hold for codex-local. Hosted
+Codex talks to OpenAI directly with no LiteLLM in the path, so namespaces
+survive and MCP is expected to work there — that is inference from the
+architecture, not a measurement, because testing it spends OpenAI credits.
+
+Re-run `scripts/validate-codex-e2e.sh` after any Codex upgrade; this verdict is
+version-pinned, not permanent.
 
 Hosted Claude and hosted Codex never touch the proxy, so none of the routing,
 persona or tool-gating work affects them. XDG isolation (`CLAUDE_CONFIG_DIR`,

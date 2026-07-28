@@ -1,0 +1,56 @@
+# limiter.toml — quiets SearXNG's bot-detection startup noise. It does NOT turn
+# the limiter on: `server.limiter: false` in settings.yml governs that, and this
+# file is only the config botdetection loads when it initialises.
+#
+# Two messages prompted this, both investigated on 2026-07-27 and both harmless:
+#
+#   WARNING searx.botdetection.config: missing config file .../limiter.toml
+#   ERROR   searx.botdetection: X-Forwarded-For nor X-Real-IP header is set!
+#
+# They are emitted once at startup and never recur (measured: repeated searches,
+# direct and over the LiteLLM docker network, produced zero further botdetection
+# lines and full results). The problem was not function, it was that an
+# ERROR-level line nobody can act on gets re-investigated every time someone
+# audits the logs — and worse, trains the reader to skim past real errors.
+#
+# Upstream documents trusted_proxies as the control for the IP-resolution
+# message (docs.searxng.org/admin/searx.limiter.html): when a request arrives
+# from a trusted proxy, the client IP is taken from X-Forwarded-For/X-Real-IP;
+# otherwise SearXNG falls back to REMOTE_ADDR, which is what already happens
+# here. Declaring the docker bridge and loopback as trusted makes that fallback
+# explicit instead of exceptional.
+#
+# Nothing here rate-limits anything. If the limiter is ever genuinely wanted
+# (i.e. this instance stops being private), turn on server.limiter and revisit
+# every value below — they are chosen for a single trusted local consumer.
+
+[botdetection]
+# Who may set X-Forwarded-For/X-Real-IP on our behalf. LiteLLM talks to SearXNG
+# directly over the compose network, so the only callers are loopback and the
+# docker bridge. Declaring them trusted is what stops botdetection complaining
+# that neither header is set.
+#
+# This replaced the older `[real_ip] x_for` key; on SearXNG 2026.7.24 that key
+# still loads but emits its own deprecation ERROR, which would have traded one
+# piece of noise for two.
+trusted_proxies = [
+  "127.0.0.0/8",
+  "::1/128",
+  "172.16.0.0/12",
+]
+
+[botdetection.ip_limit]
+# The abuse controls, all off: one local process issues every query.
+filter_link_local = false
+link_token = false
+
+[botdetection.ip_lists]
+# Loopback plus the RFC1918 range docker's bridge allocates from (this stack
+# lands on 172.18.0.0/16). Anything else cannot reach the published port, which
+# is bound to 127.0.0.1 by compose.
+pass_ip = [
+  "127.0.0.0/8",
+  "::1/128",
+  "172.16.0.0/12",
+]
+block_ip = []

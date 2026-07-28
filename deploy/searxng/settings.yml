@@ -3,9 +3,31 @@ general:
   debug: false
 
 server:
+  # 0.0.0.0 INSIDE the container only; compose publishes it as 127.0.0.1:8080,
+  # so it is not reachable off this machine.
   bind_address: "0.0.0.0"
   port: 8080
   secret_key: "change_this_to_a_random_string_for_production"
+
+  # Set explicitly to match upstream's default, because the two log lines it
+  # produces look alarming during a log audit and have now been investigated
+  # twice. AUDITED 2026-07-27:
+  #
+  #   WARNING searx.botdetection.config: missing config file .../limiter.toml
+  #   ERROR   searx.botdetection: X-Forwarded-For nor X-Real-IP header is set!
+  #
+  # Both are emitted ONCE at startup and never again — measured: four searches
+  # (direct and over the LiteLLM docker network) produced zero further
+  # botdetection lines, and all returned results. The limiter is the abuse
+  # control for PUBLIC instances; this one is private, bound to loopback, with
+  # a single trusted consumer. With `limiter: false` nothing is rate-limited or
+  # blocked, so neither message affects functionality.
+  #
+  # Do NOT "fix" them by adding a limiter.toml or by injecting
+  # X-Forwarded-For/X-Real-IP from LiteLLM: that turns ON machinery this
+  # deployment does not need, to silence a message that costs nothing.
+  limiter: false
+  public_instance: false
 
 search:
   formats:
@@ -33,10 +55,24 @@ outgoing:
 # Names must match the default list exactly; an unmatched name is silently
 # dropped, not an error.
 #
-# Measured against this instance (query: "python asyncio semaphore", results
-# returned): google cse 20 · github 14 · stackoverflow 10 · mojeek 10 ·
-# wikipedia 0 · wikidata 0 · qwant 0 (CAPTCHA). Previously measured and also
-# excluded: duckduckgo, startpage (CAPTCHA), brave (429).
+# ENGINE AVAILABILITY DRIFTS — re-measure, do not trust this list on faith.
+# Two exclusions here were reversed by measurement on 2026-07-28.
+#
+# Measured (query: "python asyncio semaphore", results returned):
+#   google cse 20 · github 14 · stackoverflow 10 · wikipedia 0 (nothing on
+#   technical queries) · wikidata 0 · qwant 0 (CAPTCHA).
+#
+# 2026-07-28 re-audit:
+#   mojeek     REMOVED. Was the designated google-cse fallback; measured dead
+#              from this network — HTTP 403 on 3/3 direct requests and
+#              "Suspended: access denied" with 0 results on a !mjk bang. It
+#              403'd on the first query of every fresh container, so it produced
+#              only error noise.
+#   duckduckgo ADDED in its place. Previously excluded for CAPTCHA; re-probed
+#              and answering.
+#   qwant      stays excluded. Its CAPTCHA errors in older logs predate this
+#              keep_only list — it is no longer loaded and cannot fail. Check
+#              timestamps before acting on log lines; much of it is history.
 #
 # Deliberately NOT solved with Redis, a proxy pool, or a FlareSolverr-style
 # browser: SearXNG is an aggregator, so engine selection is the correct lever
@@ -45,7 +81,7 @@ use_default_settings:
   engines:
     keep_only:
       - google cse
-      - mojeek
+      - duckduckgo
       - github
       - stackoverflow
       - wikipedia
@@ -54,14 +90,27 @@ engines:
   # Carries the general-web result set, but rate-limits: it is not the keyed
   # Custom Search API (require_api_key is False upstream), so there is no quota
   # to buy and 429s are inherent. Its "unusual traffic" errors are left visible
-  # rather than silenced — mojeek exists to cover the suspension window.
+  # rather than silenced — duckduckgo covers the suspension window.
   - name: google cse
     disabled: false
 
-  # Independent index, no CAPTCHA. Present so a google cse 429 does not mean
-  # zero general-web results.
-  - name: mojeek
-    shortcut: mjk
+  # Second general-web source, so a google cse 429 does not mean zero results.
+  #
+  # This slot held mojeek until 2026-07-28, when it was measured DEAD from this
+  # network: HTTP 403 on 3/3 direct requests, and SearXNG reporting
+  # "Suspended: access denied" with 0 results on a !mjk bang query. A keyless
+  # engine that 403s on first contact is not a fallback, it is error noise —
+  # it 403'd on the very first query of every fresh container.
+  #
+  # duckduckgo was re-probed at the same time and now answers where it
+  # previously CAPTCHA'd — but only INTERMITTENTLY: measured 2 of 3 queries
+  # served, the third returning `unresponsive_engines: [[duckduckgo, CAPTCHA]]`.
+  # That is still strictly better than the 0 of 3 it replaced, and SearXNG
+  # degrades cleanly (44 results from the remaining engines on the failing
+  # query). Do not read an occasional ddg CAPTCHA line as a regression; read
+  # zero results as one.
+  - name: duckduckgo
+    shortcut: ddg
     disabled: false
 
   # API-backed, no CAPTCHA, directly useful for coding queries.
