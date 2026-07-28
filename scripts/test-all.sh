@@ -79,6 +79,13 @@ run "tool-call repair (repairs real calls, refuses examples)" \
 
 echo
 echo "INTEGRATION"
+# Guards a backported LiteLLM fix. The bug it covers is NON-BLOCKING — streamed
+# /v1/messages kept working while success logging raised on every request — so
+# without a test its return would be invisible. Asserts the observable property
+# (no validation error) rather than "the patch is installed", so it also catches
+# a LiteLLM upgrade that makes the patch no-op while the bug persists.
+run "anthropic streaming logging (no AnthropicResponse validation error)" \
+    python3 scripts/test-anthropic-stream-logging.py
 run "client compatibility (3 dialects x 3 modes)" \
     ./scripts/test-client-compatibility.sh
 

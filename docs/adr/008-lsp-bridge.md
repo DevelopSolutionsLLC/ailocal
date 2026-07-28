@@ -21,8 +21,23 @@
 > | mcpls bridge | 20 | 10,021 |
 >
 > Same nine operations (goToDefinition, findReferences, goToImplementation,
-> hover, rename, documentSymbol, workspaceSymbol, incomingCalls, outgoingCalls),
-> **plus automatic diagnostics after every edit**, which the bridge cannot do.
+> hover, rename, documentSymbol, workspaceSymbol, incomingCalls, outgoingCalls).
+>
+> **CORRECTION, 2026-07-28.** An earlier revision of this ADR claimed native LSP
+> adds "automatic diagnostics after every edit". That came from a blog post, not
+> from measurement, and it does NOT hold here. Measured: there is no callable
+> `diagnostics` operation (the model tried and fell back to reading the file),
+> and an `Edit` that introduces a real type error returns a plain success result
+> with no diagnostics attached. The migration still stands on the token and
+> standards arguments alone; it does not need a capability that was never
+> observed.
+>
+> Two further operation quirks, measured: `hover` and `findReferences` return
+> "may occur if the LSP server has not fully indexed" rather than an error when
+> the position is not on a symbol, so an empty result here is as ambiguous as
+> everywhere else in this stack; and `workspaceSymbol` rejects a bare `query`,
+> demanding `filePath`/`line`/`character` — which makes it awkward for the one
+> job its name implies.
 > Whole-payload effect once the bridge was descoped: **49 tools / 43,403 B → 26
 > tools / 31,555 B**. Verified answering through a custom `ANTHROPIC_BASE_URL` —
 > it is client-side, unlike tool search (ADR 001).
