@@ -1,7 +1,28 @@
 # ailocal
 
-Run AI coding tools — Claude Code, Codex, VS Code Copilot Chat — against local models on Apple Silicon. No cloud costs, no data leaving your machine, no changes to the tools: Ollama runs the models natively (Metal/MLX GPU) and LiteLLM fronts them as an OpenAI/Anthropic-compatible proxy on `localhost:4000` that exposes **capability names** (`architecture`, `implementation`, `review`, `completion`, `embeddings`) instead of raw model tags. Point a tool at the proxy instead of Anthropic/OpenAI — everything else stays the same.
+Run AI coding tools — Claude Code, Codex, VS Code Copilot Chat — against local models on Apple Silicon. No cloud costs, no data leaving your machine, no changes to the tools: Ollama runs the models natively (Metal/MLX GPU) and LiteLLM fronts them as an OpenAI/Anthropic-compatible proxy on `localhost:4000` that exposes **capability names** (`architecture`, `implementation`, `review`, `fast`, `completion`, `embeddings`) instead of raw model tags. Point a tool at the proxy instead of Anthropic/OpenAI — everything else stays the same.
 
+## Start here
+
+| Question | Answer |
+|---|---|
+| **Supported clients?** | `claude-local`, `codex-local`, VS Code, plus hosted Claude/Codex untouched alongside. Per-client state: [compatibility matrix](docs/compatibility-matrix.md) |
+| **Which model?** | `architecture` for anything agentic (default), `implementation` for edits, `review` for critique, `fast` for background work. `completion` is FIM autocomplete **only** — it hard-400s on a chat turn |
+| **Which tools do I get?** | Automatic. The gateway classifies each request: a plain question gets no tools, a refactor gets search + LSP + delegation. Nothing to switch on. (Known: the no-tools case holds for the first turn only — [ADR 004](docs/adr/004-tool-gateway.md)) |
+| **grepai or LSP?** | grepai for *concepts* ("where is retry handled"), LSP for *exact* ("where is this defined, what calls it"). Prefer LSP's document-scoped tools |
+| **Something's wrong** | `./scripts/doctor.sh` → `./scripts/validate-deployment.sh` → `./scripts/test-all.sh`. Run them **idle**; contention causes phantom failures |
+| **Why is it built this way?** | [ADRs](docs/adr/) — one per decision, with the measurements behind it |
+| **What's not done?** | [future work](docs/future-work.md) |
+
+**Common mistakes:** editing a generated region instead of the two source files
+(`config/profiles/<tier>.yaml`, `config/clients.yaml`); expecting
+`docker compose up -d` to pick up a config change (it will not — use
+`./scripts/start.sh`); reading `content[0].text` on a `review` response and
+seeing empty (it returns a `thinking` block first); treating an empty LSP or
+grepai result as proof of absence (it usually means still-indexing, or the wrong
+language server answered).
+
+Full operational detail: [environment cheat sheet](docs/environment-cheatsheet.md).
 Architecture and file map: [CLAUDE.md](CLAUDE.md).
 
 ## Requirements
@@ -56,34 +77,6 @@ LiteLLM exposes capability names only — the router owns the backend, context, 
 
 Order in the `/model` picker follows the key order of `config/profiles/64gb.yaml`.
 
-**Which model for which task.** `architecture` is the only tier measured able to
-sustain a multi-step tool loop, so it is the launch default and the one that can
-act as a parent agent; `implementation` is a strong single-shot coder but does
-not drive loops; `review` is the only reasoning tier; `fast` handles background
-summarisation; `completion` is FIM autocomplete **only** and hard-400s on any
-chat turn.
-
-**Tool activation is automatic.** The gateway classifies each request: a general
-question gets no tools at all (measured 61 → 1), a small edit gets read/edit/run,
-and only architecture/debug/review-class work gets search, LSP and delegation.
-Nothing to switch on.
-
-**grepai vs LSP.** grepai (semantic) answers "where is X handled" and concept
-questions; LSP answers exact ones — where a symbol is defined, what references
-it. Prefer LSP's document-scoped tools: `workspace_symbol_search` only answers
-for one language at a time and returns empty for the rest, which looks exactly
-like "not found".
-
-**Common mistakes:** editing a generated region instead of the two source files;
-expecting `docker compose up -d` to pick up a config change (it will not — the
-config is bind-mounted and parsed once at boot, so use `./scripts/start.sh`);
-reading `content[0].text` on a `review` response and seeing empty (it returns a
-`thinking` block first); and treating an empty LSP or grepai result as proof of
-absence.
-
-Deeper detail, per-client differences and debugging commands:
-[`docs/environment-cheatsheet.md`](docs/environment-cheatsheet.md).
-
 Change a backend in `config/profiles/64gb.yaml`, run `./scripts/sync-models.sh`, and every generated client config regenerates. `architecture`/`implementation`/`review` get a server-side engineering persona (`config/instructions/<capability>.md`), injected on both the OpenAI and Anthropic routes. Use capability names only — never raw model tags.
 
 ## Clients
@@ -94,7 +87,7 @@ Change a backend in `config/profiles/64gb.yaml`, run `./scripts/sync-models.sh`,
 
 Client state lives in `~/.config/ailocal/`; your cloud `~/.claude` / `~/.codex` are never touched.
 
-- **Claude Code** — `claude-local` (launches on `implementation`; `/model` to switch to `architecture` or delegate to subagents). Plain `claude` stays on cloud.
+- **Claude Code** — `claude-local` (launches on `architecture`, the only tier measured able to sustain a tool loop; `/model` to switch). Plain `claude` stays on cloud.
 - **Codex** — `codex-local`. Plain `codex` stays on cloud.
 - **VS Code Copilot Chat** — `ailocal-code [path]` opens an isolated VS Code profile with the [LiteLLM Connector](https://marketplace.visualstudio.com/items?itemName=Gethnet.litellm-connector-copilot) wired up; models auto-discover from `/model/info`. To wire it manually: Copilot model-picker → **Manage Models → LiteLLM Connector**, base URL `http://localhost:4000`, key = `LITELLM_MASTER_KEY`, then ⌘⇧P → **LiteLLM: Reload Models**.
 

@@ -30,8 +30,10 @@ same files document the Claude Code persona (config/clients/CLAUDE.md), so the t
 lives in one place. ("persona" is retained for the hook/mechanism name; the files
 themselves are capability instruction profiles, not personalities.)
 
-Capabilities without an instruction file (completion, embeddings) pass through
-untouched — the fast autocomplete/embedding tiers stay lean by design.
+A capability with no <capability>.md gets _core.md alone (or nothing, where the
+capability has no persona at all). Currently that is `fast`, `completion` and
+`embeddings`: the small/FIM/embedding tiers stay lean by design. Adding a file
+is the only step needed to give one an enhancer — no code change.
 """
 
 import glob

@@ -162,6 +162,12 @@ fast:
   temperature: 0.0
   num_predict: 4096
   keep_alive: 20m
+  # persona: true, but there is deliberately NO config/instructions/fast.md — this
+  # tier receives _core.md ONLY. Verified 2026-07-28: the instructions directory
+  # holds _core/architecture/implementation/review. A per-capability enhancer is
+  # absent on purpose; this tier answers in a word or two and every extra token of
+  # system prompt is a larger share of its budget than for any other tier. Add
+  # fast.md if that changes — the injector picks it up with no code change.
   persona: true
   purpose: [task classification, doc summarisation, quick edits, tool-driven lookups]
   strengths: [tiny footprint, native tool calling, very long context, low latency]

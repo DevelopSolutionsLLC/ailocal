@@ -158,31 +158,59 @@ def task_negotiation_enabled():
     return (os.environ.get(TASK_ENV) or "").strip().lower() in ("1", "true", "on")
 
 
-def _is_first_turn(data):
-    """True when the request carries exactly one user turn and no assistant turn.
+def _single_user_turn(data):
+    """True when the USER has said exactly one thing, whatever the agent has done since.
 
-    Used only to bound the conversational class (see the call site): stripping
-    every tool is safe for a one-shot question and unsafe the moment the session
-    has history, because classification always reads the FIRST user message.
-    Counts across all three dialects; anything unrecognised returns False, so the
-    override fails CLOSED and tools are kept.
+    This bounds the conversational class. Two failure modes had to be avoided and
+    they pull in opposite directions:
+
+      - Classification always reads the FIRST user message, which never changes
+        as a session grows. Make the override sticky on that and a session
+        opening with a chat question stays tool-less forever, so a later
+        "now fix this file" can never touch anything.
+      - Release it on the agent's own continuation turn and the override lapses
+        mid-loop. MEASURED: "show me an example of hello world in c++"
+        classified conversational, the model produced a second turn, tools
+        re-armed (48 of 61 kept) and it went on to call rg, Bash x3 and Write.
+        That is the exact repo-crawling behaviour the class exists to stop, and
+        a single-turn measurement (61 -> 1) had hidden it.
+
+    Counting only USER messages resolves both: the override holds for the whole
+    agent loop that answers one question, and lifts the moment the user asks for
+    something else. Anything unrecognised returns False, so it fails CLOSED and
+    tools are kept.
     """
+    def is_real_user_turn(m):
+        """A user message the HUMAN wrote, not a tool result.
+
+        The trap: on the Anthropic route, tool results come back as
+        `role: "user"` messages carrying `tool_result` blocks. Counting user
+        messages naively therefore releases the override the instant any tool
+        runs — measured, and it is why a conversational request still ended up
+        calling rg/Bash/Write. Only a user turn containing actual text counts.
+        """
+        if not isinstance(m, dict) or m.get("role") != "user":
+            return False
+        c = m.get("content")
+        if isinstance(c, str):
+            return bool(c.strip())
+        if isinstance(c, list):
+            return any(isinstance(b, dict) and b.get("type") == "text"
+                       and str(b.get("text") or "").strip() for b in c)
+        return False
+
     msgs = (data or {}).get("messages")
     if isinstance(msgs, list) and msgs:
-        users = sum(1 for m in msgs if isinstance(m, dict) and m.get("role") == "user")
-        assistants = sum(1 for m in msgs
-                         if isinstance(m, dict) and m.get("role") == "assistant")
-        return users == 1 and assistants == 0
+        return sum(1 for m in msgs if is_real_user_turn(m)) == 1
 
     items = (data or {}).get("input")
     if isinstance(items, str):
         return True          # Responses API with a bare prompt string
     if isinstance(items, list) and items:
-        users = sum(1 for i in items if isinstance(i, dict) and i.get("role") == "user")
-        others = sum(1 for i in items if isinstance(i, dict)
-                     and i.get("role") in ("assistant", "tool")
-                     or (isinstance(i, dict) and "function_call" in i))
-        return users == 1 and others == 0
+        # Responses API: function_call_output items are the tool-result shape.
+        return sum(1 for i in items
+                   if isinstance(i, dict) and i.get("role") == "user"
+                   and i.get("type") not in ("function_call_output",)) == 1
     return False
 
 
@@ -471,15 +499,12 @@ class ToolGateway(CustomLogger):
             task_class, task_needed, task_hits = reg.classify_task(
                 first_user_text(data))
 
-            # The conversational class strips tools to nothing, and classification
-            # reads the FIRST user message — which never changes as a session
-            # grows. Left alone, a session that opened with "what is the
-            # difference between X and Y" would stay permanently tool-less, so
-            # the follow-up "now fix this file" could never touch anything.
-            # Restrict the override to a genuine one-shot: a single user turn and
-            # no assistant turn yet. Any real conversation falls through to the
-            # normal floor.
-            if task_class == "conversational" and not _is_first_turn(data):
+            # Bound the conversational class to a SINGLE USER REQUEST — see
+            # _single_user_turn for why it counts users only. Sticky-forever and
+            # release-on-the-agent's-own-continuation are both wrong, in
+            # opposite directions, and the second was measured stripping then
+            # re-arming tools mid-loop.
+            if task_class == "conversational" and not _single_user_turn(data):
                 task_class, task_needed, task_hits = None, None, 0
 
             if task_needed is not None:
