@@ -38,6 +38,13 @@ CAPS_JSON = os.environ.get("AILOCAL_CAPABILITIES_JSON",
 CONFIG_PATH = os.environ.get("AILOCAL_CONFIG_PATH", "/app/config/config.yaml")
 
 
+def truthy_flag(v):
+    """YAML `true`/`yes`/`1` -> True. Anything absent or unrecognised is False,
+    so a typo in the registry fails CLOSED (keeps tools) rather than silently
+    stripping a task's toolset."""
+    return str(v).strip().lower() in ("1", "true", "yes", "on")
+
+
 class Registry:
     """Loaded capability registry. Construct once; it is read-only afterwards."""
 
@@ -291,8 +298,18 @@ class Registry:
             hits = sum(1 for pat in cls.get("patterns") or []
                        if str(pat).lower() in lowered)
             if hits >= int(cls.get("min_confidence_hits", 1) or 1):
-                return (cls.get("name"),
-                        always | set(cls.get("groups") or []), hits)
+                # `override_always` lets a class drop BELOW the always-floor.
+                # Only the conversational class uses it, and it exists because
+                # the floor (edit_and_run) is what made a general question like
+                # "show me hello world in C++" behave like an engineering task:
+                # the model still held Read/Glob/Grep/Bash, and the coding
+                # persona duly went looking through the repository first.
+                # Everything else keeps the floor — losing tools mid-task is the
+                # dangerous direction, so this stays opt-in per class.
+                groups = set(cls.get("groups") or [])
+                if not truthy_flag(cls.get("override_always")):
+                    groups = always | groups
+                return cls.get("name"), groups, hits
         return None, None, 0
 
     def task_always_groups(self):
