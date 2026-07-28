@@ -70,7 +70,10 @@ to end. See ADR 010.
 **LSP is NATIVE on both Claude surfaces since 2026-07-28.** `ENABLE_LSP_TOOL=1`
 plus the official `pyright-lsp`/`typescript-lsp`/`gopls-lsp`/`clangd-lsp` plugins,
 installed into both roots by `install-clients.sh`. One `LSP` tool (2,224 B)
-replaced the 20-tool mcpls bridge (10,021 B); payload went 49 → 26 tools. Hosted
+replaced the 20-tool mcpls bridge (10,021 B); payload went 49 → 26 tools.
+Native exposes no callable `diagnostics` operation, and diagnostics are NOT
+auto-injected after edits — measured, contradicting a claim made from
+documentation earlier in this project. Hosted
 Claude previously had **no** LSP at all — that gap is closed, and both surfaces
 now share one mechanism. Verified: the model called `LSP goToDefinition` and
 `findReferences` and reported correct lines. Shell (.sh/.bash/.zsh) is the one
@@ -83,21 +86,53 @@ and a bridge would duplicate them (ADR 007). Model routing via the
 **Delegation exists only on Claude Code.** Codex gets prompts
 (`--profile plan/review`), VS Code neither. That is the clients' shape.
 
-## Languages (claude-local / codex-local, via mcpls)
+## LSP: mechanism and language coverage (all measured 2026-07-28)
 
-| Language | Server | Status |
-|---|---|---|
-| Python | pyright-lsp (native) / pyright-langserver | OK — verified answering |
-| TypeScript / JavaScript | typescript-language-server | OK — verified answering |
-| Go | gopls 0.23.0 | OK — verified in a real module |
-| Bash / POSIX sh | bash-language-server (mcpls, **codex-local only**) | CAVEAT — no native plugin exists |
-| zsh | bash-language-server (mcpls, **codex-local only**) | CAVEAT — navigation only, no shellcheck |
-| C / C++ | clangd | EXP — configured, not exercised |
-| Rust | rust-analyzer | N/A — not installed, deliberately not declared |
+Three different mechanisms, on purpose — each client gets its own officially
+supported one. No client runs two.
 
-**Cross-language caveat:** `workspace_symbol_search` does not fan out — it
-answers for whichever server became ready first and returns `{"symbols":[]}` for
-the rest. Use document-scoped tools. See ADR 008.
+| Client | Mechanism | Python | TS/JS | Go | C/C++ | Shell (.sh/.zsh) |
+|---|---|---|---|---|---|---|
+| Claude Code (hosted) | native `LSP` tool + official `*-lsp` plugins | OK | OK | OK | OK | **none** |
+| claude-local | native `LSP` tool + official `*-lsp` plugins | **verified** | OK | OK | OK | **none** |
+| codex-local | mcpls MCP bridge | OK | OK | OK | OK | **verified** |
+| Codex (hosted) | none | — | — | — | — | — |
+| VS Code | its own extensions | OK (Pylance) | OK (core) | OK (golang.go) | — | **none** |
+
+**Why three mechanisms.** Claude has native LSP, so it uses it. Codex has none,
+so the bridge is its only path. VS Code has an extension ecosystem, so it uses
+that — handing it the bridge would have duplicated TS/JS and created a second
+symbol path.
+
+**VS Code was fixed, not just documented.** The "it has native language servers"
+justification was only ever true for TS/JS (built into core); the install had
+four extensions and no Python or Go at all. `install-vscode.sh` now installs
+`ms-python.python` and `golang.go` — the client-native answer.
+
+**Shell is genuinely unavailable to Claude and VS Code.** There is no first-party
+shell language server for either. Only codex-local has it, via mcpls, verified:
+`.sh` and `.zsh` both return real symbols. zsh is parsed with bash's grammar and
+shellcheck is skipped there, so a clean `.zsh` result means nothing was linted.
+Do not claim shell LSP where it does not exist.
+
+**codex-local caveat:** its LSP is registered and the servers answer, but the
+model cannot reach them — see the namespace blocker above. Registered ≠ usable.
+
+**Native LSP operation notes (measured, not from docs):**
+- Nine operations: goToDefinition, findReferences, goToImplementation, hover,
+  rename, documentSymbol, workspaceSymbol, incomingCalls, outgoingCalls.
+- There is **no callable `diagnostics` operation**, and diagnostics are **not**
+  auto-injected after an edit — an `Edit` introducing a real type error returns a
+  plain success. An earlier claim to the contrary in this project came from a
+  blog post rather than measurement and is retracted.
+- `workspaceSymbol` rejects a bare `query`, demanding `filePath`/`line`/
+  `character`.
+- `hover`/`findReferences` answer "may occur if the LSP server has not fully
+  indexed" instead of erroring when the position is not on a symbol — so empty
+  is ambiguous here too.
+
+**mcpls note:** it only resolves files inside its workspace root. A path outside
+it returns empty, which looks identical to "symbol not found".
 
 ## How to re-derive this table
 

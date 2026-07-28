@@ -70,6 +70,33 @@ else
   fi
 fi
 
+# ── 1b. language servers, VS Code's own way ─────────────────────────────────
+# VS Code is deliberately excluded from the mcpls MCP bridge on the grounds that
+# it "has native language servers". AUDITED 2026-07-28: that was only ever true
+# for TypeScript/JavaScript, which ship in VS Code core. The install had FOUR
+# extensions total and no Python or Go support at all — so the justification held
+# while the capability did not.
+#
+# Fixed the client-native way rather than by handing VS Code the bridge: these
+# are the official extensions, they are what a VS Code user would install anyway,
+# and Copilot Chat's agent mode consumes their language features directly. Adding
+# the bridge instead would have duplicated TS/JS and introduced a second symbol
+# path — the thing ADR 007/008 exist to avoid.
+#
+# Shell has no entry for the same reason it has none under native Claude LSP:
+# there is no first-party shell language server. Not claimed, not faked.
+for EXT in ms-python.python golang.go; do
+  if code --list-extensions 2>/dev/null | grep -qix "$EXT"; then
+    ok "$EXT already installed"
+  elif [ -n "$DRY" ]; then
+    echo "  would install $EXT"
+  else
+    info "installing $EXT"
+    code --install-extension "$EXT" --force >/dev/null 2>&1 \
+      && ok "installed" || warn "$EXT install failed — language intelligence for it will be absent"
+  fi
+done
+
 # ── 2. provider group (automatable; preserves the SecretStorage reference) ──
 info "provider group -> $(basename "$MODELS_JSON")"
 python3 - "$MODELS_JSON" "$BASE_URL" "${DRY:-}" <<'PY'

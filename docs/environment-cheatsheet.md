@@ -283,6 +283,24 @@ VS Code: MCP `grepai`, `litellm-connector` extension for model routing, native
 LSP. Instructions are layered, not duplicated — `~/.copilot/instructions/`
 (global, `applyTo: "**"`) plus the repo's `.github/copilot-instructions.md`.
 
+## Latency: what to expect (measured, ADR 013)
+
+TTFB is **prompt evaluation**, not the proxy and not model loading.
+
+| layer | cost |
+|---|---|
+| LiteLLM + all hooks | ~70 ms (0.36 s vs 0.29 s direct) |
+| model load, cold | 3.9 s (30B) / 2.6 s (2B); resident tiers never pay it |
+| prompt eval, 30B | 0.7 s @ 694 tok · 5.8 s @ 5.5K · **27.6 s @ 16.5K** · 84.7 s @ 33K |
+
+Throughput *degrades* with prompt size (989 → 390 tok/s), so a big first request
+costs superlinearly. The KV cache makes it a **first-turn** cost: an identical
+prompt re-evaluates in 0.03 s. So a slow first turn then fast follow-ups is
+expected, not a fault.
+
+The lever is prompt size — which is what the tool gateway attacks. Never measure
+prompt eval on a warm repeat; use a cold, large, unique prompt.
+
 ## Startup
 
 ```bash
