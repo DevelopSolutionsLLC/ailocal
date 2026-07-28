@@ -111,7 +111,26 @@ Most of this repo's complexity is in these; change them carefully.
    optionally trims) the tool payload clients declare. Measured: Claude Code sends **61 tools /
    104KB / 24,448 real Qwen tokens** on every `/v1/messages` request; **70.8%** of it is
    orchestration/scheduling/worktree machinery a local 30B cannot drive. Three modes via
-   `AILOCAL_TOOL_GATEWAY` — `off` (default, hook returns immediately), `report`, `filter`.
+   `AILOCAL_TOOL_GATEWAY` — `off` (compose default), `report`, `filter`. **`.env` sets `filter`,
+   so filtering is live**; `off` is only the fallback when `.env` says nothing.
+
+   **Tool activation is what shapes behaviour most, and it is task-classified.** The registry's
+   `task_classes` decide which groups survive. A `conversational` class carries
+   `override_always: true` so it drops BELOW the `always` floor to *no tools* — without it, "show
+   me hello world in C++" arrived holding Read/Glob/Grep/Bash and the coding persona dutifully
+   crawled the repo before answering (measured 61 tools → 1 after). Two guards, because losing
+   tools mid-task strands an agent while spare schemas only cost tokens: an unmatched task keeps
+   everything (fail-open), and the conversational override applies only to a genuine first turn —
+   classification reads the FIRST user message, which never changes as a session grows, so without
+   that guard a session opening with a chat question would stay tool-less forever.
+   `mention_overrides` re-adds a group the user names explicitly; classification matches on TOPIC
+   and is blind to instructions about HOW to work, so "delegate this to the reviewer subagent"
+   matched `review` on the word "security" and lost the very Task tool it asked for.
+
+   **`Task` lives in its own `delegation` group, NOT `orchestration`.** Grouped together, denying
+   orchestration to local models also stripped Task, so claude-local could not reach the subagents
+   this repo ships — and that was initially misread as the model declining to delegate. The token
+   argument never applied: Workflow alone is 21,525 B, Task is ~1 KB.
    ALL facts about models/clients/routes/tools live in `config/litellm/registry.yaml` (the
    capability registry); the negotiator contains no such literal and a test enforces that by
    grepping its code. `tool-policy.yaml` was superseded by the registry and removed. Frontier
@@ -143,6 +162,8 @@ ailocal and Cadence are independent *installations*, not independent *content*. 
    **`install-clients.sh` rewrites those files and strips the block**, so the install order is
    cadence → ailocal → cadence-local. Re-run the Cadence installer afterwards;
    `cadence doctor --root ~/.config/ailocal/claude` reports `NO-OVERLAY` when it is missing.
+   The same rewrite used to erase Codex's `[mcp_servers.*]` blocks; `install-clients.sh` now
+   re-invokes `cadence mcp sync` itself, so that ordering is enforced in code rather than memory.
 
 ## Where things live
 

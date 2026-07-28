@@ -424,6 +424,24 @@ task_classes:
   # things is the floor: a task that cannot read a file cannot be verified.
   always: [edit_and_run, mcp_plumbing]
 
+  # Groups force-added when the request EXPLICITLY asks for them, whatever class
+  # it matched. Classification is substring matching, so it reads the topic and
+  # is blind to an instruction about HOW to work.
+  #
+  # Measured: "delegate the security analysis to the 'reviewer' subagent" matched
+  # the `review` class on the word "security", and `review` sheds delegation — so
+  # the gateway removed the Task tool from a request whose entire point was to
+  # use it. The user asked in plain language and the middleware silently made it
+  # impossible.
+  #
+  # These patterns are high-precision on purpose: they name the mechanism, not a
+  # topic. Asking about "security" is a subject; asking to "delegate to a
+  # subagent" is an instruction, and an instruction the user gives explicitly
+  # should never be filtered away.
+  mention_overrides:
+    delegation: ["delegate", "subagent", "sub-agent", "task tool",
+                 "spawn an agent", "hand off to", "hand this off"]
+
   classes:
 
     # MUST stay first: first class with enough hits wins.
@@ -491,14 +509,21 @@ task_classes:
       min_confidence_hits: 1
       patterns: ["bug", "failing", "error", "stack trace", "traceback",
                  "why does", "broken", "crash", "regression"]
-      groups: [search, lsp]
-      notes: "Read widely, run tests, edit narrowly."
+      groups: [search, lsp, delegation]
+      notes: >
+        Read widely, run tests, edit narrowly. `delegation` is available because
+        a non-trivial debug legitimately farms out "run the suite and report" or
+        "find every caller" — the parent keeps its own context for the diagnosis.
 
     - name: review
       min_confidence_hits: 1
       patterns: ["review", "audit", "security", "vulnerability", "code smell"]
-      groups: [search, lsp]
-      notes: "Read-heavy; mutation is incidental but not forbidden."
+      groups: [search, lsp, delegation]
+      notes: >
+        Read-heavy; mutation is incidental but not forbidden. `delegation` is
+        included because "review this" is one of the most common things to hand
+        to the reviewer subagent, and this class matching on the word "security"
+        was what silently stripped Task from an explicit delegation request.
 
 # ── Client profiles ─────────────────────────────────────────────────────────
 # What each client sends and how it should be treated. `drop_groups` here is

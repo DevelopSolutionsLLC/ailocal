@@ -7,7 +7,7 @@
 # Requires: OPENAI_API_KEY set by the wrapper (env_key below).
 #
 # Switch model per-session: codex --model <name>
-# Valid models: ailocal-architecture | ailocal-implementation | ailocal-fast | ailocal-review | ailocal-completion | ailocal-embeddings
+# Valid models: ailocal-architecture | ailocal-implementation | ailocal-review | ailocal-fast | ailocal-completion | ailocal-embeddings
 # Phase profiles (deployed alongside): codex-local --profile plan | review
 
 # ── Core Model Selection ────────────────────────────────────────────────────
