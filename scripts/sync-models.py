@@ -299,11 +299,14 @@ def gen_role_block(role, info):
     ]
     if vision:
         mi += ["      supports_vision: true", "      supports_pdf_input: true"]
+    # The cost zeros are emitted ONCE, above. They used to be repeated here,
+    # producing duplicate YAML keys in every model_info block: harmless in
+    # effect (both values were 0, and the later key wins) but a strict YAML
+    # parser rejects the file outright, and it made validate-deployment.sh fail
+    # on a defect that had nothing to do with the deployment.
     mi += [
         f"      max_input_tokens: {num_ctx}",
         f"      max_output_tokens: {max_out}",
-        f"      input_cost_per_token: 0",
-        f"      output_cost_per_token: 0",
     ]
     header = f"  # {mn(role)} — {desc} ({backend})\n" if desc else ""
     return header + "\n".join(params) + "\n" + "\n".join(mi) + "\n"

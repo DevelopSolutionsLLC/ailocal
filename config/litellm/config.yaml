@@ -63,8 +63,6 @@ model_list:
       cache_read_input_token_cost: 0
       max_input_tokens: 65536
       max_output_tokens: 16384
-      input_cost_per_token: 0
-      output_cost_per_token: 0
 
   # ailocal-implementation — Daily coding (qwen2.5-coder:14b-instruct-q4_K_M)
   - model_name: ailocal-implementation
@@ -93,8 +91,6 @@ model_list:
       cache_read_input_token_cost: 0
       max_input_tokens: 16384
       max_output_tokens: 4096
-      input_cost_per_token: 0
-      output_cost_per_token: 0
 
   # ailocal-review — Code review (gpt-oss:20b)
   - model_name: ailocal-review
@@ -122,8 +118,6 @@ model_list:
       cache_read_input_token_cost: 0
       max_input_tokens: 16384
       max_output_tokens: 4096
-      input_cost_per_token: 0
-      output_cost_per_token: 0
 
   # ailocal-fast — Fast agent (qwen3.5:2b)
   - model_name: ailocal-fast
@@ -152,8 +146,6 @@ model_list:
       cache_read_input_token_cost: 0
       max_input_tokens: 32768
       max_output_tokens: 8192
-      input_cost_per_token: 0
-      output_cost_per_token: 0
 
   # ailocal-completion — Autocomplete (standby) (qwen2.5-coder:3b-instruct-q4_K_M)
   - model_name: ailocal-completion
@@ -182,8 +174,6 @@ model_list:
       cache_read_input_token_cost: 0
       max_input_tokens: 4096
       max_output_tokens: 1024
-      input_cost_per_token: 0
-      output_cost_per_token: 0
 
   - model_name: ailocal-embeddings
     litellm_params:
