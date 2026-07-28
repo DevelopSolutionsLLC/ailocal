@@ -309,8 +309,23 @@ class Registry:
                 groups = set(cls.get("groups") or [])
                 if not truthy_flag(cls.get("override_always")):
                     groups = always | groups
-                return cls.get("name"), groups, hits
+                return cls.get("name"), groups | self._mentioned(spec, lowered), hits
         return None, None, 0
+
+    @staticmethod
+    def _mentioned(spec, lowered):
+        """Groups the request explicitly asked for by name (task_classes.mention_overrides).
+
+        Classification matches on TOPIC and is blind to an instruction about how
+        to work, so "delegate this to the reviewer subagent" matched the `review`
+        class and lost the Task tool it was asking for. An explicit instruction
+        outranks an inferred class — a user who names the mechanism gets it.
+        """
+        out = set()
+        for group, pats in (spec.get("mention_overrides") or {}).items():
+            if any(str(p).lower() in lowered for p in pats or []):
+                out.add(group)
+        return out
 
     def task_always_groups(self):
         return set((self.doc.get("task_classes") or {}).get("always") or [])

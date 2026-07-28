@@ -104,6 +104,37 @@ implementation:
   #   ASSUMED starting point. No penalties, for the same reason as above.
   # THINKING
   #   MEASURED: qwen2.5-coder:14b has NO `thinking` capability. N/A here.
+# ── review — code review / bug & security detection ──────────────────────────
+review:
+  role: Code review
+  active: gpt-oss:20b
+  preferred: [gpt-oss:20b, deepseek-coder-v2:16b-lite-instruct-q4_K_M]
+  reasoning: true          # VERIFIED: thinking AND tools (deepseek had NO tools)
+  context: 16384
+  temperature: 0.2
+  num_predict: 2048
+  keep_alive: 20m
+  persona: true
+  purpose: [code review, bug detection, security review, alternative solutions]
+  strengths: [careful analysis, security awareness, concrete findings]
+  weaknesses: [slower than the implementation tier, not for bulk generation]
+  top_p: 0.9
+  top_k: 20
+  repeat_penalty: 1.0
+  # SAMPLING RATIONALE
+  #   temperature 0.2 — review should be reproducible; two runs over the same
+  #   diff should not disagree. ASSUMED starting point.
+  # THINKING: ON by default, and this is the ONLY tier where it is.
+  #   MEASURED: gpt-oss:20b reports `thinking`, and reasoning_content is
+  #   produced through the proxy. Reasoning is the point of a review tier and
+  #   latency is not critical there (307 ms ttft, 71.7 tok/s).
+  #
+  #   OVERRIDE CAVEAT [REAL]: reasoning_effort DOES reach the backend, but the
+  #   mapping is unreliable — `none` produced 120 reasoning chars while `high`
+  #   produced 54, i.e. inverted. This is BerriAI/litellm#15059 ("think
+  #   parameter for Ollama models are not mapped correctly"). Treat per-request
+  #   effort levels as UNRELIABLE until that lands; the per-role default below
+  #   is the control that actually works.
 # ── fast — lightweight tool-enabled agent (NOT autocomplete) ────────────────
 # Deliberately NOT the completion tier. qwen3.5:4b has no FIM/insert capability
 # (verified against Ollama metadata: no fim_prefix/fim_suffix/fim_middle markers,
@@ -145,37 +176,6 @@ fast:
   #   MEASURED: with thinking enabled qwen3.5:2b emitted 19,056 reasoning
   #   characters and returned EMPTY content at BOTH max_tokens 8 and 64
   #   (finish_reason=length). It thinks past its budget and never answers.
-# ── review — code review / bug & security detection ──────────────────────────
-review:
-  role: Code review
-  active: gpt-oss:20b
-  preferred: [gpt-oss:20b, deepseek-coder-v2:16b-lite-instruct-q4_K_M]
-  reasoning: true          # VERIFIED: thinking AND tools (deepseek had NO tools)
-  context: 16384
-  temperature: 0.2
-  num_predict: 2048
-  keep_alive: 20m
-  persona: true
-  purpose: [code review, bug detection, security review, alternative solutions]
-  strengths: [careful analysis, security awareness, concrete findings]
-  weaknesses: [slower than the implementation tier, not for bulk generation]
-  top_p: 0.9
-  top_k: 20
-  repeat_penalty: 1.0
-  # SAMPLING RATIONALE
-  #   temperature 0.2 — review should be reproducible; two runs over the same
-  #   diff should not disagree. ASSUMED starting point.
-  # THINKING: ON by default, and this is the ONLY tier where it is.
-  #   MEASURED: gpt-oss:20b reports `thinking`, and reasoning_content is
-  #   produced through the proxy. Reasoning is the point of a review tier and
-  #   latency is not critical there (307 ms ttft, 71.7 tok/s).
-  #
-  #   OVERRIDE CAVEAT [REAL]: reasoning_effort DOES reach the backend, but the
-  #   mapping is unreliable — `none` produced 120 reasoning chars while `high`
-  #   produced 54, i.e. inverted. This is BerriAI/litellm#15059 ("think
-  #   parameter for Ollama models are not mapped correctly"). Treat per-request
-  #   effort levels as UNRELIABLE until that lands; the per-role default below
-  #   is the control that actually works.
 # ── completion — inline autocomplete (FIM) ───────────────────────────────────
 # STANDBY — not in active use. Zero recorded requests across every trace, and the
 # only consumer (Continue) is not installed. Kept mapped so inline autocomplete
