@@ -116,6 +116,11 @@ shell_syntax() {
   done
   return $bad
 }
+# The runtime must be the version the rest of this gate was validated against.
+# A floating tag silently moved us from 1.92.0 to 1.93.0 while the docs still
+# claimed the old one, so every "verified on" note referred to a version that was
+# no longer running.
+run "litellm runtime matches the validated version" "$ROOT/scripts/check-litellm-version.sh"
 run "all shell scripts parse (bash -n)" shell_syntax
 
 # Every python module must parse, including the hooks the proxy loads.

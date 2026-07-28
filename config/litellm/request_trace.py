@@ -44,6 +44,55 @@ import uuid
 from litellm.integrations.custom_logger import CustomLogger
 
 
+def _classify_event(item) -> str | None:
+    """Does this streamed event put TEXT on screen, or carry a TOOL CALL?
+
+    Handles all three dialects because the distinction is dialect-independent and
+    the question ("did the user see anything?") is the same in each.
+    """
+    try:
+        # Events arrive as PYDANTIC MODELS on most routes, not dicts. An earlier
+        # version read __dict__, which does not expose pydantic fields, so every
+        # event classified as None and first_visible_text_ms was always null --
+        # a metric that silently measured nothing. model_dump() first.
+        if isinstance(item, dict):
+            d = item
+        elif hasattr(item, "model_dump"):
+            d = item.model_dump()
+        elif hasattr(item, "dict"):
+            d = item.dict()
+        else:
+            d = getattr(item, "__dict__", {}) or {}
+        if not isinstance(d, dict):
+            return None
+        # `type` is an ENUM on the Responses path (ResponsesAPIStreamEvents), so
+        # str() yields "ResponsesAPIStreamEvents.RESPONSE_CREATED" rather than
+        # "response.created" and every endswith() check silently failed. Take
+        # .value when present. Measured, after two wrong guesses about the shape.
+        _t = d.get("type")
+        t = str(getattr(_t, "value", _t) or "")
+        if t.endswith("output_text.delta") or t == "content_block_delta":
+            delta = d.get("delta")
+            if isinstance(delta, str) and delta:
+                return "text"
+            if isinstance(delta, dict):
+                return "text" if delta.get("text") or delta.get("type") == "text_delta" else "tool"
+        if "function_call" in t or "tool_use" in t:
+            return "tool"
+        choices = d.get("choices") or []
+        if choices:
+            delta = getattr(choices[0], "delta", None) or (
+                choices[0].get("delta") if isinstance(choices[0], dict) else None) or {}
+            get = delta.get if isinstance(delta, dict) else lambda k: getattr(delta, k, None)
+            if get("tool_calls"):
+                return "tool"
+            if get("content"):
+                return "text"
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
 def _load_registry():
     """Reuse capability_registry rather than re-deriving capability/client/route.
     A second implementation would drift from the gateway's, and then a trace and
@@ -193,11 +242,28 @@ class RequestTrace(CustomLogger):
         st = self._state(request_data) or {}
         first = None
         n = 0
+        # Per-event timeline. ttfb_ms + generation_ms alone actively MISLED a
+        # whole investigation: they cannot distinguish "the model was slow", "the
+        # backend was busy", "nothing visible was ever produced" and "output was
+        # buffered and replayed". These four fields separate them.
+        stamps = []
+        first_text = None
+        first_tool = None
+        saw_text = False
         try:
             async for item in response:
+                now = time.time()
                 if first is None:
-                    first = time.time()
+                    first = now
                     st["t_first_byte"] = first
+                stamps.append(now)
+                kind = _classify_event(item)
+                if kind == "text":
+                    saw_text = True
+                    if first_text is None:
+                        first_text = now
+                elif kind == "tool" and first_tool is None:
+                    first_tool = now
                 n += 1
                 yield item
         finally:
@@ -212,9 +278,48 @@ class RequestTrace(CustomLogger):
             # large prompt.
             gen_ms = (round(total_ms - ttfb_ms, 1)
                       if (total_ms is not None and ttfb_ms is not None) else None)
+            # Derived timeline. Every field here answers a question that
+            # ttfb/generation could not.
+            gaps = [(b - a) * 1000 for a, b in zip(stamps, stamps[1:])]
+            window_ms = ((stamps[-1] - stamps[0]) * 1000) if len(stamps) > 1 else 0.0
+            eps = (len(stamps) / (window_ms / 1000)) if window_ms > 1 else None
             rec.update({
                 "phase": "stream_end",
                 "ttfb_ms": ttfb_ms,
+                # WHAT THE USER ACTUALLY EXPERIENCES. first_event is when the
+                # stream opened; first_visible_text is when the UI started
+                # moving. They differ by seconds on tool-call turns, and the gap
+                # between them IS the "it looks frozen" complaint.
+                "first_event_ms": ttfb_ms,
+                "first_visible_text_ms": (round((first_text - st["t_start"]) * 1000, 1)
+                                          if first_text and st.get("t_start") else None),
+                "first_function_call_event_ms": (round((first_tool - st["t_start"]) * 1000, 1)
+                                                 if first_tool and st.get("t_start") else None),
+                "event_gap_max_ms": round(max(gaps), 1) if gaps else None,
+                "events_per_second": round(eps, 1) if eps else None,
+                # MEASURED at the source (2026-07-28): Ollama emits a tool call as
+                # ONE atomic chunk with complete arguments -- there are no partial
+                # function-call deltas to forward. So a tool-call turn having
+                # almost no events is CORRECT, not a buffering fault.
+                "tool_call_only": bool(first_tool) and not saw_text,
+                # A local model cannot emit >200 events/sec through this stack.
+                # Above that, the events were produced earlier and replayed.
+                "impossible_flush_detected": bool(eps and eps > 200),
+                "buffered_stream": bool(eps and eps > 200 and n > 50),
+                # Set by LiteLLM's websearch_interception when it converts a
+                # streaming call to non-streaming. Recorded so the question
+                # "did interception downgrade this?" is answerable from data
+                # instead of from reading source and guessing.
+                "stream_downgraded": bool(
+                    (request_data or {}).get("_websearch_interception_converted_stream")),
+                # NOT MEASURABLE from inside the proxy, and recorded as null
+                # rather than omitted so their absence is explicit: Ollama's
+                # load_duration / prompt_eval_duration / queue time do not survive
+                # into the LiteLLM response (usage carries only token counts).
+                # Getting them needs a direct backend query this hook must not make.
+                "backend_queue_ms": None,
+                "prompt_eval_ms": None,
+                "model_load_ms": None,
                 "total_ms": total_ms,
                 "generation_ms": gen_ms,
                 "chunks": n,
