@@ -1,7 +1,7 @@
 # Local AI environment — operator & AI-session cheat sheet
 
 One page for a new session (human or AI) on Claude Code, Codex, or VS Code.
-Verified 2026-07-27. Anything not actually exercised says so — unmarked
+Verified 2026-07-28. Anything not actually exercised says so — unmarked
 confidence in this file is a bug.
 
 ## Who owns what
@@ -82,26 +82,33 @@ session opening with a chat question would stay tool-less forever.
 `mention_overrides` re-adds a group the user names explicitly. Classification
 reads the *topic* and is blind to instructions about *how* to work: "delegate
 this to the reviewer subagent" matched `review` on the word "security" and lost
-the Task tool it was asking for.
+the delegation tool it was asking for.
 
 Mode is `filter` (set in `.env`; the compose default is `off`).
 
-## Subagents — current status
+## Subagents — WORKING (verified end to end)
 
-`Task` was grouped with `Workflow`/`Cron`/`worktree` in `orchestration`, which
-every local model class denies, so the gateway stripped it and claude-local could
-not delegate at all. Task now has its own `delegation` group. **Verified: no
-longer dropped.**
+`architecture` delegates to a subagent, the subagent runs on its own tier, and
+results flow back. Measured through `claude -p`:
 
-**Not verified end-to-end, and not verifiable with the current harness.**
-`claude -p` (headless) does not offer the subagent `Task` tool at all — measured
-by capturing the real payload: 47 tools arrive containing `TaskCreate`/`TaskGet`/
-`TaskList`/… (background-task management) but no bare `Task`, and passing
-`--agents` explicitly does not change that. So whether the 30B *chooses* to
-delegate in an interactive session is untested. Do not claim it works or that the
-model "won't delegate" — neither has been shown.
+```
+TOOLS CALLED: Read, Agent, TaskOutput, Read
+MODELS USED:  ailocal-architecture  +  claude-fable-5 -> review (gpt-oss:20b)
+```
 
-Delegation is not the goal in itself. Correct behaviour: simple question → answer
+**The tool is `Agent`, not `Task`.** Claude Code renamed it in v2.1.63; `Task`
+survives only as an alias in settings and agent definitions. The live `Task*`
+names are something else — `TaskCreate`/`TaskGet`/`TaskList`/`TaskUpdate`/
+`TaskStop`/`TaskOutput` are BACKGROUND-TASK MANAGEMENT.
+
+That rename cost two wrong conclusions here, both recorded so they are not
+repeated: first "the local model won't delegate" (it had no tool), then
+"headless mode does not expose subagents" (it does — a payload capture showed no
+`Task`, but `Agent` was there and this gateway was dropping it, because only
+`Task*` had been moved out of `orchestration`). Check the tool the client
+actually sends, not the name the docs used two versions ago.
+
+Delegation is not a goal in itself. Intended behaviour: simple question → answer
 directly; small edit → implementation only; large architectural change →
 architecture may delegate; risky change → implementation + review.
 
@@ -220,7 +227,7 @@ proven healthy; the unproven link is the model's tool emission.
 | Tool gating applies | yes | no | yes | no | yes |
 | MCP registered | grepai + lsp | grepai | grepai + lsp | grepai | grepai only |
 | MCP **usable by the model** | **yes** (measured) | yes | **NO** — see below | expected yes (untested) | yes |
-| Subagents | see status above | yes | prompts only | prompts only | no |
+| Subagents (`Agent` tool) | **yes, verified** | yes | prompts only | prompts only | no |
 
 ### The Codex divergence (measured 2026-07-28, the one real capability gap)
 

@@ -74,15 +74,28 @@ groups:
   # delegation"; it had no such tool to reach for.
   #
   # The token argument for denying orchestration does not apply here: Workflow
-  # alone is 21,525 B, while Task is ~1 KB. Keeping them in one group traded the
-  # entire delegation workflow for savings that came almost entirely from Workflow.
+  # alone is 21,525 B, while the delegation tool is ~1 KB. Keeping them in one
+  # group traded the entire delegation workflow for savings that came almost
+  # entirely from Workflow.
+  #
+  # THE TOOL IS `Agent`, NOT `Task`. Claude Code renamed it in v2.1.63; `Task`
+  # survives only as an alias in settings and agent definitions, and the live
+  # `Task*` names are something else entirely — TaskCreate/TaskGet/TaskList/
+  # TaskUpdate/TaskStop/TaskOutput are BACKGROUND-TASK MANAGEMENT.
+  #
+  # This cost a full investigation: a capture of the real payload showed no
+  # `Task` tool and the conclusion drawn was "headless mode does not offer
+  # subagents". It does. `Agent` was in the payload and this gateway was
+  # dropping it, because `Agent` sat in `orchestration` while only `Task*` had
+  # been moved here. Verify against the tool the client actually sends, not the
+  # name the documentation used two versions ago.
   delegation:
-    - "Task*"
+    - Agent               # the subagent spawn tool (was `Task` before v2.1.63)
+    - "Task*"             # alias + background-task tools; harmless to keep together
 
   orchestration:
     - Workflow            # measured 21,525 B — the largest single tool observed
     - DesignSync
-    - Agent
     - SendMessage
     - Skill
     - ReportFindings
