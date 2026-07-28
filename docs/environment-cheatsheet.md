@@ -66,7 +66,7 @@ needs. This is why a general question no longer triggers a repo crawl.
 
 | Request | Class | Tools |
 |---|---|---|
-| "show me hello world in C++" | `conversational` | **none** (61 → 1 measured) |
+| "show me hello world in C++" | `conversational` | **none** on turn 1 (61 → 1); see caveat |
 | "fix the typo in README" | `simple_edit` | read/edit/run only |
 | "where is X handled" | `explore` | + search, LSP |
 | "why is it failing" | `debug` | + search, LSP, delegation |
@@ -85,6 +85,11 @@ this to the reviewer subagent" matched `review` on the word "security" and lost
 the delegation tool it was asking for.
 
 Mode is `filter` (set in `.env`; the compose default is `off`).
+
+**Caveat — the conversational class holds for turn 1 only.** Measured across 9
+gateway turns of one session, classification drifts (`class=None`, 48/61 kept)
+and the model resumes exploring. Open issue, root cause and non-fix rationale in
+ADR 004; `benchmark-baseline.sh` fails on it deliberately.
 
 ## Subagents — WORKING (verified end to end)
 
