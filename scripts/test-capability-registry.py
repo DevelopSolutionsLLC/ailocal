@@ -175,6 +175,13 @@ check(reg.group_of("Workflow") == "orchestration", "Workflow -> orchestration")
 check(reg.group_of("mcp__lsp__get_hover") == "lsp", "prefix pattern -> lsp")
 check(reg.group_of("mcp__grepai__grepai_search") == "search", "grepai -> search")
 check(reg.group_of("TaskCreate") == "delegation", "Task* prefix -> delegation")
+# `Agent` is THE subagent spawn tool (renamed from `Task` in Claude Code 2.1.63).
+# It sat in `orchestration` and was therefore dropped for every local model, which
+# is what actually prevented delegation -- a payload capture showed no `Task` tool
+# and that was misread as "headless mode has no subagents". Verified working once
+# Agent reached the model: it called Agent and the reviewer ran on the review tier.
+check(reg.group_of("Agent") == "delegation",
+      "Agent (the real subagent tool) -> delegation, NOT orchestration")
 # Delegation is a SEPARATE group from orchestration on purpose. Grouped together,
 # denying orchestration to local models also stripped Task, so claude-local could
 # not reach the subagents this repo ships — measured, and initially misread as the
