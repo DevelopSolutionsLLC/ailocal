@@ -46,11 +46,14 @@ CODEX_PLAN     = ROOT / "config/clients/codex/plan.config.toml"
 CODEX_REVIEW   = ROOT / "config/clients/codex/review.config.toml"
 CONTINUE_CONFIG= ROOT / "config/clients/continue/config.json"
 CONFIGURE_ZSH  = ROOT / "config/clients/configure.zsh"
+COPILOT_REPO_MD= ROOT / "config/clients/copilot/repo-instructions.md"
 
 ML_BEGIN = "  # >>> BEGIN GENERATED model_list (sync-models.py) — do not edit <<<"
 ML_END   = "  # >>> END GENERATED model_list <<<"
 AL_BEGIN = "  # >>> BEGIN GENERATED model_group_alias (sync-models.py) — do not edit <<<"
 AL_END   = "  # >>> END GENERATED model_group_alias <<<"
+CP_BEGIN = "<!-- >>> BEGIN GENERATED capabilities (sync-models.py) — do not edit <<< -->"
+CP_END   = "<!-- >>> END GENERATED capabilities <<< -->"
 CS_BEGIN = "  # >>> BEGIN GENERATED claude slots (sync-models.py) — do not edit <<<"
 CS_END   = "  # >>> END GENERATED claude slots <<<"
 
@@ -490,6 +493,43 @@ def gen_slot_block(clients):
     return "\n".join(lines) + "\n"
 
 
+def gen_copilot_capabilities(models):
+    """The capability table for the VS Code Copilot repo instructions.
+
+    Generated because the hand-written version drifted badly: by 2026-07-28 four
+    of six rows were wrong — `review` had been gpt-oss:20b for weeks while the
+    file still said deepseek-coder-v2, keep_alive values were stale, and the
+    `fast` tier was missing entirely. A client instruction file that restates
+    generated truth always drifts, because nothing regenerates it. Now something
+    does."""
+    lines = [CP_BEGIN,
+             "",
+             "Use **capability names** only — never a backend model tag. The router owns",
+             "context, sampling and residency, so a model swap never touches this file.",
+             "",
+             "| Capability | Backend | Context | keep_alive |",
+             "|---|---|---|---|"]
+    for name, info in models.items():
+        lines.append(f"| `{mn(name)}` | {backend_of(info)} | {ctx_of(info)} | "
+                     f"{norm_keep_alive(info.get('keep_alive'))} |")
+    lines += ["",
+              "`ailocal-completion` is FIM autocomplete **only** — it hard-400s on a chat",
+              "turn. Cold-loading a model costs a few seconds; the dominant latency is",
+              "prompt evaluation, not loading (docs/adr/013-latency-profile.md).",
+              CP_END]
+    return "\n".join(lines) + "\n"
+
+
+def regen_copilot_repo_md(models):
+    if not COPILOT_REPO_MD.exists():
+        return False
+    text = COPILOT_REPO_MD.read_text()
+    text, spliced = splice(text, CP_BEGIN, CP_END, gen_copilot_capabilities(models),
+                           "copilot capabilities")
+    COPILOT_REPO_MD.write_text(text)
+    return spliced
+
+
 def regen_configure_zsh(clients):
     if not CONFIGURE_ZSH.exists():
         return False
@@ -642,6 +682,7 @@ def main():
     ok("model_catalog.json") if regen_catalog(models) else warn("catalog skipped")
     ok("claude/settings.json") if regen_claude_settings(models, clients) else warn("claude settings skipped")
     ok("configure.zsh (claude slots)") if regen_configure_zsh(clients) else warn("configure.zsh slots skipped")
+    ok("copilot repo-instructions (capabilities)") if regen_copilot_repo_md(models) else warn("copilot repo md skipped")
     ok("codex config + profiles") if regen_codex(models, clients) else warn("codex skipped")
     ok("continue/config.json") if regen_continue(models, clients) else warn("continue skipped")
 

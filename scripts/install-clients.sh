@@ -368,6 +368,17 @@ PYEOF
   cp "$ROOT_DIR/config/clients/copilot/session-primer.md" "$COPILOT_INSTR/session-primer.md"
   info "Copilot instruction files deployed to ~/.copilot/instructions/"
 
+  # Repo-level Copilot instructions. GENERATED, not tracked: this file used to be
+  # hand-maintained in .github/ and drifted — four of six capability rows were
+  # wrong and it pointed at config/models.yaml, which has not existed for a long
+  # time. A VS Code agent following it was being sent to a nonexistent file.
+  # Source: config/clients/copilot/repo-instructions.md (its capability table is
+  # a sync-models.py generated region). .github/ is gitignored for this name.
+  mkdir -p "$ROOT_DIR/.github"
+  cp "$ROOT_DIR/config/clients/copilot/repo-instructions.md" \
+     "$ROOT_DIR/.github/copilot-instructions.md"
+  info ".github/copilot-instructions.md generated (from config/clients/copilot/)"
+
   # ── Continue extension (local autocomplete + chat) ────────────────────────
   # Continue gives VS Code local tab-autocomplete (FIM) that Copilot can't. Deploy
   # a managed ~/.continue/config.json: chat/edit through the proxy, autocomplete
