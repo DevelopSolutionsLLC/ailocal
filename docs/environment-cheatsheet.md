@@ -4,6 +4,42 @@ One page for a new session (human or AI) on Claude Code, Codex, or VS Code.
 Verified 2026-07-28. Anything not actually exercised says so — unmarked
 confidence in this file is a bug.
 
+## If you are a new AI session, read this first
+
+**Where truth lives.** Two source files decide everything downstream:
+`config/profiles/<tier>.yaml` (what each capability IS) and
+`config/clients.yaml` (which capability each client uses) in ailocal; and
+`cadence/config/mcp.yaml` (MCP registration) plus `cadence/config/mcpls.toml`
+(the LSP bridge) in Cadence. Everything else is generated. **Never hand-edit a
+generated region** — edit the source and re-run the generator.
+
+**Do not duplicate tooling.** Before adding a capability, check whether the
+client already has it natively. Three real examples: Claude Code ships native
+LSP (so we retired our bridge for it), VS Code has an extension ecosystem (so it
+uses that, not our bridge), and LiteLLM has its own web-search interception (so
+we do not implement search). The rule is: use the client's official mechanism;
+add ours only where none exists.
+
+**First moves in a session**
+
+```bash
+./scripts/doctor.sh              # is the stack healthy?
+./scripts/validate-deployment.sh # does it actually answer, end to end?
+```
+
+Then use the discovery ladder below (grepai → LSP → grep → read) rather than
+opening files at random.
+
+**Before you believe anything**, remember the rule this whole system is built
+around: *presence is not capability, and empty is not absent.* A configured MCP
+server, an enrolled repo, an installed plugin and a listed model all say nothing
+about whether the thing answers. Most of the hard bugs here were something that
+looked configured, returned empty, and was read as "not found".
+
+**Before you change anything**, read `docs/adr/` — each record carries the
+measurements behind a decision and the conditions that would justify revisiting
+it. Several obvious-looking "improvements" were already tried and measured.
+
 ## Who owns what
 
 Two repos, two jobs. Independent *installations*, not independent *content*.
