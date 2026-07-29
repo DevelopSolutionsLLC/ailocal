@@ -76,6 +76,11 @@ run "persona injection" \
 # execute commands the model never intended.
 run "tool-call repair (repairs real calls, refuses examples)" \
     python3 scripts/test-tool-repair.py
+# The deployed Claude instructions are COMPOSED, not hand-written, because
+# ~/.config/ailocal/claude is a separate CLAUDE_CONFIG_DIR that inherits nothing
+# from ~/.claude. Asserts the removed regressions stay removed, by string.
+run "claude instructions (composition, content, deploy, repair)" \
+    python3 scripts/test-claude-instructions.py
 
 echo
 echo "INTEGRATION"

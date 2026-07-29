@@ -503,6 +503,46 @@ else:
 check(rep["tokenizer"] == "cl100k-proxy",
       "every report names the tokenizer, so no figure reads as model-exact")
 
+print("\nNATIVE LSP (client-side tool, NOT mcp__lsp__*)")
+# Claude Code's native LSP tool is a bare name. It used to survive only because
+# the gateway fails open on unclassified tools — correct by accident, and
+# silently lost the moment fail-open is tightened. The registry now names it in
+# a `native_lsp` group listed in the `always` floor. These tests pin BOTH the
+# classification and the outcome, so neither half can regress alone.
+NATIVE_LSP = json.loads('{"description":"Language server","input_schema":'
+                        '{"properties":{},"type":"object"},"name":"LSP"}')
+
+check(reg.group_of("LSP") == "native_lsp",
+      "native LSP is explicitly classified, not left to fail-open")
+check(reg.group_of("LSP") != reg.group_of("mcp__lsp__get_hover"),
+      "native LSP is a separate group from the MCP lsp bridge")
+check("native_lsp" in (reg.doc.get("task_classes") or {}).get("always", []),
+      "native_lsp sits in the always floor")
+
+os.environ[tg.MODE_ENV] = "filter"
+# Task negotiation must be ON for these: with it off, classification never runs
+# and nothing would be shed, so the assertions would pass vacuously.
+os.environ[tg.TASK_ENV] = "1"
+check(tg.task_negotiation_enabled() is True, "task negotiation on for these cases")
+
+# The conversational opener is the harshest case — that class carries
+# override_always, dropping BELOW the always floor to no tools at all. Native
+# LSP is expected to go with it there; what must hold is that every class which
+# does keep a floor keeps native LSP in it.
+for prompt, label, want in (
+        ("fix the failing auth test", "debug task", True),
+        ("review this diff for security issues", "review task", True),
+        ("show me an example of hello world in C++", "conversational opener", False)):
+    d = dict(CLAUDE_HEADERS, model="ailocal-architecture",
+             messages=[{"role": "user", "content": prompt}],
+             tools=[NATIVE_LSP, json.loads(WORKFLOW)])
+    run(d)
+    kept = [t.get("name") for t in d["tools"] if isinstance(t, dict)]
+    check(("LSP" in kept) is want,
+          f"native LSP {'survives' if want else 'is shed with the floor'}: {label}")
+
+os.environ.pop(tg.TASK_ENV, None)
+
 print()
 if fails:
     print(f"TOOL GATEWAY TESTS: {fails} FAILED")

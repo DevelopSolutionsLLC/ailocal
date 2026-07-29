@@ -492,7 +492,11 @@ if has_target "claude"; then
   cp "$ROOT_DIR/config/clients/claude/settings.json" "$CLAUDE_CFG"
   info "$CLAUDE_CFG written"
 
-  # CLAUDE.md — managed file, always overwrite.
+  # CLAUDE.md — fully ailocal-owned, always overwritten, never merged. The source
+  # is COMPOSED by sync-models.py from config/clients/claude/instructions/*.md;
+  # this root is a separate CLAUDE_CONFIG_DIR and inherits nothing from
+  # ~/.claude, so the shared engineering policy ships inside this file.
+  # No backup: the stale copy is exactly what must not survive a repair.
   cp "$ROOT_DIR/config/clients/CLAUDE.md" "$CLAUDE_MD"
   info "$CLAUDE_MD written"
 
