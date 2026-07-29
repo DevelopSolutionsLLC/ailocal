@@ -170,6 +170,23 @@ So the gateway reports `bytes_reachable`, `bytes_prefiltered_by_litellm`, and
 `bytes_dropped_moot` separately, and **every ratio uses `bytes_kept_reachable`**.
 Getting this wrong once produced a **−133.7%** "reduction".
 
+The **counts** had the same defect until 2026-07-29: `tools_kept` was measured
+before LiteLLM's route translation, so a Codex request read `tools_kept: 14` while
+two of those entries (`mcp__grepai`, `mcp__lsp`) were discarded microseconds later
+and never reached the model. That single misleading number cost two misdiagnoses.
+`tools_kept` now means **forwarded** — survived the gateway *and* the translation:
+
+| field | stage |
+|---|---|
+| `tools_in` | declared by the client |
+| `tools_dropped` / `dropped_names` | removed by **this gateway**, with groups |
+| `tools_kept_by_gateway` | survived the gateway (pre-translation) |
+| `tools_killed_by_translation` / `killed_by_translation` | removed by **LiteLLM** afterwards — each entry names itself, its `type`, and the reason |
+| `tools_kept` | **actually forwarded to the backend** |
+
+`tokens_est_kept` counts forwarded tools only, for the same reason. On a route
+that discards nothing, `tools_kept == tools_kept_by_gateway`.
+
 > **[REAL] Independent finding:** through Codex, `mcp__lsp` and `mcp__grepai`
 > never reach the local model at all. Configured ≠ available.
 

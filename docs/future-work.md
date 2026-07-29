@@ -118,7 +118,11 @@ dispatcher rejects flattened names.
 in unreleased [PR #17556](https://github.com/openai/codex/pull/17556).
 CLIProxyAPI#3298 is the same bug from another proxy.
 *Trigger:* any Codex upgrade → run `scripts/validate-codex-e2e.sh`. The verdict
-is version-pinned to codex-cli 0.145.0, not permanent.
+is version-pinned to codex-cli **0.146.0** (re-verified 2026-07-29, unchanged
+from 0.145.0), not permanent. 0.147.0-alpha.1 is schema-identical, so it is not
+a candidate. The blocker is Codex's dispatcher (openai/codex#20652); no proxy or
+config change reaches it, and five candidate config levers were measured inert —
+see `config/litellm/registry.yaml` and Cadence's `client-capabilities.yaml`.
 
 **`workspace_symbol_search` does not fan out (mcpls 0.3.7).**
 It answers for whichever language server became ready first and returns

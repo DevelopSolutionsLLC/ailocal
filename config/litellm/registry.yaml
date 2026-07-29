@@ -215,6 +215,17 @@ routes:
 # presentation. Upstream PR #17556 ("Support flattened deferred MCP tool calls")
 # is the real fix and is not in 0.145.0.
 #
+# RE-VERIFIED 2026-07-29 on codex-cli 0.146.0 (latest STABLE; 0.147.0-alpha.1 is
+# schema-identical, so upgrading fixes nothing). Verdict UNCHANGED. Namespace
+# wrapping is UNCONDITIONAL — not Code Mode. Additionally measured inert, so do
+# not retry them: [features.code_mode] direct_only_tool_namespaces (all four name
+# forms), [features] code_mode = false, and model-catalog tool_mode = "direct"
+# (the enum is direct|code_mode|code_mode_only — "direct_only" is NOT a tool_mode
+# value). Expansion again reached the model and again failed at dispatch, for
+# BOTH grepai_list_projects and mcp__grepai__grepai_list_projects, with
+# [features.non_prefixed_mcp_tool_names] enabled: the blocker is Codex's router,
+# not the name shape.
+#
 # Re-run the experiment after a Codex upgrade. Until its verdict changes, enabling
 # this only spends context on tools the client will reject.
 #

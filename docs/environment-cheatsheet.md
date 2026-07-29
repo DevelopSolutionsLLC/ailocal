@@ -168,9 +168,13 @@ deployed `settings.json` plus official `*-lsp` plugins, provisioned into BOTH
 `~/.claude` and `~/.config/ailocal/claude` by `install-clients.sh`. One `LSP`
 tool, nine operations, and automatic diagnostics after every edit.
 
-The mcpls MCP bridge now serves **codex-local only** (Codex has no native LSP).
-It was 20 tools / 10,021 B against native's 1 tool / 2,224 B for the same
-operations; removing it took the claude-local payload from 49 to 26 tools.
+The mcpls MCP bridge was retained for **codex-local** (Codex has no native LSP),
+but as of 2026-07-29 that path is **dead end-to-end** — Codex's router rejects
+every MCP dispatch (see "The Codex divergence"). So mcpls currently serves no
+working client: Claude uses native LSP, VS Code uses native language servers,
+and codex-local cannot call it. It was 20 tools / 10,021 B against native's
+1 tool / 2,224 B for the same operations; removing it took the claude-local
+payload from 49 to 26 tools.
 
 VS Code is excluded from both: it has native language servers.
 
@@ -311,11 +315,26 @@ Measured on a real `codex exec` run: `bytes_prefiltered_by_litellm: 27239` — a
 of `mcp__lsp` and `mcp__grepai` — after which the model reported "there are no
 MCP resources or resource templates available".
 
-Flattening the bundles at the gateway is implemented (`namespace_expansion`) and
-is deliberately **disabled**: Codex's own dispatcher then rejects the flattened
-names (`unsupported call: mcp__lsp__workspace_symbol_search`,
-openai/codex#20652), so enabling it only spends context on tools the client will
-refuse. Upstream PR #17556 is the fix and is not in codex-cli 0.145.0.
+Flattening the bundles at the gateway is implemented (`namespace_expansion`),
+kept **experimental, disabled, and test-covered**. Re-verified 2026-07-29 on
+codex-cli **0.146.0** (the latest *stable*; `0.147.0-alpha.1` is schema-identical
+on every relevant field). Per-boundary state — codex-local MCP/LSP is
+**unavailable end-to-end**, and no proxy-side change can alter that:
+
+| boundary | state |
+|---|---|
+| MCP registration generated (Cadence) | supported |
+| Codex emits MCP tools | namespace-wrapped, unconditional |
+| LiteLLM `/v1/responses` translation | drops namespace tools |
+| experimental flattening reaches the model | proven (49 tools, 0 namespaces left) |
+| model emits calls against flattened names | proven (structured calls) |
+| Codex router dispatches flattened calls | **rejected** |
+| end-to-end MCP/LSP in codex-local | **unavailable** |
+
+Blocker: **openai/codex#20652**. Both name forms fail (`grepai_list_projects`
+and `mcp__grepai__grepai_list_projects`), with `non_prefixed_mcp_tool_names`
+enabled — so it is the dispatcher, not the name shape. Do not retry naming
+variants or further LiteLLM routing changes; reopen only if that issue changes.
 
 Consequence for the "one client-agnostic stack" goal: it holds for Claude Code
 (local and hosted) and VS Code, and does **not** hold for codex-local. Hosted

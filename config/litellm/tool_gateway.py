@@ -562,6 +562,21 @@ class ToolGateway(CustomLogger):
         dropped_moot = sum(s for _, s, t in drop if not reaches(t))
         keep = rewritten
 
+        # A tool the gateway keeps is NOT necessarily a tool the backend sees:
+        # LiteLLM's Responses->Chat-Completions transformation runs AFTER this
+        # hook and silently discards any type it cannot express (namespace,
+        # custom, web_search). Reporting those as "kept" is how Codex's
+        # mcp__grepai/mcp__lsp bundles read as delivered while the model never
+        # received them — measured, and it cost two misdiagnoses. So `tools_kept`
+        # means FORWARDED, and the pre-translation figure keeps its own name.
+        forwarded = [(n, s, t) for n, s, t in keep if reaches(t)]
+        killed_downstream = [
+            {"name": n, "type": (t.get("type") if isinstance(t, dict) else None),
+             "bytes": s,
+             "reason": "dropped by litellm %s translation: unsupported type"
+                       % route.strip("/")}
+            for n, s, t in keep if not reaches(t)]
+
         report = {
             "route": route,
             "client": client,
@@ -583,7 +598,16 @@ class ToolGateway(CustomLogger):
             "tools_reachable": sum(1 for t in tools if reaches(t)),
             "bytes_reachable": reachable_bytes,
             "bytes_prefiltered_by_litellm": prefiltered,
-            "tools_kept": len(keep),
+            # FORWARDED to the backend — survived the gateway AND survives
+            # LiteLLM's route translation. This is the only count comparable
+            # with tools_reachable, exactly as bytes_kept_reachable is the only
+            # byte figure comparable with bytes_reachable.
+            "tools_kept": len(forwarded),
+            # What the gateway itself kept, before translation. Retained under
+            # its own name so the two stages stay separable.
+            "tools_kept_by_gateway": len(keep),
+            "tools_killed_by_translation": len(killed_downstream),
+            "killed_by_translation": killed_downstream or None,
             "tools_dropped": len(drop),
             "bytes_kept": rewritten_bytes,
             "bytes_kept_reachable": kept_reachable,
@@ -597,7 +621,11 @@ class ToolGateway(CustomLogger):
             "bytes_dropped": dropped_bytes,
             "bytes_dropped_moot": dropped_moot,
             "tokens_est_in": tokens_est(encode(tools), model),
-            "tokens_est_kept": tokens_est(encode([t for _, _, t in keep]), model),
+            # Tokens the model actually pays for: forwarded only. Counting
+            # translation-killed bundles here inflated the estimate by ~17K on
+            # every Codex request.
+            "tokens_est_kept": tokens_est(
+                encode([t for _, _, t in forwarded]), model),
             "tokenizer": "cl100k-proxy",
             "dropped_names": sorted(n for n, _, _ in drop),
             "dropped_groups": sorted({reg.group_of(n) or "ungrouped"
