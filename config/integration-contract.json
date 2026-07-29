@@ -1,0 +1,31 @@
+{
+  "client_roots": {
+    "claude": "~/.config/ailocal/claude",
+    "codex": "~/.config/ailocal/codex"
+  },
+  "compatibility": {
+    "claude_native_lsp": {
+      "configured": true,
+      "execution": "failing",
+      "schema_preserved": true
+    },
+    "codex_mcp_lsp": {
+      "configured": true,
+      "execution": "blocked_namespace_dispatch",
+      "schema_preserved": false
+    }
+  },
+  "producer": "ailocal",
+  "runtime": {
+    "canonical_capabilities": [
+      "ailocal-architecture",
+      "ailocal-implementation",
+      "ailocal-review",
+      "ailocal-fast",
+      "ailocal-completion",
+      "ailocal-embeddings"
+    ],
+    "inference_endpoint": "http://localhost:4000"
+  },
+  "schema_version": 1
+}
