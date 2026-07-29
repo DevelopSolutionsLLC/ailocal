@@ -1,7 +1,8 @@
 # Client compatibility matrix
 
-State of every supported client, as measured on **2026-07-28**.
-Versions: Claude Code 2.1.220 · codex-cli 0.145.0 · LiteLLM 1.93.0 · mcpls 0.3.7
+State of every supported client, as measured on **2026-07-28**; the Codex rows
+re-verified **2026-07-29**.
+Versions: Claude Code 2.1.220 · codex-cli 0.146.0 · LiteLLM 1.93.0 · mcpls 0.3.7
 · SearXNG 2026.7.24.
 
 ## Legend
@@ -50,7 +51,8 @@ are no MCP resources or resource templates available".
   (namespace tools stripped in conversion — the layer doing the dropping) and
   [openai/codex#20652](https://github.com/openai/codex/issues/20652)
   (flattened MCP names rejected by Codex's dispatcher),
-  [PR #17556](https://github.com/openai/codex/pull/17556) (the fix, unreleased).
+  [PR #17556](https://github.com/openai/codex/pull/17556) — the fix, still
+  unreleased: absent from 0.146.0 (latest stable) and from 0.147.0-alpha.1.
   Same class from another proxy: CLIProxyAPI#3298.
 - Gateway-side flattening exists (`namespace_expansion`) and is **deliberately
   disabled** — enabling it only spends context on tools Codex will refuse.

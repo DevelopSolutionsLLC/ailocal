@@ -216,6 +216,33 @@ rk, _ = gw.negotiate(dict(CODEX_HEADERS, model="ailocal-architecture",
 check(rk["tools_dropped"] == 0, "an ungrouped namespace bundle is kept...")
 check(rk["bytes_kept"] > 0 and rk["bytes_kept_reachable"] == 0,
       "...but contributes ZERO to what the model receives")
+# The COUNT must tell the same story the BYTES already told. Reporting a
+# translation-killed namespace as "kept" is what made Codex's mcp__grepai /
+# mcp__lsp bundles read as delivered on every request while the model never
+# saw them (measured 2026-07-29: tools_kept 14 with both bundles listed in
+# `largest`). tools_kept now means FORWARDED.
+check(rk["tools_kept"] == 0,
+      "a namespace bundle LiteLLM will discard is NOT counted as kept")
+check(rk["tools_kept_by_gateway"] == 1,
+      "...while the pre-translation figure still records the gateway's own "
+      "decision under its own name")
+check(rk["tools_killed_by_translation"] == 1,
+      "the entry is booked against the translation stage that removes it")
+killed = rk["killed_by_translation"]
+check(killed and killed[0]["name"] == "mcp__lsp"
+      and killed[0]["type"] == "namespace" and "litellm" in killed[0]["reason"],
+      "each killed entry names itself, its type, and the reason it vanished")
+# <= 1 because encode([]) is the two-byte "[]", which tokenises to 1 — the
+# floor for an empty forwarded set, not zero.
+check(rk["tokens_est_kept"] <= 1 < rk["tokens_est_in"],
+      "tokens the model pays for exclude tools it never receives")
+# Claude Code's route keeps namespaces, so the two stages must agree there.
+rc, _ = gw.negotiate(dict(CLAUDE_HEADERS, model="ailocal-architecture",
+                          messages=[{"role": "user", "content": "hi"}],
+                          tools=[ns_kept]), "acompletion")
+check(rc["tools_kept"] == rc["tools_kept_by_gateway"]
+      and rc["tools_killed_by_translation"] == 0,
+      "on a route that drops nothing, forwarded == kept-by-gateway")
 
 print("\nSCHEMA REWRITES (Phase C): shrink without removing")
 rules = reg.rewrite_rules("claude-code")

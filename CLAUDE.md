@@ -154,6 +154,30 @@ Most of this repo's complexity is in these; change them carefully.
    BUNDLES, which LiteLLM discards before the backend; enabling `namespace_expansion` instead makes
    the model emit flattened names that Codex's own dispatcher then refuses
    (`unsupported call: mcp__lsp__workspace_symbol_search`, openai/codex#20652). Both paths dead-end.
+   **RE-VERIFIED 2026-07-29 on Codex 0.146.0** (the latest STABLE; `0.147.0-alpha.1` is
+   schema-identical on every relevant field, so upgrading fixes nothing). Namespace wrapping is
+   UNCONDITIONAL — it is NOT Code Mode, and no setting turns it off. These were each measured inert;
+   do not re-propose them: `namespace_tools` does not exist in the binary (`ModelProviderInfo` has
+   exactly 18 fields, none namespace-related); `[features.code_mode] direct_only_tool_namespaces`
+   does nothing under any of the four plausible name forms; `[features] code_mode = false` does
+   nothing; model-catalog `tool_mode = "direct"` does nothing — and the enum is
+   `direct|code_mode|code_mode_only`, so `direct_only` is NOT a `tool_mode` value at all, it belongs
+   only to `direct_only_tool_namespaces`. Gateway flattening clears **four of seven** boundaries:
+   bundles expand (49 tools, zero namespaces left, zero killed by translation) and the model emits
+   structured calls against them — then Codex's router refuses to dispatch BOTH
+   `grepai_list_projects` and `mcp__grepai__grepai_list_projects`, with
+   `[features.non_prefixed_mcp_tool_names]` enabled. The blocker is Codex's dispatcher, not the name
+   shape and not the proxy, so `namespace_expansion` stays `enabled: false`.
+   Schema claims about Codex must come from the NATIVE binary: the `codex` on
+   `PATH` is a JS shim with none of the Rust config schema in it. Resolve it
+   dynamically rather than hardcoding a version- or arch-specific path:
+   `ls "$(npm root -g)"/@openai/codex/node_modules/@openai/codex-*/vendor/*/bin/codex`
+   then `strings -a` that file (e.g. `struct ModelProviderInfo with N elements`
+   enumerates every accepted provider key). If that glob resolves to zero or to
+   more than one binary, STOP and report the ambiguity — do not pick one. Zero
+   means the layout moved and the guidance is stale; several means multiple
+   installs or architectures are present, and reading the wrong one yields a
+   schema that looks authoritative while describing a binary you are not running.
    So MCP-delivered capability — grepai, the LSP bridge, and Cadence's intelligence server — is
    reachable from Claude Code and VS Code but NOT from Codex, regardless of registration. Do not
    "fix" this at the proxy; it is a client limitation with an upstream issue.
@@ -223,6 +247,17 @@ it. Then `./scripts/doctor.sh` (0=healthy, 2=degraded), `./scripts/smoke-test.sh
 `bash -n` any edited script, and `./scripts/sync-models.sh` must produce **zero diff**
 on a second run. After editing a persona `.md`, restart the proxy — the hook reads
 them at load.
+
+Never invoke `deploy/litellm/docker-compose.yml` on its own — it references a
+service defined elsewhere and fails as an invalid Compose project. Use
+`./scripts/start.sh`, which loads the full project and `.env` and restarts on
+config-fingerprint change.
+
+To inspect a real client tool payload, arm the capture corpus: set
+`AILOCAL_TOOL_GATEWAY_CAPTURE=/app/captures` in `.env`, `./scripts/start.sh`,
+run the client, then read `data/tool-captures/*.json` (already a writable mount).
+**Captures record request text** — disable it and delete the captures when the
+investigation ends.
 
 ## Conventions
 

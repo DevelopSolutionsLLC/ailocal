@@ -178,7 +178,7 @@ echo "   The proxy cannot see this: dispatch happens inside the client, after th
 echo "   response leaves LiteLLM. For Codex, grep its run log for"
 echo "   'codex_core::tools::router' — that is where 'unsupported call' appears."
 echo
-echo " MEASURED [REAL] as of codex-cli 0.145.0:"
+echo " MEASURED [REAL] as of codex-cli 0.146.0 (re-verified 2026-07-29):"
 echo "   claude-local  configured -> transmitted -> emitted -> ACCEPTED   (works)"
 echo "   codex-local   configured -> NOT transmitted                      (bundles dropped)"
 echo "   codex-local   with expansion: transmitted -> emitted -> REJECTED (codex#20652)"
