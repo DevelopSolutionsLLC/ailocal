@@ -50,6 +50,20 @@ groups:
   lsp:
     - "mcp__lsp__*"
 
+  # Claude Code's NATIVE LSP tool — a client-side tool, not an MCP server, so it
+  # is a bare name and does NOT match `mcp__lsp__*` above. It is deliberately a
+  # separate group from `lsp`: `lsp` is shed by the conversational and
+  # simple_edit classes, and native LSP must not be.
+  #
+  # This group exists to make an EXISTING behaviour explicit rather than to
+  # change it. Before it, `LSP` matched no group, and the gateway's fail-open
+  # rule (`group_of(name) is None` -> keep) forwarded it — correct by accident.
+  # Listing it in the `always` floor below reproduces that outcome by
+  # construction, so a future tightening of fail-open cannot silently remove the
+  # client's language-server access.
+  native_lsp:
+    - LSP
+
   mcp_plumbing:
     - ListMcpResourcesTool
     - ReadMcpResourceTool
@@ -435,7 +449,7 @@ task_classes:
 
   # Groups every task keeps regardless of classification. Reading and running
   # things is the floor: a task that cannot read a file cannot be verified.
-  always: [edit_and_run, mcp_plumbing]
+  always: [edit_and_run, mcp_plumbing, native_lsp]
 
   # Groups force-added when the request EXPLICITLY asks for them, whatever class
   # it matched. Classification is substring matching, so it reads the topic and

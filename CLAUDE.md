@@ -108,6 +108,15 @@ Most of this repo's complexity is in these; change them carefully.
    and is sourced from `.zshrc` between installer markers (`finalize.zsh` runs last).
    `CLAUDE_CONFIG_DIR` relocates `.claude.json` itself, so MCP registrations, history, and
    credentials are genuinely per-root — nothing leaks between local and cloud.
+   **The local root inherits nothing from `~/.claude`, including its `CLAUDE.md`.** So
+   `config/clients/CLAUDE.md` carries the shared engineering policy itself rather than
+   pointing at one, and it is **composed by `sync-models.py`** from
+   `config/clients/claude/instructions/{00-engineering-policy,10-ailocal-overlay}.md` with the
+   capability and compat-alias tables substituted from the same sources as every other
+   generated file. Edit the sources, not the composed file. It was hand-maintained until it
+   drifted (a stale 16-32K context claim, a backend table four rows wrong, and a
+   filesystem-first search rule contradicting the repository-intelligence ladder);
+   `scripts/test-claude-instructions.py` now asserts those removals by string.
 
 5. **Tool gateway.** `config/litellm/tool_gateway.py` is a pre-call hook that measures (and
    optionally trims) the tool payload clients declare. Measured: Claude Code sends **61 tools /

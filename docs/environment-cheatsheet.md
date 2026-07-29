@@ -331,6 +331,55 @@ persona or tool-gating work affects them. XDG isolation (`CLAUDE_CONFIG_DIR`,
 `CODEX_HOME`) means local and cloud coexist without sharing history, MCP
 registrations or credentials.
 
+### The two Claude config roots, and why the local one repeats itself
+
+There are two independent Claude Code configuration roots:
+
+| Root | Used by | Instruction file | Owner |
+|---|---|---|---|
+| `~/.claude` | plain `claude` (hosted) | `~/.claude/CLAUDE.md` | the user — ailocal never writes here |
+| `~/.config/ailocal/claude` | `claude-local` (`CLAUDE_CONFIG_DIR`) | `~/.config/ailocal/claude/CLAUDE.md` | ailocal, generated |
+
+The isolation is the point, and it has a consequence people get wrong: the local
+root **does not inherit `~/.claude/CLAUDE.md`**. Nothing is layered, imported, or
+followed across roots. So the local profile cannot be a thin overlay on the
+shared engineering policy — the policy has to be deployed *into* it.
+
+That is why `config/clients/CLAUDE.md` is composed rather than hand-written.
+`sync-models.py` concatenates two in-repo sources —
+`config/clients/claude/instructions/00-engineering-policy.md` (the shared rules,
+kept inside ailocal so there is no cross-repo ownership with Cadence) and
+`10-ailocal-overlay.md` (local routing, tools, runtime) — and substitutes the
+capability and compat-alias tables from the same profile/`clients.yaml` data
+every other generated file uses. Edit the sources, never the composed file or the
+deployed copy.
+
+Regenerate and deploy:
+
+```bash
+./scripts/sync-models.sh          # recompose config/clients/CLAUDE.md
+./scripts/install-clients.sh claude   # deploy it to ~/.config/ailocal/claude/
+```
+
+Deployment is a full overwrite — the stale copy is never a source, which is how
+the previous hand-maintained version rotted (a wrong context figure and a backend
+table four rows out of date). `scripts/test-claude-instructions.py` asserts the
+removed lines stay removed.
+
+### Native LSP vs MCP LSP vs grepai vs Grep
+
+Four different systems, routinely confused:
+
+- **Native LSP** — a Claude Code *client-side* tool named `LSP`. The protocol never crosses LiteLLM; only its schema does. Exact answers: definition, references, type.
+- **MCP LSP** (`mcp__lsp__*`) — the mcpls bridge, now `codex-local` only.
+- **grepai** (`mcp__grepai__*`) — semantic and call-graph search over the Qdrant index. Good at "where is X handled"; weakest on prose.
+- **Grep/Glob** — a literal filesystem scan. Last resort, when the path is already known.
+
+The gateway now names native `LSP` explicitly in the registry's `native_lsp`
+group, listed in the `always` floor. Before that it survived only because the
+gateway fails open on tools matching no group — the right outcome for the wrong
+reason, and one a future tightening of fail-open would have silently removed.
+
 VS Code: MCP `grepai`, `litellm-connector` extension for model routing, native
 LSP. Instructions are layered, not duplicated — `~/.copilot/instructions/`
 (global, `applyTo: "**"`) plus the repo's `.github/copilot-instructions.md`.
