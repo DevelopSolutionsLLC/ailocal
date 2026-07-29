@@ -88,6 +88,12 @@ run "anthropic streaming logging (no AnthropicResponse validation error)" \
     python3 scripts/test-anthropic-stream-logging.py
 run "client compatibility (3 dialects x 3 modes)" \
     ./scripts/test-client-compatibility.sh
+# Claude Code sends auxiliary Anthropic-shaped probes derived from
+# ANTHROPIC_BASE_URL; LiteLLM implements none of them, so HEAD /api/hello 404'd.
+# Asserts the probe answers 200 AND that nothing else moved to make that true —
+# /v1/models stays authenticated, health routes stay put, unknown paths still 404.
+run "client compatibility probes (/api/hello, no side effects)" \
+    ./scripts/test-compat-routes.sh
 
 echo
 echo "INVARIANTS"
@@ -146,7 +152,7 @@ hooks_importable() {
   docker exec -i "$CONTAINER" python - <<'PY'
 import importlib.util, sys
 mods = ["persona_injector", "model_registrar", "tool_repair", "tool_gateway",
-        "session_observer", "capability_registry"]
+        "session_observer", "capability_registry", "compat_routes"]
 bad = []
 for name in mods:
     try:
