@@ -48,20 +48,12 @@ CONTINUE_CONFIG= ROOT / "config/clients/continue/config.json"
 CONFIGURE_ZSH  = ROOT / "config/clients/configure.zsh"
 COPILOT_REPO_MD= ROOT / "config/clients/copilot/repo-instructions.md"
 
-# The Claude Code instruction file deployed to the ailocal config root. It is
-# COMPOSED, not hand-written: `~/.config/ailocal/claude` is a separate
-# CLAUDE_CONFIG_DIR and inherits nothing from `~/.claude`, so the shared
-# engineering policy has to be deployed INTO it alongside the local overlay.
-# Sources are concatenated in listed order; two placeholders in the overlay are
-# filled from the same profile/clients data every other generated file uses, so
-# the routing facts cannot drift the way the hand-maintained version did.
-CLAUDE_MD_SOURCES = [
-    ROOT / "config/clients/claude/instructions/00-engineering-policy.md",
-    ROOT / "config/clients/claude/instructions/10-ailocal-overlay.md",
-]
-CLAUDE_MD       = ROOT / "config/clients/CLAUDE.md"
-CM_CAPS_MARKER  = "<!-- ailocal:capabilities -->"
-CM_SLOTS_MARKER = "<!-- ailocal:claude-slots -->"
+# The machine-readable seam with Cadence. Cadence reads THIS and nothing else to
+# learn about the local runtime — see write_integration_contract(). ailocal does
+# NOT own client instruction policy; Cadence composes it from this contract.
+CONTRACT_JSON  = ROOT / "config/integration-contract.json"
+BASE_URL       = "http://localhost:4000"
+
 
 ML_BEGIN = "  # >>> BEGIN GENERATED model_list (sync-models.py) — do not edit <<<"
 ML_END   = "  # >>> END GENERATED model_list <<<"
@@ -386,6 +378,65 @@ def write_caps_json(models):
     return True
 
 
+def write_integration_contract(models):
+    """The ONLY surface Cadence reads to learn about this runtime.
+
+    Cadence owns client instruction policy; ailocal owns the runtime. The seam
+    between them is this file and nothing else — Cadence must never parse
+    ailocal's prose or generated Markdown to discover a fact, because that
+    couples a policy generator to our formatting.
+
+    So this publishes FACTS ONLY: where the roots are, what the endpoint is,
+    which capability names are canonical, and what is measurably true about
+    routes that pass through the proxy. No policy, no instructions, no prose
+    telling an agent how to behave.
+
+    `schema_version` is load-bearing: Cadence fails CLOSED on a version it does
+    not understand rather than guessing at fields whose meaning may have moved.
+    Bump it on any breaking change to shape or field semantics.
+
+    No timestamp — the file must be byte-stable so idempotence is hash-checkable.
+    """
+    contract = {
+        "schema_version": 1,
+        "producer": "ailocal",
+        "client_roots": {
+            # Where the launchers point CLAUDE_CONFIG_DIR / CODEX_HOME. Written
+            # as ~-relative so the contract is not machine-specific.
+            "claude": "~/.config/ailocal/claude",
+            "codex": "~/.config/ailocal/codex",
+        },
+        "runtime": {
+            "inference_endpoint": BASE_URL,
+            "canonical_capabilities": [mn(c) for c in models],
+        },
+        # Measured compatibility of routes that pass THROUGH the proxy. These are
+        # the facts that make Cadence describe a tool as usable or not; getting
+        # them wrong makes it advertise a broken tool as a first choice.
+        "compatibility": {
+            "claude_native_lsp": {
+                "configured": True,
+                # The gateway names native `LSP` explicitly (registry group
+                # `native_lsp`, in the `always` floor) rather than relying on
+                # fail-open, so the schema reaches the model on every task class
+                # that keeps a floor.
+                "schema_preserved": True,
+                "execution": "failing",
+            },
+            "codex_mcp_lsp": {
+                "configured": True,
+                "schema_preserved": False,
+                # Codex declares MCP servers as namespace BUNDLES, which LiteLLM
+                # discards before the backend; flattening them makes Codex's own
+                # dispatcher refuse the call (openai/codex#20652).
+                "execution": "blocked_namespace_dispatch",
+            },
+        },
+    }
+    CONTRACT_JSON.write_text(json.dumps(contract, indent=2, sort_keys=True) + "\n")
+    return True
+
+
 # ── Codex model_catalog.json ───────────────────────────────────────────────────
 CATALOG_PREAMBLE = (
     "Ground every claim in the actual code: open the files, search before claiming something "
@@ -545,51 +596,6 @@ def regen_copilot_repo_md(models):
     return spliced
 
 
-def gen_claude_md_caps(models):
-    """Canonical capability table for the deployed Claude instructions."""
-    lines = ["| Capability | Backend | Context |", "|---|---|---|"]
-    for name, info in models.items():
-        lines.append(f"| `{mn(name)}` | {backend_of(info)} | {ctx_of(info)} |")
-    return "\n".join(lines)
-
-
-def gen_claude_md_slots(clients):
-    """Compat-alias -> capability table, from the same source as the slot block."""
-    lines = ["| `/model` slot | Capability |", "|---|---|"]
-    for slot, cap in (clients.get("claude") or {}).get("slots", {}).items():
-        if slot not in SLOT_ENV:
-            warn(f"unknown claude slot '{slot}' — omitted from CLAUDE.md slot table")
-            continue
-        lines.append(f"| `claude-{slot}-*` | `{mn(cap)}` |")
-    return "\n".join(lines)
-
-
-def regen_claude_md(models, clients):
-    """Compose the deployed Claude Code instructions from their two sources.
-
-    Whole managed file, not a marker splice: the deployed copy under
-    ~/.config/ailocal/claude is a verbatim copy of this one, so the entire file
-    is ailocal-owned and there is nothing hand-kept to preserve inside it.
-    """
-    missing = [p for p in CLAUDE_MD_SOURCES if not p.exists()]
-    if missing:
-        warn("CLAUDE.md sources missing: " + ", ".join(p.name for p in missing))
-        return False
-
-    rel = ", ".join(str(p.relative_to(ROOT)) for p in CLAUDE_MD_SOURCES)
-    header = ("<!-- Generated by ailocal (scripts/sync-models.py). "
-              f"Source: {rel}. Do not edit this file or its deployed copy. -->\n")
-
-    body = "\n\n".join(p.read_text().strip() for p in CLAUDE_MD_SOURCES)
-    body = body.replace(CM_CAPS_MARKER, gen_claude_md_caps(models))
-    body = body.replace(CM_SLOTS_MARKER, gen_claude_md_slots(clients))
-
-    # No timestamp: this file must be byte-stable so the idempotence check can
-    # compare it by hash rather than structurally.
-    CLAUDE_MD.write_text(header + "\n" + body + "\n")
-    return True
-
-
 def regen_configure_zsh(clients):
     if not CONFIGURE_ZSH.exists():
         return False
@@ -742,7 +748,7 @@ def main():
     ok("model_catalog.json") if regen_catalog(models) else warn("catalog skipped")
     ok("claude/settings.json") if regen_claude_settings(models, clients) else warn("claude settings skipped")
     ok("configure.zsh (claude slots)") if regen_configure_zsh(clients) else warn("configure.zsh slots skipped")
-    ok("clients/CLAUDE.md (composed)") if regen_claude_md(models, clients) else warn("CLAUDE.md skipped")
+    ok("integration-contract.json (for Cadence)") if write_integration_contract(models) else warn("contract skipped")
     ok("copilot repo-instructions (capabilities)") if regen_copilot_repo_md(models) else warn("copilot repo md skipped")
     ok("codex config + profiles") if regen_codex(models, clients) else warn("codex skipped")
     ok("continue/config.json") if regen_continue(models, clients) else warn("continue skipped")
