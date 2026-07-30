@@ -22,6 +22,14 @@
 # BASH_SOURCE is empty and would otherwise resolve two levels above $PWD.
 : "${AILOCAL_ROOT:=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)}"
 
+# Mutable runtime state lives OUTSIDE the checkout, under XDG state. A working
+# copy is source, not storage: benchmark output, e2e results, captured request
+# payloads and the config fingerprint all used to accumulate in ./data and
+# ./backups, where they were invisible to `git status` and travelled with the
+# repository. Exported so the compose files can mount it by absolute path.
+export AILOCAL_STATE="${AILOCAL_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/ailocal}"
+mkdir -p "$AILOCAL_STATE"
+
 AILOCAL_COMPOSE_FILES=(
   -f "$AILOCAL_ROOT/deploy/litellm/docker-compose.yml"
   -f "$AILOCAL_ROOT/deploy/searxng/docker-compose.yml"

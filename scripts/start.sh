@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # start.sh — start all ailocal Docker services
-# Usage: ./scripts/start.sh [--no-wait]
+# Usage: ailocal start [--no-wait]
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -87,7 +87,7 @@ dc up -d --remove-orphans
 # Config fingerprint: the mounted files LiteLLM only reads at boot. If any of
 # them changed since the last start, the running process is stale and must be
 # restarted explicitly — `up -d` will not do it.
-CONFIG_STAMP="$ROOT_DIR/data/.litellm-config.sha"
+CONFIG_STAMP="$AILOCAL_STATE/litellm-config.sha"
 mkdir -p "$(dirname "$CONFIG_STAMP")"
 # registry.yaml is in this list deliberately: it is the tool gateway's capability
 # registry, it is mounted, and it is read once at gateway_init. A registry edit
@@ -154,9 +154,9 @@ echo "    codex"
 echo ""
 echo "  ── VS Code ───────────────────────────────────────────────"
 echo "    Uses the litellm-connector extension (key in SecretStorage):"
-echo "    ./scripts/install-clients.sh vscode   # installs extension + prints setup"
+echo "    ailocal vscode   # installs extension + prints setup"
 echo ""
 echo "  ── First-time client setup ───────────────────────────────────"
-echo "    ./scripts/install-clients.sh"
+echo "    ailocal clients"
 echo "    (configures Codex, Claude Code, and VS Code Copilot Chat)"
 echo ""

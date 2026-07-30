@@ -28,8 +28,8 @@ cd "$ROOT"
 KEEP=""
 [ "${1:-}" = "--keep" ] && KEEP=1
 WORK="${CLAUDE_E2E_WORKDIR:-/tmp/ailocal-e2e}"
-LEDGERS="$ROOT/data/tool-captures/sessions"
-RESULTS="$ROOT/data/e2e"
+LEDGERS="${AILOCAL_STATE:-$HOME/.local/state/ailocal}/captures/sessions"
+RESULTS="${AILOCAL_STATE:-$HOME/.local/state/ailocal}/e2e"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$RESULTS"
 
@@ -41,7 +41,7 @@ info(){ printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 # ── preflight ───────────────────────────────────────────────────────────────
 command -v docker >/dev/null || { echo "docker missing"; exit 1; }
 docker ps --format '{{.Names}}' | grep -qx ailocal-litellm || {
-  echo "ailocal-litellm is not running. ./scripts/start.sh first."; exit 1; }
+  echo "ailocal-litellm is not running. ailocal start first."; exit 1; }
 [ "$(docker inspect ailocal-litellm --format '{{.State.Health.Status}}')" = healthy ] || {
   echo "proxy is not healthy; fix that before trusting any result."; exit 1; }
 

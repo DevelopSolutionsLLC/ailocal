@@ -8,12 +8,16 @@
 # active; the profiles themselves are the committed source of truth. `--profile <tier>` overrides.
 config/active-profile
 
-# Data, logs, and backups — contain runtime state and may contain secrets
+# Runtime state lives in $XDG_STATE_HOME/ailocal, never in the checkout — see
+# scripts/lib/compose.sh. These patterns remain as a guard: an older install, or
+# a script that regresses to a repo-relative path, must not commit runtime state
+# or an .env snapshot.
 /data/
 /logs/
 /backups/
+/captures/
 
-# Backup archives (defence in depth — /backups/ above already covers the directory)
+# Backup archives
 *.tar.gz
 *.tar.bz2
 

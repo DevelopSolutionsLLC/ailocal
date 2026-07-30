@@ -120,7 +120,7 @@ STATUS=$?
 
 if [ "$CHECK_GENERATED" = 1 ]; then
   echo -e "\033[1;36mGenerated files in sync\033[0m"
-  if OUT="$("$ROOT_DIR/scripts/sync-models.sh" --check 2>&1)"; then echo "  ✓ $OUT"; else echo -e "  \033[31m✗\033[0m drift — run ./scripts/sync-models.sh && commit"; STATUS=1; fi
+  if OUT="$("$ROOT_DIR/scripts/sync-models.sh" --check 2>&1)"; then echo "  ✓ $OUT"; else echo -e "  \033[31m✗\033[0m drift — run ailocal sync && commit"; STATUS=1; fi
 else
   echo "  (generated-files check skipped — --profile $TIER differs from active $ACTIVE)"
 fi

@@ -2,11 +2,11 @@
 # install-clients.sh — install AI client configs to their destinations
 #
 # Usage:
-#   ./scripts/install-clients.sh              # install all three
-#   ./scripts/install-clients.sh vscode       # VS Code Copilot Chat only
-#   ./scripts/install-clients.sh codex        # Codex CLI only
-#   ./scripts/install-clients.sh claude       # Claude Code only
-#   ./scripts/install-clients.sh codex claude # multiple targets
+#   ailocal clients              # install all three
+#   ailocal vscode       # VS Code Copilot Chat only
+#   ailocal clients codex        # Codex CLI only
+#   ailocal clients claude       # Claude Code only
+#   ailocal clients codex claude # multiple targets
 #
 # Destinations:
 #   vscode → installs the litellm-connector extension + prints one-time setup
@@ -172,7 +172,7 @@ EOF
     cp "$ROOT_DIR/config/integration-contract.json" "$AILOCAL_CFG/integration-contract.json"
     info "$AILOCAL_CFG/integration-contract.json published (schema for Cadence)"
   else
-    warn "config/integration-contract.json missing — run ./scripts/sync-models.sh"
+    warn "config/integration-contract.json missing — run ailocal sync"
   fi
 
   local rc="${ZDOTDIR:-$HOME}/.zshrc"
@@ -481,7 +481,7 @@ if has_target "codex"; then
   echo "  Launch with: codex-local exec 'say ok'   (reload your shell first: source ~/.zshrc)"
 
   echo "  To force-update a config that was skipped, delete it and re-run:"
-  echo "    rm $CODEX_CFG && ./scripts/install-clients.sh codex"
+  echo "    rm $CODEX_CFG && ailocal clients codex"
 fi
 
 # ── Claude Code ───────────────────────────────────────────────────────────
@@ -651,7 +651,7 @@ install_ailocal_launcher() {
 set -euo pipefail
 cfg="${XDG_CONFIG_HOME:-$HOME/.config}/ailocal"
 if [[ ! -r "$cfg/repo" ]]; then
-  echo "ailocal: $cfg/repo is missing — re-run ./scripts/install-clients.sh" >&2; exit 1
+  echo "ailocal: $cfg/repo is missing — re-run ailocal clients" >&2; exit 1
 fi
 root="$(cat "$cfg/repo")"
 if [[ ! -x "$root/scripts/ailocal" ]]; then
@@ -674,8 +674,8 @@ echo "  To force-update a config that was skipped, delete it and re-run:"
 has_target "codex"   && echo "    rm $AILOCAL_CFG/codex/config.toml"
 has_target "claude"  && echo "    rm $AILOCAL_CFG/claude/settings.json"
 has_target "vscode"  && echo "    VS Code:  no file to delete — re-enter via \"Chat: Manage Language Models\" (key lives in SecretStorage)"
-echo "  Then: ./scripts/install-clients.sh [target]"
+echo "  Then: ailocal clients [target]"
 echo ""
 echo "  Key rotation: after running install.sh, restart the proxy with:"
-echo "    ./scripts/start.sh   # LiteLLM reloads LITELLM_MASTER_KEY from .env"
-echo "  ...then re-run ./scripts/install-clients.sh to refresh ~/.config/ailocal/env"
+echo "    ailocal start   # LiteLLM reloads LITELLM_MASTER_KEY from .env"
+echo "  ...then re-run ailocal clients to refresh ~/.config/ailocal/env"

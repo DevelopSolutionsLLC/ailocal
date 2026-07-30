@@ -93,7 +93,7 @@ if [ "$MODE" = "dashboard" ]; then
   hdr "Models"
 fi
 
-[ -f "$CAPS" ] || { echo "capabilities.generated.json missing — run ./scripts/sync-models.sh" >&2; exit 1; }
+[ -f "$CAPS" ] || { echo "capabilities.generated.json missing — run ailocal sync" >&2; exit 1; }
 
 PS_JSON="$(curl -fsS -m 3 "$OLLAMA_URL/api/ps" 2>/dev/null || echo '{"models":[]}')"
 

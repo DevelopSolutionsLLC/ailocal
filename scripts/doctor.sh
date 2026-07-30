@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # doctor.sh — one-command preflight and health summary for ailocal
-# Usage: ./scripts/doctor.sh
+# Usage: ailocal doctor
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"

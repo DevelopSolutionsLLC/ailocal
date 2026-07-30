@@ -232,7 +232,7 @@ if curl -sf -m 10 "$BASE_URL/model/info" -H "Authorization: Bearer $KEY" \
   ok "the proxy's /model/info answers with $N models — this is the endpoint the"
   echo "     connector reads to populate the model picker"
 else
-  warn "$BASE_URL/model/info did not answer; start the stack (./scripts/start.sh)"
+  warn "$BASE_URL/model/info did not answer; start the stack (ailocal start)"
 fi
 
 echo

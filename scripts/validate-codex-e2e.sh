@@ -22,8 +22,8 @@ cd "$ROOT"
 . scripts/lib/compose.sh
 
 WORK="${CODEX_E2E_WORKDIR:-/tmp/ailocal-codex-e2e}"
-LEDGERS="$ROOT/data/tool-captures/sessions"
-RESULTS="$ROOT/data/e2e"
+LEDGERS="$AILOCAL_STATE/captures/sessions"
+RESULTS="$AILOCAL_STATE/e2e"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$RESULTS"
 
