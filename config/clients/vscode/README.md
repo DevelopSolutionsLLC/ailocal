@@ -1,8 +1,8 @@
 # VS Code client
 
-Deployed by `./scripts/install-vscode.sh` (also reachable as
-`./scripts/install-clients.sh vscode`). Validated by
-`./scripts/validate-vscode-e2e.sh`.
+Deployed by `ailocal vscode` (also reachable as
+`ailocal clients vscode`). Validated by
+`ailocal e2e vscode`.
 
 ## Why VS Code spans three directories
 

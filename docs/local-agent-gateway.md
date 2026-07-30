@@ -303,7 +303,7 @@ python3 scripts/test-session-observer.py   # three dialects
 ./scripts/test-verify-session.sh           # all four classifications + exit codes
 ./scripts/test-client-compatibility.sh     # 3 dialects x 3 modes
 python3 scripts/test-persona-injection.py
-./scripts/sync-models.sh                   # must be idempotent
+ailocal sync                   # must be idempotent
 ./scripts/preload-model.sh
 python3 scripts/gateway-metrics.py --since 30m
 ./scripts/benchmark-tool-gateway.sh        # RUNS=2+ for a latency claim

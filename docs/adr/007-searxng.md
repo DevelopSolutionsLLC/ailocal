@@ -203,7 +203,7 @@ query speed.
 ### Validation
 
 ```bash
-./scripts/doctor.sh                 # includes SearXNG health
+ailocal doctor                 # includes SearXNG health
 ```
 
 Single-shot probes are misleading — the failures are volume-triggered. The

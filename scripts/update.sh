@@ -46,7 +46,7 @@ dc pull
 
 if [ "$SKIP_MODELS" = false ]; then
   step "Updating Ollama models"
-  "$ROOT_DIR/scripts/install-models.sh" || warn "Model update had warnings — services will still restart."
+  bash "$ROOT_DIR/scripts/install-models.sh" || warn "Model update had warnings — services will still restart."
 fi
 
 # ── Regenerate model config (single source of truth) ──────────────────────
@@ -56,7 +56,7 @@ fi
 # want to:  ./scripts/install-clients.sh [claude|codex|vscode]
 
 step "Regenerating model config (sync-models)"
-"$ROOT_DIR/scripts/sync-models.sh"
+bash "$ROOT_DIR/scripts/sync-models.sh"
 
 # ── Rolling restart (dependency order) ────────────────────────────────────
 # Restart infrastructure first, then dependents.
@@ -77,7 +77,7 @@ until curl -sSf --max-time 3 http://localhost:4000/health/liveliness >/dev/null 
   [ "$attempts" -ge 20 ] && break
   sleep 3
 done
-if "$ROOT_DIR/scripts/doctor.sh"; then
+if bash "$ROOT_DIR/scripts/doctor.sh"; then
   step "Update complete — LiteLLM healthy."
 else
   warn "Health check reported issues after update."

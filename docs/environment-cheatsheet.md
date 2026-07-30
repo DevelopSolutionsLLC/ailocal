@@ -23,7 +23,7 @@ add ours only where none exists.
 **First moves in a session**
 
 ```bash
-./scripts/doctor.sh              # is the stack healthy?
+ailocal doctor              # is the stack healthy?
 ./scripts/validate-deployment.sh # does it actually answer, end to end?
 ```
 
@@ -250,7 +250,7 @@ halved latency (1.46s → 0.73s) and took engine errors to zero.
 quota was exhausted by measurement bursts. It removes bot detection, not rate
 limits.
 
-Check health with `./scripts/doctor.sh`, which probes SearXNG among the rest.
+Check health with `ailocal doctor`, which probes SearXNG among the rest.
 The signal to act on is **zero-result queries**, not an individual engine at 0%.
 Audited 2026-07-28 — availability drifts, so re-measure rather than trusting any
 list:
@@ -384,8 +384,8 @@ deployed copy.
 Regenerate and deploy:
 
 ```bash
-./scripts/sync-models.sh          # recompose config/clients/AGENTS.md
-./scripts/install-clients.sh claude   # deploy it to ~/.config/ailocal/claude/
+ailocal sync          # recompose config/clients/AGENTS.md
+ailocal clients claude   # deploy it to ~/.config/ailocal/claude/
 ```
 
 Deployment is a full overwrite — the stale copy is never a source, which is how
@@ -434,7 +434,7 @@ prompt eval on a warm repeat; use a cold, large, unique prompt.
 ```bash
 docker ps            # ailocal-litellm, ailocal-searxng, cadence-qdrant (healthy)
 ollama ps            # nomic-embed-text + qwen3-coder resident (keep_alive -1)
-./scripts/doctor.sh  # 0 = healthy, 2 = degraded
+ailocal doctor  # 0 = healthy, 2 = degraded
 ```
 
 Nothing to export by hand: the `claude-local` / `codex-local` wrappers inject
@@ -475,8 +475,8 @@ fails, and the empty result reads as "no references exist".
 
 ```bash
 ./scripts/test-all.sh                 # 13-check regression gate
-./scripts/doctor.sh                   # service health
-./scripts/sync-models.sh              # must be a fixed point (zero diff on rerun)
+ailocal doctor                   # service health
+ailocal sync              # must be a fixed point (zero diff on rerun)
 bash <cadence>/scripts/verify-lsp.sh  # per-language LSP, not just "installed"
 cadence doctor --root ~/.config/ailocal/claude
 ```

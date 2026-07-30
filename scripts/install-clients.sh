@@ -249,7 +249,7 @@ if has_target "vscode"; then
   # settings VS Code still honours, and that the SecretStorage apiKey reference
   # must be preserved) are not maintained in two files that can drift.
   if [ -x "$ROOT_DIR/scripts/install-vscode.sh" ]; then
-    "$ROOT_DIR/scripts/install-vscode.sh" || warn "install-vscode.sh reported a problem"
+    bash "$ROOT_DIR/scripts/install-vscode.sh" || warn "install-vscode.sh reported a problem"
   else
     warn "scripts/install-vscode.sh missing — provider group not configured"
   fi
