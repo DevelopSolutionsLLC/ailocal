@@ -67,7 +67,7 @@ AILOCAL_TOOL_GATEWAY=filter    # in .env
 The user reports intermittent errors *with filtering enabled*. Filtering removes
 the dominant cause but a residual one may exist — long sessions grow the message
 history independently of tools. Not yet characterised; needs a failing-request
-capture with the tracing described in `docs/local-agent-gateway.md`.
+capture with the tracing described in `docs/architecture.md`.
 
 ---
 

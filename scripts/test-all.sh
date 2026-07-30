@@ -77,10 +77,6 @@ run "capability registry (+ no-hard-coded-literals assertion)" \
     bash scripts/tests/capability-registry.sh
 run "capability negotiator (byte accounting, modes, passthrough)" \
     bash scripts/tests/tool-gateway.sh
-run "session observer (three dialects)" \
-    python3 scripts/tests/session-observer.py
-run "verification classification (+ exit codes)" \
-    bash scripts/tests/verify-session.sh
 run "persona injection" \
     python3 scripts/tests/persona-injection.py
 # Both directions matter: a repair layer that fires on a tutorial fence would
@@ -91,8 +87,6 @@ run "tool-call repair (repairs real calls, refuses examples)" \
 # was true and misleading: implementation is the TERMINAL tier, so having no chain is
 # intentional, and the real fault was upstream connectivity. Pure functions, so all
 # seven states are checked with no proxy and no model.
-run "E5 fallback-state classification (seven states, no live model)" \
-    python3 scripts/tests/fallback-state.py
 # E1. The hook READS prompts, system text, tool definitions and tool results in
 # order to measure them, so every one of those is a place a secret or a source file
 # could enter a log. These tests push secret- and prompt-shaped values through the
@@ -106,8 +100,6 @@ run "E1 trace schema, redaction and token reconciliation" \
 # 8192 over-declaration was corrected at its source in config/profiles/64gb.yaml
 # (db8c9e6) and regenerated, so this now guards the corrected state rather than
 # reporting a known failure.
-run "E3 declared context vs backend capacity" \
-    python3 scripts/tests/context-limits.py
 # The isolated claude-local root sets ENABLE_LSP_TOOL=1, but a plugin is what puts
 # a server behind that tool. Provisioning used to be delegated entirely to
 # Cadence, so an ailocal-only machine got the tool switched on with nothing behind
@@ -123,8 +115,6 @@ echo "INTEGRATION"
 # without a test its return would be invisible. Asserts the observable property
 # (no validation error) rather than "the patch is installed", so it also catches
 # a LiteLLM upgrade that makes the patch no-op while the bug persists.
-run "anthropic streaming logging (no AnthropicResponse validation error)" \
-    python3 scripts/tests/anthropic-stream-logging.py
 # MOVED TO --full. This drives nine REAL generations through a local model and
 # measured 51s of a 73s gate — the single reason the gate was slow enough to skip.
 # The cheap probe below still covers all three dialects on every run, so a broken

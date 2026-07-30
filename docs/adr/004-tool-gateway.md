@@ -116,9 +116,9 @@ issue, and a baseline that hides it would be worse than one that reports it.
 
 ## Deeper reference
 
-- `docs/local-agent-gateway.md` — full architecture: registry, negotiation,
+- `docs/architecture.md` — full architecture: registry, negotiation,
   verification, metrics, client profiles, flags, recovery.
-- `docs/tool-gateway.md` — phase-2 history and the token-calibration discipline
+- `docs/architecture.md` — phase-2 history and the token-calibration discipline
   behind the byte/token numbers quoted here.
 
 This ADR records *why*; those record *how*. Do not restate them here.

@@ -76,7 +76,7 @@ if [ "$MODE" = "dashboard" ]; then
     && ok "Claude Code   configured, isolated from ~/.claude" \
     || bad "Claude Code   not installed"
   [ -f "$HOME/.config/ailocal/codex/config.toml" ] \
-    && ok "Codex CLI     configured  (MCP registered, NOT reachable: docs/runtime-issues.md)" \
+    && ok "Codex CLI     configured  (MCP registered, NOT reachable: docs/troubleshooting.md)" \
     || bad "Codex CLI     not installed"
   if command -v code >/dev/null 2>&1 && code --list-extensions 2>/dev/null \
        | grep -qix Gethnet.litellm-connector-copilot; then

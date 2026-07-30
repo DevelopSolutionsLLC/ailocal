@@ -29,14 +29,14 @@ If you do not use LiteLLM, you do not need this repo.
 
 | Question | Answer |
 |---|---|
-| **Supported clients?** | `claude-local`, `codex-local`, VS Code, plus hosted Claude/Codex untouched alongside. Per-client state: [compatibility matrix](docs/compatibility-matrix.md) |
+| **Supported clients?** | `claude-local`, `codex-local`, VS Code, plus hosted Claude/Codex untouched alongside. Per-client state: [compatibility matrix](docs/architecture.md) |
 | **Which model?** | `architecture` for anything agentic (default), `implementation` for edits, `review` for critique, `fast` for background work. `completion` is FIM autocomplete **only** — it hard-400s on a chat turn |
 | **Which tools do I get?** | Automatic. The gateway classifies each request: a plain question gets no tools, a refactor gets search + LSP + delegation. Nothing to switch on. (Known: the no-tools case holds for the first turn only — [ADR 004](docs/adr/004-tool-gateway.md)) |
 | **LSP?** | Native Claude Code LSP. ailocal installs the **Python** baseline (`pyright-lsp`) into the isolated `claude-local` root; Cadence adds TypeScript/Go/C and repository intelligence. Shell has no native plugin — use `bash -n`, `zsh -n`, `shellcheck` |
 | **grepai or LSP?** | grepai for *concepts* ("where is retry handled"), LSP for *exact* ("where is this defined, what calls it"). Prefer LSP's document-scoped tools |
 | **Something's wrong** | `ailocal doctor` → `./scripts/validate-deployment.sh` → `./scripts/test-all.sh`. Run them **idle**; contention causes phantom failures |
 | **Why is it built this way?** | [ADRs](docs/adr/) — one per decision, with the measurements behind it |
-| **What's not done?** | [future work](docs/future-work.md) |
+| **What's not done?** | [future work](docs/architecture.md) |
 
 **Common mistakes:** editing a generated region instead of the two source files
 (`config/profiles/<tier>.yaml`, `config/clients.yaml`); expecting
@@ -46,7 +46,7 @@ seeing empty (it returns a `thinking` block first); treating an empty LSP or
 grepai result as proof of absence (it usually means still-indexing, or the wrong
 language server answered).
 
-Full operational detail: [environment cheat sheet](docs/environment-cheatsheet.md).
+Full operational detail: [environment cheat sheet](docs/architecture.md).
 Architecture and file map: [AGENTS.md](AGENTS.md).
 
 ## Requirements
