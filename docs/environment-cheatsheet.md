@@ -364,15 +364,15 @@ There are two independent Claude Code configuration roots:
 
 | Root | Used by | Instruction file | Owner |
 |---|---|---|---|
-| `~/.claude` | plain `claude` (hosted) | `~/.claude/CLAUDE.md` | the user — ailocal never writes here |
-| `~/.config/ailocal/claude` | `claude-local` (`CLAUDE_CONFIG_DIR`) | `~/.config/ailocal/claude/CLAUDE.md` | ailocal, generated |
+| `~/.claude` | plain `claude` (hosted) | `~/.claude/AGENTS.md` | the user — ailocal never writes here |
+| `~/.config/ailocal/claude` | `claude-local` (`CLAUDE_CONFIG_DIR`) | `~/.config/ailocal/claude/AGENTS.md` | ailocal, generated |
 
 The isolation is the point, and it has a consequence people get wrong: the local
-root **does not inherit `~/.claude/CLAUDE.md`**. Nothing is layered, imported, or
+root **does not inherit `~/.claude/AGENTS.md`**. Nothing is layered, imported, or
 followed across roots. So the local profile cannot be a thin overlay on the
 shared engineering policy — the policy has to be deployed *into* it.
 
-That is why `config/clients/CLAUDE.md` is composed rather than hand-written.
+That is why `config/clients/AGENTS.md` is composed rather than hand-written.
 `sync-models.py` concatenates two in-repo sources —
 `config/clients/claude/instructions/00-engineering-policy.md` (the shared rules,
 kept inside ailocal so there is no cross-repo ownership with Cadence) and
@@ -384,7 +384,7 @@ deployed copy.
 Regenerate and deploy:
 
 ```bash
-./scripts/sync-models.sh          # recompose config/clients/CLAUDE.md
+./scripts/sync-models.sh          # recompose config/clients/AGENTS.md
 ./scripts/install-clients.sh claude   # deploy it to ~/.config/ailocal/claude/
 ```
 

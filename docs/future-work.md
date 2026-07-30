@@ -65,7 +65,7 @@ current five.
 *Blocker:* costs OpenAI credits; nobody has needed it.
 *Trigger:* first real use of hosted Codex, or any claim that depends on it.
 
-**Trim `CLAUDE.md`.**
+**Trim `AGENTS.md`.**
 *Why:* 208 lines against its own stated ~70-line budget, and it loads every
 session. The cheat sheet and ADRs now carry the deep material, so the primer
 could shrink to pointers.

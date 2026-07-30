@@ -2,7 +2,7 @@
 # check-litellm-version.sh — the RUNNING LiteLLM must be the one we validated.
 #
 # `main-stable` is a floating tag. It moved under this project: the runtime was
-# 1.93.0 while CLAUDE.md claimed 1.92.0, so behaviour recorded as "verified on
+# 1.93.0 while AGENTS.md claimed 1.92.0, so behaviour recorded as "verified on
 # 1.92.0" had been verified against a version no longer running. Documentation,
 # validation environment and runtime must name the same release, and drift must
 # be LOUD rather than discovered months later while debugging something else.
@@ -42,6 +42,6 @@ echo "      validated: $expected" >&2
 echo "      running:   $actual" >&2
 echo "    The image moved, or the pin was changed without re-validating." >&2
 echo "    Re-run scripts/test-all.sh and scripts/streaming-ab.py against the new" >&2
-echo "    version, then update the digest, AILOCAL_LITELLM_VERSION and CLAUDE.md" >&2
+echo "    version, then update the digest, AILOCAL_LITELLM_VERSION and AGENTS.md" >&2
 echo "    together." >&2
 exit 2

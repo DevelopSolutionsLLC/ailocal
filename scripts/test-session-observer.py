@@ -5,7 +5,7 @@ The payload shapes here are taken from a REAL captured session (Claude Code
 against ailocal-architecture on /v1/messages, ledger 63ebd9b636ca917f): five
 tool calls in the order Read, Edit, Read, Bash, Bash with three errored results,
 and a first user message whose text began with the client's injected
-<system-reminder> block carrying the whole of the user's global CLAUDE.md. That
+<system-reminder> block carrying the whole of the user's global AGENTS.md. That
 last detail is why _strip_injected exists, and it is pinned here.
 
 Run: python3 scripts/test-session-observer.py   (stdlib only; exit 1 on failure)
@@ -44,12 +44,12 @@ def check(cond, name):
 
 
 # ── the real thing: injected scaffolding must not become "the ask" ───────────
-REMINDER = ("<system-reminder>\nContents of CLAUDE.md (user's private global "
+REMINDER = ("<system-reminder>\nContents of AGENTS.md (user's private global "
             "instructions):\n# ailocal\nsecret-ish operating directives\n"
             "</system-reminder>")
 ASK = "There is a bug in calc.py: add() subtracts instead of adding. Fix it."
 
-print("\nINJECTED CONTEXT (measured failure: the ledger recorded CLAUDE.md)")
+print("\nINJECTED CONTEXT (measured failure: the ledger recorded AGENTS.md)")
 check(so._strip_injected(REMINDER + "\n" + ASK) == ASK,
       "a leading <system-reminder> block is stripped, the ask survives")
 check(so._strip_injected(ASK + "\n" + REMINDER) == ASK,

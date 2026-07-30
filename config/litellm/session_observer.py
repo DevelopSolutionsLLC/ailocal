@@ -86,8 +86,8 @@ def _strip_injected(text):
     """Remove the client's own injected context from a user message.
 
     Claude Code prepends a <system-reminder> block to the first user turn
-    carrying CLAUDE.md, directory context, and similar. Measured: the raw first
-    message began with the entire contents of the user's global CLAUDE.md, so
+    carrying AGENTS.md, directory context, and similar. Measured: the raw first
+    message began with the entire contents of the user's global AGENTS.md, so
     the ledger recorded that as the "requested change" and stored 2 KB of
     unrelated instructions. Both wrong and needlessly nosy — this ledger should
     hold the ask, not the client's scaffolding."""

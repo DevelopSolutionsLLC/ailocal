@@ -221,7 +221,7 @@ def first_user_text(data):
     model's output, and letting those steer which tools remain available would
     let a confused model narrow its own capabilities mid-loop.
 
-    Client-injected scaffolding (<system-reminder> blocks carrying CLAUDE.md and
+    Client-injected scaffolding (<system-reminder> blocks carrying AGENTS.md and
     similar) is stripped: measured, an unstripped first message began with the
     entire contents of a global instructions file, which would classify every
     session by whatever words happened to appear in it.

@@ -534,7 +534,7 @@ def check_conversational_slots(models, clients):
     if bad:
         sys.exit(f"error: claude.slots {bad} -> 'completion' (FIM tier, num_ctx "
                  f"{ctx_of(models.get('completion', {}))}). Conversational slots "
-                 f"must not use it; see CLAUDE.md. Fix config/clients.yaml.")
+                 f"must not use it; see AGENTS.md. Fix config/clients.yaml.")
 
     # Two slots on one capability is legal but shows up as a DUPLICATE entry in
     # Claude Code's /model picker (gateway discovery lists the capability once

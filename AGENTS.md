@@ -1,4 +1,4 @@
-# CLAUDE.md — ailocal repo primer
+# AGENTS.md — ailocal repo primer
 
 Agent primer. Keep it under ~70 lines; merge or delete before adding a doc file.
 User-facing setup/troubleshooting lives in README.md — don't duplicate it here.
@@ -108,8 +108,8 @@ Most of this repo's complexity is in these; change them carefully.
    and is sourced from `.zshrc` between installer markers (`finalize.zsh` runs last).
    `CLAUDE_CONFIG_DIR` relocates `.claude.json` itself, so MCP registrations, history, and
    credentials are genuinely per-root — nothing leaks between local and cloud.
-   **The local root inherits nothing from `~/.claude`, including its `CLAUDE.md`.** So
-   `config/clients/CLAUDE.md` carries the shared engineering policy itself rather than
+   **The local root inherits nothing from `~/.claude`, including its `AGENTS.md`.** So
+   `config/clients/AGENTS.md` carries the shared engineering policy itself rather than
    pointing at one, and it is **composed by `sync-models.py`** from
    `config/clients/claude/instructions/{00-engineering-policy,10-ailocal-overlay}.md` with the
    capability and compat-alias tables substituted from the same sources as every other
@@ -232,7 +232,7 @@ ailocal and Cadence are independent *installations*, not independent *content*. 
   `scratchpad-hook.sh` (shared SessionStart hook → per-session
   `/tmp/scratchpad/<tool>-<session_id>/`), and per-client dirs `claude/` (settings,
   `agents/`, `commands/`), `codex/`, `copilot/`, `continue/`. Detail in its own
-  `config/clients/CLAUDE.md`.
+  `config/clients/AGENTS.md`.
 - `scripts/` — `install.sh`, `install-clients.sh`, `sync-models.sh` → `sync-models.py`,
   `start/stop/update/teardown`, `setup-ollama-env.sh`, `setup-startup.sh` (login
   LaunchAgents), `preload-model.sh`, `doctor.sh`, `smoke-test.sh`.

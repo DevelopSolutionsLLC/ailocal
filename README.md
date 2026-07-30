@@ -47,7 +47,7 @@ grepai result as proof of absence (it usually means still-indexing, or the wrong
 language server answered).
 
 Full operational detail: [environment cheat sheet](docs/environment-cheatsheet.md).
-Architecture and file map: [CLAUDE.md](CLAUDE.md).
+Architecture and file map: [AGENTS.md](AGENTS.md).
 
 ## Requirements
 
