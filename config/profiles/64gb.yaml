@@ -212,7 +212,12 @@ embeddings:
   role: Semantic retrieval
   active: nomic-embed-text
   preferred: [nomic-embed-text, mxbai-embed-large]
-  context: 8192
+  # 2048 is nomic-embed-text's REAL maximum. Measured: it silently CLIPS above this
+  # and still returns a valid 768-dim vector, so 8192 advertised 4x the true capacity
+  # and produced successful-looking embeddings of truncated text. Two inputs sharing
+  # a prefix and differing only past the boundary embed BYTE-IDENTICALLY (cosine
+  # 1.0000000000); a control differing inside the prefix does not (0.9833).
+  context: 2048
   keep_alive: -1
   purpose: [semantic search, memory, retrieval for grepai]
   strengths: [always-on, tiny, grepai calls it directly on :11434]
