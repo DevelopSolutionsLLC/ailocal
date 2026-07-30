@@ -20,7 +20,7 @@ Identical real 61-tool captured payload, same model, same warm cache, only
 | `off` | **95.4 s, 88.6 s** |
 | `filter` | **1.0 s, 0.18 s** |
 
-Reproduce: `./scripts/diagnose-ttfb.sh`
+Reproduce: time the first streamed byte against the proxy directly.
 
 ### What is happening
 
@@ -49,7 +49,7 @@ classified the request into a smaller tool set.
   validation.
 - **[claude-code#54434](https://github.com/anthropics/claude-code/issues/54434)
   is a different bug.** That one stalls with **no** `message_stop`; every capture
-  taken here contains one. `diagnose-ttfb.sh` checks slowness and malformation
+  taken here contains one. a first-byte timing check covers slowness and malformation
   separately so the two can never be conflated.
 
 ### Consequence

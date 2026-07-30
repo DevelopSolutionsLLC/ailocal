@@ -20,7 +20,7 @@ Report an improvement it cannot substantiate. Specifically:
   zeros.
 - Token figures are the cl100k proxy and are labelled as such. Calibrated at
   1.009-1.021 against Ollama's real prompt_eval_count, so they under-report
-  slightly; scripts/calibrate-tokens.py re-establishes that after a model change.
+  slightly; re-measure against Ollama's prompt_eval_count after a model change.
 - Latency is NOT reported here. These records contain the hook's own overhead,
   not end-to-end request time; presenting hook microseconds next to a model's
   seconds would invite exactly the wrong conclusion. End-to-end latency is

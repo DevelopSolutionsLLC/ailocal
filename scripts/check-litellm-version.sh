@@ -41,7 +41,7 @@ echo "  ✗ LiteLLM VERSION DRIFT" >&2
 echo "      validated: $expected" >&2
 echo "      running:   $actual" >&2
 echo "    The image moved, or the pin was changed without re-validating." >&2
-echo "    Re-run scripts/test-all.sh and scripts/streaming-ab.py against the new" >&2
+echo "    Re-run scripts/test-all.sh against the new" >&2
 echo "    version, then update the digest, AILOCAL_LITELLM_VERSION and AGENTS.md" >&2
 echo "    together." >&2
 exit 2

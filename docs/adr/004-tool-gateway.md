@@ -104,7 +104,7 @@ compaction), so the classifier stops seeing the original question. Fixing that
 means classification that survives context changes, which is a design change,
 not a patch — deliberately **not** attempted during close-out.
 
-`benchmark-baseline.sh`'s `conversational` scenario asserts the model calls *no*
+The `conversational` task class asserts the model calls *no*
 tools and therefore **fails today**. That is intentional: it is a real open
 issue, and a baseline that hides it would be worse than one that reports it.
 

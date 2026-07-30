@@ -125,7 +125,7 @@ Mode is `filter` (set in `.env`; the compose default is `off`).
 **Caveat — the conversational class holds for turn 1 only.** Measured across 9
 gateway turns of one session, classification drifts (`class=None`, 48/61 kept)
 and the model resumes exploring. Open issue, root cause and non-fix rationale in
-ADR 004; `benchmark-baseline.sh` fails on it deliberately.
+ADR 004.
 
 ## Subagents — WORKING (verified end to end)
 

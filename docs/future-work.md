@@ -24,7 +24,7 @@ messages) and neither was sufficient. The fix is classification that survives
 context changes, which is a design change and was deliberately not attempted
 during close-out.
 *Trigger:* the next time the repo-crawling behaviour is annoying in daily use —
-`benchmark-baseline.sh`'s `conversational` scenario already fails on it, so the
+The `conversational` task class already covers it, so the
 regression signal exists.
 
 ## Soon
@@ -50,7 +50,7 @@ and a used one.
 unstated, run several times, since one sample proves nothing about a
 probabilistic system.
 *Trigger:* next time the baseline is run; add scenarios to
-`benchmark-baseline.sh`.
+the tool-gateway regression.
 
 **Broaden benchmark coverage.**
 *Why:* five scenarios cover the paths that broke historically, not the whole
@@ -89,7 +89,7 @@ tier in one repoint.
 `architecture` carries work it does not need to.
 *Blocker:* measured non-agentic — described an edit and emitted a fenced JSON
 block instead of a `tool_use`.
-*Trigger:* a new 14B-class model; re-measure with `benchmark-models.sh` before
+*Trigger:* a new 14B-class model; re-measure before
 changing the launch default.
 
 **Second Qdrant collection / index sharding.**

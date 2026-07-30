@@ -40,7 +40,7 @@ figure on one real client. They are reported separately as
 
 Token figures come from litellm's counter, which selects the cl100k tokenizer
 even for a non-OpenAI backend. Calibrated against Ollama's real
-prompt_eval_count at 1.009-1.021 (scripts/calibrate-tokens.py), so the estimate
+prompt_eval_count at 1.009-1.021 (measured against Ollama), so the estimate
 under-counts by 1-2% on tool-schema JSON. Labelled `cl100k-proxy` in every
 record; re-calibrate after a model change.
 
