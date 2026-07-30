@@ -94,7 +94,7 @@ Net: five error/warning lines on a fresh container down to one.
 
 ## 2026-07-28 audit — engine reliability is the whole problem
 
-Measured with `scripts/search-health.sh`, ten agent-style queries per run.
+Measured with a ten-query agent-style burst (script since removed; `doctor.sh` covers health).
 
 | engine | run 1 | run 2 | kind |
 |---|---|---|---|
@@ -161,7 +161,7 @@ start, and must not be "fixed" by injecting headers from LiteLLM.
 
 ### Observability
 
-`scripts/search-health.sh` reports per-engine served/failed/rate, failure
+The burst reported per-engine served/failed/rate, failure
 reasons, results per query, zero-result count, latency, and the LiteLLM
 `/v1/search` leg. Single-shot probes are misleading here — the failures are
 volume-triggered, so health can only be judged from a burst.
@@ -203,9 +203,7 @@ query speed.
 ### Validation
 
 ```bash
-./scripts/search-health.sh          # burst of 10, per-engine rates + LiteLLM leg
-./scripts/search-health.sh --quick  # 3 queries
-./scripts/search-health.sh --json   # machine-readable baseline
+./scripts/doctor.sh                 # includes SearXNG health
 ```
 
 Single-shot probes are misleading — the failures are volume-triggered. The

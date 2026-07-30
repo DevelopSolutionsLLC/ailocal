@@ -250,7 +250,7 @@ halved latency (1.46s → 0.73s) and took engine errors to zero.
 quota was exhausted by measurement bursts. It removes bot detection, not rate
 limits.
 
-Check health with a burst, never a single query: `./scripts/search-health.sh`.
+Check health with `./scripts/doctor.sh`, which probes SearXNG among the rest.
 The signal to act on is **zero-result queries**, not an individual engine at 0%.
 Audited 2026-07-28 — availability drifts, so re-measure rather than trusting any
 list:
