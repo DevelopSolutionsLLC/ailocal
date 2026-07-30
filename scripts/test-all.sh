@@ -82,6 +82,13 @@ run "tool-call repair (repairs real calls, refuses examples)" \
 # seven states are checked with no proxy and no model.
 run "E5 fallback-state classification (seven states, no live model)" \
     python3 scripts/test-fallback-state.py
+# E1. The hook READS prompts, system text, tool definitions and tool results in
+# order to measure them, so every one of those is a place a secret or a source file
+# could enter a log. These tests push secret- and prompt-shaped values through the
+# real helpers and prove they never serialize, and that the token components are
+# disjoint and sum to the reported total.
+run "E1 trace schema, redaction and token reconciliation" \
+    python3 scripts/test-request-trace.py
 
 echo
 echo "INTEGRATION"

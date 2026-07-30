@@ -118,6 +118,181 @@ TRACE_DIR = os.environ.get("AILOCAL_TRACE_DIR") or ""
 KEY = "_ailocal_trace"
 
 
+
+# ── E1: schema version, process generation, token components ─────────────────
+# Bumped whenever a FIELD'S MEANING changes, not when one is added. A consumer can
+# then trust older records instead of guessing which shape it is reading.
+EVENT_VERSION = 2
+
+# A stable identity for THIS proxy process. The startup connect-refused burst was
+# only diagnosable because every failing record shared one container lifetime; with
+# no generation marker, a restart is indistinguishable from a mid-life failure.
+# Derived from the boot timestamp of this interpreter, so it survives log rotation
+# and needs no Docker introspection from inside the container.
+_PROCESS_GENERATION = f"pg-{int(time.time())}-{os.getpid()}"
+
+# Availability reasons, so a null is never ambiguous. "Not measured" and "measured
+# as zero" must never look alike.
+UNAVAILABLE_NO_HOOK = "not_exposed_by_litellm_hook"
+UNAVAILABLE_NOT_STREAMED = "non_streaming_request"
+UNAVAILABLE_NO_BACKEND_REPLY = "no_backend_response"
+
+
+def _upstream_host(data) -> str | None:
+    """The configured upstream, WITHOUT credentials.
+
+    api_base only; any user-info or query string is dropped rather than trimmed,
+    because a base URL is one of the places a key legitimately appears.
+    """
+    try:
+        base = ((data or {}).get("litellm_params") or {}).get("api_base") or ""
+        if not base:
+            return None
+        rest = base.split("://", 1)[-1]
+        host = rest.split("/", 1)[0]
+        return host.rsplit("@", 1)[-1].split("?", 1)[0][:120] or None
+    except Exception:
+        return None
+
+
+def _est_tokens(text: str) -> int:
+    """A deliberately crude, CONSISTENT estimate: ~4 chars per token.
+
+    Estimated, never exact, and labelled as such in the record. The point is that
+    every component uses the SAME method so they reconcile with each other; swapping
+    in a real tokenizer for one component would make the parts stop summing.
+    """
+    return max(0, len(text) // 4)
+
+
+def _text_len_of(content) -> int:
+    """Character count of a message's content, WITHOUT retaining the text."""
+    if isinstance(content, str):
+        return len(content)
+    total = 0
+    if isinstance(content, list):
+        for part in content:
+            if isinstance(part, str):
+                total += len(part)
+            elif isinstance(part, dict):
+                for key in ("text", "content"):
+                    v = part.get(key)
+                    if isinstance(v, str):
+                        total += len(v)
+    return total
+
+
+def _token_components(data) -> dict:
+    """Estimated input-token components, measured by LENGTH only.
+
+    Reads message content to MEASURE it and keeps none of it — the record carries
+    integers. Components are disjoint by construction so they reconcile:
+
+      schema        tool DEFINITIONS (serialized tool list)
+      system        system prompt, including any injected persona
+      history       user + assistant turns
+      tool_result   tool RESULTS returned into the conversation
+      other         anything else structural
+
+    Tool definitions and tool results are counted separately and never both — the
+    trap being that a filtered tool payload and a large tool result are different
+    problems with different fixes.
+    """
+    d = data or {}
+    out = {
+        "schema_tokens_estimated": None,
+        "system_instruction_tokens_estimated": None,
+        "conversation_history_tokens_estimated": None,
+        "tool_result_tokens_estimated": None,
+        "other_input_tokens_estimated": None,
+        "input_tokens_estimated_total": None,
+        "token_estimate_method": "chars_div_4",
+        "token_estimate_exactness": "estimated",
+    }
+    try:
+        schema = _est_tokens(json.dumps(d.get("tools") or []))
+
+        system = 0
+        sys_field = d.get("system")
+        if isinstance(sys_field, str):
+            system += _est_tokens(sys_field)
+        elif isinstance(sys_field, list):
+            system += _est_tokens(str(_text_len_of(sys_field) * "x"))
+
+        history = tool_result = other = 0
+        for msg in (d.get("messages") or []):
+            if not isinstance(msg, dict):
+                continue
+            role = msg.get("role")
+            chars = _text_len_of(msg.get("content"))
+            if role == "system":
+                system += chars // 4
+            elif role in ("user", "assistant"):
+                # A tool RESULT arrives as a user-role message carrying
+                # tool_result blocks; attributing it to history would hide the
+                # single largest controllable contributor.
+                content = msg.get("content")
+                is_result = isinstance(content, list) and any(
+                    isinstance(p, dict) and p.get("type") in
+                    ("tool_result", "tool_use") for p in content)
+                if is_result or role == "tool":
+                    tool_result += chars // 4
+                else:
+                    history += chars // 4
+            elif role == "tool":
+                tool_result += chars // 4
+            else:
+                other += chars // 4
+
+        out.update({
+            "schema_tokens_estimated": schema,
+            "system_instruction_tokens_estimated": system,
+            "conversation_history_tokens_estimated": history,
+            "tool_result_tokens_estimated": tool_result,
+            "other_input_tokens_estimated": other,
+            "input_tokens_estimated_total": schema + system + history + tool_result + other,
+        })
+    except Exception:
+        pass
+    return out
+
+
+def _context_budget(self_registry, data, components) -> dict:
+    """Declared context, requested output reserve, and the resulting headroom.
+
+    `effective_backend_context_tokens` is deliberately NULL with a reason: the
+    declared window is routing metadata, and what Ollama actually sustains is a
+    separate measurement this hook cannot make. Reporting the declared number as
+    "effective" is exactly the conflation that makes an overflow look impossible.
+    """
+    d = data or {}
+    declared = None
+    try:
+        if self_registry is not None:
+            declared = self_registry.max_context_for(d.get("model"))
+    except Exception:
+        declared = None
+    if declared is None:
+        try:
+            declared = ((d.get("litellm_params") or {}).get("model_info") or {}) \
+                .get("max_input_tokens")
+        except Exception:
+            declared = None
+
+    requested_out = d.get("max_tokens") or d.get("max_completion_tokens")
+    total_in = components.get("input_tokens_estimated_total")
+    headroom = None
+    if isinstance(declared, int) and isinstance(total_in, int):
+        headroom = declared - total_in - (requested_out if isinstance(requested_out, int) else 0)
+    return {
+        "requested_output_tokens": requested_out if isinstance(requested_out, int) else None,
+        "declared_context_tokens": declared if isinstance(declared, int) else None,
+        "effective_backend_context_tokens": None,
+        "effective_backend_context_availability": "not_measured_by_this_hook",
+        "context_headroom_tokens": headroom,
+    }
+
+
 _FALLBACK_CFG: dict | None = None
 
 
@@ -264,6 +439,22 @@ class RequestTrace(CustomLogger):
             "messages": len((data or {}).get("messages") or []),
             "input_items": len((data or {}).get("input") or [])
                            if isinstance((data or {}).get("input"), list) else None,
+            "event_version": EVENT_VERSION,
+            "process_generation": _PROCESS_GENERATION,
+            "upstream_host": _upstream_host(data),
+            # Connection timing is NOT exposed to a pre/post-call hook, so these are
+            # explicit nulls with a reason rather than the request timestamps
+            # relabelled — which would have looked like a measurement and been one.
+            "upstream_connect_started_at": None,
+            "upstream_connect_completed_at": None,
+            "upstream_connect_ms": None,
+            "upstream_connect_availability": UNAVAILABLE_NO_HOOK,
+            "last_chunk_at": st.get("last_chunk_at"),
+            "disconnect_owner": st.get("disconnect_owner"),
+            "disconnect_owner_availability": (
+                None if st.get("disconnect_owner") else "not_determinable"),
+            **_token_components(data),
+            **_context_budget(self.registry, data, _token_components(data)),
         }
 
     # ── lifecycle ───────────────────────────────────────────────────────────
