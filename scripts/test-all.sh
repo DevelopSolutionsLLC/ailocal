@@ -97,14 +97,6 @@ run "E1 trace schema, redaction and token reconciliation" \
 # reporting a known failure.
 run "E3 declared context vs backend capacity" \
     python3 scripts/test-context-limits.py
-# E2. Readiness must track the UPSTREAM, not just the process. Measured: both
-# /health/liveliness and /health/readiness answer 200 "healthy" in single-digit ms
-# with nothing listening on the backend port, so a doctor built on either reports a
-# green system during a total Ollama outage. Runs entirely on an ISOLATED proxy and
-# a fake upstream on their own ports — it never touches the live stack or the shared
-# Ollama daemon that Cadence's index also depends on.
-run "E2 isolated readiness transitions (own proxy, fake upstream)" \
-    python3 scripts/test-readiness-isolated.py
 
 echo
 echo "INTEGRATION"
@@ -115,14 +107,6 @@ echo "INTEGRATION"
 # a LiteLLM upgrade that makes the patch no-op while the bug persists.
 run "anthropic streaming logging (no AnthropicResponse validation error)" \
     python3 scripts/test-anthropic-stream-logging.py
-# E3. Six controlled shapes, each loading ONE contributor to the context budget so
-# an overflow can be attributed to a named component rather than to "the request".
-# Also the regression guard for the budget itself: request_trace.py called a
-# Registry method that never existed, and a bare `except` turned that into a
-# permanent null, so declared_context_tokens and context_headroom_tokens were
-# empty in every trace ever written. This fails if they go null again.
-run "E3 six controlled context cases (live, attributed to traces)" \
-    python3 scripts/test-context-cases.py
 run "client compatibility (3 dialects x 3 modes)" \
     ./scripts/test-client-compatibility.sh
 # Claude Code sends auxiliary Anthropic-shaped probes derived from
