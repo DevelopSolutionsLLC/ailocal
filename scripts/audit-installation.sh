@@ -201,8 +201,7 @@ print()
 print("  Reachability is a SEPARATE question — registration is not availability.")
 print("  Codex: MCP is registered and does NOT reach the model (LiteLLM drops")
 print("  namespace tools; flattened names are rejected by Codex's router,")
-print("  openai/codex#20652). Run ./scripts/mcp-reachability.sh for the full")
-print("  configured -> transmitted -> emitted -> accepted table.")
+print("  openai/codex#20652). Measured and closed — do not re-probe.")
 PY
 
 # ── LiteLLM ─────────────────────────────────────────────────────────────────

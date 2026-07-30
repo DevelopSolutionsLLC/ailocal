@@ -66,7 +66,6 @@ Consequences that fall out of that choice:
 | `config/litellm/session_observer.py` | Records what was asked and which tools ran |
 | `scripts/verify-session.py` | Host-side verification and classification |
 | `scripts/gateway-metrics.py` | Aggregates the metric stream |
-| `scripts/warmup.sh` | Pays init cost up front, measures the benefit |
 
 ### Registry
 
@@ -305,7 +304,7 @@ python3 scripts/test-session-observer.py   # three dialects
 ./scripts/test-client-compatibility.sh     # 3 dialects x 3 modes
 python3 scripts/test-persona-injection.py
 ./scripts/sync-models.sh                   # must be idempotent
-./scripts/warmup.sh
+./scripts/preload-model.sh
 python3 scripts/gateway-metrics.py --since 30m
 ./scripts/benchmark-tool-gateway.sh        # RUNS=2+ for a latency claim
 ```
