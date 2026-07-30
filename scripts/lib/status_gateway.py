@@ -32,4 +32,4 @@ else:
     dropped = d.get("dropped_groups") or []
     if dropped:
         print(f"                 removed: {', '.join(dropped)}")
-    print(f"  {len(rows)} request(s) seen; ./scripts/tool-summary.sh for detail")
+    print(f"  {len(rows)} request(s) seen; ./scripts/gateway-metrics.py for detail")

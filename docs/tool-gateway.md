@@ -105,7 +105,7 @@ That last one is not theoretical. Codex declares web search as a bare
 `{"type":"web_search"}` with no name. An earlier revision dropped it — which
 would have killed SearXNG search silently, the worst possible failure for a
 change sold as a performance win. It was caught by replaying a real captured
-payload (`scripts/replay-tool-captures.py`), not by a unit test.
+payload captured from a real client, not by a unit test.
 
 ---
 
@@ -141,7 +141,7 @@ of 71% and the truth of **18%** for Codex.
 proxy image, so every `tokens_est` is a proxy figure and is labelled
 `tokenizer: "cl100k-proxy"`.
 
-`scripts/calibrate-tokens.py` measures the error by sending the real captured
+The error was measured by sending the real captured
 payloads to Ollama and reading `prompt_eval_count` — the real tokenizer on the
 real text:
 
@@ -212,8 +212,6 @@ The measurement validates itself before it is allowed to report savings.
 
 ```
 ./scripts/test-tool-gateway.sh        # known-answer tests, host + container
-./scripts/replay-tool-captures.sh     # real captures through the real policy
-python3 scripts/calibrate-tokens.py   # token estimate vs Ollama ground truth
 ./scripts/benchmark-tool-gateway.sh   # A/B on the real client and model
 ```
 

@@ -36,7 +36,7 @@ services:
     # and runtime must name the same release.
     #
     # To upgrade: pull the new digest, re-run scripts/test-all.sh and
-    # scripts/streaming-ab.py, then update this digest, AILOCAL_LITELLM_VERSION
+    # scripts/test-all.sh, then update this digest, AILOCAL_LITELLM_VERSION
     # below, and the version in AGENTS.md together.
     image: ghcr.io/berriai/litellm@sha256:a1745e629abfb17d434426ff48b115f54f4f4c4a0f5af241de569e93c63c411e
     container_name: ailocal-litellm

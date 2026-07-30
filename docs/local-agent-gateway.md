@@ -193,7 +193,7 @@ that discards nothing, `tools_kept == tools_kept_by_gateway`.
 ### Token honesty
 
 `litellm.token_counter` selects cl100k even for an `ollama_chat/qwen3-coder`
-deployment. `scripts/calibrate-tokens.py` measures the error against Ollama's
+deployment. The estimate was calibrated against Ollama's
 real `prompt_eval_count`: **1.009–1.021**, so the estimate under-counts by 1–2%.
 Every record is labelled `cl100k-proxy`.
 
