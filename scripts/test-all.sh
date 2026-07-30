@@ -24,15 +24,26 @@ CONTAINER="${AILOCAL_LITELLM_CONTAINER:-ailocal-litellm}"
 pass=0; fail=0
 declare -a FAILED=()
 
+# A gate nobody runs protects nothing, so every check reports its own duration and
+# anything at or over SLOW_S is flagged. Timing per check, not just in total, is what
+# makes the one slow check findable instead of the whole gate feeling slow.
+SLOW_S="${AILOCAL_GATE_SLOW_S:-10}"
+SLOW=()
+
 run() { # $1=label  $2..=command
   local label="$1"; shift
-  local out rc
+  local out rc t0 t1 secs
+  t0=$(date +%s)
   out="$("$@" 2>&1)"; rc=$?
+  t1=$(date +%s); secs=$((t1 - t0))
+  local mark=""
+  if [ "$secs" -ge "$SLOW_S" ]; then mark=" \033[33m[${secs}s]\033[0m"; SLOW+=("$label (${secs}s)")
+  elif [ "$secs" -ge 2 ]; then mark=" (${secs}s)"; fi
   if [ "$rc" -eq 0 ]; then
-    printf '  \033[32mPASS\033[0m  %s\n' "$label"
+    printf '  \033[32mPASS\033[0m  %s'"$mark"'\n' "$label"
     pass=$((pass+1))
   else
-    printf '  \033[31mFAIL\033[0m  %s\n' "$label"
+    printf '  \033[31mFAIL\033[0m  %s'"$mark"'\n' "$label"
     printf '%s\n' "$out" | grep -E 'FAIL|Error|error|Traceback|not idempotent' \
       | head -6 | sed 's/^/          /'
     fail=$((fail+1)); FAILED+=("$label")
@@ -114,8 +125,15 @@ echo "INTEGRATION"
 # a LiteLLM upgrade that makes the patch no-op while the bug persists.
 run "anthropic streaming logging (no AnthropicResponse validation error)" \
     python3 scripts/test-anthropic-stream-logging.py
-run "client compatibility (3 dialects x 3 modes)" \
-    ./scripts/test-client-compatibility.sh
+# MOVED TO --full. This drives nine REAL generations through a local model and
+# measured 51s of a 73s gate — the single reason the gate was slow enough to skip.
+# The cheap probe below still covers all three dialects on every run, so a broken
+# route is caught in seconds; the full matrix proves generation quality, which is
+# what --full is for.
+if [ -n "$FULL" ]; then
+  run "client compatibility (3 dialects x 3 modes)" \
+      ./scripts/test-client-compatibility.sh
+fi
 # Claude Code sends auxiliary Anthropic-shaped probes derived from
 # ANTHROPIC_BASE_URL; LiteLLM implements none of them, so HEAD /api/hello 404'd.
 # Asserts the probe answers 200 AND that nothing else moved to make that true —
@@ -223,4 +241,9 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 echo " REGRESSION GATE: all $pass checks passed"
-[ -n "$FULL" ] || echo " (add --full for the end-to-end client benchmark)"
+  if [ ${#SLOW[@]} -gt 0 ]; then
+    printf " %d check(s) at/over %ss — keep the gate fast enough to run:\n" "${#SLOW[@]}" "$SLOW_S"
+    printf "   %s\n" "${SLOW[@]}"
+  fi
+  : ""
+[ -n "$FULL" ] || echo " (add --full for the client-compatibility matrix and end-to-end benchmark)"
