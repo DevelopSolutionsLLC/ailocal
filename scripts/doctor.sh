@@ -124,6 +124,36 @@ fi
 step "Service endpoints"
 if docker ps --format '{{.Names}}' | grep -q '^ailocal-litellm$'; then
   check_http "LiteLLM" "http://localhost:4000/health/liveliness" 5
+
+  # LIVENESS IS NOT REACHABILITY, and neither is /health/readiness. Measured in
+  # scripts/test-readiness-isolated.py against an isolated proxy whose upstream
+  # port had nothing listening on it: /health/liveliness returns 200 in ~2ms and
+  # /health/readiness returns {"status":"healthy"} in ~1ms. Both describe the
+  # proxy's own process, never the backend. So a doctor built on either one
+  # prints "healthy" during a total Ollama outage and sends the operator to the
+  # wrong layer.
+  #
+  # `ollama list` above is necessary and still not sufficient: it runs on the
+  # HOST. LiteLLM reaches Ollama as host.docker.internal from inside a container,
+  # and that path can fail on its own (missing host-gateway mapping, a daemon
+  # bound to 127.0.0.1 only, a firewall) while the host CLI keeps working.
+  #
+  # So probe it the way LiteLLM actually uses it — from inside the container,
+  # against $OLLAMA_URL — which is exactly the discipline already applied to
+  # SearXNG below.
+  if docker exec ailocal-litellm python3 -c "
+import json,os,sys,urllib.request
+base=os.environ.get('OLLAMA_URL','http://host.docker.internal:11434').rstrip('/')
+try:
+    d=json.load(urllib.request.urlopen(base+'/api/tags',timeout=10))
+except Exception as e:
+    print(f'{type(e).__name__}: {e}',file=sys.stderr); sys.exit(1)
+sys.exit(0 if isinstance(d.get('models'),list) else 1)" 2>/dev/null; then
+    info "Ollama reachable FROM LiteLLM (\$OLLAMA_URL)"
+  else
+    error "LiteLLM cannot reach Ollama — every capability will fail at request time"
+    ok=false
+  fi
 else
   echo "  — LiteLLM endpoint skipped (container not running)"
 fi

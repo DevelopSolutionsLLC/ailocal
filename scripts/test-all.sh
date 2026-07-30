@@ -89,14 +89,22 @@ run "E5 fallback-state classification (seven states, no live model)" \
 # disjoint and sum to the reported total.
 run "E1 trace schema, redaction and token reconciliation" \
     python3 scripts/test-request-trace.py
-# E3. Declared num_ctx vs what the backend actually serves. This is EXPECTED TO FAIL
-# until `ailocal-embeddings` num_ctx comes down from 8192 to 2048: nomic-embed-text
-# silently CLIPS at 2048 rather than erroring, so an over-declaration yields
-# successful-looking embeddings of truncated text. The correction lives in
-# config/litellm/config.yaml, which currently carries user-owned uncommitted
-# changes, so the test reports the one-line patch instead of applying it.
+# E3. Declared num_ctx vs what the backend actually serves. nomic-embed-text silently
+# CLIPS at 2048 rather than erroring, so an over-declaration yields successful-looking
+# embeddings of truncated text — no error to notice, just quietly worse vectors. The
+# 8192 over-declaration was corrected at its source in config/profiles/64gb.yaml
+# (db8c9e6) and regenerated, so this now guards the corrected state rather than
+# reporting a known failure.
 run "E3 declared context vs backend capacity" \
     python3 scripts/test-context-limits.py
+# E2. Readiness must track the UPSTREAM, not just the process. Measured: both
+# /health/liveliness and /health/readiness answer 200 "healthy" in single-digit ms
+# with nothing listening on the backend port, so a doctor built on either reports a
+# green system during a total Ollama outage. Runs entirely on an ISOLATED proxy and
+# a fake upstream on their own ports — it never touches the live stack or the shared
+# Ollama daemon that Cadence's index also depends on.
+run "E2 isolated readiness transitions (own proxy, fake upstream)" \
+    python3 scripts/test-readiness-isolated.py
 
 echo
 echo "INTEGRATION"
