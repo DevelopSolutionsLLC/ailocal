@@ -19,9 +19,9 @@
 #                                      profile drops nothing and this proves the
 #                                      route works, NOT that the profile is right.
 #
-# Usage: ./scripts/test-client-compatibility.sh
+# Usage: ./scripts/tests/client-compatibility.sh
 set -uo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 . scripts/lib/compose.sh
 

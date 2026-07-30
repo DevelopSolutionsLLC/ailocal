@@ -12,7 +12,7 @@ behavior that matters and is immune to model (dis)obedience:
   - completion / embeddings (no persona file) and non-chat call_types: untouched.
   - injection is idempotent (persona never doubled).
 
-Run: python3 scripts/test-persona-injection.py   (stdlib only; exit 1 on failure)
+Run: python3 scripts/tests/persona-injection.py   (stdlib only; exit 1 on failure)
 """
 
 import asyncio
@@ -30,7 +30,7 @@ sys.modules["litellm"] = types.ModuleType("litellm")
 sys.modules["litellm.integrations"] = types.ModuleType("litellm.integrations")
 sys.modules["litellm.integrations.custom_logger"] = _clog
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("AILOCAL_INSTRUCTIONS_DIR", "/nonexistent")   # _load_personas → {} (we override)
 _spec = importlib.util.spec_from_file_location(
     "persona_injector", os.path.join(ROOT, "config/litellm/persona_injector.py"))

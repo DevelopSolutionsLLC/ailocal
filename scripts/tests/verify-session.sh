@@ -6,7 +6,7 @@
 # The case that matters most is UNVERIFIED->3: a verification layer whose
 # "could not check" is scriptable as success is worse than no layer.
 set -uo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 TMP="$(mktemp -d)"; LED="$TMP/ledgers"; mkdir -p "$LED"
 fails=0

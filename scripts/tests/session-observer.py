@@ -8,7 +8,7 @@ and a first user message whose text began with the client's injected
 <system-reminder> block carrying the whole of the user's global AGENTS.md. That
 last detail is why _strip_injected exists, and it is pinned here.
 
-Run: python3 scripts/test-session-observer.py   (stdlib only; exit 1 on failure)
+Run: python3 scripts/tests/session-observer.py   (stdlib only; exit 1 on failure)
 """
 
 import importlib.util
@@ -27,7 +27,7 @@ except ImportError:
     sys.modules["litellm.integrations"] = types.ModuleType("litellm.integrations")
     sys.modules["litellm.integrations.custom_logger"] = _clog
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.pop("AILOCAL_SESSION_LEDGER", None)      # never write during tests
 MODULE = os.environ.get("AILOCAL_OBSERVER_MODULE",
                         os.path.join(ROOT, "config/litellm/session_observer.py"))
