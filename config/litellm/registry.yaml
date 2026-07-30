@@ -576,8 +576,23 @@ clients:
       user_agent_contains: ["claude-cli"]
       headers: {x-app: cli}
     routes: [/v1/messages]
-    # REAL: 61 tools / 104,202 B / 24,448 Qwen tokens observed on turn 1.
-    observed_payload: {tools: 61, bytes: 104202, real_tokens: 24448}
+    # REAL, re-measured 2026-07-29 on a live headless `/v1/messages` turn:
+    #   39 tools / 93,266 B / 21,438 est. tokens arriving, and after this profile's
+    #   filtering 26 tools / 31,472 B / 6,955 est. tokens reach the backend.
+    #
+    # SUPERSEDES a stale 61 tools / 104,202 B / 24,448 tokens recorded here. That
+    # figure was real when taken and is no longer true of any shipping Claude Code
+    # build, and it was actively misleading: it was cited as the reason context
+    # overflow "must" be schema-driven, when the measured schema cost after
+    # filtering is 6,955 tokens against a 98,304-token window. Attributing an
+    # overflow to 7K of schemas points every fix at the wrong layer.
+    #
+    # Re-measure with: run one headless claude-local turn, then read
+    # `tool_gateway_metric` from the proxy log — do NOT copy these numbers forward
+    # across a client upgrade.
+    observed_payload: {tools: 39, bytes: 93266, real_tokens: 21438}
+    observed_payload_filtered: {tools: 26, bytes: 31472, real_tokens: 6955}
+    observed_payload_measured_on: "2026-07-29"
     drop_groups: [orchestration, scheduling, worktree]
     keep_groups: [edit_and_run, search, lsp, mcp_plumbing, planning]
     warmup: [lsp, grepai]
