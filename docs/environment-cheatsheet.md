@@ -164,9 +164,17 @@ architecture may delegate; risky change → implementation + review.
 ### LSP
 
 **Claude uses NATIVE LSP** (since 2026-07-28) — `ENABLE_LSP_TOOL=1` in the
-deployed `settings.json` plus official `*-lsp` plugins, provisioned into BOTH
-`~/.claude` and `~/.config/ailocal/claude` by `install-clients.sh`. One `LSP`
-tool, nine operations, and automatic diagnostics after every edit.
+deployed `settings.json` plus official `*-lsp` plugins. One `LSP` tool, nine
+operations, and automatic diagnostics after every edit.
+
+**Ownership split.** ailocal provides the minimum local-client compatibility
+baseline required by the isolated profiles it creates: the **Python** plugin
+(`pyright-lsp`) in `~/.config/ailocal/claude`, so `claude-local` has a working
+LSP with Cadence absent. Cadence provides repository intelligence, broader
+language tooling (TypeScript/Go/C, both roots), cross-client integration and
+policy — and detects and REUSES the baseline rather than reinstalling it.
+`scripts/test-lsp-baseline.py` proves the ailocal half by driving
+pyright-langserver over stdio against a real repo file.
 
 The mcpls MCP bridge was retained for **codex-local** (Codex has no native LSP),
 but as of 2026-07-29 that path is **dead end-to-end** — Codex's router rejects

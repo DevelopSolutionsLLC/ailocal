@@ -530,18 +530,62 @@ if has_target "claude"; then
   echo "  Plain 'claude' in this or any other shell is untouched — still the cloud session."
 fi
 
-# ── Language servers: delegated to Cadence ─────────────────────────────────
-# LSP provisioning used to live here. That was the wrong home and it is now
-# `cadence lsp install`.
+# ── Minimum Python LSP baseline (ailocal-owned) ────────────────────────────
+# ailocal provides the minimum local-client compatibility baseline required by
+# the isolated profiles it creates. Cadence provides repository intelligence,
+# broader language tooling, cross-client integration, and policy.
 #
-# The tell: a user on hosted Claude with no LiteLLM never runs this installer,
-# so they would never get LSP — even though nothing about language servers is
-# specific to local inference. Cadence already owned the other half (mcpls.toml
-# for the codex-local bridge), so both halves now sit in one place.
+# WHY THIS EXISTS AT ALL. The generated settings.json for the isolated root sets
+# ENABLE_LSP_TOOL=1, but plugins are what put a language server behind that tool.
+# Delegating ALL plugin provisioning to Cadence meant an ailocal-only machine got
+# the LSP tool switched on with nothing behind it — the fail-quiet shape this
+# project avoids, and worse than leaving it off, because the tool advertises a
+# capability that cannot answer.
 #
-# ailocal owns local inference: LiteLLM, Ollama, routing, personas, capabilities,
-# the gateway. It does not own developer tooling. Same reasoning as the MCP
-# delegation immediately below.
+# ONE LANGUAGE, DELIBERATELY. Python, because this repository is Python and its
+# own agents edit it. Everything else — TypeScript, Go, C — stays Cadence's, so
+# there is exactly one owner per layer and no duplicate plugin management.
+#
+# A plugin only wires up a binary the user already has, so this checks for the
+# server before installing the plugin rather than advertising a dead tool.
+lsp_baseline() {
+  local root="$HOME/.config/ailocal/claude"
+  command -v claude >/dev/null 2>&1 || { skip "claude not on PATH — no LSP baseline"; return 0; }
+  [ -d "$root" ] || { skip "$root missing — no LSP baseline"; return 0; }
+
+  if ! command -v pyright-langserver >/dev/null 2>&1; then
+    warn "pyright-langserver not installed — claude-local has NO Python LSP."
+    warn "  Install it, then re-run this script:  npm i -g pyright"
+    return 0
+  fi
+
+  # Idempotent: the marketplace update and install are both no-ops when current,
+  # but checking first keeps a re-run quiet and fast.
+  if CLAUDE_CONFIG_DIR="$root" claude plugin list 2>/dev/null \
+       | grep -q 'pyright-lsp@claude-plugins-official'; then
+    info "Python LSP baseline already present (pyright-lsp)"
+    return 0
+  fi
+
+  CLAUDE_CONFIG_DIR="$root" claude plugin marketplace update \
+    claude-plugins-official >/dev/null 2>&1 || true
+  if CLAUDE_CONFIG_DIR="$root" claude plugin install \
+       pyright-lsp@claude-plugins-official >/dev/null 2>&1; then
+    info "Python LSP baseline installed (pyright-lsp)"
+  else
+    warn "pyright-lsp install failed — claude-local has no Python LSP"
+  fi
+}
+
+if has_target "claude"; then
+  step "Python LSP baseline (ailocal-owned minimum)"
+  lsp_baseline
+fi
+
+# ── Broader language servers: delegated to Cadence ─────────────────────────
+# Cadence owns everything beyond the Python minimum above: additional languages,
+# repository-specific configuration, and the advanced retrieval layer. It detects
+# and reuses the baseline rather than reinstalling it.
 if has_target "claude" && command -v cadence >/dev/null 2>&1; then
   step "Language servers (delegated to Cadence)"
   if cadence lsp install >/tmp/ailocal-lsp-install.log 2>&1; then
@@ -550,7 +594,7 @@ if has_target "claude" && command -v cadence >/dev/null 2>&1; then
     warn "cadence lsp install failed — see /tmp/ailocal-lsp-install.log"
   fi
 elif has_target "claude"; then
-  skip "cadence not on PATH — LSP not provisioned (install Cadence, then: cadence lsp install)"
+  skip "cadence not on PATH — Python baseline only (Cadence adds TS/Go/C + retrieval)"
 fi
 
 # ── Re-apply Cadence-owned MCP registrations ───────────────────────────────
