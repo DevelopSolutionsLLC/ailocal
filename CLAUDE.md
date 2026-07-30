@@ -248,6 +248,18 @@ it. Then `./scripts/doctor.sh` (0=healthy, 2=degraded), `./scripts/smoke-test.sh
 on a second run. After editing a persona `.md`, restart the proxy — the hook reads
 them at load.
 
+**Liveness and readiness prove the PROXY is running, not that Ollama is reachable.**
+Measured against an isolated proxy with nothing listening on its backend port:
+`/health/liveliness` returns 200 in ~2 ms and `/health/readiness` returns
+`{"status":"healthy"}` in ~1 ms. Both describe LiteLLM's own process, so a health
+check built on either reports a green system during a total Ollama outage. Only
+`/health` dials the backend. A host-side `ollama list` is also insufficient — it
+runs on the HOST, while LiteLLM reaches Ollama as `host.docker.internal` from
+inside a container, and that path fails on its own (missing host-gateway mapping,
+a daemon bound to 127.0.0.1, a firewall) while the CLI keeps answering. Validate
+from INSIDE the container against `$OLLAMA_URL`; `doctor.sh` now does, and
+`scripts/test-readiness-isolated.py` holds the evidence.
+
 Never invoke `deploy/litellm/docker-compose.yml` on its own — it references a
 service defined elsewhere and fails as an invalid Compose project. Use
 `./scripts/start.sh`, which loads the full project and `.env` and restarts on
