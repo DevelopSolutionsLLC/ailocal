@@ -273,6 +273,11 @@ investigation ends.
 
 ## Conventions
 
+Engineering conventions shared with Cadence — repository layout, XDG usage,
+installer and CLI contracts, generated-file rules, the maturity checklist — live in
+`cadence/docs/standards/developsolutions-repository-standard.md`. Repo-specific rules follow.
+
+
 Shell: `set -euo pipefail`, reuse the `info/warn/step/backup` helpers. Python: stdlib
 only. Never commit `.env` or secrets; ports bind `127.0.0.1` only. No Claude commit
 attribution — Victor's identity only. Never `git push` without explicit approval.
