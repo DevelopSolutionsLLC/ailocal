@@ -37,7 +37,7 @@ shape is required. Two earlier repro attempts came back clean for exactly this
 reason, which is why the shape is pinned here with a comment rather than left to
 whoever edits this next.
 
-Usage: python3 scripts/test-anthropic-stream-logging.py
+Usage: python3 scripts/tests/anthropic-stream-logging.py
 Exit 0 = pass. Requires the stack running.
 """
 
@@ -49,7 +49,7 @@ import time
 import urllib.error
 import urllib.request
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BASE = "http://127.0.0.1:4000"
 CONTAINER = "ailocal-litellm"
 failures = []

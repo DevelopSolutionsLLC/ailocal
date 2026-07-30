@@ -3,7 +3,7 @@
 # the real litellm and the mounted registry all exist. The host interpreter has
 # no PyYAML, so a host run would skip the substance; this refuses to pretend.
 set -euo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CONTAINER="${AILOCAL_LITELLM_CONTAINER:-ailocal-litellm}"
 docker ps --format '{{.Names}}' | grep -qx "$CONTAINER" || {
   echo "$CONTAINER is not running — start the stack first."; exit 1; }

@@ -74,32 +74,32 @@ fi
 echo
 echo "UNIT / BEHAVIOUR"
 run "capability registry (+ no-hard-coded-literals assertion)" \
-    ./scripts/test-capability-registry.sh
+    bash scripts/tests/capability-registry.sh
 run "capability negotiator (byte accounting, modes, passthrough)" \
-    ./scripts/test-tool-gateway.sh
+    bash scripts/tests/tool-gateway.sh
 run "session observer (three dialects)" \
-    python3 scripts/test-session-observer.py
+    python3 scripts/tests/session-observer.py
 run "verification classification (+ exit codes)" \
-    ./scripts/test-verify-session.sh
+    bash scripts/tests/verify-session.sh
 run "persona injection" \
-    python3 scripts/test-persona-injection.py
+    python3 scripts/tests/persona-injection.py
 # Both directions matter: a repair layer that fires on a tutorial fence would
 # execute commands the model never intended.
 run "tool-call repair (repairs real calls, refuses examples)" \
-    python3 scripts/test-tool-repair.py
+    python3 scripts/tests/tool-repair.py
 # E5. The message this replaces ("No fallback model group found ... Fallbacks=[...]")
 # was true and misleading: implementation is the TERMINAL tier, so having no chain is
 # intentional, and the real fault was upstream connectivity. Pure functions, so all
 # seven states are checked with no proxy and no model.
 run "E5 fallback-state classification (seven states, no live model)" \
-    python3 scripts/test-fallback-state.py
+    python3 scripts/tests/fallback-state.py
 # E1. The hook READS prompts, system text, tool definitions and tool results in
 # order to measure them, so every one of those is a place a secret or a source file
 # could enter a log. These tests push secret- and prompt-shaped values through the
 # real helpers and prove they never serialize, and that the token components are
 # disjoint and sum to the reported total.
 run "E1 trace schema, redaction and token reconciliation" \
-    python3 scripts/test-request-trace.py
+    python3 scripts/tests/request-trace.py
 # E3. Declared num_ctx vs what the backend actually serves. nomic-embed-text silently
 # CLIPS at 2048 rather than erroring, so an over-declaration yields successful-looking
 # embeddings of truncated text — no error to notice, just quietly worse vectors. The
@@ -107,14 +107,14 @@ run "E1 trace schema, redaction and token reconciliation" \
 # (db8c9e6) and regenerated, so this now guards the corrected state rather than
 # reporting a known failure.
 run "E3 declared context vs backend capacity" \
-    python3 scripts/test-context-limits.py
+    python3 scripts/tests/context-limits.py
 # The isolated claude-local root sets ENABLE_LSP_TOOL=1, but a plugin is what puts
 # a server behind that tool. Provisioning used to be delegated entirely to
 # Cadence, so an ailocal-only machine got the tool switched on with nothing behind
 # it. This drives pyright-langserver over stdio against a real repo file and
 # requires real symbols back — presence of a plugin is not capability.
 run "Python LSP baseline for claude-local (real documentSymbol)" \
-    python3 scripts/test-lsp-baseline.py
+    python3 scripts/tests/lsp-baseline.py
 
 echo
 echo "INTEGRATION"
@@ -124,7 +124,7 @@ echo "INTEGRATION"
 # (no validation error) rather than "the patch is installed", so it also catches
 # a LiteLLM upgrade that makes the patch no-op while the bug persists.
 run "anthropic streaming logging (no AnthropicResponse validation error)" \
-    python3 scripts/test-anthropic-stream-logging.py
+    python3 scripts/tests/anthropic-stream-logging.py
 # MOVED TO --full. This drives nine REAL generations through a local model and
 # measured 51s of a 73s gate — the single reason the gate was slow enough to skip.
 # The cheap probe below still covers all three dialects on every run, so a broken
@@ -132,14 +132,14 @@ run "anthropic streaming logging (no AnthropicResponse validation error)" \
 # what --full is for.
 if [ -n "$FULL" ]; then
   run "client compatibility (3 dialects x 3 modes)" \
-      ./scripts/test-client-compatibility.sh
+      bash scripts/tests/client-compatibility.sh
 fi
 # Claude Code sends auxiliary Anthropic-shaped probes derived from
 # ANTHROPIC_BASE_URL; LiteLLM implements none of them, so HEAD /api/hello 404'd.
 # Asserts the probe answers 200 AND that nothing else moved to make that true —
 # /v1/models stays authenticated, health routes stay put, unknown paths still 404.
 run "client compatibility probes (/api/hello, no side effects)" \
-    ./scripts/test-compat-routes.sh
+    bash scripts/tests/compat-routes.sh
 
 echo
 echo "INVARIANTS"
@@ -219,7 +219,7 @@ run "every registered hook imports inside the proxy image" hooks_importable
 # Re-running an installer must change nothing. This is the check that catches an
 # installation rotting into duplicate MCP stanzas / provider groups / shell
 # blocks — invisible until something picks the wrong duplicate.
-run "installers are idempotent" ./scripts/test-idempotent-install.sh
+run "installers are idempotent" bash scripts/tests/idempotent-install.sh
 
 # The audit exits 3 when it finds actionable items. That is informational here,
 # not a gate failure: untracked notes are a normal working state. Only a hard

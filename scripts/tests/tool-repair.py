@@ -10,7 +10,7 @@ fence is a tutorial example. These tests pin both directions, because a repair
 layer that fires on documentation would execute commands the model never
 intended, which is strictly worse than the bug it fixes.
 
-Run: python3 scripts/test-tool-repair.py   (stdlib only; exit 1 on failure)
+Run: python3 scripts/tests/tool-repair.py   (stdlib only; exit 1 on failure)
 """
 import importlib.util
 import os
@@ -28,7 +28,7 @@ except ImportError:
     sys.modules["litellm.integrations"] = types.ModuleType("litellm.integrations")
     sys.modules["litellm.integrations.custom_logger"] = _c
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 spec = importlib.util.spec_from_file_location(
     "tool_repair", os.environ.get("AILOCAL_TOOL_REPAIR",
                                   os.path.join(ROOT, "config/litellm/tool_repair.py")))

@@ -17,9 +17,9 @@
 # 5-7 exist because the failure mode worth catching is not "the probe 404s" but
 # "someone made the probe work by loosening auth or routing for everything else".
 #
-# Usage: ./scripts/test-compat-routes.sh
+# Usage: ./scripts/tests/compat-routes.sh
 set -uo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 PROXY="${AILOCAL_PROXY_URL:-http://127.0.0.1:4000}"

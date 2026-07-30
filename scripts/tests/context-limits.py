@@ -41,7 +41,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
+REPO = Path(__file__).resolve().parent.parent.parent
 CONFIG = REPO / "config" / "litellm" / "config.yaml"
 OLLAMA = "http://127.0.0.1:11434"
 

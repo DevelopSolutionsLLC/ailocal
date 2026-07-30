@@ -24,7 +24,7 @@ import re
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
+REPO = Path(__file__).resolve().parent.parent.parent
 TRACE = REPO / "config" / "litellm" / "request_trace.py"
 
 failures: list[str] = []
