@@ -40,6 +40,7 @@ import json
 import os
 import time
 import uuid
+from pathlib import Path
 
 from litellm.integrations.custom_logger import CustomLogger
 
@@ -115,6 +116,56 @@ TRACE_DIR = os.environ.get("AILOCAL_TRACE_DIR") or ""
 # every hook for the same request, so this is the join key across hooks without
 # mutating anything the backend sees.
 KEY = "_ailocal_trace"
+
+
+_FALLBACK_CFG: dict | None = None
+
+
+def _fallback_chains() -> tuple[list, list]:
+    """The router's declared chains, read once from the mounted config.
+
+    Read from config rather than hardcoded so a routing edit cannot leave the
+    classifier describing a hierarchy that no longer exists. Failure to read is not
+    fatal — an unclassified failure record is still better than no record.
+    """
+    global _FALLBACK_CFG
+    if _FALLBACK_CFG is None:
+        _FALLBACK_CFG = {"fallbacks": [], "context_window_fallbacks": []}
+        try:
+            import yaml
+            for candidate in ("/app/config.yaml",
+                              str(Path(__file__).resolve().parent / "config.yaml")):
+                p = Path(candidate)
+                if p.is_file():
+                    doc = yaml.safe_load(p.read_text()) or {}
+                    rs = doc.get("router_settings") or {}
+                    _FALLBACK_CFG = {
+                        "fallbacks": rs.get("fallbacks") or [],
+                        "context_window_fallbacks": rs.get("context_window_fallbacks") or [],
+                    }
+                    break
+        except Exception:
+            pass
+    return (_FALLBACK_CFG["fallbacks"], _FALLBACK_CFG["context_window_fallbacks"])
+
+
+def _classify_fallback(group, error_type) -> dict:
+    """Bounded categorical fallback fields for a failure record."""
+    if not group:
+        return {}
+    try:
+        import fallback_state
+        fb, cw = _fallback_chains()
+        kind = (fallback_state.KIND_CONTEXT_WINDOW
+                if error_type == "ContextWindowExceededError"
+                else fallback_state.KIND_GENERAL)
+        st = fallback_state.classify(group=str(group), kind=kind,
+                                     error_type=error_type,
+                                     fallbacks=fb, context_window_fallbacks=cw)
+        st["fallback_explanation"] = fallback_state.explain(st, str(group))
+        return st
+    except Exception:
+        return {}
 
 
 def emit(record):
@@ -385,9 +436,17 @@ class RequestTrace(CustomLogger):
                 "error": str(original_exception)[:600],
                 "traceback": (traceback_str or "")[:1500],
             })
+            # FALLBACK CLASSIFICATION. LiteLLM's own message for this case reads
+            # "No fallback model group found for original model_group=X" and prints
+            # the whole routing table beside it, which sends the reader to read
+            # routing config while the real fault was upstream connectivity.
+            # `ailocal-implementation` is the TERMINAL tier the other groups fall
+            # back TO, so having no chain is intentional, not a lookup failure.
+            rec.update(_classify_fallback(rec.get("model"),
+                                          type(original_exception).__name__))
             self._write(rec)
             emit({k: rec[k] for k in ("request_id", "phase", "error_type",
-                                      "total_ms", "model")})
+                                      "total_ms", "model", "fallback_state")})
         except Exception as exc:
             emit({"event": "trace_failure_failed", "error": str(exc)})
         return None
