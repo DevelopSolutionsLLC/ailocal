@@ -115,6 +115,14 @@ echo "INTEGRATION"
 # a LiteLLM upgrade that makes the patch no-op while the bug persists.
 run "anthropic streaming logging (no AnthropicResponse validation error)" \
     python3 scripts/test-anthropic-stream-logging.py
+# E3. Six controlled shapes, each loading ONE contributor to the context budget so
+# an overflow can be attributed to a named component rather than to "the request".
+# Also the regression guard for the budget itself: request_trace.py called a
+# Registry method that never existed, and a bare `except` turned that into a
+# permanent null, so declared_context_tokens and context_headroom_tokens were
+# empty in every trace ever written. This fails if they go null again.
+run "E3 six controlled context cases (live, attributed to traces)" \
+    python3 scripts/test-context-cases.py
 run "client compatibility (3 dialects x 3 modes)" \
     ./scripts/test-client-compatibility.sh
 # Claude Code sends auxiliary Anthropic-shaped probes derived from
