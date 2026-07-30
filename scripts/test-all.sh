@@ -60,7 +60,7 @@ if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
   echo "  $CONTAINER is not running."
   echo "  The registry, negotiator and compatibility suites all need it. Refusing"
   echo "  to run a reduced set and report success — start the stack first:"
-  echo "      ./scripts/start.sh"
+  echo "      ailocal start"
   exit 1
 fi
 health="$(docker inspect "$CONTAINER" --format '{{.State.Health.Status}}')"

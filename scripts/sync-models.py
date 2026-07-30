@@ -9,7 +9,7 @@ Single source of truth (both TRACKED — no gitignored intermediate):
   config/clients.yaml   WHICH capability each client surface uses (launch defaults, Codex
                         profiles, Continue entries, compat aliases).
 
-Running ./scripts/sync-models.sh regenerates, deterministically:
+Running `ailocal sync` regenerates, deterministically:
   config/litellm/config.yaml         model_list + model_group_alias (between markers)
   config/capabilities.generated.json resolved capabilities (for `ailocal status`)
   config/clients/model_catalog.json  Codex picker (capability slugs)
@@ -753,7 +753,7 @@ def main():
     ok("codex config + profiles") if regen_codex(models, clients) else warn("codex skipped")
     ok("continue/config.json") if regen_continue(models, clients) else warn("continue skipped")
 
-    step("Done — restart LiteLLM (./scripts/start.sh) and re-run ./scripts/install-clients.sh "
+    step("Done — restart LiteLLM (`ailocal start`) and re-run `ailocal clients` "
          "to deploy the regenerated client configs.")
 
 

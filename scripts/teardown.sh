@@ -51,7 +51,7 @@ if [ "$REMOVE_CLIENTS" = true ]; then
 fi
 echo ""
 echo "  Your .env and repo config files will NOT be touched."
-echo "  Re-run ./scripts/install.sh + ./scripts/start.sh to rebuild."
+echo "  Re-run ./scripts/install.sh + ailocal start to rebuild."
 echo ""
 read -r -p "  Proceed? [y/N]: " confirm
 [[ "${confirm:-}" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 0; }
@@ -129,4 +129,4 @@ step "Teardown complete."
 echo ""
 echo "  To fully reset and start fresh:"
 echo "    ./scripts/install.sh     # re-generate .env if needed"
-echo "    ./scripts/start.sh       # rebuild and start"
+echo "    ailocal start       # rebuild and start"

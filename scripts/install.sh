@@ -236,7 +236,7 @@ run_next_steps() {
   CLIENTS="${CLIENTS:-skip}"
   case "$CLIENTS" in
     skip|"")
-      info "Skipped — run later with:  ./scripts/install-clients.sh [all|claude|codex|vscode]" ;;
+      info "Skipped — run later with:  ailocal clients [all|claude|codex|vscode]" ;;
     all)
       bash "$ROOT_DIR/scripts/install-clients.sh" || warn "Client install reported issues." ;;
     *)
@@ -299,7 +299,7 @@ SEARXNG_SECRET=${SEARXNG_SECRET}
 ENABLE_CLOUD=false
 # To enable cloud fallback: add your key here, set ENABLE_CLOUD=true,
 # and uncomment the relevant model block in config/litellm/config.yaml.
-# Then: ./scripts/start.sh  (or: dc restart litellm)
+# Then: ailocal start  (or: dc restart litellm)
 ANTHROPIC_API_KEY=
 OPENAI_API_KEY=
 EOF

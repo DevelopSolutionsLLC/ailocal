@@ -29,8 +29,8 @@ SKIP_MODELS=false
 
 step "Snapshotting .env before update"
 if [ -f "$ROOT_DIR/.env" ]; then
-  mkdir -p "$ROOT_DIR/backups"
-  SNAP="$ROOT_DIR/backups/.env.$(date -u +%Y%m%dT%H%M%SZ)"
+  mkdir -p "$AILOCAL_STATE/backups"
+  SNAP="$AILOCAL_STATE/backups/.env.$(date -u +%Y%m%dT%H%M%SZ)"
   cp "$ROOT_DIR/.env" "$SNAP" && chmod 600 "$SNAP"
   info "Saved $SNAP"
 else
@@ -53,7 +53,7 @@ fi
 # Regenerate config.yaml / model_catalog.json / docs from models.yaml.
 # Client configs are NOT auto-redeployed here — that would rewrite the user's
 # ~/.codex and ~/.claude files on every update. Redeploy explicitly when you
-# want to:  ./scripts/install-clients.sh [claude|codex|vscode]
+# want to:  ailocal clients [claude|codex|vscode]
 
 step "Regenerating model config (sync-models)"
 bash "$ROOT_DIR/scripts/sync-models.sh"
@@ -82,6 +82,6 @@ if bash "$ROOT_DIR/scripts/doctor.sh"; then
 else
   warn "Health check reported issues after update."
   echo "  Check logs: docker logs ailocal-litellm --tail=50"
-  echo "  To roll back: git checkout the previous config, then ./scripts/start.sh"
+  echo "  To roll back: git checkout the previous config, then ailocal start"
   exit 1
 fi

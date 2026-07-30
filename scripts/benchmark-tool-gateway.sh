@@ -25,7 +25,7 @@ cd "$ROOT"
 PROMPT="${1:-Read the file sample.py in the current directory and tell me exactly what it prints. Use your tools.}"
 RUNS="${RUNS:-1}"
 WORKDIR="${BENCH_WORKDIR:-/tmp/ailocal-bench}"
-OUT="$ROOT/data/benchmarks"
+OUT="$AILOCAL_STATE/benchmarks"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 
 mkdir -p "$WORKDIR" "$OUT"

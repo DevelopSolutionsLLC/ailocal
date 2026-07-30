@@ -59,7 +59,7 @@ if [ -d "$CLAUDE_LOCAL" ]; then
     okk "local state     .claude.json present (per-root: MCP, history, creds)"
   else
     flag MISSING "claude local .claude.json" "$CLAUDE_LOCAL" \
-      "run ./scripts/install-clients.sh claude"
+      "run ailocal clients claude"
   fi
   if [ -d "$HOME/.claude" ]; then
     okk "cloud root      ~/.claude — SEPARATE BY DESIGN, not a duplicate"
@@ -74,7 +74,7 @@ if [ -d "$CLAUDE_LOCAL" ]; then
   fi
 else
   flag MISSING "claude local root" "$CLAUDE_LOCAL" \
-    "run ./scripts/install-clients.sh claude"
+    "run ailocal clients claude"
 fi
 
 line ""
@@ -93,7 +93,7 @@ if [ -f "$CODEX_LOCAL/config.toml" ]; then
     "$CODEX_LOCAL/config.toml" "remove the duplicate [mcp_servers.*] block"
 else
   flag MISSING "codex local config" "$CODEX_LOCAL/config.toml" \
-    "run ./scripts/install-clients.sh codex"
+    "run ailocal clients codex"
 fi
 
 line ""
@@ -230,7 +230,7 @@ PY
   MODE=$(docker exec ailocal-litellm printenv AILOCAL_TOOL_GATEWAY 2>/dev/null || echo off)
   okk "gateway mode    $MODE"
 else
-  flag MISSING "LiteLLM container" "docker" "run ./scripts/start.sh"
+  flag MISSING "LiteLLM container" "docker" "run ailocal start"
 fi
 
 # ── stale repo artifacts ────────────────────────────────────────────────────

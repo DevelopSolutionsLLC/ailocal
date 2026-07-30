@@ -21,7 +21,7 @@
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
-DIR="${AILOCAL_TRACE_HOST_DIR:-data/tool-captures/traces}"
+DIR="${AILOCAL_TRACE_HOST_DIR:-${AILOCAL_STATE:-$HOME/.local/state/ailocal}/captures/traces}"
 
 MODE=recent; ARG=""
 while [ $# -gt 0 ]; do

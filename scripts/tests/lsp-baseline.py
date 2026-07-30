@@ -77,7 +77,7 @@ def main() -> int:
     server = shutil.which("pyright-langserver")
     if not server:
         print("\nSKIP — pyright-langserver is not installed, so there is no baseline")
-        print("       to verify. `./scripts/install-clients.sh claude` reports this")
+        print("       to verify. `ailocal clients claude` reports this")
         print("       too. Install with: npm i -g pyright")
         return 0
     check(True, f"pyright-langserver resolvable ({server})")
@@ -147,7 +147,7 @@ def main() -> int:
         print(f"FAIL — {len(failures)} broken:")
         for f in failures:
             print(f"  - {f}")
-        print("\nRepair: ./scripts/install-clients.sh claude")
+        print("\nRepair: ailocal clients claude")
         return 1
     print("LSP BASELINE: claude-local has working Python native LSP.")
     return 0

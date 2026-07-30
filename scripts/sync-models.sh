@@ -2,12 +2,12 @@
 # sync-models.sh — propagate the active config/profiles/<tier>.yaml + config/clients.yaml
 # to all derived files.
 # Usage:
-#   ./scripts/sync-models.sh          regenerate every derived file
-#   ./scripts/sync-models.sh --check  regenerate, then fail if any TRACKED generated file changed
+#   ailocal sync          regenerate every derived file
+#   ailocal sync --check  regenerate, then fail if any TRACKED generated file changed
 #                                     (drift check for pre-commit: sources and generated output are
 #                                      out of sync). capabilities.generated.json is excluded — it
 #                                      carries a timestamp and is gitignored.
-#   ./scripts/sync-models.sh --resolve <capability>   print the active backend tag
+#   ailocal sync --resolve <capability>   print the active backend tag
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
