@@ -13,7 +13,7 @@
 #            (the key lives in VS Code SecretStorage — no file is written)
 #   codex  → ~/.config/ailocal/codex/config.toml, model_catalog.json
 #            (CODEX_HOME for the codex-local wrapper — ~/.codex is NEVER touched)
-#   claude → ~/.config/ailocal/claude/settings.json (CLAUDE.md is Cadence-owned)
+#   claude → ~/.config/ailocal/claude/settings.json (AGENTS.md is Cadence-owned)
 #            (CLAUDE_CONFIG_DIR for the claude-local wrapper — ~/.claude is NEVER touched)
 #
 # All targets also (re)install two silent, idempotent lines in ~/.zshrc that
@@ -493,7 +493,7 @@ if has_target "claude"; then
   mkdir -p "$CLAUDE_HOME_DIR"
 
   CLAUDE_CFG="$CLAUDE_HOME_DIR/settings.json"
-  CLAUDE_MD="$CLAUDE_HOME_DIR/CLAUDE.md"
+  CLAUDE_MD="$CLAUDE_HOME_DIR/AGENTS.md"
   CLAUDE_JSON="$CLAUDE_HOME_DIR/.claude.json"
 
   # settings.json — always overwrite (managed file, no secrets — key comes
@@ -502,7 +502,7 @@ if has_target "claude"; then
   cp "$ROOT_DIR/config/clients/claude/settings.json" "$CLAUDE_CFG"
   info "$CLAUDE_CFG written"
 
-  # CLAUDE.md is NOT written here. Cadence owns client instruction policy for
+  # AGENTS.md is NOT written here. Cadence owns client instruction policy for
   # every root it detects, including this one, and composes it from the
   # integration contract published above. ailocal writing a policy file here
   # would fight that generator and re-create the drift this replaced.

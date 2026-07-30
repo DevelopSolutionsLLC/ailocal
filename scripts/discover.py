@@ -10,7 +10,7 @@ file performed the same as a 47 KB one, so volume is not the lever. Relevance is
 WHAT IT DOES
   1. Classifies the task with the CHEAP model (the 3B tier), not the 30B. The
      30B's job is coding; classification is a one-word answer.
-  2. Finds candidate documents — CLAUDE.md, AGENTS.md, CODEX.md, README.md,
+  2. Finds candidate documents — AGENTS.md, AGENTS.md, CODEX.md, README.md,
      docs/**.md, ADRs.
   3. Ranks them against the task by EMBEDDING similarity, using the local
      embeddings model. Not keyword matching: "modifying the auth flow" should
@@ -56,7 +56,7 @@ EMBED_MODEL = os.environ.get("AILOCAL_EMBED_MODEL", "ailocal-embeddings")
 # Where repository instructions and design notes actually live. Ordered by how
 # likely they are to carry binding constraints rather than prose.
 DOC_PATTERNS = [
-    "CLAUDE.md", "AGENTS.md", "CODEX.md", "CONTRIBUTING.md", "README.md",
+    "AGENTS.md", "AGENTS.md", "CODEX.md", "CONTRIBUTING.md", "README.md",
     "docs/*.md", "docs/**/*.md", "doc/*.md",
     "adr/*.md", "docs/adr/*.md", "docs/architecture/*.md",
     ".github/*.md",

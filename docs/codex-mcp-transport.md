@@ -49,7 +49,7 @@ produced no change in the wire representation. Do not re-propose them.
 | `[features.non_prefixed_mcp_tool_names]` | no effect on wire shape; does not make flattened calls dispatchable |
 
 Schema claims must come from the **native** binary — the `codex` on `PATH` is a
-JS shim. Resolve it dynamically (see `CLAUDE.md`); if the glob matches zero or
+JS shim. Resolve it dynamically (see `AGENTS.md`); if the glob matches zero or
 several, stop rather than reading the wrong one.
 
 ## Current state

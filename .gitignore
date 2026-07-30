@@ -36,10 +36,9 @@ config/active-profile
 .idea/
 *.iml
 .claude/
-# Only a REPO-ROOT AGENTS.md is generated/tool-authored and should be ignored. Do NOT use a bare
-# `AGENTS.md` pattern — it silently hides source files like
-# config/clients/codex/AGENTS.md.template and any future in-repo AGENTS source.
-/AGENTS.md
+# /AGENTS.md is NO LONGER IGNORED. It was, back when a root AGENTS.md could only be
+# tool-generated; it is now this repo's canonical instruction file (it replaced
+# CLAUDE.md), so ignoring it would silently drop the primer from every clone.
 
 # Python
 __pycache__/
