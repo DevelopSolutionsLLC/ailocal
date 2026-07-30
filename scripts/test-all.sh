@@ -89,6 +89,14 @@ run "E5 fallback-state classification (seven states, no live model)" \
 # disjoint and sum to the reported total.
 run "E1 trace schema, redaction and token reconciliation" \
     python3 scripts/test-request-trace.py
+# E3. Declared num_ctx vs what the backend actually serves. This is EXPECTED TO FAIL
+# until `ailocal-embeddings` num_ctx comes down from 8192 to 2048: nomic-embed-text
+# silently CLIPS at 2048 rather than erroring, so an over-declaration yields
+# successful-looking embeddings of truncated text. The correction lives in
+# config/litellm/config.yaml, which currently carries user-owned uncommitted
+# changes, so the test reports the one-line patch instead of applying it.
+run "E3 declared context vs backend capacity" \
+    python3 scripts/test-context-limits.py
 
 echo
 echo "INTEGRATION"
