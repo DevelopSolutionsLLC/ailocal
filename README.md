@@ -137,4 +137,7 @@ ailocal teardown --clients   # full removal + client uninstall
 
 **Claude Code `/model` shows only Opus/Sonnet/Haiku** — reload your shell and relaunch `claude-local` (the wrapper enables gateway discovery and remaps the built-in slots to local capabilities).
 
-**Models unload too fast** — the Ollama app ignores `~/.zshrc`; run `./scripts/setup-ollama-env.sh` and restart Ollama.
+**Models unload too fast** — the Ollama app ignores `~/.zshrc`; run `bash scripts/setup-ollama-env.sh` and restart Ollama.
+
+More: `docs/architecture.md` (runtime, gateway, client capabilities) ·
+`docs/troubleshooting.md` (runtime symptoms) · `docs/adr/README.md` (decisions).
