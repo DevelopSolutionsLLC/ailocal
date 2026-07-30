@@ -153,9 +153,9 @@ on it), and Cadence appends a marker block into ailocal's deployed agents that
 
 ## Depth
 
-- `docs/environment-cheatsheet.md` — **start here for cross-system questions**
-- `docs/internals.md` — the five non-obvious mechanisms; read before changing them
-- `docs/local-agent-gateway.md` · `docs/tool-gateway.md` — the tool gateway
+- `docs/architecture.md` — **start here for cross-system questions**
+- `docs/architecture.md` — the five non-obvious mechanisms; read before changing them
+- `docs/architecture.md` · `docs/architecture.md` — the tool gateway
 - `docs/adr/README.md` — decisions
 - `cadence/docs/standards/developsolutions-repository-standard.md` — shared conventions
 
