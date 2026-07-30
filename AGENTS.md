@@ -58,16 +58,18 @@ Haiku→fast, Fable→review.
 ## Common commands
 
 ```sh
-./scripts/install.sh [--profile <tier>]   # detect RAM, install models, set up
-./scripts/install-clients.sh              # deploy client configs + the ailocal launcher
-./scripts/sync-models.sh                  # regenerate every derived config
+./scripts/install.sh [--profile <tier>]   # bootstrap: detect RAM, install models
 ./scripts/test-all.sh [--full]            # the regression gate (~22s)
-./scripts/doctor.sh                       # 0 healthy, 2 degraded
-./scripts/start.sh | stop.sh | update.sh  # lifecycle
-ailocal status|models|validate|doctor|sync|resolve <capability>
+
+ailocal clients | vscode | models-install  # deploy
+ailocal start | stop | update | sync       # lifecycle
+ailocal status | models | doctor | validate | smoke
+ailocal audit | cleanup | teardown         # installation
+ailocal trace | metrics | e2e <client>     # diagnostics
+ailocal resolve <capability>
 ```
 
-Before every commit: `./scripts/test-all.sh`, then `./scripts/sync-models.sh`
+Before every commit: `./scripts/test-all.sh`, then `ailocal sync`
 must produce **zero diff** on a second run.
 
 ## Important paths
@@ -109,7 +111,7 @@ managed files: the `model_list` and `model_group_alias` in
 `codex/config.toml` · `continue/config.json` · copilot tables.
 
 Never hand-edit a generated region. Edit the two sources, run
-`./scripts/sync-models.sh`, then `./scripts/install-clients.sh` to deploy.
+`ailocal sync`, then `ailocal clients` to deploy.
 
 ## Instruction files
 
@@ -127,7 +129,7 @@ keeps serving the OLD routing with nothing in the logs to say so. `start.sh`
 fingerprints those files and restarts on change.
 
 Never invoke `deploy/litellm/docker-compose.yml` directly — it references a
-service defined elsewhere. Use `./scripts/start.sh`.
+service defined elsewhere. Use `ailocal start`.
 
 **Liveness and readiness prove the proxy is running, not that Ollama is
 reachable.** Only `/health` dials the backend, and it must be checked from
@@ -144,8 +146,8 @@ on it), and Cadence appends a marker block into ailocal's deployed agents that
 
 | Task | Do this |
 |---|---|
-| Repoint a capability | edit `config/profiles/<tier>.yaml`, `./scripts/sync-models.sh`, `./scripts/start.sh` |
-| Change a client's model | edit `config/clients.yaml`, sync, `./scripts/install-clients.sh` |
+| Repoint a capability | edit `config/profiles/<tier>.yaml`, `ailocal sync`, `ailocal start` |
+| Change a client's model | edit `config/clients.yaml`, sync, `ailocal clients` |
 | Edit a persona | edit `config/instructions/`, then **restart the proxy** |
 | Add a decision | `docs/adr/NNN-name.md`, update `docs/adr/README.md` |
 

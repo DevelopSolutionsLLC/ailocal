@@ -37,10 +37,10 @@ sessions short, diffs small, and claims verifiable. Follow it literally.
 - Paste the real command output (or a faithful summary of it), not a
   guessed result.
 - Any shell script you touch: run `bash -n <script>` before calling it done.
-- Config changes: `./scripts/sync-models.sh` must produce zero diff after
+- Config changes: `ailocal sync` must produce zero diff after
   regeneration if the active profile changed.
-- Prefer `./scripts/doctor.sh` (0=healthy, 2=degraded) and
-  `./scripts/smoke-test.sh` as final sanity checks when touching runtime
+- Prefer `ailocal doctor` (0=healthy, 2=degraded) and
+  `ailocal smoke` as final sanity checks when touching runtime
   config.
 - If verification fails twice, stop and report the failure instead of
   guessing at another fix.

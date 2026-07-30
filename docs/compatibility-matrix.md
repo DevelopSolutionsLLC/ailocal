@@ -141,9 +141,9 @@ it returns empty, which looks identical to "symbol not found".
 ```bash
 ./scripts/validate-deployment.sh        # connectivity + end-to-end through proxy
 ailocal models                          # capability -> backend -> status
-./scripts/validate-claude-e2e.sh
-./scripts/validate-codex-e2e.sh         # re-run after any Codex upgrade
-./scripts/validate-vscode-e2e.sh
+ailocal e2e claude
+ailocal e2e codex         # re-run after any Codex upgrade
+ailocal e2e vscode
 bash <cadence>/scripts/verify-lsp.sh    # per-language LSP
 codex mcp list                          # MCP registration (per root via CODEX_HOME)
 ```

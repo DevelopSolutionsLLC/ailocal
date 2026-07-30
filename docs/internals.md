@@ -15,7 +15,7 @@ Most of this repo's complexity is in these; change them carefully.
    `config/capabilities.generated.json`, `config/clients/model_catalog.json`, and the
    `claude/settings.json` · `codex/config.toml` (+ profiles) · `continue/config.json` · copilot
    tables. Never hand-edit a generated region — edit the two sources and run
-   `./scripts/sync-models.sh`, then `./scripts/install-clients.sh` to deploy. Which tier is active
+   `ailocal sync`, then `ailocal clients` to deploy. Which tier is active
    is the one-line `config/active-profile` marker, written by `install.sh` from detected RAM
    (`config/profiles/{16,32,64,128}gb.yaml`); `--profile <tier>` overrides.
    `sync-models.py --resolve <capability>` prints the active backend (used by the shell scripts).

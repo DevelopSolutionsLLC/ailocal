@@ -82,7 +82,7 @@ was fixed.
 
 1. Confirm the version is newer *stable* (`npm view @openai/codex version`).
 2. Diff the native binary's schema for namespace/MCP changes.
-3. Set `namespace_expansion.enabled: true`, `./scripts/start.sh`.
+3. Set `namespace_expansion.enabled: true`, `ailocal start`.
 4. `codex exec "Call grepai_list_projects with no arguments."`
 5. Grep the run for `codex_core::tools::router`. No `unsupported call` = fixed.
 6. Restore `enabled: false` unless boundary 7 passes end-to-end.

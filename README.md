@@ -34,14 +34,14 @@ If you do not use LiteLLM, you do not need this repo.
 | **Which tools do I get?** | Automatic. The gateway classifies each request: a plain question gets no tools, a refactor gets search + LSP + delegation. Nothing to switch on. (Known: the no-tools case holds for the first turn only — [ADR 004](docs/adr/004-tool-gateway.md)) |
 | **LSP?** | Native Claude Code LSP. ailocal installs the **Python** baseline (`pyright-lsp`) into the isolated `claude-local` root; Cadence adds TypeScript/Go/C and repository intelligence. Shell has no native plugin — use `bash -n`, `zsh -n`, `shellcheck` |
 | **grepai or LSP?** | grepai for *concepts* ("where is retry handled"), LSP for *exact* ("where is this defined, what calls it"). Prefer LSP's document-scoped tools |
-| **Something's wrong** | `./scripts/doctor.sh` → `./scripts/validate-deployment.sh` → `./scripts/test-all.sh`. Run them **idle**; contention causes phantom failures |
+| **Something's wrong** | `ailocal doctor` → `./scripts/validate-deployment.sh` → `./scripts/test-all.sh`. Run them **idle**; contention causes phantom failures |
 | **Why is it built this way?** | [ADRs](docs/adr/) — one per decision, with the measurements behind it |
 | **What's not done?** | [future work](docs/future-work.md) |
 
 **Common mistakes:** editing a generated region instead of the two source files
 (`config/profiles/<tier>.yaml`, `config/clients.yaml`); expecting
 `docker compose up -d` to pick up a config change (it will not — use
-`./scripts/start.sh`); reading `content[0].text` on a `review` response and
+`ailocal start`); reading `content[0].text` on a `review` response and
 seeing empty (it returns a `thinking` block first); treating an empty LSP or
 grepai result as proof of absence (it usually means still-indexing, or the wrong
 language server answered).
@@ -62,7 +62,7 @@ brew install git jq
 brew install --cask docker ollama     # open Docker Desktop once to finish first-run setup
 ollama serve                          # or open Ollama.app
 ./scripts/install.sh                  # deps, .env, models, proxy, health check, client configs
-./scripts/smoke-test.sh               # verify a real model request succeeds
+ailocal smoke               # verify a real model request succeeds
 ```
 
 `install.sh` can also install login LaunchAgents (autostart `ollama serve` + preload the resident model) — answer `y` when prompted, or manage it later with `./scripts/setup-startup.sh`.
@@ -101,12 +101,12 @@ LiteLLM exposes capability names only — the router owns the backend, context, 
 
 Order in the `/model` picker follows the key order of `config/profiles/64gb.yaml`.
 
-Change a backend in `config/profiles/64gb.yaml`, run `./scripts/sync-models.sh`, and every generated client config regenerates. `architecture`/`implementation`/`review` get a server-side engineering persona (`config/instructions/<capability>.md`), injected on both the OpenAI and Anthropic routes. Use capability names only — never raw model tags.
+Change a backend in `config/profiles/64gb.yaml`, run `ailocal sync`, and every generated client config regenerates. `architecture`/`implementation`/`review` get a server-side engineering persona (`config/instructions/<capability>.md`), injected on both the OpenAI and Anthropic routes. Use capability names only — never raw model tags.
 
 ## Clients
 
 ```bash
-./scripts/install-clients.sh          # all three (or one: vscode | codex | claude)
+ailocal clients          # all three (or one: vscode | codex | claude)
 ```
 
 Client state lives in `~/.config/ailocal/`; your cloud `~/.claude` / `~/.codex` are never touched.
@@ -118,11 +118,11 @@ Client state lives in `~/.config/ailocal/`; your cloud `~/.claude` / `~/.codex` 
 ## Operations
 
 ```bash
-./scripts/start.sh                # start
-./scripts/stop.sh                 # stop
-./scripts/update.sh               # pull latest image + restart
-./scripts/doctor.sh               # health summary (exit 0 healthy / 2 degraded)
-./scripts/teardown.sh --clients   # full removal + client uninstall
+ailocal start                # start
+ailocal stop                 # stop
+ailocal update               # pull latest image + restart
+ailocal doctor               # health summary (exit 0 healthy / 2 degraded)
+ailocal teardown --clients   # full removal + client uninstall
 ```
 
 ## Troubleshooting

@@ -54,7 +54,7 @@ hold() { printf '  %s HOLD  %s %s\n' "$C_WARN" "$C_0" "$*"; }
 # two implementations that can disagree about what is stale.
 if [ ! -s "$FINDINGS" ]; then
   info "no findings file — running the audit first"
-  ./scripts/audit-installation.sh >/dev/null 2>&1 || true
+  bash scripts/audit-installation.sh >/dev/null 2>&1 || true
 fi
 if [ ! -s "$FINDINGS" ]; then
   echo "${C_OK}Nothing to clean.${C_0}"

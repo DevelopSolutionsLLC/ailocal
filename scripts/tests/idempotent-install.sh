@@ -154,9 +154,9 @@ fingerprint baseline >/dev/null
 
 # ── sync-models.sh ─────────────────────────────────────────────────────────
 info "sync-models.sh x2"
-./scripts/sync-models.sh >/dev/null 2>&1 || bad "sync-models.sh #1 failed"
+bash scripts/sync-models.sh >/dev/null 2>&1 || bad "sync-models.sh #1 failed"
 fingerprint sync1 >/dev/null
-./scripts/sync-models.sh >/dev/null 2>&1 || bad "sync-models.sh #2 failed"
+bash scripts/sync-models.sh >/dev/null 2>&1 || bad "sync-models.sh #2 failed"
 fingerprint sync2 >/dev/null
 compare sync1 sync2 "sync-models.sh"
 
@@ -164,9 +164,9 @@ compare sync1 sync2 "sync-models.sh"
 # claude + codex only by default: the vscode target touches the user's editor
 # config, which is opt-in here.
 info "install-clients.sh claude codex x2"
-if ./scripts/install-clients.sh claude codex >/dev/null 2>&1; then
+if bash scripts/install-clients.sh claude codex >/dev/null 2>&1; then
   fingerprint clients1 >/dev/null
-  ./scripts/install-clients.sh claude codex >/dev/null 2>&1
+  bash scripts/install-clients.sh claude codex >/dev/null 2>&1
   fingerprint clients2 >/dev/null
   compare clients1 clients2 "install-clients.sh claude codex"
 else
@@ -176,9 +176,9 @@ fi
 # ── install-vscode.sh (opt-in) ─────────────────────────────────────────────
 if [ -n "$INCLUDE_VSCODE" ]; then
   info "install-vscode.sh x2"
-  if ./scripts/install-vscode.sh >/dev/null 2>&1; then
+  if bash scripts/install-vscode.sh >/dev/null 2>&1; then
     fingerprint vsc1 >/dev/null
-    ./scripts/install-vscode.sh >/dev/null 2>&1
+    bash scripts/install-vscode.sh >/dev/null 2>&1
     fingerprint vsc2 >/dev/null
     compare vsc1 vsc2 "install-vscode.sh"
   else
