@@ -97,6 +97,13 @@ run "E1 trace schema, redaction and token reconciliation" \
 # reporting a known failure.
 run "E3 declared context vs backend capacity" \
     python3 scripts/test-context-limits.py
+# The isolated claude-local root sets ENABLE_LSP_TOOL=1, but a plugin is what puts
+# a server behind that tool. Provisioning used to be delegated entirely to
+# Cadence, so an ailocal-only machine got the tool switched on with nothing behind
+# it. This drives pyright-langserver over stdio against a real repo file and
+# requires real symbols back — presence of a plugin is not capability.
+run "Python LSP baseline for claude-local (real documentSymbol)" \
+    python3 scripts/test-lsp-baseline.py
 
 echo
 echo "INTEGRATION"
