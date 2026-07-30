@@ -76,6 +76,12 @@ run "persona injection" \
 # execute commands the model never intended.
 run "tool-call repair (repairs real calls, refuses examples)" \
     python3 scripts/test-tool-repair.py
+# E5. The message this replaces ("No fallback model group found ... Fallbacks=[...]")
+# was true and misleading: implementation is the TERMINAL tier, so having no chain is
+# intentional, and the real fault was upstream connectivity. Pure functions, so all
+# seven states are checked with no proxy and no model.
+run "E5 fallback-state classification (seven states, no live model)" \
+    python3 scripts/test-fallback-state.py
 
 echo
 echo "INTEGRATION"
