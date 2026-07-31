@@ -48,7 +48,7 @@ SETTINGS_JSON="$USER_DIR/settings.json"
 BASE_URL="${AILOCAL_BASE_URL:-http://localhost:4000}"
 
 info() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
-warn() { printf '\033[1;33mWARN\033[0m %s\n' "$*"; }
+warn() { echo "  ⚠ $*" >&2; }
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 
 command -v code >/dev/null || { echo "the 'code' CLI is not on PATH"; exit 1; }

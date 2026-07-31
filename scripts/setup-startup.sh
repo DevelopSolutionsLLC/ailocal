@@ -37,7 +37,7 @@ WITH_LITELLM=0
 UNINSTALL=0
 
 info() { echo "  ✓ $*"; }
-warn() { echo "  ⚠ $*"; }
+warn() { echo "  ⚠ $*" >&2; }
 step() { echo; echo "▶ $*"; }
 
 # Resolve a role name to its Ollama backend tag from models.yaml (at install time,

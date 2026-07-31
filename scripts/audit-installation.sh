@@ -245,11 +245,12 @@ for f in config/litellm/config.yaml.backup audit-session.json next-session.md; d
     fi
   fi
 done
-BK=$(ls -1 backups/ 2>/dev/null | wc -l | tr -d ' ')
+BKDIR="${AILOCAL_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/ailocal}/backups"
+BK=$(ls -1 "$BKDIR" 2>/dev/null | wc -l | tr -d ' ')
 if [ "${BK:-0}" -gt 20 ]; then
-  flag STALE "$BK files in backups/" "$ROOT/backups" "prune the oldest"
+  flag STALE "$BK files in $BKDIR" "$BKDIR" "prune the oldest"
 else
-  okk "backups/        $BK file(s)"
+  okk "state backups   $BK file(s)"
 fi
 # The generated config must match its sources, or the running proxy and the repo
 # silently disagree.

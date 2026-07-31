@@ -55,7 +55,7 @@ Architecture and file map: [AGENTS.md](AGENTS.md).
 - 64 GB RAM — the supported/tested profile
 - ~85 GB free disk for the models
 
-## Setup
+## Install
 
 ```bash
 brew install git jq
@@ -67,7 +67,7 @@ ailocal smoke               # verify a real model request succeeds
 
 `install.sh` can also install login LaunchAgents (autostart `ollama serve` + preload the resident model) — answer `y` when prompted, or manage it later with `./scripts/setup-startup.sh`.
 
-## Test it
+## Verify
 
 Everything routes through the proxy on `localhost:4000`:
 
@@ -81,12 +81,21 @@ curl -s http://localhost:4000/v1/chat/completions \
 
 Any client that speaks OpenAI (`/v1/chat/completions`) or Anthropic (`/v1/messages`) works the same way: base URL `http://localhost:4000`, key `LITELLM_MASTER_KEY`, model = a capability name.
 
-## Services
+## Architecture
+
+Clients speak to LiteLLM on `127.0.0.1:4000`, which routes each request to an
+Ollama-hosted model by **capability** — never by model name. Server-side hooks
+inject the per-capability persona and trim the client's tool payload before the
+request reaches the backend.
+
+Full design in [`docs/architecture.md`](docs/architecture.md).
+
+### Services
 
 - **litellm** — one Docker container on `127.0.0.1:4000` (localhost only, authed with `LITELLM_MASTER_KEY`). No database, no cache.
 - **Ollama** — runs natively on the host (`:11434`) for Metal GPU access; the only heavy memory user.
 
-## Capabilities
+### Capabilities
 
 LiteLLM exposes capability names only — the router owns the backend, context, sampling, and residency, so a model swap never touches a client config. Only the **64 GB** profile is active (`config/profiles/64gb.yaml`); it's the tested configuration.
 
@@ -103,7 +112,7 @@ Order in the `/model` picker follows the key order of `config/profiles/64gb.yaml
 
 Change a backend in `config/profiles/64gb.yaml`, run `ailocal sync`, and every generated client config regenerates. `architecture`/`implementation`/`review` get a server-side engineering persona (`config/instructions/<capability>.md`), injected on both the OpenAI and Anthropic routes. Use capability names only — never raw model tags.
 
-## Clients
+### Clients
 
 ```bash
 ailocal clients          # all three (or one: vscode | codex | claude)
@@ -115,7 +124,7 @@ Client state lives in `~/.config/ailocal/`; your cloud `~/.claude` / `~/.codex` 
 - **Codex** — `codex-local`. Plain `codex` stays on cloud.
 - **VS Code Copilot Chat** — `ailocal-code [path]` opens an isolated VS Code profile with the [LiteLLM Connector](https://marketplace.visualstudio.com/items?itemName=Gethnet.litellm-connector-copilot) wired up; models auto-discover from `/model/info`. To wire it manually: Copilot model-picker → **Manage Models → LiteLLM Connector**, base URL `http://localhost:4000`, key = `LITELLM_MASTER_KEY`, then ⌘⇧P → **LiteLLM: Reload Models**.
 
-## Operations
+## Update
 
 ```bash
 ailocal start                # start
@@ -124,6 +133,16 @@ ailocal update               # pull latest image + restart
 ailocal doctor               # health summary (exit 0 healthy / 2 degraded)
 ailocal teardown --clients   # full removal + client uninstall
 ```
+
+## Uninstall
+
+```sh
+ailocal teardown          # stop services, remove containers and client configs
+```
+
+Removes only what ailocal installed. Models, `~/.claude`, `~/.codex` and Cadence
+content are left alone. Runtime state under `~/.local/state/ailocal` is kept —
+delete it yourself if you want it gone.
 
 ## Troubleshooting
 
@@ -139,5 +158,10 @@ ailocal teardown --clients   # full removal + client uninstall
 
 **Models unload too fast** — the Ollama app ignores `~/.zshrc`; run `bash scripts/setup-ollama-env.sh` and restart Ollama.
 
-More: `docs/architecture.md` (runtime, gateway, client capabilities) ·
-`docs/troubleshooting.md` (runtime symptoms) · `docs/adr/README.md` (decisions).
+## Links
+
+- [`docs/architecture.md`](docs/architecture.md) — system design, ownership, data flow
+- [`docs/troubleshooting.md`](docs/troubleshooting.md) — runtime symptoms
+- [`docs/adr/`](docs/adr/) — durable decisions
+- [`AGENTS.md`](AGENTS.md) — AI operating instructions
+- Cadence — optional repository-intelligence layer; see its README

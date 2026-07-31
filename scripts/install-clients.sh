@@ -34,7 +34,7 @@ AILOCAL_CFG="${XDG_CONFIG_HOME:-$HOME/.config}/ailocal"
 
 has()  { command -v "$1" >/dev/null 2>&1; }
 info() { echo "  ✓ $*"; }
-warn() { echo "  ⚠ $*"; }
+warn() { echo "  ⚠ $*" >&2; }
 skip() { echo "  — $*"; }
 step() { echo; echo "▶ $*"; }
 
