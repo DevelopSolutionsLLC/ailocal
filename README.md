@@ -105,7 +105,7 @@ LiteLLM exposes capability names only — the router owns the backend, context, 
 
 | Capability | Backend | ctx / keep_alive |
 |---|---|---|
-| `architecture` | qwen3-coder:30b-a3b-q4_K_M | 64K / resident — shared big-context hub: design, deep reasoning, large agent prompts |
+| `architecture` | qwen3-coder:30b | 64K / resident — shared big-context hub: design, deep reasoning, large agent prompts |
 | `implementation` | qwen2.5-coder:14b | 16K / 20m — everyday coding, features, tests |
 | `review` | gpt-oss:20b | 16K / 20m — code review, bug & security |
 | `fast` | qwen3.5:2b | 32K / 20m — classification, summarisation, cheap tool-driven lookups |
