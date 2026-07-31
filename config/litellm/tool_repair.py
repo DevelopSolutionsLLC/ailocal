@@ -781,6 +781,18 @@ class ToolRepair(CustomLogger):
         text = ""              # accumulated visible text
         suspect = False
         native_seen = False
+        # LiteLLM calls this hook expecting a stream, but for some /v1/responses
+        # requests it hands back an already-materialized ResponsesAPIResponse
+        # (not async-iterable). `async for` on that raised immediately, the
+        # broad except below swallowed it, and the caller got an EMPTY stream —
+        # no content, no completion signal — every single turn. That silently
+        # stalled agentic clients (codex-local looped, re-issuing the same
+        # request every ~10-30s, forever). Nothing here needs repairing on an
+        # already-complete object; pass it through unchanged.
+        if not hasattr(response, "__aiter__"):
+            log.warning("tool_repair: got non-streaming %s in streaming hook — passthrough", type(response).__name__)
+            yield response
+            return
         try:
             async for chunk in response:
                 # ── /v1/responses: typed events, handled before anything else ──
