@@ -39,7 +39,11 @@ fi
 
 # ── Pull updated images ────────────────────────────────────────────────────
 
-step "Pulling latest Docker images"
+# NOT an image upgrade. Every image is digest-pinned, so this re-fetches the
+# SAME digests and exists only to repair a locally deleted layer. `ailocal update`
+# advances Ollama models, never container images -- replacing an image is a
+# validated, human-approved change: ailocal security --check-updates
+step "Pulling pinned Docker images (digests unchanged by design)"
 dc pull
 
 # ── Update Ollama models ───────────────────────────────────────────────────

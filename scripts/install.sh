@@ -483,10 +483,11 @@ run_next_steps() {
   fi
 
   echo
-  # Initial setup pulls the latest image so a fresh install starts on current LiteLLM
-  # (bug fixes land in main-stable frequently). Routine start.sh never auto-pulls —
-  # that keeps a reboot reproducible; use update.sh (or `./scripts/update.sh`) to refresh.
-  step "Pulling latest Docker images"
+  # Fetches the PINNED digests, not "latest" -- every image in deploy/ is
+  # digest-pinned, so `dc pull` resolves nothing and a fresh install receives
+  # exactly the validated images. It cannot silently start on a newer LiteLLM.
+  # To learn whether a newer release exists: ailocal security --check-updates
+  step "Pulling pinned Docker images"
   dc pull
 
   echo
