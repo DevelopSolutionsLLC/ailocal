@@ -63,6 +63,39 @@ each client's configuration file.
 Generated regions sit between `BEGIN/END GENERATED` markers. Regeneration is a
 fixed point — running it twice produces no diff — and the gate asserts that.
 
+### Generated output lives beside its source — deliberately, for now
+
+Every file `sync-models.py` writes is git-ignored, and each has a tracked
+`<name>.template.<ext>` beside it. Source and output therefore share a directory:
+
+    config/litellm/          11 tracked source  +  2 generated
+    config/clients/          25 tracked source  +  5 generated
+
+This is the same three-stage pipeline Cadence runs as `src/` → `build/` → `dist/`,
+without the directory separation. **Separating them is the preferred end state**; the current layout is what shipped in the first release candidate
+because it is fully validated.
+
+**Why it is not separated yet.** LiteLLM resolves callback modules relative to the
+config file's directory:
+
+    --config /app/config/config.yaml        # config/litellm → /app/config
+    callbacks:
+      - tool_repair.proxy_handler_instance  # bare module name
+
+So `config.yaml` must sit with the hook modules, and that directory is the bind
+mount. Moving output to `dist/` therefore means moving the mount and copying the
+hooks into it — the shape Cadence's build already has.
+
+**The planned change.** Mount `dist/litellm` instead of `config/litellm`, and have
+`sync` copy the hook modules alongside the generated `config.yaml`. Result:
+`config/` becomes entirely source, `dist/` entirely output, and both repositories
+follow one rule.
+
+**Trigger:** after clean-install validation and the first baseline release. It is
+deferred rather than rejected because it changes the bind mount — if it is wrong
+the proxy does not boot — and that is not a risk worth carrying into a release
+candidate alongside a first clean-machine install.
+
 ## Persona injection
 
 `config/litellm/persona_injector.py` is a pre-call hook that merges
