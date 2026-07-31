@@ -178,8 +178,12 @@ cp "$ROOT_DIR/config/clients/compact-hook.sh" "$AILOCAL_CFG/compact-hook.sh"
 
   local rc="${ZDOTDIR:-$HOME}/.zshrc"
   if [ ! -f "$rc" ]; then
-    skip "no ~/.zshrc — skipping source-line injection (functions still available if you source them manually)"
-    return 0
+    # A bare Mac (zsh is the default shell) simply has no rc file yet — skipping
+    # injection here left claude-local/codex-local/ailocal-code permanently
+    # unavailable, and every "reload your shell: source ~/.zshrc" message below
+    # this point would then fail outright (no such file). Create it instead.
+    : > "$rc"
+    info "Created $rc (none existed)"
   fi
 
   local configure_line finalize_line
@@ -249,7 +253,7 @@ if has_target "vscode"; then
   # Delegating rather than duplicating means the researched details (which
   # settings VS Code still honours, and that the SecretStorage apiKey reference
   # must be preserved) are not maintained in two files that can drift.
-  if [ -x "$ROOT_DIR/scripts/install-vscode.sh" ]; then
+  if [ -f "$ROOT_DIR/scripts/install-vscode.sh" ]; then
     bash "$ROOT_DIR/scripts/install-vscode.sh" || warn "install-vscode.sh reported a problem"
   else
     warn "scripts/install-vscode.sh missing — provider group not configured"
