@@ -79,6 +79,13 @@ elif [ ! -w "$MODELS_DIR" ]; then
 else
   info "OLLAMA_MODELS=$MODELS_DIR ($(du -sh "$MODELS_DIR" 2>/dev/null | cut -f1 || echo '?'))"
 fi
+# Models left behind in the home directory are invisible to a daemon pointed at
+# the shared store — they occupy disk while Ollama re-downloads the same tags.
+if [ -d "$HOME/.ollama/models" ] && [ -n "$(ls -A "$HOME/.ollama/models" 2>/dev/null)" ] \
+   && [ "$MODELS_DIR" != "$HOME/.ollama/models" ]; then
+  warn "$HOME/.ollama/models still holds $(du -sh "$HOME/.ollama/models" 2>/dev/null | cut -f1) that Ollama cannot see"
+  warn "  Migrate it: bash scripts/setup-ollama-env.sh"
+fi
 
 if has docker && docker compose version >/dev/null 2>&1; then
   info "docker compose available"
