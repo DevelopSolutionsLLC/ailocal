@@ -283,7 +283,12 @@ for lbl in com.ailocal.ollama com.ailocal.ollama-env com.ailocal.preload com.cad
     miss "$lbl not installed"
   fi
 done
-N_OLLAMA=$(ps ax -o command= | grep -c '[o]llama serve' || true)
+# Count DAEMONS by pid, not by grepping command lines. `ps ax -o command= | grep -c`
+# returned 3 and 4 on consecutive runs while exactly one daemon existed -- it counts
+# transient/duplicate command-line rows, so it reported DUPLICATE against a healthy
+# single-service machine. Real daemons are reparented to launchd (ppid 1); the
+# llama-server runner children are not, and must never be counted as daemons.
+N_OLLAMA=$(ps ax -o pid=,ppid=,command= | awk '$2==1 && /ollama serve/ {print $1}' | sort -u | wc -l | tr -d ' ')
 if [ "$N_OLLAMA" -eq 1 ]; then
   okk "exactly one 'ollama serve' process"
 elif [ "$N_OLLAMA" -eq 0 ]; then
@@ -291,6 +296,26 @@ elif [ "$N_OLLAMA" -eq 0 ]; then
 else
   flag DUPLICATE "$N_OLLAMA ollama serve processes" "launchd + Ollama.app" \
     "quit the Ollama menu-bar app; the LaunchAgent owns the daemon"
+fi
+
+# A process count does not prove OWNERSHIP of the port. The failure this catches:
+# the GUI app holding :11434 while the LaunchAgent is unloaded, so ailocal looks
+# healthy until the app is quit and the whole stack loses its backend with no
+# managed service to restart it -- which is exactly what happened here.
+OLLAMA_LPID=$(lsof -nP -iTCP:11434 -sTCP:LISTEN 2>/dev/null | awk 'NR>1{print $2; exit}')
+AGENT_PID=$(launchctl list 2>/dev/null | awk '$3=="com.ailocal.ollama"{print $1}')
+if [ -z "$OLLAMA_LPID" ]; then
+  flag MISSING "nothing is listening on 11434" "launchd" \
+    "launchctl kickstart -k gui/$(id -u)/com.ailocal.ollama"
+elif [ -z "$AGENT_PID" ] || [ "$AGENT_PID" = "-" ]; then
+  flag UNMANAGED "port 11434 is held by pid $OLLAMA_LPID but com.ailocal.ollama is NOT loaded" \
+    "Ollama.app or an ad-hoc 'ollama serve'" \
+    "launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.ailocal.ollama.plist"
+elif [ "$AGENT_PID" != "$OLLAMA_LPID" ]; then
+  flag UNMANAGED "port 11434 is held by pid $OLLAMA_LPID, not the LaunchAgent pid $AGENT_PID" \
+    "a competing Ollama instance" "quit the Ollama menu-bar app, then kickstart the agent"
+else
+  okk "port 11434 is owned by the managed LaunchAgent (pid $OLLAMA_LPID)"
 fi
 
 # ── summary ─────────────────────────────────────────────────────────────────
