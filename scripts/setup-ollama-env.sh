@@ -28,6 +28,7 @@ KV_CACHE="${OLLAMA_KV_CACHE_TYPE:-q8_0}" # quantize KV cache to 8-bit, halves me
 MODELS_DIR="${OLLAMA_MODELS:-/Users/Shared/ollama/models}" # store models outside any one user's home
 
 info() { echo "  ✓ $*"; }
+warn() { echo "  ⚠ $*" >&2; }
 step() { echo; echo "▶ $*"; }
 
 # /Users/Shared exists so the model store is not inside one user's home — a 43 GB
@@ -78,18 +79,25 @@ migrate_home_models() {
     sleep 2
   fi
 
-  local moved=0 kept=0 entry base
-  for entry in "$HOME_MODELS"/*; do
-    [ -e "$entry" ] || continue
-    base="$(basename "$entry")"
-    if [ -e "$MODELS_DIR/$base" ]; then
+  # $HOME_MODELS and $MODELS_DIR both always have top-level blobs/ and manifests/
+  # dirs (setup-startup.sh mkdir -p's the shared store on every run), so a
+  # shallow top-level compare always finds them "already present" and silently
+  # skips merging the actual content underneath — models vanish instead of
+  # migrating. Walk files, not top-level entries.
+  local moved=0 kept=0 entry rel dest
+  while IFS= read -r -d '' entry; do
+    rel="${entry#"$HOME_MODELS"/}"
+    dest="$MODELS_DIR/$rel"
+    if [ -e "$dest" ]; then
       kept=$((kept + 1))            # already present in the shared store
       continue
     fi
-    mv "$entry" "$MODELS_DIR/$base" && moved=$((moved + 1))
-  done
+    mkdir -p "$(dirname "$dest")"
+    mv "$entry" "$dest" && moved=$((moved + 1))
+  done < <(find "$HOME_MODELS" -type f -print0)
 
   info "moved $moved entr$([ "$moved" = 1 ] && echo y || echo ies)$([ "$kept" -gt 0 ] && echo ", $kept already present")"
+  find "$HOME_MODELS" -type d -empty -delete 2>/dev/null || true
   if [ -z "$(ls -A "$HOME_MODELS" 2>/dev/null)" ]; then
     rmdir "$HOME_MODELS" 2>/dev/null || true
     info "$HOME_MODELS is empty and was removed"
