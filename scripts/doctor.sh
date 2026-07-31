@@ -260,8 +260,26 @@ fi
   if [ "${SWAPUSED%%.*}" -gt 4096 ]; then warn "swap in use ${SWAPUSED} MB — paging degrades prompt eval badly"
   else info "swap in use ${SWAPUSED} MB"; fi; }
 
+# Client-native compaction is what keeps a session OUT of the danger zone. If the
+# deployed client config disagrees with the active profile, the client compacts on
+# a threshold this repository never chose -- silently, with no error anywhere.
+CC_WIN="$(python3 -c "
+import json,os
+try: print(json.load(open(os.path.expanduser('~/.config/ailocal/claude/settings.json')))['env'].get('CLAUDE_CODE_AUTO_COMPACT_WINDOW',''))
+except Exception: print('')" 2>/dev/null)"
+PROF_WIN="$(sed -n '/^compaction:/,/^[a-z]/p' config/profiles/"$(cat config/active-profile 2>/dev/null || echo 64gb)".yaml 2>/dev/null | sed -n 's/^  window: *//p' | cut -d'#' -f1 | tr -d ' ' | head -1)"
+PROF_PCT="$(sed -n '/^compaction:/,/^[a-z]/p' config/profiles/"$(cat config/active-profile 2>/dev/null || echo 64gb)".yaml 2>/dev/null | sed -n 's/^  pct: *//p' | cut -d'#' -f1 | tr -d ' ' | head -1)"
+if [ -z "$CC_WIN" ]; then
+  warn "claude-local has NO auto-compaction window — long sessions will grow into the stall"
+  echo "      fix:  ailocal clients"
+elif [ "$CC_WIN" = "$PROF_WIN" ]; then
+  info "auto-compaction: ${PROF_WIN} x ${PROF_PCT}% = $((PROF_WIN * PROF_PCT / 100)) tokens (matches profile)"
+else
+  warn "auto-compaction window $CC_WIN disagrees with the active profile ($PROF_WIN) — run: ailocal clients"
+fi
+
 echo "      Cold prompt eval is super-linear on this route [REAL, measured]:"
-echo "        ~28K tokens -> ~85 s     ~55K -> ~300 s     ~61K -> ~416 s"
+echo "        ~28K -> 85 s    ~58K -> 341 s    ~88K -> 789 s (13 min)"
 echo "      A cache MISS at large context is what exceeds the client timeout."
 echo "      See docs/troubleshooting.md, 'architecture route stalls'."
 
