@@ -41,11 +41,14 @@ LITELLM_TEMPLATE = ROOT / "config/litellm/config.template.yaml"
 LITELLM_CONFIG   = ROOT / "config/litellm/config.yaml"
 CAPS_JSON      = ROOT / "config/capabilities.generated.json"
 CODEX_CATALOG  = ROOT / "config/clients/model_catalog.json"
-CLAUDE_SETTINGS= ROOT / "config/clients/claude/settings.json"
+CLAUDE_SETTINGS_TPL = ROOT / "config/clients/claude/settings.template.json"
+CLAUDE_SETTINGS = ROOT / "config/clients/claude/settings.json"
 CODEX_CONFIG   = ROOT / "config/clients/codex/config.toml"
 CODEX_PLAN     = ROOT / "config/clients/codex/plan.config.toml"
 CODEX_REVIEW   = ROOT / "config/clients/codex/review.config.toml"
-CONTINUE_CONFIG= ROOT / "config/clients/continue/config.json"
+CONTINUE_CONFIG_TPL = ROOT / "config/clients/continue/config.template.json"
+CONTINUE_CONFIG = ROOT / "config/clients/continue/config.json"
+CONFIGURE_ZSH_TPL = ROOT / "config/clients/configure.template.zsh"
 CONFIGURE_ZSH  = ROOT / "config/clients/configure.zsh"
 COPILOT_REPO_TPL = ROOT / "config/clients/copilot/repo-instructions.template.md"
 COPILOT_REPO_MD  = ROOT / "config/clients/copilot/repo-instructions.md"
@@ -604,18 +607,18 @@ def regen_copilot_repo_md(models):
 
 
 def regen_configure_zsh(clients):
-    if not CONFIGURE_ZSH.exists():
+    if not CONFIGURE_ZSH_TPL.exists():
         return False
-    text = CONFIGURE_ZSH.read_text()
+    text = CONFIGURE_ZSH_TPL.read_text()
     text, spliced = splice(text, CS_BEGIN, CS_END, gen_slot_block(clients), "claude slots")
     CONFIGURE_ZSH.write_text(text)
     return spliced
 
 
 def regen_claude_settings(models, clients):
-    if not CLAUDE_SETTINGS.exists():
+    if not CLAUDE_SETTINGS_TPL.exists():
         return False
-    data = json.loads(CLAUDE_SETTINGS.read_text())
+    data = json.loads(CLAUDE_SETTINGS_TPL.read_text())
     default = (clients.get("claude") or {}).get("launch_default", next(iter(models)))
     caps = " | ".join(mn(k) for k in models.keys())
     slots = (clients.get("claude") or {}).get("slots", {})
@@ -673,9 +676,9 @@ def regen_codex(models, clients):
 
 # ── Continue config.json ───────────────────────────────────────────────────────
 def regen_continue(models, clients):
-    if not CONTINUE_CONFIG.exists():
+    if not CONTINUE_CONFIG_TPL.exists():
         return False
-    data = json.loads(CONTINUE_CONFIG.read_text())
+    data = json.loads(CONTINUE_CONFIG_TPL.read_text())
     cont = clients.get("continue", {})
     chat = cont.get("chat", list(models.keys()))
     data["models"] = [
