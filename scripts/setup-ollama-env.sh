@@ -30,7 +30,23 @@ MODELS_DIR="${OLLAMA_MODELS:-/Users/Shared/ollama/models}" # store models outsid
 info() { echo "  ✓ $*"; }
 step() { echo; echo "▶ $*"; }
 
+# /Users/Shared exists so the model store is not inside one user's home — a 43 GB
+# download should not be re-fetched per account, and Cadence's embedder reads the
+# same daemon. A plain `mkdir -p` leaves it 755 and owned by whoever ran the
+# installer, so a SECOND user can read the models but cannot pull: `ollama pull`
+# fails with a permission error naming a path they did not choose.
+#
+# Group-writable + setgid so files created by any member inherit the group. Best
+# effort: on a single-user machine the chmod is a no-op, and if the directory is
+# owned by someone else the installer must not fail over a permission it cannot
+# change — it says so instead.
 mkdir -p "$MODELS_DIR"
+if [ -w "$MODELS_DIR" ]; then
+  chmod g+rwxs "$MODELS_DIR" 2>/dev/null || true
+else
+  echo "  ⚠ $MODELS_DIR is not writable by $(id -un) — models will not pull here." >&2
+  echo "    Fix: sudo chgrp -R staff '$MODELS_DIR' && sudo chmod -R g+rwXs '$MODELS_DIR'" >&2
+fi
 
 step "Setting Ollama env vars for the current login session (launchctl)"
 launchctl setenv OLLAMA_KEEP_ALIVE "$KEEP_ALIVE"

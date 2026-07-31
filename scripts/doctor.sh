@@ -63,6 +63,23 @@ else
   ok=false
 fi
 
+# Where the models actually live. Nothing verified this, and the failure is silent
+# and expensive: with OLLAMA_MODELS unset the daemon quietly uses ~/.ollama, so a
+# second account re-downloads tens of gigabytes and the shared store looks fine
+# because it still holds the FIRST user's copy. launchctl is the authority here —
+# Ollama.app is a GUI process and never reads ~/.zshrc.
+MODELS_DIR="$(launchctl getenv OLLAMA_MODELS 2>/dev/null || true)"
+if [ -z "$MODELS_DIR" ]; then
+  warn "OLLAMA_MODELS unset in launchctl — models go to ~/.ollama, not the shared store"
+  warn "  Fix: bash scripts/setup-ollama-env.sh, then restart Ollama"
+elif [ ! -d "$MODELS_DIR" ]; then
+  warn "OLLAMA_MODELS=$MODELS_DIR does not exist"
+elif [ ! -w "$MODELS_DIR" ]; then
+  warn "OLLAMA_MODELS=$MODELS_DIR is not writable by $(id -un) — pulls will fail"
+else
+  info "OLLAMA_MODELS=$MODELS_DIR ($(du -sh "$MODELS_DIR" 2>/dev/null | cut -f1 || echo '?'))"
+fi
+
 if has docker && docker compose version >/dev/null 2>&1; then
   info "docker compose available"
 else
