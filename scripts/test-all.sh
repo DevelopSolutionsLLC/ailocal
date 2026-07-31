@@ -105,6 +105,8 @@ run "E1 trace schema, redaction and token reconciliation" \
 # Cadence, so an ailocal-only machine got the tool switched on with nothing behind
 # it. This drives pyright-langserver over stdio against a real repo file and
 # requires real symbols back — presence of a plugin is not capability.
+run "hardware profiles (schema, tiers, dedup)" \
+    python3 scripts/tests/profiles.py
 run "Python LSP baseline for claude-local (real documentSymbol)" \
     python3 scripts/tests/lsp-baseline.py
 

@@ -50,7 +50,13 @@ prompt_secret() {
 # rights, then a single consent prompt, then one sudo authorisation up front.
 # --yes runs unattended.
 ASSUME_YES=false
-for a in "$@"; do [ "$a" = "--yes" ] && ASSUME_YES=true; done
+PROFILE_OVERRIDE=""
+_prev=""
+for a in "$@"; do
+  [ "$a" = "--yes" ] && ASSUME_YES=true
+  [ "$_prev" = "--profile" ] && PROFILE_OVERRIDE="$a"
+  _prev="$a"
+done
 
 # git ships with the Xcode Command Line Tools on macOS; jq and the rest come from
 # Homebrew. Ordered by dependency: CLT -> brew -> everything else.
@@ -350,10 +356,49 @@ step "Detecting hardware profile"
 RAM_BYTES=$(sysctl -n hw.memsize 2>/dev/null || echo 0)
 RAM_GB=$((RAM_BYTES / 1024 / 1024 / 1024))
 
-if   [ "$RAM_GB" -ge 96 ]; then RAM_TIER="128gb"
-elif [ "$RAM_GB" -ge 48 ]; then RAM_TIER="64gb"
-elif [ "$RAM_GB" -ge 24 ]; then RAM_TIER="32gb"
-else                             RAM_TIER="16gb"
+# NEVER ROUND UP. This used to select the tier at 75% of its name — 24 GB got the
+# 32gb profile, 48 GB got 64gb, 96 GB got 128gb — so a machine was routinely given
+# models sized for memory it did not have. A tier is chosen only when the machine
+# actually has that much memory.
+#
+#   >= 128   128gb
+#   64-127   64gb
+#   32-63    32gb
+#   16-31    16gb
+#   < 16     unsupported
+if   [ "$RAM_GB" -ge 128 ]; then RAM_TIER="128gb"
+elif [ "$RAM_GB" -ge 64 ];  then RAM_TIER="64gb"
+elif [ "$RAM_GB" -ge 32 ];  then RAM_TIER="32gb"
+elif [ "$RAM_GB" -ge 16 ];  then RAM_TIER="16gb"
+else
+  error "${RAM_GB} GB of unified memory — ailocal requires at least 16 GB."
+  echo "  The smallest profile runs a 4b primary model at 64K context; below 16 GB" >&2
+  echo "  that does not fit alongside macOS. No profile is offered rather than one" >&2
+  echo "  that would swap or OOM." >&2
+  exit 1
+fi
+
+# Explicit override, validated. --profile wins over detection, but an override that
+# exceeds physical memory is refused unattended and must be confirmed interactively:
+# the failure mode is a machine thrashing on models it cannot hold.
+if [ -n "${PROFILE_OVERRIDE:-}" ]; then
+  case "$PROFILE_OVERRIDE" in
+    16gb|32gb|64gb|128gb) ;;
+    *) error "unknown profile '$PROFILE_OVERRIDE' (expected 16gb, 32gb, 64gb or 128gb)"; exit 1 ;;
+  esac
+  OVERRIDE_GB="${PROFILE_OVERRIDE%gb}"
+  if [ "$OVERRIDE_GB" -gt "$RAM_GB" ]; then
+    warn "--profile $PROFILE_OVERRIDE exceeds detected memory (${RAM_GB} GB)."
+    warn "  Models sized for ${OVERRIDE_GB} GB will swap or fail to load."
+    if $ASSUME_YES; then
+      error "Refusing an unsafe override under --yes. Re-run interactively to confirm."
+      exit 1
+    fi
+    read -r -p "  Use $PROFILE_OVERRIDE anyway? [y/N]: " OK
+    case "$OK" in y|Y|yes|Yes) : ;; *) error "aborted"; exit 1 ;; esac
+  fi
+  info "profile overridden: $RAM_TIER -> $PROFILE_OVERRIDE"
+  RAM_TIER="$PROFILE_OVERRIDE"
 fi
 
 PROFILE_SRC="$ROOT_DIR/config/profiles/${RAM_TIER}.yaml"
@@ -376,7 +421,45 @@ else
   echo "$RAM_TIER" > "$ACTIVE_PROFILE"
   info "active profile set to $RAM_TIER (config/active-profile)"
 fi
-[ "$RAM_TIER" != "64gb" ] && warn "profile '$RAM_TIER' is marked status: unverified — validate with 'ailocal validate' before relying on it"
+# Report the whole plan before anything is pulled. A disk warning that just says
+# "80 GB required" is unauditable; every number below names where it came from.
+PROFILE_STATUS="$(grep -m1 '^status:' "$PROFILE_SRC" | awk '{print $2}' || echo unknown)"
+echo
+echo "  architecture:        $(uname -m)"
+echo "  physical memory:     ${RAM_GB} GB"
+echo "  selected profile:    ${RAM_TIER}  (${PROFILE_STATUS})"
+python3 - "$PROFILE_SRC" <<'PYEOF'
+import re, sys
+text = open(sys.argv[1]).read()
+caps = {}
+for m in re.finditer(r'^([a-z_]+):\n((?:  .*\n)+)', text, re.M):
+    cap, body = m.group(1), m.group(2)
+    f = lambda k: (re.search(rf'^  {k}: *(.+?)\s*(?:#.*)?$', body, re.M) or [None, None])[1]
+    if (f("enabled") or "true").lower() == "false":
+        continue
+    if f("active"):
+        caps.setdefault(f("active"), []).append((cap, f("context"), f("num_predict")))
+shared = max(caps.items(), key=lambda kv: len(kv[1]))
+names  = [c for c, _, _ in shared[1]]
+print(f"  primary model:       {shared[0]}")
+print(f"  shared across:       {', '.join(names)}")
+for tag, users in caps.items():
+    if tag == shared[0]:
+        continue
+    print(f"  {users[0][0]+' model:':21}{tag}")
+print(f"  configured context:  {shared[1][0][1]} (a maximum, not a per-request reservation)")
+print(f"  max output:          {shared[1][0][2]}")
+print(f"  unique models:       {len(caps)}")
+PYEOF
+echo "  parallelism:         ${OLLAMA_NUM_PARALLEL:-2} (Ollama divides a runner's context across"
+echo "                       parallel sequences — two full-context requests are not guaranteed)"
+case "$RAM_TIER" in
+  16gb) echo "  tier notes:          one shared 4b primary; quality below larger tiers by design" ;;
+  32gb) echo "  tier notes:          one shared 9b primary; targets daily coding and agent work" ;;
+  128gb) echo "  tier notes:          mirrors the validated 64gb configuration; 128 GB-specific"
+         echo "                       tuning deferred until measured on matching hardware" ;;
+esac
+[ "$PROFILE_STATUS" != "measured" ] && warn "profile '$RAM_TIER' is $PROFILE_STATUS — not measured on matching hardware"
 
 # ── Directory structure ────────────────────────────────────────────────────
 step "Creating directory structure"
