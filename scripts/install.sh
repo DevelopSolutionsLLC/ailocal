@@ -15,7 +15,7 @@ AILOCAL_ROOT="$ROOT_DIR"
 has() { command -v "$1" >/dev/null 2>&1; }
 
 info()  { echo "  ✓ $*"; }
-warn()  { echo "  ⚠ $*"; }
+warn()  { echo "  ⚠ $*" >&2; }
 error() { echo "  ✗ $*" >&2; }
 step()  { echo; echo "▶ $*"; }
 
@@ -169,11 +169,11 @@ fi
 
 # ── Directory structure ────────────────────────────────────────────────────
 step "Creating directory structure"
-# Only backups/ needs creating — it holds the .env snapshot from update.sh.
-# config/litellm/ is tracked in the repo; nothing writes to a ./data dir.
-mkdir -p "$ROOT_DIR/backups"
-# backups/ holds .env snapshots — lock it down.
-chmod 700 "$ROOT_DIR/backups"
+# Runtime state lives outside the checkout (see scripts/lib/compose.sh). Only the
+# backup directory needs pre-creating, because it holds .env snapshots from
+# update.sh and must be locked down before anything writes one.
+mkdir -p "${AILOCAL_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/ailocal}/backups"
+chmod 700 "${AILOCAL_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/ailocal}/backups"
 info "Directories ready"
 
 # ── .env generation ────────────────────────────────────────────────────────

@@ -33,11 +33,11 @@ if [ "$MODE" = "dashboard" ]; then
   C_OK=$'\033[32m'; C_BAD=$'\033[31m'; C_WARN=$'\033[33m'; C_DIM=$'\033[2m'; C_0=$'\033[0m'
   ok()   { printf '  %s✓%s %s\n' "$C_OK" "$C_0" "$*"; }
   bad()  { printf '  %s✗%s %s\n' "$C_BAD" "$C_0" "$*"; }
-  warn() { printf '  %s!%s %s\n' "$C_WARN" "$C_0" "$*"; }
+  warn() { printf '  %s⚠%s %s\n' "$C_WARN" "$C_0" "$*"; }
   dim()  { printf '  %s—%s %s\n' "$C_DIM" "$C_0" "$*"; }
   hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
   PROXY="${AILOCAL_PROXY_URL:-http://127.0.0.1:4000}"
-  TRACES="$ROOT_DIR/data/tool-captures/traces"
+  TRACES="${AILOCAL_STATE:-$HOME/.local/state/ailocal}/captures/traces"
 
   echo "══════════════════════════════════════════════════════════════════════"
   echo " AILOCAL STATUS   $(date '+%Y-%m-%d %H:%M:%S')"

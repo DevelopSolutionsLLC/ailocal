@@ -18,7 +18,7 @@ MODELS_YAML="$ROOT_DIR/config/profiles/${_TIER}.yaml"   # active profile (tracke
 
 has()   { command -v "$1" >/dev/null 2>&1; }
 info()  { echo "  ✓ $*"; }
-warn()  { echo "  ⚠ $*"; }
+warn()  { echo "  ⚠ $*" >&2; }
 error() { echo "  ✗ $*" >&2; }
 step()  { echo; echo "▶ $*"; }
 
