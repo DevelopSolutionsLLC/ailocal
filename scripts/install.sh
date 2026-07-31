@@ -306,7 +306,8 @@ if has ollama; then
   info "Ollama CLI present ($(ollama --version 2>/dev/null | awk '{print $NF}'))"
   if ! ollama list >/dev/null 2>&1; then
     warn "Ollama daemon is not running."
-    echo "  Start it with: ollama serve   (or open /Applications/Ollama.app)"
+    echo "  Start the MANAGED service (not the GUI app, which competes for :11434):"
+    echo "    launchctl kickstart -k gui/$(id -u)/com.ailocal.ollama"
     echo "  Models will be pulled by scripts/install-models.sh after Ollama is running."
   else
     info "Ollama daemon is responding"

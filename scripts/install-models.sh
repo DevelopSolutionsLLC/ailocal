@@ -34,7 +34,8 @@ info "Ollama CLI present"
 
 if ! "$OLLAMA" list >/dev/null 2>&1; then
   error "Ollama daemon is not responding."
-  echo "  Start it with: ollama serve   (or open /Applications/Ollama.app)" >&2
+  echo "  Start the MANAGED service (not the GUI app, which competes for :11434):" >&2
+  echo "    launchctl kickstart -k gui/$(id -u)/com.ailocal.ollama" >&2
   exit 1
 fi
 info "Ollama daemon responding"
