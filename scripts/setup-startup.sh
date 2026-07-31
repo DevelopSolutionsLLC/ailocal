@@ -31,7 +31,21 @@ LOG_DIR="$HOME/Library/Logs/ailocal"
 # modern macOS. Install self-contained wrappers here instead (and bake in any values
 # from the repo at install time, since the repo itself may be under ~/Documents).
 APP_SUPPORT="$HOME/Library/Application Support/ailocal"
-OLLAMA_BIN="/Applications/Ollama.app/Contents/Resources/ollama"
+# Resolve the binary rather than assuming the cask layout. This was hardcoded to
+# the app bundle, so a machine where Ollama came from the FORMULA (or where the
+# app was moved) got a LaunchAgent pointing at a path that does not exist —
+# launchd reports nothing useful and `ollama serve` simply never runs.
+# Order: app bundle, then the symlink, then Homebrew, then PATH.
+OLLAMA_BIN=""
+for _cand in "/Applications/Ollama.app/Contents/Resources/ollama" \
+             "/usr/local/bin/ollama" \
+             "$(command -v ollama 2>/dev/null || true)"; do
+  [ -n "$_cand" ] && [ -x "$_cand" ] && { OLLAMA_BIN="$_cand"; break; }
+done
+if [ -z "$OLLAMA_BIN" ]; then
+  echo "  ✗ ollama binary not found — install Ollama first, then re-run." >&2
+  exit 1
+fi
 MODEL_ROLE="coder"
 WITH_LITELLM=0
 UNINSTALL=0
