@@ -56,10 +56,20 @@ Architecture and file map: [AGENTS.md](AGENTS.md).
 ## Requirements
 
 **A bare Mac is fine.** `install.sh` reports everything missing up front, asks
-once, and requests administrator rights once — Command Line Tools, Homebrew and
-Docker Desktop all install system-wide, so sudo is unavoidable on macOS. Docker's
-licence terms are recorded in Docker's own settings file before first launch, so
-there is no manual accept-and-re-run step. `--yes` runs unattended.
+once, then requests administrator rights once. Docker's licence terms are
+recorded in Docker's own settings file before first launch, so there is no
+manual accept-and-re-run step. `--yes` runs unattended.
+
+| Prerequisite | Administrator rights | Why |
+|---|---|---|
+| git (Command Line Tools) | **yes** | `softwareupdate -i` runs as root; installed headlessly, no dialog |
+| Homebrew | **yes** | creates `/opt/homebrew` |
+| jq | no | Homebrew formula, user-owned prefix |
+| Docker Desktop | **yes** | root-owned privileged helpers (cask `docker-desktop`, not the CLI-only formula) |
+| Ollama | no | cask `ollama-app`; `/Applications` is admin-group writable |
+
+You must be an **administrator**. A standard account cannot install these, and
+the installer says so up front rather than failing partway through.
 
 ### Prerequisites
 
