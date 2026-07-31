@@ -13,6 +13,7 @@ config/active-profile
 # would immediately contradict. install.sh regenerates it before clients install.
 config/integration-contract.json
 config/capabilities.generated.json
+config/clients/model_catalog.json
 
 # Runtime state lives in $XDG_STATE_HOME/ailocal, never in the checkout — see
 # scripts/lib/compose.sh. These patterns remain as a guard: an older install, or
