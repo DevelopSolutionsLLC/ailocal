@@ -162,6 +162,7 @@ EOF
   cp "$ROOT_DIR/config/clients/finalize.zsh" "$AILOCAL_CFG/finalize.zsh"
   # Shared SessionStart hook (claude-local + codex-local) — per-session scratchpad.
   cp "$ROOT_DIR/config/clients/scratchpad-hook.sh" "$AILOCAL_CFG/scratchpad-hook.sh"
+cp "$ROOT_DIR/config/clients/compact-hook.sh" "$AILOCAL_CFG/compact-hook.sh"
   chmod +x "$AILOCAL_CFG/scratchpad-hook.sh"
   info "configure.zsh / finalize.zsh / scratchpad-hook.sh deployed to $AILOCAL_CFG"
 

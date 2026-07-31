@@ -115,6 +115,46 @@ EXPECTED-AUTH-FAILURE` markers to the container's own stdout, so
 `docker logs ailocal-litellm` shows the boundary inline around the traceback.
 The gate's own output stays a single `PASS` line.
 
+## Provenance and its limit
+
+A digest proves the bytes did not change. It does **not** prove who published
+them. `ailocal security` and `cadence security` report signature status, and
+`install.sh` provisions `cosign` so a fresh machine can verify from day one.
+`ailocal security` still refuses to install it at runtime — adding a verification
+tool to a *running* system is the operator's call.
+
+| Image | Signature |
+|---|---|
+| `ghcr.io/berriai/litellm` | published (+ attestations) |
+| `qdrant/qdrant` | published |
+| `searxng/searxng` | **none** |
+
+**Do not use `cosign triangulate` to prove a signature exists.** It only computes
+the expected `.sig` tag name from the digest and succeeds for unsigned images —
+it reported a signature for SearXNG, which publishes none. It is also deprecated.
+`cosign tree` queries the registry and is what these checks use.
+
+### Deferred: identity-constrained verification
+
+Sigstore's guidance is explicit that verification must include identity
+constraints, not merely "is signed". That is **not implemented**, and presence is
+the honest ceiling here.
+
+- **Affected images:** `ghcr.io/berriai/litellm@sha256:28b10a63…`,
+  `qdrant/qdrant@sha256:0bd98fa7…`. SearXNG is unaffected — it signs nothing.
+- **Why:** neither publisher documents a signing identity, and
+  `cosign verify --certificate-identity-regexp 'https://github.com/BerriAI/litellm/.*'
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com`
+  fails with `no matching signatures: error verifying bundle: empty key` — the
+  signature is not a standard keyless Fulcio bundle.
+- **Manual check available today:**
+  `cosign tree <image>@<digest>`
+- **Re-evaluate when:** either publisher documents a signing identity or key, or
+  an image moves to standard keyless signing. Recheck on any image upgrade.
+
+Until then, the load-bearing controls remain the immutable digest, the
+declared-vs-running drift check, and loopback binding.
+
 ## Update awareness
 
 **Nothing here updates itself.** A pinned digest is fetched, never resolved
