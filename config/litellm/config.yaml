@@ -41,7 +41,7 @@ model_list:
     litellm_params:
       model: ollama_chat/qwen3-coder:30b-a3b-q4_K_M
       api_base: os.environ/OLLAMA_URL
-      num_ctx: 65536
+      num_ctx: 98304
       temperature: 0.1
       top_p: 0.9
       top_k: 20
@@ -61,7 +61,7 @@ model_list:
       output_cost_per_token: 0
       cache_creation_input_token_cost: 0
       cache_read_input_token_cost: 0
-      max_input_tokens: 65536
+      max_input_tokens: 98304
       max_output_tokens: 16384
 
   # ailocal-implementation — Daily coding (qwen2.5-coder:14b-instruct-q4_K_M)
@@ -69,7 +69,7 @@ model_list:
     litellm_params:
       model: ollama_chat/qwen2.5-coder:14b-instruct-q4_K_M
       api_base: os.environ/OLLAMA_URL
-      num_ctx: 16384
+      num_ctx: 24576
       temperature: 0.1
       top_p: 0.9
       top_k: 20
@@ -89,20 +89,20 @@ model_list:
       output_cost_per_token: 0
       cache_creation_input_token_cost: 0
       cache_read_input_token_cost: 0
-      max_input_tokens: 16384
-      max_output_tokens: 4096
+      max_input_tokens: 24576
+      max_output_tokens: 6144
 
   # ailocal-review — Code review (gpt-oss:20b)
   - model_name: ailocal-review
     litellm_params:
       model: ollama_chat/gpt-oss:20b
       api_base: os.environ/OLLAMA_URL
-      num_ctx: 16384
+      num_ctx: 24576
       temperature: 0.2
       top_p: 0.9
       top_k: 20
       repeat_penalty: 1.0
-      num_predict: 2048
+      num_predict: 4096
       keep_alive: 20m
       think: true
     model_info:
@@ -116,15 +116,15 @@ model_list:
       output_cost_per_token: 0
       cache_creation_input_token_cost: 0
       cache_read_input_token_cost: 0
-      max_input_tokens: 16384
-      max_output_tokens: 4096
+      max_input_tokens: 24576
+      max_output_tokens: 6144
 
   # ailocal-fast — Fast agent (qwen3.5:2b)
   - model_name: ailocal-fast
     litellm_params:
       model: ollama_chat/qwen3.5:2b
       api_base: os.environ/OLLAMA_URL
-      num_ctx: 32768
+      num_ctx: 49152
       temperature: 0.0
       top_p: 0.9
       top_k: 20
@@ -144,8 +144,8 @@ model_list:
       output_cost_per_token: 0
       cache_creation_input_token_cost: 0
       cache_read_input_token_cost: 0
-      max_input_tokens: 32768
-      max_output_tokens: 8192
+      max_input_tokens: 49152
+      max_output_tokens: 12288
 
   # ailocal-completion — Autocomplete (standby) (qwen2.5-coder:3b-instruct-q4_K_M)
   - model_name: ailocal-completion
@@ -183,7 +183,7 @@ model_list:
       keep_alive: -1
     model_info:
       mode: embedding
-      max_tokens: 8192
+      max_tokens: 2048
       input_cost_per_token: 0
       output_cost_per_token: 0
       cache_creation_input_token_cost: 0
@@ -231,17 +231,36 @@ router_settings:
     - {"ailocal-architecture":   ["ailocal-implementation"]}
     - {"ailocal-review":         ["ailocal-implementation"]}
   context_window_fallbacks:
-    # Graceful fallback when a request exceeds a capability's declared window.
-    # Same rule, and more obviously so here: routing an over-16K request to a 4K
-    # model is arithmetically guaranteed to fail. Only ever fall back UP.
-    - {"ailocal-review":         ["ailocal-architecture"]}
-    - {"ailocal-implementation": ["ailocal-architecture"]}
+    # STRICTLY UPWARD, by context size. A fallback to an equal-or-smaller window
+    # cannot serve a request that just overflowed — that is the same arithmetic
+    # error as falling back DOWN, only less obvious. Chain order is therefore the
+    # size order, and every hop must strictly increase:
+    #
+    #   implementation 32768 -> fast 65536 -> architecture 131072
+    #   review         32768 -> fast 65536 -> architecture 131072
+    #   fast           65536 ->               architecture 131072
+    #
+    # `completion` (4096) is deliberately absent from every chain: it is the FIM
+    # tier and any real agent turn exceeds it, so using it as a target converts a
+    # recoverable overflow into a hard 400.
+    - {"ailocal-implementation": ["ailocal-fast", "ailocal-architecture"]}
+    - {"ailocal-review":         ["ailocal-fast", "ailocal-architecture"]}
+    - {"ailocal-fast":           ["ailocal-architecture"]}
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   # No database. Single-user local proxy: master key from env, models from this
   # file. Spend logs / virtual keys / the /ui dashboard need a DB and are unused.
-  max_parallel_requests: 1          # Apple Silicon: queue inference; never split GPU
+  # Matched to OLLAMA_NUM_PARALLEL (2). This was 1, which SERIALISED every request
+  # at the proxy while Ollama still allocated two KV slots per model — paying the
+  # memory cost of parallelism with none of the throughput. The two settings must
+  # move together; raising this above OLLAMA_NUM_PARALLEL only queues inside
+  # Ollama instead of inside LiteLLM.
+  #
+  # The prior comment ("Apple Silicon: queue inference; never split GPU") reflects
+  # a real trade-off: concurrent requests share one GPU, so each is slower even
+  # though total throughput rises. Revert to 1 if interactive latency regresses.
+  max_parallel_requests: 2
   # background_health_checks are intentionally OFF — they reload every model on an
   # interval and thrash GPU memory. Check health on demand via /health.
 

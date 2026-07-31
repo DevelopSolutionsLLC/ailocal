@@ -54,7 +54,7 @@ architecture:
   # model's thinking/vision did not pay for ~2x slower generation.
   preferred: [qwen3-coder:30b-a3b-q4_K_M]
   reasoning: false         # VERIFIED: no `thinking` capability on this model
-  context: 65536
+  context: 98304
   temperature: 0.1
   num_predict: 16384
   keep_alive: -1
@@ -88,7 +88,7 @@ implementation:
   # VERIFIED capabilities: tools YES, insert YES, thinking NO.
   preferred: [qwen2.5-coder:14b-instruct-q4_K_M, qwen3-coder:30b-a3b-q4_K_M]
   reasoning: false         # VERIFIED: no `thinking` capability
-  context: 16384
+  context: 24576
   temperature: 0.1
   num_predict: -1
   keep_alive: 20m
@@ -110,9 +110,9 @@ review:
   active: gpt-oss:20b
   preferred: [gpt-oss:20b, deepseek-coder-v2:16b-lite-instruct-q4_K_M]
   reasoning: true          # VERIFIED: thinking AND tools (deepseek had NO tools)
-  context: 16384
+  context: 24576
   temperature: 0.2
-  num_predict: 2048
+  num_predict: 4096
   keep_alive: 20m
   persona: true
   purpose: [code review, bug detection, security review, alternative solutions]
@@ -158,7 +158,7 @@ fast:
   # max_tokens 8 and 64 (finish_reason=length). This tier answers one word; it
   # must not think itself out of its budget.
   reasoning: false
-  context: 32768
+  context: 49152
   temperature: 0.0
   num_predict: 4096
   keep_alive: 20m
@@ -222,22 +222,3 @@ embeddings:
   purpose: [semantic search, memory, retrieval for grepai]
   strengths: [always-on, tiny, grepai calls it directly on :11434]
   weaknesses: [not a chat model]
-
-# ── reasoning tier (no installed backend) ────────────────────────────────────
-# The deepseek-r1 reasoners were removed; no installed model emits <think>. To restore,
-# pull a reasoner, uncomment, and repoint the deep-think* legacy names at `reasoning` in
-# config/clients.yaml.
-# reasoning:
-#   role: Chain-of-thought
-#   active: deepseek-r1:14b-qwen-distill-q8_0
-#   preferred: [deepseek-r1:14b-qwen-distill-q8_0, deepseek-r2:32b]
-#   context: 32768
-#   temperature: 0.6
-#   top_p: 0.95
-#   keep_alive: 30m
-#   priority: medium
-#   reasoning: true
-#   merge: true
-#   purpose: [chain-of-thought reasoning, decomposition]
-#   strengths: [visible thinking, hard multi-step problems]
-#   weaknesses: [slow, verbose]
