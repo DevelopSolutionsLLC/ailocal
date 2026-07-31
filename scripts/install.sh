@@ -54,12 +54,26 @@ for a in "$@"; do [ "$a" = "--yes" ] && ASSUME_YES=true; done
 
 # git ships with the Xcode Command Line Tools on macOS; jq and the rest come from
 # Homebrew. Ordered by dependency: CLT -> brew -> everything else.
+# Which of these actually need administrator rights, verified rather than assumed:
+#
+#   git / CLT       YES  `softwareupdate -i` runs as root (Homebrew's own installer
+#                        uses execute_sudo for exactly this call)
+#   Homebrew        YES  creates /opt/homebrew
+#   jq              no   a formula, installed into the user-owned Homebrew prefix
+#   Docker Desktop  YES  installs root:wheel helpers in /Library/PrivilegedHelperTools
+#                        and symlinks into /usr/local/bin
+#   Ollama          no   a cask; the app drops into /Applications, which is
+#                        drwxrwxr-x root:admin and so writable by an admin user
+#                        without sudo, and its binary lands in the Homebrew prefix.
+#                        (Ollama.app separately offers to create a root symlink at
+#                        /usr/local/bin/ollama — ailocal does not need it and uses
+#                        the Homebrew one.)
 MISSING=()
 NEEDS_ADMIN=false
-has git    || { MISSING+=("git (Xcode Command Line Tools)"); NEEDS_ADMIN=true; }
-has brew   || { MISSING+=("Homebrew");                       NEEDS_ADMIN=true; }
+has git    || { MISSING+=("git (Xcode Command Line Tools) [admin]"); NEEDS_ADMIN=true; }
+has brew   || { MISSING+=("Homebrew [admin]");                       NEEDS_ADMIN=true; }
 has jq     || MISSING+=("jq")
-has docker || { MISSING+=("Docker Desktop");                 NEEDS_ADMIN=true; }
+has docker || { MISSING+=("Docker Desktop [admin]");                 NEEDS_ADMIN=true; }
 has ollama || MISSING+=("Ollama")
 
 step "Preflight"
@@ -69,8 +83,17 @@ else
   echo "  This machine is missing:"
   for m in "${MISSING[@]}"; do echo "    - $m"; done
   echo
+  # A standard (non-admin) account cannot install these AT ALL: it cannot sudo,
+  # and /Applications is only group-writable by admin. Saying so here beats
+  # failing several minutes into a cask install with a permissions error.
+  if $NEEDS_ADMIN && ! id -Gn | tr ' ' '\n' | grep -qx admin; then
+    error "$(id -un) is not an administrator, and these need administrator rights:"
+    for m in "${MISSING[@]}"; do case "$m" in *"[admin]"*) echo "    - $m" >&2 ;; esac; done
+    echo "  Install them from an admin account, or have an admin do it, then re-run." >&2
+    exit 1
+  fi
   if $NEEDS_ADMIN; then
-    echo "  Some of these need administrator rights:"
+    echo "  The items marked [admin] need administrator rights:"
     echo "    Command Line Tools and Docker Desktop install system-wide;"
     echo "    Homebrew creates /opt/homebrew. There is no user-local path for"
     echo "    these on macOS, so sudo is unavoidable — asked for ONCE, now,"
@@ -93,22 +116,41 @@ else
   fi
 fi
 
-# ── Xcode Command Line Tools (provides git) ────────────────────────────────
-step "Checking git"
-if ! has git; then
-  echo "  git not found — installing the Xcode Command Line Tools."
-  echo "  macOS shows its own dialog for this; accept it and wait for it to finish."
-  xcode-select --install 2>/dev/null || true
-  # xcode-select returns immediately; the install is a separate GUI process.
-  for _ in $(seq 1 120); do has git && break; sleep 10; done
-  has git || { error "git still not available. Finish the Command Line Tools install, then re-run."; exit 1; }
-fi
-info "git present ($(git --version 2>/dev/null | awk '{print $3}'))"
+# ── Command Line Tools (provides git) and Homebrew ─────────────────────────
+#
+# ORDER MATTERS. Homebrew's own installer provisions the Command Line Tools
+# SILENTLY — it seeds /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress,
+# reads the CLT label out of `softwareupdate -l`, and installs it headlessly. So
+# when both are missing, installing Homebrew first gets git too, with no GUI
+# dialog and no second password prompt (we already hold sudo from the preflight).
+#
+# This used to run `xcode-select --install` first, which pops a macOS dialog the
+# user has to click and then polls for up to twenty minutes. That path is now the
+# FALLBACK, for the narrow case where brew exists but git somehow does not.
+#
+# There is no sudo-free way to install the Command Line Tools: `softwareupdate -i`
+# requires root, which is why the preflight asks once, up front.
+install_clt_silently() {
+  local placeholder="/tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress"
+  local label
+  touch "$placeholder" 2>/dev/null || true
+  label="$(/usr/sbin/softwareupdate -l 2>/dev/null \
+           | grep -B1 -E 'Command Line Tools' \
+           | awk -F'*' '/^ *\*/ {print $2}' \
+           | sed -e 's/^ *Label: //' -e 's/^ *//' \
+           | sort -V | tail -n1)"
+  if [ -n "$label" ]; then
+    echo "  Installing $label (headless)..."
+    sudo /usr/sbin/softwareupdate -i "$label" >/dev/null 2>&1 || true
+    sudo /usr/bin/xcode-select --switch /Library/Developer/CommandLineTools 2>/dev/null || true
+  fi
+  rm -f "$placeholder" 2>/dev/null || true
+  has git
+}
 
-# ── Homebrew ───────────────────────────────────────────────────────────────
 step "Checking Homebrew"
 if ! has brew; then
-  echo "  Installing Homebrew..."
+  echo "  Installing Homebrew (this also installs the Command Line Tools, which provide git)..."
   NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
     || { error "Homebrew install failed. See https://brew.sh"; exit 1; }
   BREW_BIN="/opt/homebrew/bin/brew"; [ -x "$BREW_BIN" ] || BREW_BIN="/usr/local/bin/brew"
@@ -121,16 +163,53 @@ if ! has brew; then
 fi
 info "Homebrew present ($(brew --version 2>/dev/null | head -1))"
 
-# ── CLI tools ──────────────────────────────────────────────────────────────
-step "Checking CLI tools"
-for pkg in jq; do
-  if ! has "$pkg"; then
-    echo "  Installing $pkg..."
-    brew install "$pkg" || { error "Could not install $pkg"; exit 1; }
-  else
-    info "$pkg present"
+step "Checking git"
+if ! has git; then
+  echo "  git not found — installing the Command Line Tools."
+  if ! install_clt_silently; then
+    # Headless install can fail on a machine whose software-update catalogue is
+    # unreachable. Fall back to the GUI, which is slower but always available.
+    warn "Headless install did not produce git — falling back to the macOS dialog."
+    xcode-select --install 2>/dev/null || true
+    echo "  Accept the dialog; waiting for git to appear..."
+    for _ in $(seq 1 120); do has git && break; sleep 10; done
   fi
-done
+  has git || { error "git still unavailable. Finish the Command Line Tools install, then re-run."; exit 1; }
+fi
+info "git present ($(git --version 2>/dev/null | awk '{print $3}'))"
+
+# ── CLI tools ──────────────────────────────────────────────────────────────
+# ── Everything Homebrew provides, in one pass ──────────────────────────────
+#
+# Two commands, not one, and the distinction is load-bearing:
+# `brew install docker` resolves to the CLI-only FORMULA — no daemon, no VM — so
+# a mixed `brew install jq docker ollama` would leave `has docker` true while
+# `docker ps` fails with nothing listening. The casks are named explicitly
+# (docker-desktop, ollama-app) rather than relying on alias resolution.
+#
+# Batched so Homebrew escalates once per command instead of once per package.
+# Homebrew prompts for its own sudo when a cask needs it; the preflight asked
+# earlier only so that prompt is not a surprise mid-run.
+step "Installing Homebrew packages"
+BREW_FORMULAS=(); BREW_CASKS=()
+has jq     || BREW_FORMULAS+=("jq")
+has docker || BREW_CASKS+=("docker-desktop")
+has ollama || BREW_CASKS+=("ollama-app")
+
+if [ ${#BREW_FORMULAS[@]} -gt 0 ]; then
+  echo "  formulas: ${BREW_FORMULAS[*]}"
+  brew install "${BREW_FORMULAS[@]}" || { error "Could not install: ${BREW_FORMULAS[*]}"; exit 1; }
+fi
+if [ ${#BREW_CASKS[@]} -gt 0 ]; then
+  echo "  casks: ${BREW_CASKS[*]}"
+  brew install --cask "${BREW_CASKS[@]}" || {
+    error "Could not install: ${BREW_CASKS[*]}"
+    echo "  Docker Desktop: https://www.docker.com/products/docker-desktop/" >&2
+    echo "  Ollama:         https://ollama.com/download" >&2
+    exit 1
+  }
+fi
+[ ${#BREW_FORMULAS[@]} -eq 0 ] && [ ${#BREW_CASKS[@]} -eq 0 ] && info "jq, Docker and Ollama already present"
 
 # ── Docker ─────────────────────────────────────────────────────────────────
 # The licence is accepted by pre-seeding Docker's OWN settings file before first
@@ -162,14 +241,6 @@ PYEOF
 }
 
 step "Checking Docker"
-if ! has docker; then
-  echo "  Installing Docker Desktop..."
-  brew install --cask docker || {
-    error "Could not install Docker Desktop automatically."
-    echo "  Install manually: https://www.docker.com/products/docker-desktop/" >&2
-    exit 1
-  }
-fi
 docker_accept_license
 if ! docker ps >/dev/null 2>&1; then
   echo "  Starting Docker Desktop..."
@@ -183,16 +254,12 @@ fi
 info "Docker present and running ($(docker --version | awk '{print $3}' | tr -d ,))"
 
 # ── Ollama ─────────────────────────────────────────────────────────────────
+# Installed above with the other Homebrew packages; this only verifies it.
+# The old block re-tried `--cask ollama` then fell back to the FORMULA, which
+# gives a CLI with no app — a different install shape reached by accident.
 step "Checking Ollama"
-if ! has ollama; then
-  echo "  Ollama not found — installing via Homebrew cask..."
-  brew install --cask ollama 2>/dev/null || brew install ollama 2>/dev/null || {
-    warn "Could not install Ollama via Homebrew."
-    echo "  Install manually from: https://ollama.ai/download"
-  }
-fi
 if has ollama; then
-  info "Ollama CLI present"
+  info "Ollama CLI present ($(ollama --version 2>/dev/null | awk '{print $NF}'))"
   if ! ollama list >/dev/null 2>&1; then
     warn "Ollama daemon is not running."
     echo "  Start it with: ollama serve   (or open /Applications/Ollama.app)"
