@@ -156,7 +156,14 @@ def counters():
 FENCE_RE = re.compile(r"```.*?```", re.S)
 INLINE_RE = re.compile(r"`[^`\n]*`")
 # Closing tags are REQUIRED — this is what rejects truncated calls.
-QWEN_FUNC_RE = re.compile(r"<function=([A-Za-z0-9_\-]+)\s*>(.*?)</function>", re.S)
+# The closing tag is an ALTERNATION because models mix the two dialects: observed
+# output opened `<function=exec_command>` and closed `</tool_call>`. The old
+# pattern required `</function>`, matched nothing, and the call was printed to the
+# user as literal text instead of being repaired or rejected. `$` terminates a
+# truncated emission so a cut-off call is still recoverable rather than silently
+# dropped.
+QWEN_FUNC_RE = re.compile(
+    r"<function=([A-Za-z0-9_\-]+)\s*>(.*?)(?:</function>|</tool_call>|$)", re.S)
 QWEN_PARAM_RE = re.compile(r"<parameter=([A-Za-z0-9_\-]+)\s*>(.*?)</parameter>", re.S)
 JSON_BLOB_RE = re.compile(
     r'\{\s*"name"\s*:\s*"([A-Za-z0-9_\-]+)"\s*,\s*"arguments"\s*:\s*(\{.*?\})\s*\}', re.S
