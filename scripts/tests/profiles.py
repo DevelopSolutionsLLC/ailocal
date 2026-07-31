@@ -160,6 +160,55 @@ check("requires at least 16 GB" in install,
 check("PROFILE_OVERRIDE" in install and "Refusing an unsafe override under --yes" in install,
       "an override above physical memory is refused unattended")
 
+# ── interactive compaction ──────────────────────────────────────────────────
+# Deterministic only: the arithmetic and the generated files. The LATENCY that
+# motivates these numbers costs 13 minutes of GPU time to reproduce, so it is
+# measured once and recorded in docs/troubleshooting.md, not re-run in the gate.
+print("\nCOMPACTION")
+DANGER = 55000   # measured: cold prefill passes ~5 min beyond roughly this point
+for tier in PROFILES:
+    caps, _ = PARSED[tier]
+    c = caps.get("compaction", {})
+    check(bool(c.get("window") and c.get("pct")),
+          f"{tier} declares a compaction window and pct", repr(c))
+    if not (c.get("window") and c.get("pct")):
+        continue
+    win, pct = int(c["window"]), int(c["pct"])
+    trig = win * pct // 100
+    arch = int(caps["architecture"]["context"])
+    check(trig < arch,
+          f"{tier} compaction trigger ({trig}) is below the architecture max ({arch})")
+    check(trig < DANGER,
+          f"{tier} compacts ({trig}) BEFORE the measured cold-prefill danger zone")
+    # The point of compaction is to keep sessions out of that zone. A window set
+    # ABOVE the model maximum would never fire before the model itself refused.
+    check(win <= arch, f"{tier} compaction window ({win}) does not exceed the model max ({arch})")
+
+# The generated client config must match the ACTIVE profile, or the client
+# compacts on a threshold this repository never chose.
+active = (REPO / "config" / "active-profile")
+tier = active.read_text().strip() if active.exists() else "64gb"
+cc = PARSED[tier][0].get("compaction", {})
+settings = REPO / "config/clients/claude/settings.json"
+if settings.exists() and cc:
+    import json
+    env = json.loads(settings.read_text()).get("env", {})
+    check(env.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW") == cc["window"],
+          f"claude settings.json window matches the active profile ({tier})",
+          f"{env.get('CLAUDE_CODE_AUTO_COMPACT_WINDOW')!r} != {cc['window']!r}")
+    check(env.get("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE") == cc["pct"],
+          f"claude settings.json pct matches the active profile ({tier})",
+          f"{env.get('CLAUDE_AUTOCOMPACT_PCT_OVERRIDE')!r} != {cc['pct']!r}")
+
+codex = REPO / "config/clients/codex/config.toml"
+if codex.exists() and cc:
+    txt = codex.read_text()
+    want = int(cc["window"]) * int(cc["pct"]) // 100
+    check(f"model_auto_compact_token_limit = {want}" in txt,
+          f"codex compaction limit matches the active profile ({want})")
+    check(f"model_context_window = {PARSED[tier][0]['architecture']['context']}" in txt,
+          "codex publishes the FULL architecture context, not the compaction window")
+
 # ── README cannot drift from the profiles ───────────────────────────────────
 print("\nDOCUMENTATION")
 readme = (REPO / "README.md").read_text()

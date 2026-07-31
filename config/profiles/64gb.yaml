@@ -222,3 +222,16 @@ embeddings:
   purpose: [semantic search, memory, retrieval for grepai]
   strengths: [always-on, tiny, grepai calls it directly on :11434]
   weaknesses: [not a chat model]
+
+# ── interactive compaction (client-native; ailocal does NOT summarise) ───────
+# Only `architecture` needs this. implementation/review cap at 24,576 and fast at
+# 49,152 -- their ENTIRE context sits below the cold-prefill danger zone, so they
+# cannot reach the failure and are deliberately left alone.
+#
+# window x pct is what the CLIENT compacts at; it is NOT a model limit. The model
+# maximum stays `architecture.context` above and remains available for deliberate
+# one-shot work. MEASURED: cold prefill passes ~5 min at ~58K, 13 min at ~88K
+compaction:
+  window: 65536       # effective window handed to the client's compactor
+  pct: 75             # compact at this % of the window
+  # trigger: 49152 tokens
