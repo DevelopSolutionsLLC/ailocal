@@ -189,3 +189,38 @@ resident size was 26.85 GB either way, so the configured value of 2 is unchanged
 **If a request is abandoned**, `ailocal doctor` names the task and how long it has
 been evaluating. It holds the KV slot; either let it finish or
 `ailocal stop && ailocal start`.
+
+### Automatic compaction — measured, not assumed
+
+Verified in a live `claude-local` session (Claude Code 2.1.220), not from
+configuration:
+
+| | Value |
+|---|---|
+| Session | `7b3d36fa` |
+| PreCompact | `trigger: auto` |
+| PostCompact | `trigger: auto`, 5,959-char summary |
+| Compaction duration | 123 s |
+| Context after | 41,617 tokens |
+| Next-turn TTFT | **10.4 s** |
+
+All controlled state survived verbatim — objective, the accepted decision *and*
+the rejected one, modified file, `pytest -q` → `3 passed`, the unresolved task,
+and the git branch. The rejected hypothesis stayed rejected.
+
+**Compaction runs on the MAIN model, and cannot currently be handed to a faster
+one.** Measured: every request during compaction went to `ailocal-architecture`
+(20/20, then 14/14 in a second run). Setting `ANTHROPIC_SMALL_FAST_MODEL` and
+`ANTHROPIC_DEFAULT_HAIKU_MODEL` to `ailocal-fast` routed **no** traffic there.
+That 123 s is therefore a real, unavoidable cost of a 30B model summarising ~41K
+tokens, and it is paid once per compaction rather than per turn.
+
+The lever that does work is the threshold: compaction cost is dominated by
+reading the conversation it summarises, so compacting **earlier** (a lower
+`pct`) means less to read. Trading interactive headroom for a shorter pause is a
+profile edit, not a code change.
+
+**Do not diagnose a stalled `claude -p` as a trust prompt.** First-run project
+trust is disabled in non-interactive `-p` mode, and a full `stream-json` trace
+contains zero trust or permission events. A slow first turn is the cold model
+load plus prompt eval — 126 s measured for a trivial prompt.
