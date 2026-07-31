@@ -240,6 +240,38 @@ for name, key in (("settings-store.json", "LicenseTermsVersion"),
 PYEOF
 }
 
+# ── ollama on the system PATH ──────────────────────────────────────────────
+#
+# The cask puts ollama in the Homebrew prefix, which is on PATH for the user who
+# installed it and nowhere else. /usr/local/bin IS on the minimal PATH that
+# launchd jobs and hooks get (/usr/gnu/bin:/usr/local/bin:/bin:/usr/bin), where
+# /opt/homebrew/bin is not — so a symlink there is what makes `ollama` resolvable
+# from a non-login context and for other accounts on the machine.
+#
+# Ollama.app offers to create this itself with its own authorisation dialog. We
+# create it under the sudo already granted in the preflight, so it costs no extra
+# prompt. Skipped entirely if something is already there — we do not adopt or
+# overwrite a path we did not create.
+step "Putting ollama on the system PATH"
+if [ -e /usr/local/bin/ollama ]; then
+  info "/usr/local/bin/ollama already present ($(readlink /usr/local/bin/ollama 2>/dev/null || echo 'regular file'))"
+else
+  OLLAMA_TARGET=""
+  for c in "/Applications/Ollama.app/Contents/Resources/ollama" "$(command -v ollama 2>/dev/null || true)"; do
+    [ -n "$c" ] && [ -x "$c" ] && { OLLAMA_TARGET="$c"; break; }
+  done
+  if [ -n "$OLLAMA_TARGET" ]; then
+    sudo mkdir -p /usr/local/bin 2>/dev/null || true
+    if sudo ln -sfn "$OLLAMA_TARGET" /usr/local/bin/ollama 2>/dev/null; then
+      info "/usr/local/bin/ollama -> $OLLAMA_TARGET"
+    else
+      warn "Could not create /usr/local/bin/ollama — ollama stays on the Homebrew PATH only"
+    fi
+  else
+    warn "ollama binary not found — skipping the /usr/local/bin symlink"
+  fi
+fi
+
 step "Checking Docker"
 docker_accept_license
 if ! docker ps >/dev/null 2>&1; then
