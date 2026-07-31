@@ -74,8 +74,13 @@ the installer says so up front rather than failing partway through.
 ### Prerequisites
 
 - macOS 13+ (Apple Silicon, M1 or newer)
-- 64 GB RAM — the supported/tested profile
-- ~85 GB free disk for the models
+- **16 GB unified memory minimum.** The installer reads `sysctl hw.memsize` and
+  picks the highest tier that does not exceed it, never rounding up: 16-31 GB
+  selects `16gb`, 32-63 `32gb`, 64-127 `64gb`, 128+ `128gb`. Below 16 GB it stops
+  rather than offering a profile that would swap.
+- Disk depends on the tier and on what is already installed. The installer prints
+  the unique model set, what you already have, and the additional space needed
+  before pulling anything.
 
 ## Install
 
@@ -119,20 +124,36 @@ Full design in [`docs/architecture.md`](docs/architecture.md).
 
 ### Capabilities
 
-LiteLLM exposes capability names only — the router owns the backend, context, sampling, and residency, so a model swap never touches a client config. Only the **64 GB** profile is active (`config/profiles/64gb.yaml`); it's the tested configuration.
+LiteLLM exposes capability names only — the router owns the backend, context, sampling, and residency, so a model swap never touches a client config. The active profile is chosen from detected memory and recorded in
+`config/active-profile`. Four exist:
+
+| Tier | architecture / implementation / review / fast | completion | embeddings | Unique models | Level |
+|---|---|---|---|---|---|
+| `16gb` | `qwen3.5:4b` — one shared backend | `qwen2.5-coder:1.5b` | `nomic-embed-text` | 3 | configuration-verified |
+| `32gb` | `qwen3.5:9b` — one shared backend | `qwen2.5-coder:1.5b` | `nomic-embed-text` | 3 | configuration-verified |
+| `64gb` | specialised per capability | `qwen2.5-coder:3b` | `nomic-embed-text` | 6 | **measured** |
+| `128gb` | exact copy of `64gb` | same | same | 6 | configuration-verified |
+
+The smaller tiers deliberately point four capabilities at **one** resident model.
+The aliases still differ in persona, sampling and reasoning — they share a backend
+so the tier holds one model instead of rotating several. Configured context is a
+maximum, not a guarantee that two parallel requests can each consume all of it.
+
+`128gb` mirrors `64gb` exactly for this release. It is not claimed to be faster or
+more capable, because nothing has been measured on 128 GB hardware.
 
 | Capability | Backend | ctx / keep_alive |
 |---|---|---|
-| `architecture` | qwen3-coder:30b | 64K / resident — shared big-context hub: design, deep reasoning, large agent prompts |
+| `architecture` | qwen3-coder:30b | 96K / resident — shared big-context hub: design, deep reasoning, large agent prompts |
 | `implementation` | qwen2.5-coder:14b | 16K / 20m — everyday coding, features, tests |
 | `review` | gpt-oss:20b | 16K / 20m — code review, bug & security |
 | `fast` | qwen3.5:2b | 32K / 20m — classification, summarisation, cheap tool-driven lookups |
 | `completion` | qwen2.5-coder:3b | 4K / 20m — inline autocomplete (FIM) **only**; never a chat tier |
 | `embeddings` | nomic-embed-text | 8K / resident — retrieval infrastructure |
 
-Order in the `/model` picker follows the key order of `config/profiles/64gb.yaml`.
+Order in the `/model` picker follows the key order of the active profile.
 
-Change a backend in `config/profiles/64gb.yaml`, run `ailocal sync`, and every generated client config regenerates. `architecture`/`implementation`/`review` get a server-side engineering persona (`config/instructions/<capability>.md`), injected on both the OpenAI and Anthropic routes. Use capability names only — never raw model tags.
+Change a backend in `config/profiles/<tier>.yaml`, run `ailocal sync`, and every generated client config regenerates. `architecture`/`implementation`/`review` get a server-side engineering persona (`config/instructions/<capability>.md`), injected on both the OpenAI and Anthropic routes. Use capability names only — never raw model tags.
 
 ### Clients
 
@@ -168,7 +189,7 @@ delete it yourself if you want it gone.
 
 ## Troubleshooting
 
-**"Message exceeds token limit" (VS Code)** — select `architecture` (64K, ~49K usable after VS Code's 0.75 reserve); the smaller-window capabilities can't hold a large workspace prompt.
+**"Message exceeds token limit" (VS Code)** — select `architecture` (96K, ~73K usable after VS Code's 0.75 reserve); the smaller-window capabilities can't hold a large workspace prompt.
 
 **VS Code utility-model error** (`copilot-utility-small`) — set `"chat.byokUtilityModelDefault": "mainAgent"` and reload the window (the installer adds it).
 

@@ -1,64 +1,129 @@
 # profile: 16gb
-# status: unverified — same capability schema as 64gb, but 16 GB is genuinely tight and the memory
-# fit below is estimated, not measured. `enabled: false` marks capabilities whose backend does not
-# realistically fit on 16 GB (advisory only — the capability is still routable, but expect an Ollama
-# OOM if you actually load it). Run `ailocal validate` before relying on this tier.
+# Declarative capability registry for 16 GB unified memory (Apple Silicon).
 #
-# Fit on ~10 GB usable (16 GB minus OS/apps): only completion (~2 GB) + embeddings (~0.3 GB) stay
-# comfortable. implementation (~9 GB) is marginal (one at a time, small context). architecture
-# (~18 GB) and review (~10 GB) do NOT fit — enabled:false. Keep OLLAMA_MAX_LOADED_MODELS=2.
-# Prefer a smaller backend here later (e.g. qwen2.5-coder:1.5b/7b) once evaluated.
-
-disk_gb: 20
+# SHARED PRIMARY BACKEND. architecture, implementation, review and fast all resolve
+# to ONE model (qwen3.5:4b). That is deliberate, not an oversight: on 16 GB there is
+# room for one resident agent model, and rotating several role-specific models would
+# spend the tier's whole memory budget on load/evict churn. The capability aliases
+# still differ — persona, sampling, reasoning and num_predict are per-capability —
+# they simply share a backend. One model resident, no swapping.
+#
+# CONTEXT IS A MAXIMUM, NOT A RESERVATION. context: 65536 is the largest prompt the
+# tier accepts. With OLLAMA_NUM_PARALLEL=2, Ollama divides a runner's context across
+# parallel sequences, so two simultaneous near-64K requests are NOT guaranteed —
+# they contend for the same KV budget. Sized for one large request plus one small
+# one, which is the real agent+completion pattern.
+#
+# num_predict is a generation CEILING, not an expected output length and not an
+# extra fixed allocation.
+#
+# Field meanings are documented in config/profiles/64gb.yaml, the reference schema.
+# 16 GB is the minimum supported tier. Quality is below the larger tiers by design.
+status: configuration-verified   # schema, selection and size are tested; not measured on 16 GB hardware
+disk_gb: 6
 
 architecture:
-  role: Lead architect
-  active: qwen3-coder:30b-a3b-q4_K_M
-  preferred: [qwen3-coder:30b-a3b-q4_K_M, qwen2.5-coder:7b-instruct-q4_K_M]
-  context: 8192
-  temperature: 0.2
-  keep_alive: 15m
+  role: Lead architect (shared primary)
+  active: qwen3.5:4b
+  preferred: [qwen3.5:4b]
+  reasoning: true
+  context: 65536
+  temperature: 0.1
+  num_predict: 8192
+  keep_alive: -1
   persona: true
-  enabled: false
-  purpose: [architecture, design — does not fit 16 GB; pull a smaller backend to enable]
+  purpose: [architecture, refactoring, multi-step debugging, design]
+  strengths: [shared resident primary - no load/evict churn, native tool calling, 64K context]
+  weaknesses: [smaller than the 64 GB tier's specialised models, one backend serves four roles]
+  top_p: 0.9
+  top_k: 20
+  repeat_penalty: 1.0
 
 implementation:
-  role: Daily coding
-  active: qwen2.5-coder:14b-instruct-q4_K_M
-  preferred: [qwen2.5-coder:14b-instruct-q4_K_M, qwen2.5-coder:7b-instruct-q4_K_M]
-  context: 8192
-  temperature: 0.2
-  num_predict: -1
-  keep_alive: 15m
+  role: Daily coding (shared primary)
+  active: qwen3.5:4b
+  preferred: [qwen3.5:4b]
+  reasoning: false
+  context: 65536
+  temperature: 0.1
+  num_predict: 8192
+  keep_alive: -1
   persona: true
-  purpose: [implementation, features, tests — marginal on 16 GB, one model at a time]
+  purpose: [everyday coding, features, tests]
+  strengths: [same resident backend as architecture - no reload between roles]
+  weaknesses: [shares its budget with every other chat capability]
+  top_p: 0.9
+  top_k: 20
+  repeat_penalty: 1.0
 
 review:
-  role: Code review
-  active: deepseek-coder-v2:16b-lite-instruct-q4_K_M
-  preferred: [deepseek-coder-v2:16b-lite-instruct-q4_K_M]
-  context: 8192
-  temperature: 0.1
-  num_predict: 2048
-  keep_alive: 10m
+  role: Code review (shared primary)
+  active: qwen3.5:4b
+  preferred: [qwen3.5:4b]
+  reasoning: true
+  context: 65536
+  temperature: 0.2
+  num_predict: 8192
+  keep_alive: -1
   persona: true
-  enabled: false
-  purpose: [code review — does not fit 16 GB alongside anything; enable with a smaller backend]
+  purpose: [code review, bug detection, security review]
+  strengths: [reasoning enabled for review depth, no separate model to load]
+  weaknesses: [not a dedicated review model as on the 64 GB tier]
+  top_p: 0.9
+  top_k: 20
+  repeat_penalty: 1.0
+
+fast:
+  role: Fast agent (shared primary)
+  active: qwen3.5:4b
+  # reasoning OFF for the same reason the 64 GB tier disables it on `fast`: a
+  # classification tier that thinks past its budget returns empty content.
+  reasoning: false
+  preferred: [qwen3.5:4b]
+  context: 65536
+  temperature: 0.0
+  num_predict: 4096
+  keep_alive: -1
+  persona: true
+  purpose: [task classification, summarisation, quick edits, tool-driven lookups]
+  strengths: [no extra model resident - shares the primary]
+  weaknesses: [larger than a dedicated 2b would be, so marginally slower per token]
+  top_p: 0.9
+  top_k: 20
+  repeat_penalty: 1.0
 
 completion:
-  role: Autocomplete
-  active: qwen2.5-coder:3b-instruct-q4_K_M
-  preferred: [qwen2.5-coder:3b-instruct-q4_K_M, qwen2.5-coder:1.5b]
+  role: Autocomplete (FIM)
+  # SEPARATE MODEL ON PURPOSE. The primary is an instruct model without FIM/insert
+  # tokens, so it cannot do inline completion at all, and IDE completion needs
+  # latency the primary cannot meet. qwen2.5-coder carries native FIM tokens.
+  active: qwen2.5-coder:1.5b
+  preferred: [qwen2.5-coder:1.5b]
+  reasoning: false
   context: 4096
-  temperature: 0
+  temperature: 0.1
   num_predict: 128
-  keep_alive: forever
-  purpose: [inline completion, FIM, quick fixes]
+  # Rotating, not pinned: a 16 GB machine should not hold this resident beside the
+  # primary when the editor is idle.
+  keep_alive: 20m
+  persona: false
+  purpose: [inline completion, FIM, quick syntax fixes]
+  strengths: [native FIM tokens, very fast, ~1 GB footprint]
+  weaknesses: [no reasoning, short context, not for chat]
+  top_p: 0.9
+  top_k: 20
+  repeat_penalty: 1.0
 
 embeddings:
-  role: Semantic retrieval
+  role: Embeddings
   active: nomic-embed-text
   preferred: [nomic-embed-text]
-  context: 8192
-  keep_alive: forever
-  purpose: [semantic search, memory, retrieval for grepai]
+  # 2048 is the model's REAL limit. Do not inherit a chat context here.
+  context: 2048
+  temperature: 0.0
+  num_predict: 0
+  keep_alive: 20m
+  persona: false
+  purpose: [semantic search, retrieval]
+  strengths: [tiny, fast, well-understood]
+  weaknesses: [2048-token ceiling - chunk before embedding]
