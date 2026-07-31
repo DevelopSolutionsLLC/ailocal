@@ -1,3 +1,6 @@
+<!-- SOURCE for repo-instructions.md. The capabilities table below is filled
+     by sync-models.py from config/profiles/<tier>.yaml; the generated file is
+     git-ignored. Edit this template, then run `ailocal sync`. -->
 # Copilot Agent Instructions — ailocal
 
 You are running inside VS Code connected to **local Ollama models via a LiteLLM proxy at
@@ -118,22 +121,6 @@ cat /tmp/step1.log
 ## Local model roles
 
 <!-- >>> BEGIN GENERATED capabilities (sync-models.py) — do not edit <<< -->
-
-Use **capability names** only — never a backend model tag. The router owns
-context, sampling and residency, so a model swap never touches this file.
-
-| Capability | Backend | Context | keep_alive |
-|---|---|---|---|
-| `ailocal-architecture` | qwen3-coder:30b-a3b-q4_K_M | 98304 | -1 |
-| `ailocal-implementation` | qwen2.5-coder:14b-instruct-q4_K_M | 24576 | 20m |
-| `ailocal-review` | gpt-oss:20b | 24576 | 20m |
-| `ailocal-fast` | qwen3.5:2b | 49152 | 20m |
-| `ailocal-completion` | qwen2.5-coder:3b-instruct-q4_K_M | 4096 | 20m |
-| `ailocal-embeddings` | nomic-embed-text | 2048 | -1 |
-
-`ailocal-completion` is FIM autocomplete **only** — it hard-400s on a chat
-turn. Cold-loading a model costs a few seconds; the dominant latency is
-prompt evaluation, not loading (docs/adr/013-latency-profile.md).
 <!-- >>> END GENERATED capabilities <<< -->
 
 ---
