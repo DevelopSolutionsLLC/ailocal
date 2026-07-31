@@ -167,6 +167,28 @@ shell_syntax() {
 run "litellm runtime matches the validated version" bash "$ROOT/scripts/check-litellm-version.sh"
 run "all shell scripts parse (bash -n)" shell_syntax
 
+# The architecture-outage invariant. The client must never give up BEFORE the
+# proxy: when it did, a long cold prompt eval (789 s measured at 87,791 tokens)
+# was abandoned by Claude Code on its own undocumented default while LiteLLM
+# waited 900 s and Ollama kept generating into a closed connection. Only the
+# deterministic part of that defect is asserted here -- the two numbers agreeing
+# -- because reproducing the latency itself costs 13 minutes of GPU time.
+timeout_alignment() {
+  local proxy client
+  proxy="$(sed -n 's/^ *timeout: *\([0-9]*\).*/\1/p' config/litellm/config.template.yaml | head -1)"
+  client="$(sed -n 's/.*AILOCAL_API_TIMEOUT_MS:-\([0-9]*\)}.*/\1/p' config/clients/configure.template.zsh | head -1)"
+  if [ -z "$proxy" ] || [ -z "$client" ]; then
+    echo "could not read both timeouts (proxy='$proxy' client='$client')"; return 1
+  fi
+  if [ "$client" -lt "$((proxy * 1000))" ]; then
+    echo "client API_TIMEOUT_MS ${client} is BELOW LiteLLM timeout ${proxy}s"
+    echo "the client would abandon requests the proxy is still serving"
+    return 1
+  fi
+  return 0
+}
+run "client timeout is not below the proxy timeout" timeout_alignment
+
 # Every python module must parse, including the hooks the proxy loads.
 python_syntax() {
   python3 - <<'PY'

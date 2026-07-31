@@ -196,6 +196,75 @@ sys.exit(0 if d.get('results') else 1)" 2>/dev/null; then
   fi
 fi
 
+# ── Architecture route ──────────────────────────────────────────────────────
+# The questions an operator actually has when a long session stalls. Every value
+# here is MEASURED; nothing is estimated. The recurring "architecture API outage"
+# was not a crash and not memory -- it was cold prompt evaluation on a large
+# context exceeding the client's timeout, so these are the numbers that identify
+# it while it is happening.
+step "Architecture route"
+
+ARCH_MODEL="$(sed -n 's/^  active: *//p' config/profiles/"$(cat config/active-profile 2>/dev/null || echo 64gb)".yaml 2>/dev/null | head -1)"
+if [ -n "$ARCH_MODEL" ]; then
+  PS_JSON="$(curl -s --max-time 5 http://127.0.0.1:11434/api/ps 2>/dev/null || echo '{}')"
+  if echo "$PS_JSON" | grep -q "$ARCH_MODEL"; then
+    RESIDENT="$(echo "$PS_JSON" | python3 -c "
+import json,sys
+try: ms=json.load(sys.stdin).get('models',[])
+except Exception: ms=[]
+for m in ms:
+    if m['name'].startswith('$ARCH_MODEL'.split(':')[0]):
+        print(f\"{m['size']/2**30:.1f} GB resident, ctx={m.get('context_length')}\"); break" 2>/dev/null)"
+    info "model loaded: $ARCH_MODEL — ${RESIDENT:-size unknown}"
+  else
+    warn "model NOT loaded: $ARCH_MODEL — the next request pays a cold load AND a cold prompt eval"
+  fi
+fi
+
+# In-flight generation. Ollama exposes no request API, so this reads its own log:
+# a slot with a `new prompt` and no later `release` is still working. That is the
+# difference between "the queue is blocked" and "the backend is dead".
+OLOG="$HOME/.ollama/logs/server.log"
+if [ -f "$OLOG" ]; then
+  # Take the most recent task mentioned on ANY line, not the last `new prompt`.
+  # Matching only `new prompt` reported task 1620 as current while task 2455 was
+  # actually mid-evaluation: a long prompt eval emits progress lines for minutes
+  # after its own `new prompt` line has scrolled past other slots' activity.
+  LASTTASK="$(grep -aoE 'task [0-9]+' "$OLOG" | tail -1 | grep -oE '[0-9]+')"
+  if [ -n "$LASTTASK" ] && ! grep -aq "task $LASTTASK | stop processing" "$OLOG"; then
+    AGE="$(grep -a "task $LASTTASK |" "$OLOG" | grep -oE 't = [0-9.]+ s' | tail -1 | grep -oE '[0-9.]+')"
+    warn "task $LASTTASK is STILL GENERATING${AGE:+ (${AGE}s of prompt eval so far)} — a disconnected client does NOT stop it"
+    echo "      it holds the KV slot; a new request queues behind it or evicts its cache"
+    echo "      if abandoned:  ailocal stop && ailocal start    (otherwise let it finish)"
+  else
+    info "no generation left running from a disconnected client"
+  fi
+fi
+
+# Parallelism and the KV consequence. num_ctx is allocated PER SLOT, so this is
+# the single setting that decides both memory and cache locality.
+NPAR="$(launchctl getenv OLLAMA_NUM_PARALLEL 2>/dev/null || echo '')"
+ARCH_CTX="$(sed -n '/^architecture:/,/^[a-z]/p' config/profiles/"$(cat config/active-profile 2>/dev/null || echo 64gb)".yaml 2>/dev/null | sed -n 's/^  context: *//p' | head -1)"
+[ -n "$NPAR" ] && [ -n "$ARCH_CTX" ] && \
+  info "OLLAMA_NUM_PARALLEL=$NPAR, architecture context=$ARCH_CTX (KV is allocated per slot)"
+
+# Memory and swap. Swap GROWTH is the signal, not swap presence.
+FREEPCT="$(memory_pressure 2>/dev/null | sed -n 's/.*free percentage: *\([0-9]*\)%.*/\1/p' | head -1)"
+SWAPUSED="$(sysctl -n vm.swapusage 2>/dev/null | sed -n 's/.*used = \([0-9.]*\)M.*/\1/p')"
+if [ -n "$FREEPCT" ]; then
+  if [ "$FREEPCT" -lt 10 ]; then error "memory free ${FREEPCT}% — critical"; ok=false
+  elif [ "$FREEPCT" -lt 25 ]; then warn "memory free ${FREEPCT}% — tight"
+  else info "memory free ${FREEPCT}%"; fi
+fi
+[ -n "$SWAPUSED" ] && {
+  if [ "${SWAPUSED%%.*}" -gt 4096 ]; then warn "swap in use ${SWAPUSED} MB — paging degrades prompt eval badly"
+  else info "swap in use ${SWAPUSED} MB"; fi; }
+
+echo "      Cold prompt eval is super-linear on this route [REAL, measured]:"
+echo "        ~28K tokens -> ~85 s     ~55K -> ~300 s     ~61K -> ~416 s"
+echo "      A cache MISS at large context is what exceeds the client timeout."
+echo "      See docs/troubleshooting.md, 'architecture route stalls'."
+
 if [ "$ok" = true ]; then
   echo
   echo "▶ DOCTOR: OK — ailocal looks healthy"
