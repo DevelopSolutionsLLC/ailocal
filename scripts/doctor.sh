@@ -66,12 +66,22 @@ fi
 # Where the models actually live. Nothing verified this, and the failure is silent
 # and expensive: with OLLAMA_MODELS unset the daemon quietly uses ~/.ollama, so a
 # second account re-downloads tens of gigabytes and the shared store looks fine
-# because it still holds the FIRST user's copy. launchctl is the authority here —
-# Ollama.app is a GUI process and never reads ~/.zshrc.
-MODELS_DIR="$(launchctl getenv OLLAMA_MODELS 2>/dev/null || true)"
+# because it still holds the FIRST user's copy.
+#
+# Two valid configurations exist: the production-autostart LaunchAgent (default,
+# `install.sh --yes`) bakes OLLAMA_MODELS into its own EnvironmentVariables dict
+# and deliberately never calls `launchctl setenv` (setenv is session-only, lost on
+# reboot — see setup-startup.sh). The env-only path (setup-ollama-env.sh) DOES use
+# `launchctl setenv`. Checking setenv alone false-positives on every autostart
+# install, so ask the actual running daemon process what it sees instead — correct
+# under either configuration — and fall back to setenv only if no daemon is up.
+OLLAMA_PID="$(lsof -ti :11434 2>/dev/null | head -1)"
+MODELS_DIR=""
+[ -n "$OLLAMA_PID" ] && MODELS_DIR="$(ps eww -p "$OLLAMA_PID" 2>/dev/null | tr ' ' '\n' | sed -n 's/^OLLAMA_MODELS=//p')"
+[ -z "$MODELS_DIR" ] && MODELS_DIR="$(launchctl getenv OLLAMA_MODELS 2>/dev/null || true)"
 if [ -z "$MODELS_DIR" ]; then
-  warn "OLLAMA_MODELS unset in launchctl — models go to ~/.ollama, not the shared store"
-  warn "  Fix: bash scripts/setup-ollama-env.sh, then restart Ollama"
+  warn "OLLAMA_MODELS unset — models go to ~/.ollama, not the shared store"
+  warn "  Fix: bash scripts/setup-startup.sh (autostart) or scripts/setup-ollama-env.sh, then restart Ollama"
 elif [ ! -d "$MODELS_DIR" ]; then
   warn "OLLAMA_MODELS=$MODELS_DIR does not exist"
 elif [ ! -w "$MODELS_DIR" ]; then

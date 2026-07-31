@@ -102,11 +102,11 @@ Everything routes through the proxy on `localhost:4000`:
 KEY=$(grep LITELLM_MASTER_KEY .env | cut -d= -f2)
 curl -s http://localhost:4000/v1/chat/completions \
   -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
-  -d '{"model":"implementation","messages":[{"role":"user","content":"say ok"}]}' \
+  -d '{"model":"ailocal-implementation","messages":[{"role":"user","content":"say ok"}]}' \
   | jq -r '.choices[0].message.content'
 ```
 
-Any client that speaks OpenAI (`/v1/chat/completions`) or Anthropic (`/v1/messages`) works the same way: base URL `http://localhost:4000`, key `LITELLM_MASTER_KEY`, model = a capability name.
+Any client that speaks OpenAI (`/v1/chat/completions`) or Anthropic (`/v1/messages`) works the same way: base URL `http://localhost:4000`, key `LITELLM_MASTER_KEY`, model = `ailocal-<capability>` (e.g. `ailocal-architecture`, `ailocal-implementation`, `ailocal-review`, `ailocal-fast`, `ailocal-completion`, `ailocal-embeddings`). Configured clients (`claude-local`, `codex-local`, the VS Code connector) remap their own model slots to these automatically — you only type a bare capability name inside those tools' `/model` pickers, not on the raw HTTP API.
 
 ## Architecture
 
