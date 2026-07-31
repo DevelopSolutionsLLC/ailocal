@@ -137,3 +137,55 @@ Non-zero means the upstream fix has landed.
 Codex's non-streaming path and its ability to edit files are unaffected —
 `validate-codex-e2e.sh` shows it fixing a real bug across 10 `exec_command`
 calls with the test suite passing afterwards.
+
+## Architecture route stalls after 10-15 minutes
+
+**Diagnose first:** `ailocal doctor` — the "Architecture route" section reports
+whether the model is loaded, whether a generation is still running from a
+disconnected client, memory, and swap.
+
+This is **not** a crash, not an outage, and not memory. Measured on the 64 GB
+profile: memory stayed 26-57% free, swap flat, no OOM, no jetsam, no container
+restart, and Ollama never exited.
+
+**What actually happens.** Cold prompt evaluation on this route is *super-linear*
+— it gets slower per token as the prompt grows [REAL, measured]:
+
+| Prompt tokens | Cold prompt eval | Throughput |
+|---|---|---|
+| 27,791 | 85 s | 326 tok/s |
+| 57,791 | 341 s | 170 tok/s |
+| 87,791 | **789 s (13.2 min)** | 111 tok/s |
+
+A turn that **hits** the KV cache returns in under a second. A turn that **misses**
+it at large context stalls for minutes. That asymmetry is the whole symptom: a
+session works fine, grows, and then one cache miss takes 13 minutes.
+
+The client used to give up first, on its own undocumented default, while LiteLLM
+waited its full 900 s and Ollama kept generating into a closed socket —
+`aborting completion request due to client closing the connection` in
+`~/.ollama/logs/server.log`. `API_TIMEOUT_MS` is now pinned to the proxy's 900 s
+so both ends wait the same bounded time, and a gate check enforces that they
+never diverge again.
+
+**Safe operating envelope (measured, 64 GB).**
+
+| | Tokens | Cold first byte |
+|---|---|---|
+| Comfortable | up to ~28K | under ~90 s |
+| Acceptable | up to ~58K | under ~6 min |
+| At the limit | ~88K | ~13 min |
+| Configured maximum | 98,304 | exceeds the 900 s budget |
+
+The configured 98,304 is a real capability ceiling, not a working target. Long
+architecture sessions are cheap while the cache holds and expensive the moment it
+does not, so **the practical fix is to start a fresh session rather than let one
+grow past ~60K tokens**.
+
+**Parallelism is not the cause.** Measured at `OLLAMA_NUM_PARALLEL` 1 and 2, cold
+prompt-eval throughput differed within noise (170 vs 182 tok/s at ~55K) and
+resident size was 26.85 GB either way, so the configured value of 2 is unchanged.
+
+**If a request is abandoned**, `ailocal doctor` names the task and how long it has
+been evaluating. It holds the KV slot; either let it finish or
+`ailocal stop && ailocal start`.

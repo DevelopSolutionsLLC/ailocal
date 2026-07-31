@@ -59,11 +59,24 @@ claude-local() {
     ANTHROPIC_DEFAULT_FABLE_MODEL="ailocal-review"
   )
   # >>> END GENERATED claude slots <<<
+  # API_TIMEOUT_MS matches LiteLLM's own `timeout: 900` (config.template.yaml).
+  # MEASURED, and the reason the architecture route appeared to "crash" after
+  # 10-15 minutes: COLD prompt evaluation on this route is super-linear --
+  #   27,791 tok -> 85 s      57,791 tok -> 341 s      87,791 tok -> 789 s
+  # (326 -> 170 -> 111 tok/s; it gets SLOWER per token as the prompt grows).
+  # A grown session that misses the KV cache therefore stalls for 13+ minutes
+  # before its first byte. With no client timeout set, Claude Code gave up on its
+  # own undocumented default while LiteLLM waited 900 s and Ollama kept
+  # generating -- visible in ollama's log as "aborting completion request due to
+  # client closing the connection". Client and proxy now agree on one number, so
+  # the wait is bounded and identical at both ends instead of silently mismatched.
+  # This is NOT memory: measured at 26-57% free, swap flat, no OOM and no crash.
   env "${slots[@]}" \
     CLAUDE_CONFIG_DIR="$cfg/claude" \
     ANTHROPIC_BASE_URL="$base" ANTHROPIC_API_KEY="$key" \
     CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1 \
     CLAUDE_CODE_DISABLE_1M_CONTEXT=1 \
+    API_TIMEOUT_MS="${AILOCAL_API_TIMEOUT_MS:-900000}" \
     claude "$@"
 }
 
