@@ -14,6 +14,8 @@ config/active-profile
 config/integration-contract.json
 config/capabilities.generated.json
 config/clients/model_catalog.json
+config/litellm/config.yaml
+config/clients/copilot/repo-instructions.md
 
 # Runtime state lives in $XDG_STATE_HOME/ailocal, never in the checkout — see
 # scripts/lib/compose.sh. These patterns remain as a guard: an older install, or

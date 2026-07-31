@@ -37,7 +37,8 @@ ROOT = Path(__file__).resolve().parent.parent
 PROFILES_DIR   = ROOT / "config/profiles"
 ACTIVE_PROFILE = ROOT / "config/active-profile"   # one line, e.g. "64gb" (machine-specific)
 CLIENTS_YAML   = ROOT / "config/clients.yaml"
-LITELLM_CONFIG = ROOT / "config/litellm/config.yaml"
+LITELLM_TEMPLATE = ROOT / "config/litellm/config.template.yaml"
+LITELLM_CONFIG   = ROOT / "config/litellm/config.yaml"
 CAPS_JSON      = ROOT / "config/capabilities.generated.json"
 CODEX_CATALOG  = ROOT / "config/clients/model_catalog.json"
 CLAUDE_SETTINGS= ROOT / "config/clients/claude/settings.json"
@@ -46,7 +47,8 @@ CODEX_PLAN     = ROOT / "config/clients/codex/plan.config.toml"
 CODEX_REVIEW   = ROOT / "config/clients/codex/review.config.toml"
 CONTINUE_CONFIG= ROOT / "config/clients/continue/config.json"
 CONFIGURE_ZSH  = ROOT / "config/clients/configure.zsh"
-COPILOT_REPO_MD= ROOT / "config/clients/copilot/repo-instructions.md"
+COPILOT_REPO_TPL = ROOT / "config/clients/copilot/repo-instructions.template.md"
+COPILOT_REPO_MD  = ROOT / "config/clients/copilot/repo-instructions.md"
 
 # The machine-readable seam with Cadence. Cadence reads THIS and nothing else to
 # learn about the local runtime — see write_integration_contract(). ailocal does
@@ -348,7 +350,10 @@ def splice(text, begin, end, generated, label):
 
 
 def regen_litellm(models, clients):
-    text = LITELLM_CONFIG.read_text()
+    # ALWAYS from the template. config.yaml is a build artifact: reading it back
+    # would let a hand-edit to the generated file survive, which is the drift the
+    # template exists to prevent.
+    text = LITELLM_TEMPLATE.read_text()
     text, s1 = splice(text, ML_BEGIN, ML_END, gen_model_list(models), "model_list")
     text, s2 = splice(text, AL_BEGIN, AL_END, gen_alias_block(models, clients), "model_group_alias")
     LITELLM_CONFIG.write_text(text)
@@ -462,8 +467,10 @@ CATALOG_PRIORITY = {"architecture": 10, "implementation": 15, "review": 40, "com
 
 
 def regen_catalog(models):
-    if not CODEX_CATALOG.exists():
-        return False
+    # No self-existence check. This writes the WHOLE file, so requiring it to
+    # already exist meant a fresh clone — where it is correctly git-ignored —
+    # could never produce it.
+    CODEX_CATALOG.parent.mkdir(parents=True, exist_ok=True)
     entries = []
     prio = 10
     for name, info in models.items():
@@ -587,9 +594,9 @@ def gen_copilot_capabilities(models):
 
 
 def regen_copilot_repo_md(models):
-    if not COPILOT_REPO_MD.exists():
+    if not COPILOT_REPO_TPL.exists():
         return False
-    text = COPILOT_REPO_MD.read_text()
+    text = COPILOT_REPO_TPL.read_text()
     text, spliced = splice(text, CP_BEGIN, CP_END, gen_copilot_capabilities(models),
                            "copilot capabilities")
     COPILOT_REPO_MD.write_text(text)
@@ -728,8 +735,10 @@ def main():
     if args and args[0] == "--resolve":
         sys.exit(resolve(args[1], tier) if len(args) >= 2 else 1)
 
-    if not LITELLM_CONFIG.exists():
-        print(f"Error: {LITELLM_CONFIG} not found", file=sys.stderr); sys.exit(1)
+    # The TEMPLATE is the precondition. config.yaml is this script's output, so
+    # requiring it to pre-exist made a fresh clone unable to bootstrap.
+    if not LITELLM_TEMPLATE.exists():
+        print(f"Error: {LITELLM_TEMPLATE} not found", file=sys.stderr); sys.exit(1)
 
     path = profile_path(explicit=tier)
     step(f"Reading {path.relative_to(ROOT)} + config/clients.yaml")

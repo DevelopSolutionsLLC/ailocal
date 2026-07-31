@@ -46,7 +46,7 @@ def load_helpers():
     """
     src = TRACE.read_text()
     start = src.index("# ── E1: schema version, process generation, token components")
-    end = src.index("_FALLBACK_CFG: dict | None = None")
+    end = src.index("def emit(record):")   # helpers end where emit begins
     ns: dict = {}
     exec("import json, os, time\n" + src[start:end], ns)
     return ns

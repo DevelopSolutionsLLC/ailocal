@@ -1,4 +1,12 @@
-# LiteLLM Proxy Configuration for ailocal
+# config.template.yaml — the SOURCE for config/litellm/config.yaml.
+#
+# Everything here is hand-written policy that does not vary by hardware tier:
+# router settings, auth, callbacks, dropped params, SearXNG. The model_list and
+# model_group_alias regions below are EMPTY on purpose — sync-models.py fills
+# them from config/profiles/<tier>.yaml and config/clients.yaml.
+#
+# config.yaml itself is GENERATED and git-ignored. Edit this file, then run
+# `ailocal sync`. Editing the generated file loses the edit on the next sync.
 # Reference: https://docs.litellm.ai/docs/proxy/configs
 #
 # Required env vars (set in .env, passed via docker-compose):
@@ -35,160 +43,6 @@
 model_list:
 
   # >>> BEGIN GENERATED model_list (sync-models.py) — do not edit <<<
-
-  # ailocal-architecture — Lead architect (qwen3-coder:30b-a3b-q4_K_M)
-  - model_name: ailocal-architecture
-    litellm_params:
-      model: ollama_chat/qwen3-coder:30b-a3b-q4_K_M
-      api_base: os.environ/OLLAMA_URL
-      num_ctx: 98304
-      temperature: 0.1
-      top_p: 0.9
-      top_k: 20
-      repeat_penalty: 1.0
-      num_predict: 16384
-      keep_alive: -1
-      additional_drop_params: ["thinking", "reasoning_effort"]
-      think: false
-    model_info:
-      supports_function_calling: true
-      supports_tool_choice: true
-      supports_parallel_function_calling: true
-      supports_system_messages: true
-      supports_native_streaming: true
-      supports_reasoning: false
-      input_cost_per_token: 0
-      output_cost_per_token: 0
-      cache_creation_input_token_cost: 0
-      cache_read_input_token_cost: 0
-      max_input_tokens: 98304
-      max_output_tokens: 16384
-
-  # ailocal-implementation — Daily coding (qwen2.5-coder:14b-instruct-q4_K_M)
-  - model_name: ailocal-implementation
-    litellm_params:
-      model: ollama_chat/qwen2.5-coder:14b-instruct-q4_K_M
-      api_base: os.environ/OLLAMA_URL
-      num_ctx: 24576
-      temperature: 0.1
-      top_p: 0.9
-      top_k: 20
-      repeat_penalty: 1.0
-      num_predict: -1
-      keep_alive: 20m
-      additional_drop_params: ["thinking", "reasoning_effort"]
-      think: false
-    model_info:
-      supports_function_calling: true
-      supports_tool_choice: true
-      supports_parallel_function_calling: true
-      supports_system_messages: true
-      supports_native_streaming: true
-      supports_reasoning: false
-      input_cost_per_token: 0
-      output_cost_per_token: 0
-      cache_creation_input_token_cost: 0
-      cache_read_input_token_cost: 0
-      max_input_tokens: 24576
-      max_output_tokens: 6144
-
-  # ailocal-review — Code review (gpt-oss:20b)
-  - model_name: ailocal-review
-    litellm_params:
-      model: ollama_chat/gpt-oss:20b
-      api_base: os.environ/OLLAMA_URL
-      num_ctx: 24576
-      temperature: 0.2
-      top_p: 0.9
-      top_k: 20
-      repeat_penalty: 1.0
-      num_predict: 4096
-      keep_alive: 20m
-      think: true
-    model_info:
-      supports_function_calling: true
-      supports_tool_choice: true
-      supports_parallel_function_calling: false
-      supports_system_messages: true
-      supports_native_streaming: true
-      supports_reasoning: true
-      input_cost_per_token: 0
-      output_cost_per_token: 0
-      cache_creation_input_token_cost: 0
-      cache_read_input_token_cost: 0
-      max_input_tokens: 24576
-      max_output_tokens: 6144
-
-  # ailocal-fast — Fast agent (qwen3.5:2b)
-  - model_name: ailocal-fast
-    litellm_params:
-      model: ollama_chat/qwen3.5:2b
-      api_base: os.environ/OLLAMA_URL
-      num_ctx: 49152
-      temperature: 0.0
-      top_p: 0.9
-      top_k: 20
-      repeat_penalty: 1.0
-      num_predict: 4096
-      keep_alive: 20m
-      additional_drop_params: ["thinking", "reasoning_effort"]
-      think: false
-    model_info:
-      supports_function_calling: true
-      supports_tool_choice: true
-      supports_parallel_function_calling: true
-      supports_system_messages: true
-      supports_native_streaming: true
-      supports_reasoning: false
-      input_cost_per_token: 0
-      output_cost_per_token: 0
-      cache_creation_input_token_cost: 0
-      cache_read_input_token_cost: 0
-      max_input_tokens: 49152
-      max_output_tokens: 12288
-
-  # ailocal-completion — Autocomplete (standby) (qwen2.5-coder:3b-instruct-q4_K_M)
-  - model_name: ailocal-completion
-    litellm_params:
-      model: ollama_chat/qwen2.5-coder:3b-instruct-q4_K_M
-      api_base: os.environ/OLLAMA_URL
-      num_ctx: 4096
-      temperature: 0.1
-      top_p: 0.9
-      top_k: 20
-      repeat_penalty: 1.0
-      num_predict: 128
-      keep_alive: 20m
-      additional_drop_params: ["thinking", "reasoning_effort"]
-      think: false
-    model_info:
-      supports_function_calling: true
-      supports_tool_choice: true
-      supports_parallel_function_calling: true
-      supports_system_messages: true
-      supports_native_streaming: true
-      supports_reasoning: false
-      input_cost_per_token: 0
-      output_cost_per_token: 0
-      cache_creation_input_token_cost: 0
-      cache_read_input_token_cost: 0
-      max_input_tokens: 4096
-      max_output_tokens: 1024
-
-  - model_name: ailocal-embeddings
-    litellm_params:
-      model: ollama/nomic-embed-text
-      api_base: os.environ/OLLAMA_URL
-      num_ctx: 2048
-      keep_alive: -1
-    model_info:
-      mode: embedding
-      max_tokens: 2048
-      input_cost_per_token: 0
-      output_cost_per_token: 0
-      cache_creation_input_token_cost: 0
-      cache_read_input_token_cost: 0
-
   # >>> END GENERATED model_list <<<
 
 
@@ -205,47 +59,21 @@ router_settings:
   # each aliased to its ailocal-<capability> group.
   # Do NOT hand-edit between the markers — edit config/clients.yaml and run sync.
   # >>> BEGIN GENERATED model_group_alias (sync-models.py) — do not edit <<<
-  model_group_alias:
-    claude-opus-4-8: ailocal-architecture
-    claude-opus-4-8-20251101: ailocal-architecture
-    claude-fable-5: ailocal-review
-    claude-sonnet-4-6: ailocal-implementation
-    claude-sonnet-4-6-20250219: ailocal-implementation
-    gpt-5.5: ailocal-implementation
-    claude-haiku-4-5: ailocal-fast
-    claude-haiku-4-5-20251001: ailocal-fast
-    gpt-4o: ailocal-implementation
-    gpt-4o-mini: ailocal-implementation
-    gpt-3.5-turbo: ailocal-implementation
   # >>> END GENERATED model_group_alias <<<
 
-  fallbacks:
-    # Capability hierarchy — degrade by tier when a model is unavailable.
-    # Group names are the canonical `ailocal-<capability>` model_list entries.
-    #
-    # `ailocal-completion` is deliberately absent from every chain. It is the 3B
-    # FIM tier at num_ctx 4096; any real agent turn exceeds that, so using it as a
-    # terminal fallback converted a recoverable upstream failure into a hard 400
-    # ("No models have context window large enough for this call"). Degrading to a
-    # model that cannot serve the request is not degradation. Chat tiers only.
-    - {"ailocal-architecture":   ["ailocal-implementation"]}
-    - {"ailocal-review":         ["ailocal-implementation"]}
-  context_window_fallbacks:
-    # STRICTLY UPWARD, by context size. A fallback to an equal-or-smaller window
-    # cannot serve a request that just overflowed — that is the same arithmetic
-    # error as falling back DOWN, only less obvious. Chain order is therefore the
-    # size order, and every hop must strictly increase:
-    #
-    #   implementation 32768 -> fast 65536 -> architecture 131072
-    #   review         32768 -> fast 65536 -> architecture 131072
-    #   fast           65536 ->               architecture 131072
-    #
-    # `completion` (4096) is deliberately absent from every chain: it is the FIM
-    # tier and any real agent turn exceeds it, so using it as a target converts a
-    # recoverable overflow into a hard 400.
-    - {"ailocal-implementation": ["ailocal-fast", "ailocal-architecture"]}
-    - {"ailocal-review":         ["ailocal-fast", "ailocal-architecture"]}
-    - {"ailocal-fast":           ["ailocal-architecture"]}
+  # NO FALLBACKS, DELIBERATELY.
+  #
+  # LiteLLM's `fallbacks` and `context_window_fallbacks` both reroute silently:
+  # the client asks for one capability, gets a 200 from a different model, and
+  # nothing in the response says so. A request answered by the 14B when the 30B
+  # was selected has different cost, latency and quality, and the caller cannot
+  # tell. Silent substitution is the failure mode this project refuses everywhere
+  # else; it does not get an exception because LiteLLM makes it a one-line config.
+  #
+  # So a model that is unavailable, or a request that overflows its window, FAILS
+  # — visibly, with the capability named. The caller then chooses a larger
+  # capability on purpose. Capability windows are sized per hardware tier in
+  # config/profiles/<tier>.yaml, which is where that decision belongs.
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
