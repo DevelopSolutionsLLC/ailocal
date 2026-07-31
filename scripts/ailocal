@@ -6,6 +6,7 @@
 #   ailocal validate   end-to-end sanity: capabilities, backends, client mappings, aliases, sync
 #   ailocal validate --runtime   also probe the live proxy: /v1/models, advertised contexts, embeddings
 #   ailocal doctor     health check (scripts/doctor.sh)
+#   ailocal security   container pins, digest drift, reachability (--scan for CVEs)
 #   ailocal sync       regenerate derived configs (scripts/sync-models.sh)
 #   ailocal start|stop|update|smoke    lifecycle
 #   ailocal resolve <capability>       print the active Ollama backend tag
@@ -24,6 +25,7 @@ case "$cmd" in
   models)   exec bash "$SCRIPTS/status.sh" --table ;;
   validate) exec bash "$SCRIPTS/validate.sh" "$@" ;;
   doctor)  exec bash "$SCRIPTS/doctor.sh" "$@" ;;
+  security) exec bash "$SCRIPTS/security.sh" "$@" ;;
   sync)    exec bash "$SCRIPTS/sync-models.sh" "$@" ;;
   start)   exec bash "$SCRIPTS/start.sh" "$@" ;;
   stop)    exec bash "$SCRIPTS/stop.sh" "$@" ;;
@@ -51,6 +53,7 @@ case "$cmd" in
 ailocal — local model runtime
 
   status | models | doctor | validate | smoke     inspect
+  security [--scan]                              container supply chain
   start | stop | update | sync                    lifecycle
   clients | vscode | models-install               deploy
   audit | cleanup | teardown                      installation

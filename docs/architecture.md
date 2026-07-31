@@ -1,7 +1,8 @@
 # ailocal architecture
 
 How the local runtime is put together and why. `README.md` covers installation and
-use; `AGENTS.md` is the AI bootstrap; `docs/troubleshooting.md` covers symptoms.
+use; `AGENTS.md` is the AI bootstrap; `docs/troubleshooting.md` covers symptoms;
+`docs/security.md` covers the container supply chain.
 
 ## Request path
 
@@ -246,6 +247,12 @@ the logs to say so. `start.sh` fingerprints those files and restarts on change.
 
 Never invoke `deploy/litellm/docker-compose.yml` directly — it references a
 service defined elsewhere and fails as an invalid project. Use `ailocal start`.
+
+**Every image is pinned by digest, never by tag.** `main-stable` and `latest` are
+mutable and both moved under this stack during a single audit. `ailocal security`
+fails on a floating reference, on declared/running digest drift, and on any
+container publishing a port off-host. Details and accepted residual findings are
+in `docs/security.md`.
 
 **Liveness and readiness do not prove Ollama is reachable.** Both describe
 LiteLLM's own process and return healthy during a total backend outage. Only
