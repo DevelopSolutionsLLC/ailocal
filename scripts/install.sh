@@ -284,7 +284,12 @@ echo "        /Users/Shared) and preloads the coder model. Disables Ollama.app"
 echo "        'launch at login' to avoid a port 11434 conflict. (scripts/setup-startup.sh)"
 echo "    [2] Env-only — keep using Ollama.app; just set runtime env vars via"
 echo "        launchctl so models don't unload. (scripts/setup-ollama-env.sh)"
-read -r -p "  Set up production autostart? [y/N]: " AUTOSTART
+if $ASSUME_YES; then
+  AUTOSTART=y   # --yes picks autostart: it bakes OLLAMA_MODELS into the LaunchAgent
+  echo "  --yes: setting up production autostart"
+else
+  read -r -p "  Set up production autostart? [y/N]: " AUTOSTART
+fi
 if [[ "${AUTOSTART:-}" =~ ^[Yy]$ ]]; then
   bash "$ROOT_DIR/scripts/setup-startup.sh" --model coder \
     || warn "Could not set up autostart — run ./scripts/setup-startup.sh manually."
@@ -406,7 +411,12 @@ run_next_steps() {
   echo "  ailocal can point Claude Code, Codex, and VS Code at the local proxy."
   echo "  ⚠ This backs up, then rewrites/merges existing client configs."
   echo "    Choose: all | claude | codex | vscode  (space-separated) — or Enter to skip"
-  read -r -p "  Install which client configs? [skip]: " CLIENTS
+  if $ASSUME_YES; then
+    CLIENTS=skip   # deploying into a user's client roots is never implied by --yes
+    echo "  --yes: skipping client configs (run 'ailocal clients' when ready)"
+  else
+    read -r -p "  Install which client configs? [skip]: " CLIENTS
+  fi
   CLIENTS="${CLIENTS:-skip}"
   case "$CLIENTS" in
     skip|"")
@@ -427,7 +437,12 @@ run_next_steps() {
 
 if [ -f "$ENV_FILE" ]; then
   echo "  .env already exists."
-  read -r -p "  Re-generate it? Existing values will be overwritten. [y/N]: " REGEN
+  if $ASSUME_YES; then
+    REGEN=n   # never overwrite an existing .env unattended — it holds the master key
+    echo "  --yes: keeping the existing .env"
+  else
+    read -r -p "  Re-generate it? Existing values will be overwritten. [y/N]: " REGEN
+  fi
   if [[ ! "${REGEN:-}" =~ ^[Yy]$ ]]; then
     echo "  Keeping existing .env."
     run_next_steps

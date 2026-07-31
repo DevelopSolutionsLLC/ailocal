@@ -48,6 +48,58 @@ else
   echo "    Fix: sudo chgrp -R staff '$MODELS_DIR' && sudo chmod -R g+rwXs '$MODELS_DIR'" >&2
 fi
 
+# ── Migrate an existing model store ────────────────────────────────────────
+#
+# Pointing OLLAMA_MODELS at the shared store ORPHANS whatever is already in
+# ~/.ollama/models: Ollama looks in the new location, finds nothing, and
+# re-downloads everything. On a machine that has been used for a while that is
+# tens of gigabytes silently pulled again, with the originals still on disk.
+#
+# ~ and /Users/Shared are the same volume, so `mv` is a rename — instant, and it
+# never needs twice the disk. Entries are moved one at a time so an interruption
+# leaves a resumable state rather than a half-copied blob.
+HOME_MODELS="$HOME/.ollama/models"
+migrate_home_models() {
+  [ -d "$HOME_MODELS" ] || return 0
+  [ -n "$(ls -A "$HOME_MODELS" 2>/dev/null)" ] || return 0
+  # Same directory (or symlinked to it) — nothing to do.
+  [ "$(cd "$HOME_MODELS" && pwd -P)" = "$(cd "$MODELS_DIR" 2>/dev/null && pwd -P)" ] && return 0
+
+  local size; size="$(du -sh "$HOME_MODELS" 2>/dev/null | cut -f1)"
+  step "Migrating existing models to the shared store"
+  echo "  from: $HOME_MODELS ($size)"
+  echo "  to:   $MODELS_DIR"
+
+  # Models cannot be moved while the daemon has them open.
+  if pgrep -qx ollama 2>/dev/null || pgrep -qf "Ollama.app" 2>/dev/null; then
+    echo "  Stopping Ollama first..."
+    osascript -e 'quit app "Ollama"' 2>/dev/null || true
+    pkill -x ollama 2>/dev/null || true
+    sleep 2
+  fi
+
+  local moved=0 kept=0 entry base
+  for entry in "$HOME_MODELS"/*; do
+    [ -e "$entry" ] || continue
+    base="$(basename "$entry")"
+    if [ -e "$MODELS_DIR/$base" ]; then
+      kept=$((kept + 1))            # already present in the shared store
+      continue
+    fi
+    mv "$entry" "$MODELS_DIR/$base" && moved=$((moved + 1))
+  done
+
+  info "moved $moved entr$([ "$moved" = 1 ] && echo y || echo ies)$([ "$kept" -gt 0 ] && echo ", $kept already present")"
+  if [ -z "$(ls -A "$HOME_MODELS" 2>/dev/null)" ]; then
+    rmdir "$HOME_MODELS" 2>/dev/null || true
+    info "$HOME_MODELS is empty and was removed"
+  else
+    warn "$HOME_MODELS still has entries that already existed in the shared store —"
+    warn "  review and delete it yourself: rm -rf '$HOME_MODELS'"
+  fi
+}
+migrate_home_models
+
 step "Setting Ollama env vars for the current login session (launchctl)"
 launchctl setenv OLLAMA_KEEP_ALIVE "$KEEP_ALIVE"
 launchctl setenv OLLAMA_MAX_LOADED_MODELS "$MAX_LOADED"
