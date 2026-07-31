@@ -582,19 +582,18 @@ if has_target "claude"; then
   lsp_baseline
 fi
 
-# ── Broader language servers: delegated to Cadence ─────────────────────────
-# Cadence owns everything beyond the Python minimum above: additional languages,
-# repository-specific configuration, and the advanced retrieval layer. It detects
-# and reuses the baseline rather than reinstalling it.
-if has_target "claude" && command -v cadence >/dev/null 2>&1; then
-  step "Language servers (delegated to Cadence)"
-  if cadence lsp install >/tmp/ailocal-lsp-install.log 2>&1; then
-    info "cadence lsp install completed"
+# ── Broader language servers: Cadence installs its own ────────────────────
+# ailocal used to run `cadence lsp install` here. That inverted the dependency:
+# a capability Cadence owns was provisioned only when ailocal happened to run, so
+# a hosted-only machine had nothing until someone knew to type the command. LSP
+# beyond the Python baseline is now installed by `cadence install`, which is the
+# third step of the documented order. We only report the state.
+if has_target "claude"; then
+  if command -v cadence >/dev/null 2>&1; then
+    info "TypeScript/Go/C language servers: run 'cadence install claude --root $AILOCAL_CFG/claude'"
   else
-    warn "cadence lsp install failed — see /tmp/ailocal-lsp-install.log"
+    skip "cadence not installed — Python baseline only (Cadence adds TS/Go/C + retrieval)"
   fi
-elif has_target "claude"; then
-  skip "cadence not on PATH — Python baseline only (Cadence adds TS/Go/C + retrieval)"
 fi
 
 # ── Re-apply Cadence-owned MCP registrations ───────────────────────────────
@@ -617,6 +616,24 @@ if command -v cadence >/dev/null 2>&1; then
   fi
 else
   skip "cadence not on PATH — skipping MCP re-sync (no MCP servers to restore)"
+fi
+
+# ── Cadence agent overlay: DETECT what this script stripped ────────────────
+# Rewriting the deployed agents removes Cadence's marker block. `cadence mcp
+# sync` above restores the MCP slice but not the overlay, so the root is left
+# partially converged and nothing says so until someone runs Cadence's verifier.
+#
+# We detect and name the exact command rather than re-invoking Cadence: ailocal
+# does not drive another product's installer. The marker is the only Cadence
+# internal referenced here, and ailocal already has to know it — stripping it is
+# what creates the condition.
+if command -v cadence >/dev/null 2>&1 && [ -d "$AILOCAL_CFG/claude/agents" ]; then
+  if ! grep -rlq "cadence:start" "$AILOCAL_CFG/claude/agents" 2>/dev/null; then
+    warn "Cadence agent overlay was stripped by this install (expected — it rewrites agents)."
+    warn "  Restore it:  cadence install claude --root $AILOCAL_CFG/claude"
+  else
+    info "Cadence agent overlay intact"
+  fi
 fi
 
 # ── Done ───────────────────────────────────────────────────────────────────
