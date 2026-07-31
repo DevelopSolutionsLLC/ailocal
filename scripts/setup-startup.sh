@@ -46,7 +46,7 @@ if [ -z "$OLLAMA_BIN" ]; then
   echo "  ✗ ollama binary not found — install Ollama first, then re-run." >&2
   exit 1
 fi
-MODEL_ROLE="coder"
+MODEL_ROLE="architecture"
 WITH_LITELLM=0
 UNINSTALL=0
 
@@ -87,6 +87,29 @@ fi
 
 [ -x "$OLLAMA_BIN" ] || { warn "Ollama not found at $OLLAMA_BIN — install Ollama.app first"; exit 1; }
 mkdir -p "$LA_DIR" "$LOG_DIR" "$APP_SUPPORT" /Users/Shared/ollama/models
+
+# The README's own Install section says to start Ollama (`ollama serve` or open
+# Ollama.app) BEFORE running install.sh, so by the time this script installs the
+# launchd-managed 'ollama serve' with OLLAMA_MODELS baked in, an env-less instance
+# is usually already bound to :11434 and every model pull silently lands in
+# ~/.ollama instead of the shared store. Three things hold the port hostage and
+# ALL must be stopped, or the GUI respawns its own 'ollama serve' child within
+# ~1s of being killed:
+#   1. the Ollama.app GUI process itself (Contents/MacOS/Ollama) — killing only
+#      its 'ollama serve' child is not enough; the parent immediately relaunches
+#      a fresh one the moment the port is free.
+#   2. its embedded Squirrel-framework watchdog LaunchAgent (com.ollama.ollama,
+#      registered via Background Task Management from inside the app bundle —
+#      distinct from the app's own "launch at login" toggle in its menu, and
+#      invisible to `ls ~/Library/LaunchAgents`).
+#   3. the app's ordinary login-item registration, if a user enabled it.
+# Belt-and-braces: disable the BTM watchdog, quit the GUI, kill anything still
+# bound, then hand the port to our launchd agent.
+launchctl disable "gui/$(id -u)/com.ollama.ollama" >/dev/null 2>&1 || true
+osascript -e 'quit app "Ollama"' >/dev/null 2>&1 || true
+pkill -9 -f "/Applications/Ollama.app/Contents/MacOS/Ollama" 2>/dev/null || true
+pkill -9 -f "Ollama.app/Contents/Resources/ollama serve" 2>/dev/null || true
+for _ in $(seq 1 20); do lsof -i :11434 >/dev/null 2>&1 || break; sleep 0.5; done
 
 # ── 1. ollama serve ──────────────────────────────────────────────────────────
 # KEEP_ALIVE=-1 is the GLOBAL DEFAULT and it pins `embed`: grepai calls Ollama
@@ -133,7 +156,7 @@ cat > "$LA_DIR/com.ailocal.ollama.plist" <<PLIST
 PLIST
 load com.ailocal.ollama
 info "ollama serve managed by launchd (env baked in, auto-restart, logs in $LOG_DIR)"
-warn "Disable Ollama.app 'launch at login' (menubar → Settings) to avoid a port 11434 conflict."
+info "Ollama.app GUI stopped and its login/watchdog agents disabled — launchd owns :11434 now."
 
 # ── 2. preload the primary model (health-gated, one-shot) ────────────────────
 step "Installing com.ailocal.preload ($MODEL_ROLE)"

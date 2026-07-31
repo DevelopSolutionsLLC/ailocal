@@ -336,7 +336,7 @@ else
   read -r -p "  Set up production autostart? [y/N]: " AUTOSTART
 fi
 if [[ "${AUTOSTART:-}" =~ ^[Yy]$ ]]; then
-  bash "$ROOT_DIR/scripts/setup-startup.sh" --model coder \
+  bash "$ROOT_DIR/scripts/setup-startup.sh" --model architecture \
     || warn "Could not set up autostart — run ./scripts/setup-startup.sh manually."
 else
   # Check EVERY variable that matters, not one as a proxy for the rest. This used

@@ -12,7 +12,7 @@ warn()  { echo "  ⚠ $*" >&2; }
 error() { echo "  ✗ $*" >&2; }
 step()  { echo; echo "▶ $*"; }
 
-MODEL="${1:-coder-fast}"
+MODEL="${1:-ailocal-fast}"
 
 if [ ! -f ".env" ]; then
   error ".env not found. Run ./scripts/install.sh first."
