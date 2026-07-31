@@ -122,9 +122,16 @@ if [[ "${AUTOSTART:-}" =~ ^[Yy]$ ]]; then
   bash "$ROOT_DIR/scripts/setup-startup.sh" --model coder \
     || warn "Could not set up autostart — run ./scripts/setup-startup.sh manually."
 else
+  # Check EVERY variable that matters, not one as a proxy for the rest. This used
+  # to test OLLAMA_KEEP_ALIVE alone and treat it as "already configured", so a
+  # machine with keep-alive set but OLLAMA_MODELS unset was reported as done —
+  # and every model then landed in ~/.ollama instead of the shared store, which
+  # only shows up as a surprise 40 GB in a home directory.
   CUR_KA=$(launchctl getenv OLLAMA_KEEP_ALIVE 2>/dev/null || true)
-  if [ -n "$CUR_KA" ]; then
+  CUR_MD=$(launchctl getenv OLLAMA_MODELS 2>/dev/null || true)
+  if [ -n "$CUR_KA" ] && [ -n "$CUR_MD" ]; then
     info "OLLAMA_KEEP_ALIVE=$CUR_KA  OLLAMA_MAX_LOADED_MODELS=$(launchctl getenv OLLAMA_MAX_LOADED_MODELS 2>/dev/null || echo '?')"
+    info "OLLAMA_MODELS=$CUR_MD"
   else
     warn "Ollama env not set where the app can see it (launchctl) — models would unload after 5 min."
     bash "$ROOT_DIR/scripts/setup-ollama-env.sh" \
