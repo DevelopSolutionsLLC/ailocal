@@ -127,3 +127,16 @@ embeddings:
   purpose: [semantic search, retrieval]
   strengths: [tiny, fast, well-understood]
   weaknesses: [2048-token ceiling - chunk before embedding]
+
+# ── interactive compaction (client-native; ailocal does NOT summarise) ───────
+# Only `architecture` needs this. implementation/review cap at 24,576 and fast at
+# 49,152 -- their ENTIRE context sits below the cold-prefill danger zone, so they
+# cannot reach the failure and are deliberately left alone.
+#
+# window x pct is what the CLIENT compacts at; it is NOT a model limit. The model
+# maximum stays `architecture.context` above and remains available for deliberate
+# one-shot work. config-verified, NOT measured on 32 GB hardware
+compaction:
+  window: 65536       # effective window handed to the client's compactor
+  pct: 70             # compact at this % of the window
+  # trigger: 45875 tokens

@@ -35,6 +35,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PROFILES_DIR   = ROOT / "config/profiles"
+# Interactive-compaction thresholds, read from the profile's `compaction:` block.
+COMPACTION = {}
+
 ACTIVE_PROFILE = ROOT / "config/active-profile"   # one line, e.g. "64gb" (machine-specific)
 CLIENTS_YAML   = ROOT / "config/clients.yaml"
 LITELLM_TEMPLATE = ROOT / "config/litellm/config.template.yaml"
@@ -150,6 +153,10 @@ def load_models_yaml(path):
             k, _, v = s.strip().partition(":")
             models[current][k.strip()] = v.split("#", 1)[0].strip()
     models.pop("disk_gb", None)
+    # `compaction` is a CLIENT tuning knob, not a capability. Leaving it in the
+    # map would publish an "ailocal-compaction" model to every client and add a
+    # phantom row to every generated capability table.
+    COMPACTION.update(models.pop("compaction", {}))
     return models
 
 
@@ -638,6 +645,18 @@ def regen_claude_settings(models, clients):
         f"Built-in slots remap: {slot_txt}.",
         "Launch with: claude-local",
     ]
+    # Client-native compaction. ailocal does NOT summarise conversations; it only
+    # tells Claude Code to compact EARLIER than it would for a hosted model, because
+    # a local backend's cold prompt eval is super-linear (measured: 85 s at 28K,
+    # 341 s at 58K, 789 s at 88K). Compacting before that zone is what keeps a long
+    # architecture session alive. The model maximum is unchanged and still available.
+    win, pct = COMPACTION.get("window"), COMPACTION.get("pct")
+    if win and pct:
+        data.setdefault("env", {})["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = str(win)
+        data["env"]["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(pct)
+        data["//"].append(
+            f"Auto-compaction: window {win} x {pct}% = {int(win)*int(pct)//100} tokens "
+            f"(profile-owned). NOT the model limit - architecture keeps its full context.")
     CLAUDE_SETTINGS.write_text(json.dumps(data, indent=2) + "\n")
     return True
 
@@ -667,6 +686,22 @@ def regen_codex(models, clients):
                       "# Valid models: " + " | ".join(mn(k) for k in models.keys()), text, count=1)
         CODEX_CONFIG.write_text(text)
         done = True
+        # Codex's own compactor, same policy as claude-local. These keys must be
+        # TOP-LEVEL: Codex does not reliably honour them inside a named profile,
+        # so they are written to the root of the isolated codex-local config
+        # rather than relying on profile inheritance.
+        win, pct = COMPACTION.get("window"), COMPACTION.get("pct")
+        arch_ctx = (models.get("architecture") or {}).get("context")
+        if win and pct and arch_ctx:
+            trigger = int(win) * int(pct) // 100
+            text = CODEX_CONFIG.read_text()
+            for key, val in (("model_context_window", arch_ctx),
+                             ("model_auto_compact_token_limit", trigger)):
+                if re.search(rf'(?m)^{key}\s*=', text):
+                    text = re.sub(rf'(?m)^{key}\s*=.*$', f'{key} = {val}', text, count=1)
+                else:
+                    text = f'{key} = {val}\n' + text
+            CODEX_CONFIG.write_text(text)
     if "plan" in profiles:
         _set_toml_model(CODEX_PLAN, mn(profiles["plan"]))
     if "review" in profiles:
