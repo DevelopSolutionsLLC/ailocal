@@ -1,5 +1,9 @@
 # ailocal
 
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-lightgrey.svg)]()
+[![Status](https://img.shields.io/badge/status-release%20candidate-orange.svg)]()
+
 Run AI coding tools — Claude Code, Codex, VS Code Copilot Chat — against local models on Apple Silicon. No cloud costs, no data leaving your machine, no changes to the tools: Ollama runs the models natively (Metal/MLX GPU) and LiteLLM fronts them as an OpenAI/Anthropic-compatible proxy on `localhost:4000` that exposes **capability names** (`architecture`, `implementation`, `review`, `fast`, `completion`, `embeddings`) instead of raw model tags. Point a tool at the proxy instead of Anthropic/OpenAI — everything else stays the same.
 
 ## What this is, and what it is not
@@ -165,3 +169,7 @@ delete it yourself if you want it gone.
 - [`docs/adr/`](docs/adr/) — durable decisions
 - [`AGENTS.md`](AGENTS.md) — AI operating instructions
 - Cadence — optional repository-intelligence layer; see its README
+
+## License
+
+[Apache License 2.0](LICENSE) — Copyright 2026 DevelopSolutions LLC.
