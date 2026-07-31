@@ -53,7 +53,7 @@ case "$cmd" in
 ailocal — local model runtime
 
   status | models | doctor | validate | smoke     inspect
-  security [--scan]                              container supply chain
+  security [--scan|--check-updates]              container supply chain
   start | stop | update | sync                    lifecycle
   clients | vscode | models-install               deploy
   audit | cleanup | teardown                      installation

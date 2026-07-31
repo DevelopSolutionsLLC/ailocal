@@ -115,6 +115,56 @@ EXPECTED-AUTH-FAILURE` markers to the container's own stdout, so
 `docker logs ailocal-litellm` shows the boundary inline around the traceback.
 The gate's own output stays a single `PASS` line.
 
+## Update awareness
+
+**Nothing here updates itself.** A pinned digest is fetched, never resolved
+again, so `docker compose pull` on a pinned reference is a no-op and neither
+`ailocal update` nor `cadence install` can advance an image. That is deliberate:
+an image replaced without validation is an untested production change.
+
+The cost of that safety is staleness, which is what the update check exists to
+answer:
+
+    ailocal security --check-updates     # LiteLLM, SearXNG   (ailocal owns these)
+    cadence security --check-updates     # Qdrant             (Cadence owns this)
+
+Each product checks **only its own images**; neither edits the other's pin. They
+share a contract, not an implementation — a shared library across two
+independently installable repositories would be a cross-repo dependency, a worse
+trade than a few dozen lines of shell each.
+
+Both report configured digest, running digest, newest upstream release, whether
+the configured release is behind, and the exact apply/rollback commands. Exit
+codes are identical:
+
+| Exit | Meaning |
+|---|---|
+| 0 | current, or no actionable update |
+| 1 | action required — drift, a floating pin, or an update available |
+| 2 | check incomplete — Docker, network, or scanner unavailable |
+
+**A newer release is not a failure.** It is reported, and a human decides.
+Discovery never pulls a candidate over a running service.
+
+One subtlety worth knowing: comparing digests alone is wrong. The LiteLLM pin
+tracks `main-stable`, which runs *ahead* of the newest tagged GitHub release, so
+a digest-only comparison proposed v1.94.0 as an "update" to the 1.94.1 already
+running — a downgrade. The check compares versions wherever a version is knowable.
+
+### Optional weekly check
+
+Off unless installed:
+
+    ailocal security --install-schedule      # Mondays 10:00, reports only
+    ailocal security --uninstall-schedule
+
+One LaunchAgent, not two: ailocal owns the schedule and invokes *each product's
+own* check, so Cadence keeps ownership of its logic while the machine gets a
+single wakeup. It upgrades nothing, writes state under
+`$XDG_STATE_HOME/ailocal/`, and raises a notification only when a check exits 1.
+Executables are resolved absolutely, because launchd provides no interactive
+shell and a minimal PATH.
+
 ## Upgrading an image
 
 1. `docker pull` the candidate; read its versions from inside it.
