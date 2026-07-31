@@ -2,7 +2,7 @@
 anthropic_stream_logging_fix.py — backport of a missing type guard in LiteLLM's
 Anthropic success-logging path.
 
-THE BUG (upstream, LiteLLM 1.93.0)
+THE BUG (upstream, LiteLLM 1.93.0; STILL PRESENT in 1.94.1)
 ----------------------------------
 Two LiteLLM features collide. Reproduced deterministically with plain curl, no
 client involved:
@@ -35,6 +35,12 @@ responses, anthropic_messages handler calls success_handler with a assembled
 ModelResponse" — which the websearch path does not honour. Upstream has already
 patched this same method once for unhandled types (the ResponseCompletedEvent
 family, BerriAI/litellm#27091) and missed this one.
+
+RE-CHECKED on the 1.94.1 image (2026-07-30, security upgrade): the method still
+early-returns only for the ResponseCompletedEvent family and ResponsesAPIResponse,
+then reaches `AnthropicResponse.model_validate(result)` with no iterator guard.
+This shim is still required. Read the installed source again after any upgrade --
+do not assume a version bump fixed it.
 
 NOT CAUSED BY OUR HOOKS. The traceback contains no frame from request_trace,
 tool_gateway, tool_repair or persona_injector, and the repro needs none of them.
