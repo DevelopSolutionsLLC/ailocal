@@ -14,6 +14,7 @@ Run: python3 scripts/test-capability-registry.py   (needs PyYAML -> container)
 """
 
 import os
+import json
 import sys
 import importlib.util
 import re
@@ -107,10 +108,18 @@ check(reg.supports("ailocal-architecture", "nonexistent_feature") is None,
       "an unknown feature returns None, not False — unknown != unsupported")
 
 print("\nCONTEXT WINDOWS (generated, not restated)")
-check(reg.max_context("ailocal-architecture") == 65536,
-      f"architecture 65536 (got {reg.max_context('ailocal-architecture')})")
-check(reg.max_context("ailocal-completion") == 4096,
-      f"completion 4096 (got {reg.max_context('ailocal-completion')})")
+# INVARIANTS, not literals. This assertion hardcoded 65536 and broke the moment
+# the profile changed the window -- under a heading that says "generated, not
+# restated". Restating a generated number tests the literal, not the pipeline.
+# The durable properties are ordering and positivity, which hold for any profile.
+_ctx = {c: reg.max_context(f"ailocal-{c}")
+        for c in ("architecture", "fast", "implementation", "review", "completion")}
+check(all(isinstance(v, int) and v > 0 for v in _ctx.values()),
+      f"every local capability has a positive generated window ({_ctx})")
+check(_ctx["architecture"] > _ctx["fast"] > _ctx["implementation"],
+      f"windows descend architecture > fast > implementation ({_ctx})")
+check(_ctx["completion"] == min(_ctx.values()),
+      f"completion is the smallest window ({_ctx['completion']})")
 check(reg.max_context("claude-3-5-sonnet-2024-10-22") == 200000,
       "a cloud class falls back to its declared max_context")
 
