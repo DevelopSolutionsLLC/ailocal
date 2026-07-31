@@ -199,6 +199,12 @@ info "git present ($(git --version 2>/dev/null | awk '{print $3}'))"
 step "Installing Homebrew packages"
 BREW_FORMULAS=(); BREW_CASKS=()
 has jq     || BREW_FORMULAS+=("jq")
+# cosign verifies image PROVENANCE -- a digest proves the bytes are unchanged, not
+# who published them. Provisioned here so a fresh machine can verify signatures
+# from day one; `ailocal security` still refuses to install it at runtime, because
+# adding a verification tool to a RUNNING system is the operator's call. Batched,
+# so it costs nothing extra.
+has cosign || BREW_FORMULAS+=("cosign")
 has docker || BREW_CASKS+=("docker-desktop")
 has ollama || BREW_CASKS+=("ollama-app")
 

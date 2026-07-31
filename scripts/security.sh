@@ -188,6 +188,41 @@ else
   echo "  skipped — re-run with --scan (needs network and a Docker login)"
 fi
 
+# ── 4b. provenance ──────────────────────────────────────────────────────────
+# A digest proves the bytes did not change; it does NOT prove who published them.
+# cosign closes that gap where a publisher signs. Missing cosign DEGRADES the
+# report (exit 2) rather than failing it, and is never auto-installed -- adding a
+# verification tool to a machine is the operator's decision, not this script's.
+head_ "PROVENANCE"
+if ! command -v cosign >/dev/null 2>&1; then
+  warn "cosign not installed — signatures cannot be verified"
+  echo "      the installer provisions it; this machine predates that or removed it"
+  echo "      install:  brew install cosign"
+  echo "      then:     ailocal security   (re-runs verification)"
+else
+  for img in "${declared[@]}"; do
+    repo="${img%%@*}"; repo="${repo%%:*}"
+    # Keyless/OIDC signatures need the publisher's identity; a bare `cosign
+    # verify` without one is not a meaningful assertion, so an image whose
+    # publisher documents no method is reported as such rather than "unsigned".
+    # `cosign tree` QUERIES THE REGISTRY. `cosign triangulate` does not -- it only
+    # computes the expected .sig tag name from the digest, so it succeeds for
+    # unsigned images too. It reported a signature for SearXNG, which publishes
+    # none. Deprecated in cosign 3.x as well. Do not use it to prove existence.
+    out="$(timeout 60 cosign tree "$img" 2>&1 || true)"
+    if echo "$out" | grep -q "No Supply Chain Security Related Artifacts"; then
+      warn "$repo: publisher signs nothing for this digest — provenance unverifiable"
+    elif echo "$out" | grep -q "Signatures for an image"; then
+      # Presence is not validity. A real assertion needs the publisher's identity
+      # (keyless OIDC) or key, which upstream does not document for these images;
+      # reporting "signature present" is the honest ceiling here.
+      ok "$repo: signature published for this digest (identity policy not configured)"
+    else
+      warn "$repo: could not determine signature status"
+    fi
+  done
+fi
+
 # ── 5. update availability ──────────────────────────────────────────────────
 # Discovery ONLY. This never pulls a candidate over a running service and never
 # rewrites a pin: a newer tag existing is not a reason to replace a validated
