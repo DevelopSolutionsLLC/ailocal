@@ -55,6 +55,14 @@ Architecture and file map: [AGENTS.md](AGENTS.md).
 
 ## Requirements
 
+**A bare Mac is fine.** `install.sh` reports everything missing up front, asks
+once, and requests administrator rights once — Command Line Tools, Homebrew and
+Docker Desktop all install system-wide, so sudo is unavoidable on macOS. Docker's
+licence terms are recorded in Docker's own settings file before first launch, so
+there is no manual accept-and-re-run step. `--yes` runs unattended.
+
+### Prerequisites
+
 - macOS 13+ (Apple Silicon, M1 or newer)
 - 64 GB RAM — the supported/tested profile
 - ~85 GB free disk for the models

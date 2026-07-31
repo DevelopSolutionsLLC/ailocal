@@ -40,47 +40,147 @@ prompt_secret() {
   echo
 }
 
+# ── Preflight: what is missing, what it costs ──────────────────────────────
+#
+# A bare Mac may have none of these. The old flow discovered that one tool at a
+# time and curl|bash'd Homebrew with no prompt, so the first thing a new user saw
+# was an unexplained sudo password request from a script they had just cloned.
+#
+# Everything missing is reported FIRST, with whether it needs administrator
+# rights, then a single consent prompt, then one sudo authorisation up front.
+# --yes runs unattended.
+ASSUME_YES=false
+for a in "$@"; do [ "$a" = "--yes" ] && ASSUME_YES=true; done
+
+# git ships with the Xcode Command Line Tools on macOS; jq and the rest come from
+# Homebrew. Ordered by dependency: CLT -> brew -> everything else.
+MISSING=()
+NEEDS_ADMIN=false
+has git    || { MISSING+=("git (Xcode Command Line Tools)"); NEEDS_ADMIN=true; }
+has brew   || { MISSING+=("Homebrew");                       NEEDS_ADMIN=true; }
+has jq     || MISSING+=("jq")
+has docker || { MISSING+=("Docker Desktop");                 NEEDS_ADMIN=true; }
+has ollama || MISSING+=("Ollama")
+
+step "Preflight"
+if [ ${#MISSING[@]} -eq 0 ]; then
+  info "all prerequisites present (git, brew, jq, docker, ollama)"
+else
+  echo "  This machine is missing:"
+  for m in "${MISSING[@]}"; do echo "    - $m"; done
+  echo
+  if $NEEDS_ADMIN; then
+    echo "  Some of these need administrator rights:"
+    echo "    Command Line Tools and Docker Desktop install system-wide;"
+    echo "    Homebrew creates /opt/homebrew. There is no user-local path for"
+    echo "    these on macOS, so sudo is unavoidable — asked for ONCE, now,"
+    echo "    rather than surprising you halfway through."
+    echo
+  fi
+  if ! $ASSUME_YES; then
+    read -r -p "  Install them? [y/N]: " REPLY
+    case "$REPLY" in
+      y|Y|yes|Yes) : ;;
+      *) error "Declined. Install the tools above, then re-run."; exit 1 ;;
+    esac
+  fi
+  if $NEEDS_ADMIN; then
+    sudo -v || { error "Administrator authorisation declined."; exit 1; }
+    # Keep the timestamp warm so a long brew/cask run does not re-prompt.
+    while true; do sudo -n true 2>/dev/null; sleep 50; kill -0 "$$" 2>/dev/null || exit; done &
+    SUDO_KEEPALIVE=$!
+    trap 'kill "$SUDO_KEEPALIVE" 2>/dev/null || true' EXIT
+  fi
+fi
+
+# ── Xcode Command Line Tools (provides git) ────────────────────────────────
+step "Checking git"
+if ! has git; then
+  echo "  git not found — installing the Xcode Command Line Tools."
+  echo "  macOS shows its own dialog for this; accept it and wait for it to finish."
+  xcode-select --install 2>/dev/null || true
+  # xcode-select returns immediately; the install is a separate GUI process.
+  for _ in $(seq 1 120); do has git && break; sleep 10; done
+  has git || { error "git still not available. Finish the Command Line Tools install, then re-run."; exit 1; }
+fi
+info "git present ($(git --version 2>/dev/null | awk '{print $3}'))"
+
 # ── Homebrew ───────────────────────────────────────────────────────────────
 step "Checking Homebrew"
 if ! has brew; then
-  echo "  Homebrew not found — installing..."
-  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-  echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
-  eval "$(/opt/homebrew/bin/brew shellenv)"
-else
-  info "Homebrew present"
+  echo "  Installing Homebrew..."
+  NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
+    || { error "Homebrew install failed. See https://brew.sh"; exit 1; }
+  BREW_BIN="/opt/homebrew/bin/brew"; [ -x "$BREW_BIN" ] || BREW_BIN="/usr/local/bin/brew"
+  # Append the shellenv line ONCE. This used to append unconditionally, so every
+  # re-run added another copy to ~/.zprofile.
+  if ! grep -qs "$BREW_BIN shellenv" ~/.zprofile 2>/dev/null; then
+    echo "eval \"\$($BREW_BIN shellenv)\"" >> ~/.zprofile
+  fi
+  eval "$($BREW_BIN shellenv)"
 fi
+info "Homebrew present ($(brew --version 2>/dev/null | head -1))"
 
 # ── CLI tools ──────────────────────────────────────────────────────────────
 step "Checking CLI tools"
-for pkg in git jq; do
+for pkg in jq; do
   if ! has "$pkg"; then
     echo "  Installing $pkg..."
-    brew install "$pkg"
+    brew install "$pkg" || { error "Could not install $pkg"; exit 1; }
   else
     info "$pkg present"
   fi
 done
 
 # ── Docker ─────────────────────────────────────────────────────────────────
+# The licence is accepted by pre-seeding Docker's OWN settings file before first
+# launch — the same key Docker writes when you click Accept. It lives under
+# ~/Library/Group Containers and is owned by the user, so this needs no sudo.
+# Previously the script installed Docker, told the user to open it, accept the
+# terms and re-run, then exited 0 — a success code for an incomplete install.
+docker_accept_license() {
+  local dir="$HOME/Library/Group Containers/group.com.docker"
+  mkdir -p "$dir"
+  python3 - "$dir" <<'PYEOF'
+import json, os, sys
+d = sys.argv[1]
+# Two files, two key spellings: settings-store.json is current, settings.json is
+# the legacy name. Writing both keeps older and newer Docker Desktop happy.
+for name, key in (("settings-store.json", "LicenseTermsVersion"),
+                  ("settings.json",       "licenseTermsVersion")):
+    p = os.path.join(d, name)
+    try:
+        cfg = json.load(open(p)) if os.path.exists(p) else {}
+    except Exception:
+        cfg = {}
+    if cfg.get(key):
+        continue                      # already accepted — do not rewrite
+    cfg[key] = 2
+    json.dump(cfg, open(p, "w"), indent=2)
+    print(f"  ✓ Docker licence terms recorded in {name}")
+PYEOF
+}
+
 step "Checking Docker"
 if ! has docker; then
-  echo "  Docker not found — installing Docker Desktop via Homebrew..."
-  brew install --cask docker 2>/dev/null || {
+  echo "  Installing Docker Desktop..."
+  brew install --cask docker || {
     error "Could not install Docker Desktop automatically."
     echo "  Install manually: https://www.docker.com/products/docker-desktop/" >&2
     exit 1
   }
-  echo "  Docker Desktop installed."
-  echo "  ▶ Open Docker Desktop, accept the license, complete first-run setup,"
-  echo "    then re-run this script."
-  exit 0
+fi
+docker_accept_license
+if ! docker ps >/dev/null 2>&1; then
+  echo "  Starting Docker Desktop..."
+  open -a Docker 2>/dev/null || true
+  for _ in $(seq 1 60); do docker ps >/dev/null 2>&1 && break; sleep 5; done
 fi
 if ! docker ps >/dev/null 2>&1; then
-  error "Docker daemon is not running. Open Docker Desktop and re-run this script."
+  error "Docker daemon did not start. Open Docker Desktop, finish first-run setup, re-run."
   exit 1
 fi
-info "Docker present and running"
+info "Docker present and running ($(docker --version | awk '{print $3}' | tr -d ,))"
 
 # ── Ollama ─────────────────────────────────────────────────────────────────
 step "Checking Ollama"
