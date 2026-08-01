@@ -70,6 +70,8 @@ def flatten(r):
         "swap_before": (mem.get("before") or {}).get("swap_used_gb"),
         "swap_after": (mem.get("after") or {}).get("swap_used_gb"),
         "free_mem_after": (mem.get("after") or {}).get("free_memory_pct"),
+        "points": (r.get("score") or {}).get("points"),
+        "max_points": (r.get("score") or {}).get("max"),
         "errors": "; ".join(r.get("errors") or []),
     }
 
@@ -140,6 +142,63 @@ def markdown(rows):
               "comparable across models:", ""]
         for r in sorted({(r["model"], r["requested_ctx"], r["actual_ctx"]) for r in bad}):
             L.append(f"- `{r[0]}` requested {r[1]}, actual {r[2]}")
+
+    # ── accuracy AT each context size, beside throughput ────────────────────
+    # Ingestion speed alone answers "can it load 64K", not "can it USE 64K".
+    # The retrieval suite plants a fact at a controlled position and grades the
+    # answer exactly, so this table pairs tok/s with whether the context was
+    # actually usable at that size.
+    ret = [r for r in rows if r["suite"] == "retrieval"]
+    if ret:
+        L += ["", "## Context USABILITY (retrieval accuracy per size)", "",
+              "`late` = fact near the end. `distributed` = fact split across",
+              "positions and must be joined. A model that accepts 64K but only",
+              "attends to the tail passes `late` and fails `distributed`.", ""]
+        rctx = sorted({r["requested_ctx"] for r in ret})
+        L.append("| model | variant | " + " | ".join(f"{c//1024}K" for c in rctx) + " |")
+        L.append("|---|---|" + "---|" * len(rctx))
+        for mdl in sorted({r["model"] for r in ret}):
+            for v in ("late", "distributed"):
+                cells = []
+                for c in rctx:
+                    hits = [r for r in ret if r["model"] == mdl and r["task_id"] == v
+                            and r["requested_ctx"] == c]
+                    if not hits:
+                        cells.append("—")
+                    else:
+                        got = sum(1 for h in hits if h.get("points"))
+                        cells.append(f"{got}/{len(hits)}")
+                if any(c != "—" for c in cells):
+                    L.append(f"| `{mdl}` | {v} | " + " | ".join(cells) + " |")
+
+    # ── per-area leaderboard: who is best, and how fast ─────────────────────
+    areas = [("fastcode", "Fast coding"), ("cruxeval-o", "Code understanding"),
+             ("architecture", "Architecture"), ("retrieval", "Long-context retrieval")]
+    have = [(k, n) for k, n in areas if any(r["suite"] == k for r in rows)]
+    if have:
+        L += ["", "## Per-area standings (correctness first, then speed)", "",
+              "Ranked by score. Latency is the median for that area — a fast",
+              "wrong answer never outranks a correct one.", ""]
+        for key, name in have:
+            sub = [r for r in rows if r["suite"] == key]
+            L += ["", f"### {name}", "",
+                  "| model | reasoning | score | median latency |", "|---|---|---|---|"]
+            agg_rows = {}
+            for r in sub:
+                k = (r["model"], r["reasoning"])
+                a = agg_rows.setdefault(k, {"pts": 0, "max": 0, "lat": []})
+                a["pts"] += r.get("points") or 0
+                a["max"] += r.get("max_points") or 0
+                if r["wall_s"]:
+                    a["lat"].append(r["wall_s"])
+            for (mdl, mode), a in sorted(
+                    agg_rows.items(),
+                    key=lambda kv: (-(kv[1]["pts"] / kv[1]["max"] if kv[1]["max"] else 0),
+                                    statistics.median(kv[1]["lat"]) if kv[1]["lat"] else 1e9)):
+                pct = f"{a['pts']}/{a['max']}" + (
+                    f" ({a['pts']/a['max']*100:.0f}%)" if a["max"] else "")
+                lat = f"{statistics.median(a['lat']):.1f}s" if a["lat"] else "—"
+                L.append(f"| `{mdl}` | {mode} | {pct} | {lat} |")
 
     errs = [r for r in rows if r["errors"]]
     if errs:
