@@ -122,11 +122,17 @@ def run(args):
                 err = []
                 out, t = "", {}
                 try:
+                    # Architecture/review are reasoning-heavy: Qwen recommends
+                    # 32768 output for most queries, so a thinking run gets it
+                    # rather than an 8192 ceiling that would truncate the answer
+                    # and score it as wrong.
+                    opts, prefix = C.model_params(tag, mode, "base",
+                                                  thinking=(mode != "off"))
+                    opts["num_ctx"] = 32768
                     body = {"model": tag, "stream": False,
-                            "messages": [{"role": "user", "content": task["statement"]}],
-                            "options": {"num_ctx": 32768, "num_predict": 8192,
-                                        "temperature": 0, "top_p": 1.0, "seed": 42}}
-                    if think is not None:
+                            "messages": C.build_messages(task["statement"], prefix),
+                            "options": opts}
+                    if think is not None and not prefix:
                         body["think"] = think
                     t0 = time.time()
                     r = C.post(f"{ollama}/api/chat", body, timeout=1800)

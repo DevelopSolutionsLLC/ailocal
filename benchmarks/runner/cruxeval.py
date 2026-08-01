@@ -133,12 +133,14 @@ def run(args):
                 err = []
                 ans, t = "", {}
                 try:
+                    opts, prefix = C.model_params(tag, mode, "coding",
+                                                  thinking=(mode != "off"))
+                    opts["num_ctx"] = 16384
                     body = {"model": tag, "stream": False,
-                            "messages": [{"role": "user", "content": PROMPT.format(
-                                code=row["code"], input=row["input"])}],
-                            "options": {"num_ctx": 16384, "num_predict": 2048,
-                                        "temperature": 0, "top_p": 1.0, "seed": 42}}
-                    if think is not None:
+                            "messages": C.build_messages(PROMPT.format(
+                                code=row["code"], input=row["input"]), prefix),
+                            "options": opts}
+                    if think is not None and not prefix:
                         body["think"] = think
                     t0 = time.time()
                     r = C.post(f"{ollama}/api/chat", body, timeout=900)
