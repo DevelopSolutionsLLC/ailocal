@@ -17,11 +17,24 @@
 # 131,072 vs the 98,304 we configured. qwen2.5-coder:14b was the SLOWEST model in
 # the set and was the everyday-coding tier. Both are removed from the resident set.
 #
-# gemma3:27b and qwen3.5:9b were pulled and measured specifically to test the
-# proposed "Gemma reviewer / Qwen3.5-9B controller" architecture. Both are slower
-# than gpt-oss:20b on every metric, so neither was adopted. Gemma 4 does not exist
-# on Ollama (404 on the library itself); Gemma 3 27B is dense and is the slowest
-# model measured here.
+# CORRECTION: an earlier revision of this file claimed "Gemma 4 does not exist on
+# Ollama". That was WRONG. `gemma4:26b-a4b` 404s and the tags/list endpoint is not
+# public -- neither fact means the library is absent. `gemma4:26b-mlx` EXISTS and
+# is now the architecture/implementation/review backend.
+#
+#   gemma4:26b-mlx   pe 1004/s  dec 62.5/s  vram 17.5G  ctx 262144  (nvfp4, MLX)
+#   gemma3:27b       pe  121/s  dec 10.4/s  vram 16.3G              (dense GGUF)
+#
+# Gemma 4 MLX is ~8x the prompt eval and ~6x the decode of Gemma 3. Judging Gemma
+# on the 3-series was measuring the wrong generation.
+#
+# WHY IT BEATS gpt-oss:20b HERE, despite losing on a small prompt (1004 vs 1277
+# pe/s): it degrades far better, which is the property that actually stalls a
+# grown session.
+#   gemma4-mlx   17,799 tok -> 16.3s (1095/s)   45,799 tok -> 54.0s (849/s)  -22%
+#   gpt-oss:20b  10,270 tok ->  9.7s (1057/s)   26,570 tok -> 42.6s (624/s)  -41%
+# gemma4 still holds 849/s at 45.8K where gpt-oss is already at 624/s at 26.6K,
+# and its ceiling is 262,144 vs 131,072. qwen3.5:9b remains slower than both.
 #
 # ONE RESIDENT MODEL, THREE ROLES. architecture/implementation/review all point at
 # gpt-oss:20b and differ only in reasoning level and context -- Ollama keeps ONE
@@ -67,7 +80,7 @@ disk_gb: 40
 # so 64K is the balance between input capacity and permanent memory).
 architecture:
   role: Lead architect
-  active: gpt-oss:20b
+  active: gemma4:26b-mlx
   # Rollback: qwen3-coder:30b-a3b-q4_K_M stays installed and listed here, so
   # reverting is a one-line `active:` change plus ./scripts/sync-models.sh.
   # PROMPT EVAL, corrected [REAL]: 971 tok/s on a cold 4,013-token prompt, vs
@@ -114,7 +127,7 @@ architecture:
 # ── implementation — everyday working coder ──────────────────────────────────
 implementation:
   role: Daily coding
-  active: gpt-oss:20b
+  active: gemma4:26b-mlx
   # A genuinely separate tier from architecture: dedicated everyday coding at a
   # smaller footprint, so the 64K MoE is not tied up on routine edits.
   # VERIFIED capabilities: tools YES, insert YES, thinking NO.
@@ -139,7 +152,7 @@ implementation:
 # ── review — code review / bug & security detection ──────────────────────────
 review:
   role: Code review
-  active: gpt-oss:20b
+  active: gemma4:26b-mlx
   preferred: [gpt-oss:20b, deepseek-coder-v2:16b-lite-instruct-q4_K_M]
   reasoning: true          # VERIFIED: thinking AND tools (deepseek had NO tools)
   context: 24576
