@@ -2,7 +2,7 @@
 # benchmark-models — reusable model benchmark suite. See benchmarks/README.md.
 #
 #   benchmark-models plan                 capability probe + execution plan
-#   benchmark-models run --suite throughput [--model X] [--context N] [--reasoning M]
+#   benchmark-models run --suite all|throughput|retrieval|fastcode|cruxeval|architecture|review
 #   benchmark-models resume               continue; completed runs are skipped
 #   benchmark-models score                score completed runs
 #   benchmark-models report               JSONL + CSV + Markdown
@@ -23,6 +23,12 @@ case "$cmd" in
     done
     case "$suite" in
       throughput) exec python3 "$R/throughput.py" ${args+"${args[@]}"} ;;
+      retrieval)  exec python3 "$R/retrieval.py"  ${args+"${args[@]}"} ;;
+      fastcode)   exec python3 "$R/quality.py"    ${args+"${args[@]}"} ;;
+      cruxeval)   exec python3 "$R/cruxeval.py"   ${args+"${args[@]}"} ;;
+      architecture) exec python3 "$R/judged.py" --suite architecture ${args+"${args[@]}"} ;;
+      review)     exec python3 "$R/judged.py" --suite review ${args+"${args[@]}"} ;;
+      all)        exec bash "$ROOT/benchmarks/runner/run-all.sh" ${args+"${args[@]}"} ;;
       *) echo "unknown suite: $suite" >&2; exit 2 ;;
     esac ;;
   resume)  exec python3 "$R/throughput.py" "$@" ;;   # resume == run; completed keys are skipped
