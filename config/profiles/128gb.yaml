@@ -1,3 +1,35 @@
+# ── MEASURED 2026-07-31 (this machine, cold ~8K prompt, 2 reps, median) ─────
+#   model                  prompt_eval  decode   ttft   vram
+#   qwen3.5:2b                3108/s    106/s    4.9s   2.4G
+#   gpt-oss:20b                989/s     53/s   10.3s  11.9G
+#   qwen3.5:9b                 668/s     49/s   23.1s   5.5G
+#   qwen3-coder:30b-a3b        526/s     47/s   25.1s  18.9G
+#   qwen2.5-coder:14b          273/s     27/s   34.3s  11.4G
+#   gemma3:27b                 121/s     10/s   79.7s  16.3G
+#
+# LARGE-CONTEXT COLD PREFILL (the metric behind the 13-minute stall):
+#   gpt-oss:20b     10,270 tok -> 11.3s (907/s)   26,570 tok ->  39.0s (681/s)
+#   qwen3-coder     15,991 tok -> 34.9s (458/s)   41,291 tok -> 203.8s (203/s)
+#   gpt-oss degrades -25% over that range; qwen3-coder -56%, and the gap WIDENS.
+#
+# CONCLUSION: gpt-oss:20b beats qwen3-coder:30b on prompt eval, decode, TTFT and
+# footprint (11.9G vs 18.9G), at every context size measured, and its ceiling is
+# 131,072 vs the 98,304 we configured. qwen2.5-coder:14b was the SLOWEST model in
+# the set and was the everyday-coding tier. Both are removed from the resident set.
+#
+# gemma3:27b and qwen3.5:9b were pulled and measured specifically to test the
+# proposed "Gemma reviewer / Qwen3.5-9B controller" architecture. Both are slower
+# than gpt-oss:20b on every metric, so neither was adopted. Gemma 4 does not exist
+# on Ollama (404 on the library itself); Gemma 3 27B is dense and is the slowest
+# model measured here.
+#
+# ONE RESIDENT MODEL, THREE ROLES. architecture/implementation/review all point at
+# gpt-oss:20b and differ only in reasoning level and context -- Ollama keeps ONE
+# copy. reasoning_router.py makes that real by translating reasoning_effort into
+# Ollama's native `think`, which is monotonic where reasoning_effort was not.
+#
+# NOT MEASURED: output QUALITY. This is a latency and footprint optimisation.
+# qwen3-coder:30b remains installed and is one `active:` edit away.
 # profile: 128gb
 #
 # AN EXACT FUNCTIONAL COPY OF 64gb. Same capabilities, same backends, same
@@ -55,7 +87,7 @@ disk_gb: 40
 # so 64K is the balance between input capacity and permanent memory).
 architecture:
   role: Lead architect
-  active: qwen3-coder:30b-a3b-q4_K_M
+  active: gpt-oss:20b
   # Rollback: qwen3-coder:30b-a3b-q4_K_M stays installed and listed here, so
   # reverting is a one-line `active:` change plus ./scripts/sync-models.sh.
   # PROMPT EVAL, corrected [REAL]: 971 tok/s on a cold 4,013-token prompt, vs
@@ -73,7 +105,7 @@ architecture:
   # being nominally larger. Daily coding velocity is the priority; the dense
   # model's thinking/vision did not pay for ~2x slower generation.
   preferred: [qwen3-coder:30b-a3b-q4_K_M]
-  reasoning: false         # VERIFIED: no `thinking` capability on this model
+  reasoning: true          # gpt-oss:20b HAS thinking; qwen3-coder did not
   context: 98304
   temperature: 0.1
   num_predict: 16384
@@ -102,16 +134,16 @@ architecture:
 # ── implementation — everyday working coder ──────────────────────────────────
 implementation:
   role: Daily coding
-  active: qwen2.5-coder:14b-instruct-q4_K_M
+  active: gpt-oss:20b
   # A genuinely separate tier from architecture: dedicated everyday coding at a
   # smaller footprint, so the 64K MoE is not tied up on routine edits.
   # VERIFIED capabilities: tools YES, insert YES, thinking NO.
   preferred: [qwen2.5-coder:14b-instruct-q4_K_M, qwen3-coder:30b-a3b-q4_K_M]
-  reasoning: false         # VERIFIED: no `thinking` capability
+  reasoning: true
   context: 24576
   temperature: 0.1
   num_predict: -1
-  keep_alive: 20m
+  keep_alive: -1           # same physical model as architecture; one resident copy
   persona: true
   purpose: [implementation, features, refactoring, tests, shell, python, typescript]
   strengths: [fast, low memory, excellent everyday code generation]
@@ -133,7 +165,7 @@ review:
   context: 24576
   temperature: 0.2
   num_predict: 4096
-  keep_alive: 20m
+  keep_alive: -1           # same physical model as architecture; one resident copy
   persona: true
   purpose: [code review, bug detection, security review, alternative solutions]
   strengths: [careful analysis, security awareness, concrete findings]
