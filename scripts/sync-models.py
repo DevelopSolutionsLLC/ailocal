@@ -690,10 +690,17 @@ def regen_codex(models, clients):
         # TOP-LEVEL: Codex does not reliably honour them inside a named profile,
         # so they are written to the root of the isolated codex-local config
         # rather than relying on profile inheritance.
+        # Derive from the capability CODEX ACTUALLY DEFAULTS TO, not architecture.
+        # Using architecture's 98,304 wrote a compaction limit of 49,152 for a
+        # default model whose ENTIRE context is 24,576 -- compaction could never
+        # fire, because the model would 400 on context length first. The window
+        # must describe the model Codex will really talk to.
         win, pct = COMPACTION.get("window"), COMPACTION.get("pct")
-        arch_ctx = (models.get("architecture") or {}).get("context")
-        if win and pct and arch_ctx:
-            trigger = int(win) * int(pct) // 100
+        cx_ctx = (models.get(default) or {}).get("context")
+        if win and pct and cx_ctx:
+            # Never advertise a compaction point the model cannot reach.
+            trigger = min(int(win) * int(pct) // 100, int(int(cx_ctx) * int(pct) / 100))
+            arch_ctx = cx_ctx
             text = CODEX_CONFIG.read_text()
             for key, val in (("model_context_window", arch_ctx),
                              ("model_auto_compact_token_limit", trigger)):
