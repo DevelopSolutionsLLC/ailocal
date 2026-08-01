@@ -83,3 +83,29 @@ Layer A (raw inference) is implemented and validated. Layer B (agent) and the
 quality task suites (architecture / implementation / fast coding / review /
 understanding / self-repair) are specified in the parent task and **not yet
 implemented**; see the run plan for what has actually been measured.
+
+## Result formats
+
+Two, deliberately:
+
+- `reports/runs.jsonl` — one record per run, appended and fsynced immediately.
+  This is the equivalent of lm-evaluation-harness `samples_<task>_*.jsonl`:
+  instance-level, resumable, and the source of truth.
+- `reports/results_<model>_<mode>.json` — aggregate, shaped like harness
+  `results_*.json`: `config`, `configs`, `results`, `higher_is_better`,
+  `n-samples`, `date`, `git_hash`, `versions`.
+
+The aggregate is a FORMAT ADAPTER, not a compatibility claim. These tasks are
+not registered lm-eval-harness tasks and the numbers are not produced by harness
+code. The shape exists so conventional tooling can read the output and so runs
+are comparable across our own history.
+
+Reference: https://github.com/EleutherAI/lm-evaluation-harness
+
+## Reproducibility
+
+Each record carries `git_commit`, `software_versions` (ollama + litellm), the
+resolved sampling parameters actually used, the reasoning mode, requested vs
+ACTUAL context tokens, and the fixture fingerprint/seed. A run is reproducible
+from the manifest plus the commit; cross-regime comparison (temp-0 baseline vs
+vendor settings) is invalid and the commit hash distinguishes them.
