@@ -37,6 +37,7 @@ import datetime
 import json
 import os
 import random
+import zlib
 import sys
 import time
 
@@ -173,7 +174,14 @@ def run(args):
                     C.unload_all_except(ollama)
 
                     gen, kind = TASKS[name]
-                    rng = random.Random(args.seed + target + hash(name) % 9999)
+                    # STABLE seed. Python SALTS hash() for strings per process,
+                    # so `hash(name)` generated a DIFFERENT task instance on every
+                    # invocation -- models were being compared on tasks that were
+                    # not the same tasks, which is the one thing a cross-model
+                    # benchmark must never do. zlib.crc32 is stable across
+                    # processes and machines.
+                    rng = random.Random(args.seed + target
+                                        + zlib.crc32(name.encode()))
                     prompt, truth = gen(rng, target)
                     opts, prefix = C.model_params(tag, mode, "base",
                                                   thinking=(mode != "off"))
