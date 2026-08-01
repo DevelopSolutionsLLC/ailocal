@@ -81,18 +81,26 @@ def probe_reasoning(ollama, tag, modes):
         except Exception as e:
             caps[name] = {"accepted": False,
                           "error": f"{type(e).__name__}: {str(e)[:100]}"}
-    # If every accepted mode produced identical reasoning length, the control is
-    # being ignored -- report that rather than claiming three working modes.
-    vals = [v for v in lengths.values()]
-    if len(vals) > 1 and len(set(vals)) == 1:
-        for k in caps:
-            if caps[k].get("accepted"):
-                caps[k]["effective"] = False
-                caps[k]["note"] = "control accepted but reasoning length identical across modes"
-    else:
-        for k in caps:
-            if caps[k].get("accepted"):
-                caps[k]["effective"] = caps[k]["reasoning_chars"] > 0 or k == "off"
+    # A mode is DISTINCT only if no other mode produced the same reasoning
+    # length. Checking merely "are all modes identical" is too weak and was:
+    # qwen3.5 emits 765/765 for standard and deep, i.e. `deep` is silently
+    # ignored, while `off` differs -- so the all-identical test passed it as
+    # three working modes. Duplicates are reported pairwise instead.
+    seen = {}
+    for k, v in caps.items():
+        if not v.get("accepted"):
+            continue
+        n = v["reasoning_chars"]
+        if n in seen:
+            twin = seen[n]
+            v["effective"] = False
+            v["note"] = f"reasoning length identical to '{twin}' — control ignored"
+            caps[twin].setdefault("note", f"reasoning length identical to '{k}'")
+        else:
+            seen[n] = k
+            # `off` is effective when it actually SILENCES reasoning. gpt-oss:20b
+            # emits 111 chars with think=false, so off is NOT effective there.
+            v["effective"] = (n == 0) if k == "off" else (n > 0)
     return caps
 
 
