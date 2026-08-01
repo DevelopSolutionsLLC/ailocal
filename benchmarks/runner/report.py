@@ -17,6 +17,24 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import common as C  # noqa: E402
 
 
+def supersede(runs):
+    """Keep only the LATEST record per (cell, phase, repetition).
+
+    Results are append-only, so re-running a cell with --force ADDS records
+    rather than replacing them. Without this, a cell re-run on a clean machine
+    would be averaged together with the contaminated samples it was re-run to
+    replace -- hiding exactly the problem the re-run was meant to fix. Later
+    timestamp wins; superseded records stay on disk as history.
+    """
+    latest = {}
+    for r in runs:
+        k = C.run_key(r)
+        prev = latest.get(k)
+        if prev is None or (r.get("timestamp") or "") > (prev.get("timestamp") or ""):
+            latest[k] = r
+    return list(latest.values())
+
+
 def load(name="runs.jsonl"):
     p = C.results_path(name)
     if not os.path.exists(p):
@@ -136,6 +154,9 @@ def main():
     ap.add_argument("--score", action="store_true")
     a = ap.parse_args()
     runs = load()
+    superseded = len(runs)
+    runs = supersede(runs)
+    superseded -= len(runs)
     if not runs:
         print("no runs recorded yet"); return 1
     rows = [flatten(r) for r in runs]
@@ -147,6 +168,8 @@ def main():
     md_p = os.path.join(C.RESULTS, "report.md")
     with open(md_p, "w") as f:
         f.write(markdown(rows))
+    if superseded:
+        print(f"  {superseded} superseded record(s) excluded (re-runs replace older samples)")
     print(f"  {len(rows)} runs -> {csv_p}")
     print(f"                 -> {md_p}")
     return 0
