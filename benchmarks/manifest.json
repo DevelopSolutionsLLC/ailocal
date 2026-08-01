@@ -1,6 +1,6 @@
 {
   "//": [
-    "Benchmark manifest — DATA, not code. Add/remove/rename models here; the",
+    "Benchmark manifest \u2014 DATA, not code. Add/remove/rename models here; the",
     "runner never hard-codes a tag.",
     "",
     "JSON, not YAML, DELIBERATELY. PyYAML is absent on this host and the repo's",
@@ -11,22 +11,59 @@
   ],
   "schema_version": 1,
   "models": [
-    {"tag": "gemma4:26b-mlx"},
-    {"tag": "qwen3.5:9b"},
-    {"tag": "qwen3.5:4b"},
-    {"tag": "qwen3.5:2b"},
-    {"tag": "gpt-oss:20b"},
-    {"tag": "qwen3-coder:30b-a3b-q4_K_M"}
+    {
+      "tag": "gemma4:26b-mlx"
+    },
+    {
+      "tag": "qwen3.5:9b"
+    },
+    {
+      "tag": "qwen3.5:4b"
+    },
+    {
+      "tag": "qwen3.5:2b"
+    },
+    {
+      "tag": "gpt-oss:20b"
+    },
+    {
+      "tag": "qwen3-coder:30b-a3b-q4_K_M"
+    }
   ],
-  "context_targets": [24576, 32768, 49152, 65536],
+  "context_targets": [
+    24576,
+    32768,
+    49152,
+    65536
+  ],
   "reasoning_modes": {
-    "off":      {"think": false},
-    "standard": {"think": true},
-    "deep":     {"think": "high"}
+    "off": {
+      "think": false
+    },
+    "standard": {
+      "think": true
+    },
+    "deep": {
+      "think": "high"
+    }
   },
   "completion_limit": 8192,
-  "fixed_params": {"temperature": 0, "top_p": 1.0, "seed": 42},
-  "runs": {"cold": 1, "warm": 3},
+  "fixed_params": {
+    "temperature": 0,
+    "top_p": 1.0,
+    "seed": 42,
+    "//": [
+      "FAIRNESS BASELINE, applied to every model. temperature 0 makes runs",
+      "reproducible and comparable -- but it is OFF-SPEC for every vendor here.",
+      "See model_settings for what each vendor actually recommends, and run with",
+      "--vendor-settings to measure a model at its documented best. Comparisons",
+      "across models are only valid WITHIN one setting regime, never across."
+    ]
+  },
+  "runs": {
+    "cold": 1,
+    "warm": 3
+  },
   "limits": {
     "per_run_timeout_s": 1800,
     "min_free_memory_pct": 8,
@@ -36,5 +73,74 @@
   "endpoint": {
     "proxy": "http://127.0.0.1:4000",
     "ollama": "http://127.0.0.1:11434"
+  },
+  "model_settings": {
+    "//": [
+      "Vendor-recommended knobs, recorded as DATA. Not applied by default: mixing",
+      "per-model sampling into a cross-model comparison measures the settings as",
+      "much as the models. Use --vendor-settings for a per-model-best run and",
+      "compare it against the fixed-params run, never against the other regime."
+    ],
+    "qwen3.5:9b": {
+      "source": "https://huggingface.co/Qwen/Qwen3.5-0.8B (family card)",
+      "non_thinking": {
+        "temperature": 1.0,
+        "top_p": 1.0,
+        "top_k": 20,
+        "min_p": 0.0,
+        "presence_penalty": 2.0
+      },
+      "thinking_coding": {
+        "temperature": 0.6,
+        "top_p": 0.95,
+        "top_k": 20,
+        "min_p": 0.0,
+        "presence_penalty": 0.0
+      },
+      "note": "Vendor recommends 32768 output for most queries. Our 8192 ceiling may truncate long thinking."
+    },
+    "qwen3.5:4b": {
+      "same_as": "qwen3.5:9b"
+    },
+    "qwen3.5:2b": {
+      "same_as": "qwen3.5:9b"
+    },
+    "qwen3-coder:30b-a3b-q4_K_M": {
+      "source": "https://qwen.readthedocs.io/en/latest/getting_started/quickstart.html",
+      "non_thinking": {
+        "temperature": 0.7,
+        "top_p": 0.8,
+        "top_k": 20,
+        "min_p": 0.0
+      },
+      "note": "No thinking capability (probe confirmed rejection). Non-thinking settings only."
+    },
+    "gpt-oss:20b": {
+      "source": "https://github.com/openai/gpt-oss + model card arXiv:2508.10925",
+      "recommended": {
+        "temperature": 1.0,
+        "top_p": 1.0
+      },
+      "reasoning_lever": "SYSTEM PROMPT: 'Reasoning: low|medium|high'",
+      "note": "The native effort control is a SYSTEM-PROMPT directive, not a sampling param. This likely explains why Ollama's think:false does not silence it (measured 111 reasoning chars with think=false).",
+      "measured": {
+        "system_prompt_lever": {
+          "none": 93,
+          "Reasoning: low": 108,
+          "Reasoning: medium": 204,
+          "Reasoning: high": 216
+        },
+        "ollama_think_param": {
+          "off": 111,
+          "standard": 111,
+          "deep": 212
+        },
+        "conclusion": "The SYSTEM-PROMPT lever gives three distinct monotonic levels; Ollama's think gives only two (off and standard identical, i.e. off is ignored). For gpt-oss the vendor control is strictly better."
+      }
+    },
+    "gemma4:26b-mlx": {
+      "source": "not yet located \u2014 Gemma 4 vendor card not confirmed",
+      "note": "UNVERIFIED. No official recommendation recorded; fixed-params baseline used. Do not present gemma4 vendor-settings results until this is sourced."
+    }
   }
 }
