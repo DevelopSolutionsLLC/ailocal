@@ -87,13 +87,12 @@ def run(args):
                 answer = ""
                 timings = {}
                 try:
-                    body = {
-                        "model": tag, "stream": False,
-                        "messages": [{"role": "user", "content": text + QUESTION}],
-                        "options": {"num_ctx": target, "num_predict": 256,
-                                    "temperature": 0, "top_p": 1.0, "seed": 42},
-                    }
-                    if args.reasoning != "default":
+                    opts, prefix = C.model_params(tag, args.reasoning, "coding")
+                    opts.update({"num_ctx": target, "num_predict": 512})
+                    body = {"model": tag, "stream": False,
+                            "messages": C.build_messages(text + QUESTION, prefix),
+                            "options": opts}
+                    if args.reasoning != "default" and not prefix:
                         body["think"] = m["reasoning_modes"][args.reasoning]["think"]
                     r = C.post(f"{ollama}/api/chat", body, timeout=1800)
                     answer = (r.get("message") or {}).get("content") or ""

@@ -49,16 +49,12 @@
   },
   "completion_limit": 8192,
   "fixed_params": {
-    "temperature": 0,
-    "top_p": 1.0,
-    "seed": 42,
     "//": [
-      "FAIRNESS BASELINE, applied to every model. temperature 0 makes runs",
-      "reproducible and comparable -- but it is OFF-SPEC for every vendor here.",
-      "See model_settings for what each vendor actually recommends, and run with",
-      "--vendor-settings to measure a model at its documented best. Comparisons",
-      "across models are only valid WITHIN one setting regime, never across."
-    ]
+      "Only seed is now fixed across models. Sampling comes from model_settings,",
+      "because comparing models at one vendor's temperature measures the",
+      "temperature. Seed keeps a single model's runs reproducible."
+    ],
+    "seed": 42
   },
   "runs": {
     "cold": 1,
@@ -76,71 +72,96 @@
   },
   "model_settings": {
     "//": [
-      "Vendor-recommended knobs, recorded as DATA. Not applied by default: mixing",
-      "per-model sampling into a cross-model comparison measures the settings as",
-      "much as the models. Use --vendor-settings for a per-model-best run and",
-      "compare it against the fixed-params run, never against the other regime."
+      "VENDOR-CORRECT settings, APPLIED by default. Each model competes at the",
+      "settings its vendor documents, because the question is which model deserves",
+      "a role -- not which survives someone else's temperature. Sources are on each",
+      "entry. `system_prefix` is the model's native reasoning lever where sampling",
+      "params are not it (gpt-oss).",
+      "",
+      "num_predict follows vendor guidance where given: Qwen recommends 32768 for",
+      "most queries, so reasoning-heavy suites get it rather than an 8192 ceiling",
+      "that would truncate thinking and score it as a wrong answer."
     ],
-    "qwen3.5:9b": {
-      "source": "https://huggingface.co/Qwen/Qwen3.5-0.8B (family card)",
-      "non_thinking": {
-        "temperature": 1.0,
-        "top_p": 1.0,
-        "top_k": 20,
-        "min_p": 0.0,
-        "presence_penalty": 2.0
-      },
-      "thinking_coding": {
-        "temperature": 0.6,
-        "top_p": 0.95,
-        "top_k": 20,
-        "min_p": 0.0,
-        "presence_penalty": 0.0
-      },
-      "note": "Vendor recommends 32768 output for most queries. Our 8192 ceiling may truncate long thinking."
+    "defaults": {
+      "num_predict": 8192,
+      "num_predict_thinking": 32768
     },
-    "qwen3.5:4b": {
-      "same_as": "qwen3.5:9b"
-    },
-    "qwen3.5:2b": {
-      "same_as": "qwen3.5:9b"
-    },
-    "qwen3-coder:30b-a3b-q4_K_M": {
-      "source": "https://qwen.readthedocs.io/en/latest/getting_started/quickstart.html",
-      "non_thinking": {
-        "temperature": 0.7,
-        "top_p": 0.8,
-        "top_k": 20,
-        "min_p": 0.0
-      },
-      "note": "No thinking capability (probe confirmed rejection). Non-thinking settings only."
-    },
-    "gpt-oss:20b": {
-      "source": "https://github.com/openai/gpt-oss + model card arXiv:2508.10925",
-      "recommended": {
-        "temperature": 1.0,
-        "top_p": 1.0
-      },
-      "reasoning_lever": "SYSTEM PROMPT: 'Reasoning: low|medium|high'",
-      "note": "The native effort control is a SYSTEM-PROMPT directive, not a sampling param. This likely explains why Ollama's think:false does not silence it (measured 111 reasoning chars with think=false).",
-      "measured": {
-        "system_prompt_lever": {
-          "none": 93,
-          "Reasoning: low": 108,
-          "Reasoning: medium": 204,
-          "Reasoning: high": 216
+    "models": {
+      "gemma4:26b-mlx": {
+        "source": "Google recommendation via Replicate/Unsloth cards: temp 1.0, top_p 0.95, top_k 64",
+        "base": {
+          "temperature": 1.0,
+          "top_p": 0.95,
+          "top_k": 64
         },
-        "ollama_think_param": {
-          "off": 111,
-          "standard": 111,
-          "deep": 212
+        "coding": {
+          "temperature": 0.2,
+          "top_p": 0.95,
+          "top_k": 64
         },
-        "conclusion": "The SYSTEM-PROMPT lever gives three distinct monotonic levels; Ollama's think gives only two (off and standard identical, i.e. off is ignored). For gpt-oss the vendor control is strictly better."
+        "max_context": 262144
+      },
+      "gpt-oss:20b": {
+        "source": "github.com/openai/gpt-oss + model card arXiv:2508.10925 \u2014 temp 1.0, top_p 1.0",
+        "base": {
+          "temperature": 1.0,
+          "top_p": 1.0
+        },
+        "coding": {
+          "temperature": 1.0,
+          "top_p": 1.0
+        },
+        "max_context": 131072,
+        "system_prefix": {
+          "off": "Reasoning: low",
+          "standard": "Reasoning: medium",
+          "deep": "Reasoning: high"
+        },
+        "note": "MEASURED: the system-prompt lever gives 3 monotonic levels (108/204/216) where ollama think gives 2 (off==standard==111). Sampling params are NOT its reasoning control."
+      },
+      "qwen3.5:9b": {
+        "source": "huggingface.co/Qwen/Qwen3.5 family card",
+        "base": {
+          "temperature": 1.0,
+          "top_p": 1.0,
+          "top_k": 20,
+          "min_p": 0.0,
+          "presence_penalty": 2.0
+        },
+        "coding": {
+          "temperature": 0.6,
+          "top_p": 0.95,
+          "top_k": 20,
+          "min_p": 0.0,
+          "presence_penalty": 0.0
+        },
+        "max_context": 262144
+      },
+      "qwen3.5:4b": {
+        "same_as": "qwen3.5:9b",
+        "max_context": 262144
+      },
+      "qwen3.5:2b": {
+        "same_as": "qwen3.5:9b",
+        "max_context": 262144
+      },
+      "qwen3-coder:30b-a3b-q4_K_M": {
+        "source": "qwen.readthedocs.io quickstart \u2014 non-thinking instruct settings",
+        "base": {
+          "temperature": 0.7,
+          "top_p": 0.8,
+          "top_k": 20,
+          "min_p": 0.0
+        },
+        "coding": {
+          "temperature": 0.7,
+          "top_p": 0.8,
+          "top_k": 20,
+          "min_p": 0.0
+        },
+        "max_context": 262144,
+        "note": "No thinking capability (probe: standard/deep rejected). Non-thinking only."
       }
-    },
-    "gemma4:26b-mlx": {
-      "source": "not yet located \u2014 Gemma 4 vendor card not confirmed",
-      "note": "UNVERIFIED. No official recommendation recorded; fixed-params baseline used. Do not present gemma4 vendor-settings results until this is sourced."
     }
   }
 }

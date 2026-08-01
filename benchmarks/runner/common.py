@@ -217,3 +217,53 @@ def software_versions(ollama):
     except Exception:
         v["litellm"] = None
     return v
+
+
+# ── per-model vendor settings ───────────────────────────────────────────────
+def model_params(tag, mode="standard", profile="coding", thinking=False):
+    """Resolve the VENDOR-CORRECT options + system prefix for one model.
+
+    Each model competes at the settings its vendor documents. Benchmarking every
+    model at one temperature measures the temperature as much as the model --
+    and temperature 0 is off-spec for every model here.
+
+    Returns (options_dict, system_prefix_or_None). `mode` selects the reasoning
+    level, which for gpt-oss is a SYSTEM-PROMPT directive rather than a sampling
+    parameter: measured, its system lever gives three monotonic levels where
+    Ollama's `think` gives two.
+    """
+    m = manifest()
+    ms = (m.get("model_settings") or {})
+    models = ms.get("models") or {}
+    ent = models.get(tag) or {}
+    if "same_as" in ent:
+        base_ent = models.get(ent["same_as"]) or {}
+        ent = {**base_ent, **{k: v for k, v in ent.items() if k != "same_as"}}
+
+    opts = dict(ent.get(profile) or ent.get("base") or {})
+    if not opts:                      # unknown model: state it, do not invent
+        opts = {"temperature": 0.7, "top_p": 0.9}
+    opts["seed"] = (m.get("fixed_params") or {}).get("seed", 42)
+
+    d = ms.get("defaults") or {}
+    opts["num_predict"] = (d.get("num_predict_thinking", 32768) if thinking
+                           else d.get("num_predict", 8192))
+
+    prefix = (ent.get("system_prefix") or {}).get(mode)
+    return opts, prefix
+
+
+def build_messages(user_content, system_prefix=None):
+    msgs = []
+    if system_prefix:
+        msgs.append({"role": "system", "content": system_prefix})
+    msgs.append({"role": "user", "content": user_content})
+    return msgs
+
+
+def max_context(tag):
+    ms = (manifest().get("model_settings") or {}).get("models") or {}
+    ent = ms.get(tag) or {}
+    if "same_as" in ent and not ent.get("max_context"):
+        ent = ms.get(ent["same_as"]) or {}
+    return ent.get("max_context")

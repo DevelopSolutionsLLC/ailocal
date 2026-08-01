@@ -84,12 +84,17 @@ def execute(code, tests, timeout=30):
         shutil.rmtree(d, ignore_errors=True)
 
 
-def ask(ollama, tag, prompt, think, timeout=1800):
+def ask(ollama, tag, prompt, think, timeout=1800, mode="standard"):
+    # VENDOR-CORRECT settings per model. Benchmarking every model at one
+    # temperature measures the temperature; temperature 0 is off-spec for all of
+    # them. `prefix` carries gpt-oss's native reasoning lever, which is a
+    # system-prompt directive rather than a sampling parameter.
+    opts, prefix = C.model_params(tag, mode, "coding", thinking=(mode != "off"))
+    opts["num_ctx"] = 16384
     body = {"model": tag, "stream": False,
-            "messages": [{"role": "user", "content": prompt}],
-            "options": {"num_ctx": 16384, "num_predict": 8192,
-                        "temperature": 0, "top_p": 1.0, "seed": 42}}
-    if think is not None:
+            "messages": C.build_messages(prompt, prefix),
+            "options": opts}
+    if think is not None and not prefix:
         body["think"] = think
     t0 = time.time()
     r = C.post(f"{ollama}/api/chat", body, timeout=timeout)
@@ -150,7 +155,8 @@ def run(args):
                 err = []
                 try:
                     out, t = ask(ollama, tag, PROMPT.format(
-                        statement=task["statement"], signature=task["signature"]), think)
+                        statement=task["statement"], signature=task["signature"]),
+                        think, mode=mode)
                 except Exception as e:
                     out, t = "", {}
                     err = [f"{type(e).__name__}: {str(e)[:200]}"]
