@@ -117,26 +117,53 @@ def run(args):
             # Build the repo-like wrapper ONCE per (model, size); reuse across
             # tasks and modes so the only thing varying is what we intend to vary.
             ckey = f"{tag}|{target}|late"
-            if ckey in cache:
-                ctx_text, _ = F.build(target, "late", scale=cache[ckey]["scale"])
-            else:
+            if ckey not in cache:
                 try:
-                    ctx_text, measured, scale, _ = F.ratio_calibrate(
+                    _c, measured, scale, _ = F.ratio_calibrate(
                         lambda t: _measure(ollama, tag, t), target)
                     cache[ckey] = {"scale": scale, "measured": measured,
-                                   "fingerprint": F.fingerprint(ctx_text)}
+                                   "fingerprint": F.fingerprint(_c)}
                     F.save_cache(C.BENCH, cache)
                 except Exception as e:
                     print(f"  SKIP {tag} @{target}: calibration {type(e).__name__}")
                     continue
+            run_ix = 0
             for mode in modes:
                 for task in tasks:
+                    # A NOVEL wrapper per run, same calibrated size. Without this
+                    # every run at a given (model, context) sends the IDENTICAL
+                    # 32K prefix, so after the first one the prefill is served
+                    # from the KV cache and the model is replaying context rather
+                    # than reading it. Measured consequence: `off` produced 59
+                    # tokens in 35.1s (cold) while `deep` produced 741 in 12.5s
+                    # (warm) -- which reads as "deep is faster" and is purely
+                    # cache warmth. Same defect the throughput suite already had.
+                    run_ix += 1
+                    ctx_text, _ = F.build(target, "late",
+                                          scale=cache[ckey]["scale"], nonce=run_ix)
+                    # SCATTER the task's evidence through the context. Without
+                    # this the surrounding tokens are ignorable filler and the
+                    # task is answerable at any size -- which measured noise
+                    # tolerance, not long-context capability. With it, a 128K run
+                    # requires finding several pieces of evidence spread across
+                    # 128K and reasoning over them: genuinely harder than 32K.
+                    ev = task.get("evidence") or []
+                    if ev:
+                        parts = ctx_text.split("\n")
+                        step = max(1, len(parts) // (len(ev) + 1))
+                        for i, frag in enumerate(ev):
+                            parts.insert(step * (i + 1) + i, "\n" + frag + "\n")
+                        ctx_text = "\n".join(parts)
                     key = "|".join(str(x) for x in (
-                        "compete", task["id"], tag, target, mode, "warm", 0))
+                        "compete", task["id"], tag, target, mode, "cold", 0))
                     if key in done and not args.force:
                         continue
                     if C.safety_check(m["limits"], baseline_swap):
                         print("  ABORT: machine limits"); return 2
+                    # COLD every run. A warm model made `off` look 3x slower than
+                    # `deep` purely because `off` ran first; that cache artifact
+                    # was reported as a mode difference.
+                    C.unload_all_except(ollama)
 
                     prompt = WRAPPER.format(context=ctx_text, task=task["statement"])
                     opts, prefix = C.model_params(
@@ -174,6 +201,14 @@ def run(args):
                     sc["answer_chars"] = len(out)
                     sc["reasoning_chars"] = t.get("reasoning_chars")
                     sc["truncated"] = t.get("truncated")
+                    # A runaway that hits the output ceiling is INVALID, not a low
+                    # score. gemma4/review/standard emitted 201,489 chars and
+                    # 32,768 tokens, scoring 2/5 purely because it never stopped;
+                    # off and deep both scored 4/5 in under 20s. Counting that as
+                    # a capability result would be a lie about the model.
+                    if sc.get("truncated"):
+                        sc["points"] = None
+                        sc["note"] = "INVALID: hit the output ceiling (runaway)"
 
                     C.append_result({
                         "schema_version": C.SCHEMA_VERSION,
@@ -188,7 +223,7 @@ def run(args):
                         "actual_context_tokens": t.get("prompt_eval_count"),
                         "reasoning_mode_requested": mode,
                         "sampling": opts, "system_prefix": prefix,
-                        "cold_or_warm": "warm", "repetition": 0,
+                        "cold_or_warm": "cold", "repetition": 0,
                         "timings": t, "score": sc, "errors": err,
                     })
                     mark = (f"{sc['points']}/{sc['max']}"

@@ -42,39 +42,135 @@
       "id": "architecture",
       "role": "ailocal-architecture",
       "kind": "signals",
-      "statement": "Two components write the SAME ledger table: `billing/service.py` writes via the SQLAlchemy ORM, and `reports/nightly_cron.py` writes the same rows via raw SQL at 02:00.\n\n`docs/adr/ADR-004.md` is ACCEPTED and states: the ledger is the system of record; any component may READ it; WRITES are the responsibility of the owning service.\n\n`constraints.md` states: the nightly reconcile MUST complete in its window and MUST NOT hold long-running locks against the live billing path.\n\n`legacy/old_ledger_v1.py` is marked DEPRECATED 2019 and unused.\n\nNew requirement: reconciliation adjustments must become visible to billing immediately, not the next morning.\n\nIdentify the architectural boundary being violated, propose the smallest complete design, name the files that must change, and state migration and compatibility risks. Do not redesign anything unrelated.",
+      "statement": "A new requirement asks that reconciliation adjustments become visible to billing IMMEDIATELY rather than the next morning.\n\nUsing ONLY the repository above, identify the architectural boundary being violated, propose the smallest complete design, name the files that must change, and state migration and compatibility risks. Do not redesign anything unrelated.",
       "signals": {
         "required": [
-          ["ADR-004", "adr-004", "adr 004"],
-          ["ownership", "owner", "owning service", "single writer", "one writer"],
-          ["nightly_cron", "reconcile", "cron"],
-          ["billing/service.py", "billingservice", "billing service"]
+          [
+            "ADR-004",
+            "adr-004",
+            "adr 004"
+          ],
+          [
+            "ownership",
+            "owner",
+            "owning service",
+            "single writer",
+            "one writer"
+          ],
+          [
+            "nightly_cron",
+            "reconcile",
+            "cron"
+          ],
+          [
+            "billing/service.py",
+            "billingservice",
+            "billing service"
+          ]
         ],
         "anti": [
-          ["distributed lock", "advisory lock", "select for update", "mutex"],
-          ["microservice", "event sourcing", "rewrite the system", "kafka"],
-          ["ledgerv1", "old_ledger_v1"]
+          [
+            "distributed lock",
+            "advisory lock",
+            "select for update",
+            "mutex"
+          ],
+          [
+            "microservice",
+            "event sourcing",
+            "rewrite the system",
+            "kafka"
+          ],
+          [
+            "ledgerv1",
+            "old_ledger_v1"
+          ]
         ]
-      }
+      },
+      "evidence": [
+        "# docs/adr/ADR-004.md\n# STATUS: ACCEPTED. The ledger is the system of record.\n# Any component may READ the ledger. WRITES are the responsibility of the\n# owning service. Not superseded.\n",
+        "# billing/service.py\nclass BillingService:\n    def charge(self, account_id, cents):\n        row = self.db.query(Ledger).filter_by(account=account_id).one()\n        row.balance -= cents\n        self.db.commit()\n",
+        "# reports/nightly_cron.py\ndef reconcile():\n    # runs 02:00 daily, writes the SAME ledger rows via raw SQL\n    conn.execute(\"UPDATE ledger SET balance = balance + :adj WHERE account = :a\")\n    conn.commit()\n",
+        "# constraints.md\n# The nightly reconcile MUST complete within its window and MUST NOT hold\n# long-running locks against the live billing path.\n",
+        "# legacy/old_ledger_v1.py\n# DEPRECATED 2019. Unused. Kept for historical reference only.\nclass LedgerV1: ...\n"
+      ]
     },
     {
       "id": "review",
       "role": "ailocal-review",
       "kind": "review",
-      "statement": "Review this patch. Report every defect with severity and reason. Do NOT rewrite the code.\n\n@@ auth/session.py\n-    return hmac.compare_digest(expected, token.sig)\n+    return expected == token.sig\n\n@@ auth/session.py\n-    return db.query(User).filter_by(id=uid).one_or_none()\n+    return db.execute(f\"SELECT * FROM users WHERE id = {uid}\").fetchone()\n\n@@ auth/session.py\n-CACHE_TTL = 300\n+CACHE_TTL = 300  # seconds\n\n@@ auth/session.py\n-    return {u.id: u for u in users}\n+    out = {}\n+    for u in users:\n+        out[u.id] = [x for x in users if x.org == u.org]\n+    return out\n\n@@ auth/session.py\n-def revoke(uid, *, cascade=False):\n+def revoke(uid, cascade):",
+      "statement": "Review the CHANGED HUNKS shown in the repository above (lines marked with - and +). Report every defect with severity and reason. Do NOT rewrite the code.",
       "defects": [
-        {"id": "timing_attack", "severity": "critical",
-         "aliases": ["compare_digest", "timing", "constant time", "constant-time"]},
-        {"id": "sql_injection", "severity": "critical",
-         "aliases": ["sql injection", "sqli", "f-string", "parameteris", "parameteriz", "interpolat"]},
-        {"id": "quadratic_perf", "severity": "high",
-         "aliases": ["o(n^2)", "o(n2)", "quadratic", "nested loop", "performance"]},
-        {"id": "api_break", "severity": "high",
-         "aliases": ["keyword-only", "keyword only", "signature", "breaking change", "backward"]},
-        {"id": "missing_test", "severity": "medium",
-         "aliases": ["no test", "missing test", "untested", "test coverage"]}
+        {
+          "id": "timing_attack",
+          "severity": "critical",
+          "aliases": [
+            "compare_digest",
+            "timing",
+            "constant time",
+            "constant-time"
+          ]
+        },
+        {
+          "id": "sql_injection",
+          "severity": "critical",
+          "aliases": [
+            "sql injection",
+            "sqli",
+            "f-string",
+            "parameteris",
+            "parameteriz",
+            "interpolat"
+          ]
+        },
+        {
+          "id": "quadratic_perf",
+          "severity": "high",
+          "aliases": [
+            "o(n^2)",
+            "o(n2)",
+            "quadratic",
+            "nested loop",
+            "performance"
+          ]
+        },
+        {
+          "id": "api_break",
+          "severity": "high",
+          "aliases": [
+            "keyword-only",
+            "keyword only",
+            "signature",
+            "breaking change",
+            "backward"
+          ]
+        },
+        {
+          "id": "missing_test",
+          "severity": "medium",
+          "aliases": [
+            "no test",
+            "missing test",
+            "untested",
+            "test coverage"
+          ]
+        }
       ],
-      "noise": [{"id": "comment_style", "aliases": ["# seconds"]}]
+      "noise": [
+        {
+          "id": "comment_style",
+          "aliases": [
+            "# seconds"
+          ]
+        }
+      ],
+      "evidence": [
+        "# auth/session.py @@ verify\n-    return hmac.compare_digest(expected, token.sig)\n+    return expected == token.sig\n",
+        "# auth/session.py @@ load_user\n-    return db.query(User).filter_by(id=uid).one_or_none()\n+    return db.execute(f\"SELECT * FROM users WHERE id = {uid}\").fetchone()\n",
+        "# auth/session.py @@ config\n-CACHE_TTL = 300\n+CACHE_TTL = 300  # seconds\n",
+        "# auth/session.py @@ list_all\n-    return {u.id: u for u in users}\n+    out = {}\n+    for u in users:\n+        out[u.id] = [x for x in users if x.org == u.org]\n+    return out\n",
+        "# auth/session.py @@ revoke\n-def revoke(uid, *, cascade=False):\n+def revoke(uid, cascade):\n"
+      ]
     }
   ]
 }
