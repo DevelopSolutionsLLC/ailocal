@@ -120,7 +120,10 @@
           "top_p": 0.95,
           "top_k": 64
         },
-        "max_context": 262144
+        "max_context": 262144,
+        "context_native": 262144,
+        "context_source": "Ollama /api/show (gemma4.context_length). Google card NOT located; treat as unverified.",
+        "context_verified": false
       },
       "gpt-oss:20b": {
         "source": "github.com/openai/gpt-oss + model card arXiv:2508.10925 \u2014 temp 1.0, top_p 1.0",
@@ -138,7 +141,10 @@
           "standard": "Reasoning: medium",
           "deep": "Reasoning: high"
         },
-        "note": "MEASURED: the system-prompt lever gives 3 monotonic levels (108/204/216) where ollama think gives 2 (off==standard==111). Sampling params are NOT its reasoning control."
+        "note": "MEASURED: the system-prompt lever gives 3 monotonic levels (108/204/216) where ollama think gives 2 (off==standard==111). Sampling params are NOT its reasoning control.",
+        "context_native": 131072,
+        "context_source": "openai/gpt-oss model card \u2014 128K",
+        "context_verified": true
       },
       "qwen3.5:9b": {
         "source": "huggingface.co/Qwen/Qwen3.5 family card",
@@ -156,15 +162,24 @@
           "min_p": 0.0,
           "presence_penalty": 0.0
         },
-        "max_context": 262144
+        "max_context": 262144,
+        "context_native": 262144,
+        "context_source": "Ollama /api/show (qwen35.context_length). Vendor card not separately confirmed for this tag.",
+        "context_verified": false
       },
       "qwen3.5:4b": {
         "same_as": "qwen3.5:9b",
-        "max_context": 262144
+        "max_context": 262144,
+        "context_native": 262144,
+        "context_source": "Ollama /api/show (qwen35.context_length). Vendor card not separately confirmed for this tag.",
+        "context_verified": false
       },
       "qwen3.5:2b": {
         "same_as": "qwen3.5:9b",
-        "max_context": 262144
+        "max_context": 262144,
+        "context_native": 262144,
+        "context_source": "Ollama /api/show (qwen35.context_length). Vendor card not separately confirmed for this tag.",
+        "context_verified": false
       },
       "qwen3-coder:30b-a3b-q4_K_M": {
         "source": "qwen.readthedocs.io quickstart \u2014 non-thinking instruct settings",
@@ -181,9 +196,39 @@
           "min_p": 0.0
         },
         "max_context": 262144,
-        "note": "No thinking capability (probe: standard/deep rejected). Non-thinking only."
+        "note": "No thinking capability (probe: standard/deep rejected). Non-thinking only.",
+        "context_native": 262144,
+        "context_source": "huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct \u2014 256K native, 1M only via YaRN rope scaling (NOT configured here)",
+        "context_verified": true
       }
     }
   },
-  "context_targets_note": "Context ceilings are read from Ollama /api/show (gemma4/qwen 262144, gpt-oss 131072) and were NOT cross-checked against vendor documentation. Ollama's advertised context can differ from a model's trained context; the probe measures what is ACTUALLY accepted, which is the number used."
+  "context_targets_note": "Context ceilings are read from Ollama /api/show (gemma4/qwen 262144, gpt-oss 131072) and were NOT cross-checked against vendor documentation. Ollama's advertised context can differ from a model's trained context; the probe measures what is ACTUALLY accepted, which is the number used.",
+  "context_policy": {
+    "//": [
+      "IDEAL vs PRACTICAL context are different numbers and the difference matters",
+      "on a 64 GB machine.",
+      "",
+      "IDEAL = the model's native trained window (context_native above).",
+      "PRACTICAL = what fits alongside weights without paging. KV cache is allocated",
+      "per slot as num_ctx x OLLAMA_NUM_PARALLEL, so a 262,144 window on a 26B model",
+      "does not fit in 64 GB and would swap -- which this project already measured as",
+      "the cause of a 13-minute stall.",
+      "",
+      "MEASURED resident cost on this machine (weights + KV at the stated ctx):",
+      "  gemma4:26b-mlx  17.5G @16K   22.1G @98K",
+      "  gpt-oss:20b     11.9G @16K",
+      "  qwen3.5:9b       5.5G @16K",
+      "  qwen3.5:2b       2.4G @16K",
+      "",
+      "So the benchmark sweeps 24K-64K: inside every model's native window, and",
+      "inside what 64 GB holds without paging. Native ceilings are recorded so a",
+      "128 GB profile can raise them on evidence rather than on the spec sheet."
+    ],
+    "benchmark_range": [
+      24576,
+      65536
+    ],
+    "rationale": "within native window for all models AND resident on 64 GB"
+  }
 }
