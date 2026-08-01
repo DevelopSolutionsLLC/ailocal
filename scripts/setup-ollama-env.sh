@@ -16,12 +16,12 @@ set -euo pipefail
 # KEEP_ALIVE is the GLOBAL DEFAULT. It governs only direct-to-Ollama callers that
 # send no per-request keep_alive — in practice `embed` (grepai on :11434, bypassing
 # LiteLLM), which we WANT pinned as infrastructure. Generation models go through
-# LiteLLM, which sends a per-role keep_alive (architect 2h / coder 60m / reviewer
-# 20m / autocomplete -1) that overrides this. See MODEL_LIFECYCLE.md.
+# LiteLLM, which sends a per-role keep_alive (architecture 6h / implementation 20m /
+# review 20m / fast 20m / completion 2h) that overrides this.
 # -1 = never evict on idle: embed (~370 MB) is infrastructure Cadence's index depends
 # on, so keep it truly resident. Matches OLLAMA_KEEP_ALIVE=-1 in setup-startup.sh.
 KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:--1}"     # global default; pins embed persistently (-1)
-MAX_LOADED="${OLLAMA_MAX_LOADED_MODELS:-5}" # 5 = all capabilities can be resident at once: architecture/completion/embeddings pinned (keep_alive -1) + implementation/review (20m idle) loaded concurrently without evicting the pinned three. Peak ~46 GB (weights+KV at 32K/16K/16K/4K/8K) fits the ~48 GB GPU budget on 64 GB. MAX_LOADED caps COUNT not size — Ollama refuses a model that won't fit, so it never OOMs the machine.
+MAX_LOADED="${OLLAMA_MAX_LOADED_MODELS:-5}" # 5 = all capabilities can be resident at once: embeddings pinned (keep_alive -1), architecture resident for its 6h TTL, implementation/review/fast (20m) and completion (2h) loaded concurrently within that window. Peak ~46 GB (weights+KV at 32K/16K/16K/4K/8K) fits the ~48 GB GPU budget on 64 GB. MAX_LOADED caps COUNT not size — Ollama refuses a model that won't fit, so it never OOMs the machine.
 NUM_PARALLEL="${OLLAMA_NUM_PARALLEL:-2}"  # concurrent requests per model (GLOBAL — Ollama has no per-model setting). 2 balances snappy multi-request against KV growth (KV = num_ctx x NUM_PARALLEL per loaded model).
 FLASH_ATTN="${OLLAMA_FLASH_ATTENTION:-1}" # faster attention + lower memory, no quality loss
 KV_CACHE="${OLLAMA_KV_CACHE_TYPE:-q8_0}" # quantize KV cache to 8-bit, halves memory at large contexts

@@ -144,12 +144,14 @@ more capable, because nothing has been measured on 128 GB hardware.
 
 | Capability | Backend | ctx / keep_alive |
 |---|---|---|
-| `architecture` | qwen3-coder:30b | 96K / resident — shared big-context hub: design, deep reasoning, large agent prompts |
+| `architecture` | qwen3-coder:30b | 96K / 6h — shared big-context hub: design, deep reasoning, large agent prompts |
 | `implementation` | qwen2.5-coder:14b | 16K / 20m — everyday coding, features, tests |
 | `review` | gpt-oss:20b | 16K / 20m — code review, bug & security |
 | `fast` | qwen3.5:2b | 32K / 20m — classification, summarisation, cheap tool-driven lookups |
-| `completion` | qwen2.5-coder:3b | 4K / 20m — inline autocomplete (FIM) **only**; never a chat tier |
-| `embeddings` | nomic-embed-text | 8K / resident — retrieval infrastructure |
+| `completion` | qwen2.5-coder:3b | 4K / 2h — inline autocomplete (FIM) **only**; never a chat tier |
+| `embeddings` | nomic-embed-text | 8K / resident (never evicts) — retrieval infrastructure |
+
+Nothing generation-side stays resident forever — `architecture` holds for a full working session (6h) rather than indefinitely, so a genuinely idle machine eventually frees that memory. Only `embeddings` is pinned permanently: it's small (~370 MB) and other tools (grepai) depend on it never reloading.
 
 Order in the `/model` picker follows the key order of the active profile.
 

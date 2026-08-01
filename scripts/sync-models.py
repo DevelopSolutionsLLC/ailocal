@@ -763,6 +763,15 @@ def resolve(role, tier=None):
     return 0
 
 
+def resolve_keep_alive(role, tier=None):
+    info = load_models_yaml(profile_path(explicit=tier)).get(role)
+    if not info:
+        print("", end="")
+        return 1
+    print(norm_keep_alive(info.get("keep_alive")))
+    return 0
+
+
 def parse_profile_flag(argv):
     """Pull `--profile <tier>` out of argv, returning (tier_or_None, remaining_argv)."""
     tier, rest, i = None, [], 0
@@ -779,6 +788,9 @@ def main():
 
     if args and args[0] == "--resolve":
         sys.exit(resolve(args[1], tier) if len(args) >= 2 else 1)
+
+    if args and args[0] == "--resolve-keep-alive":
+        sys.exit(resolve_keep_alive(args[1], tier) if len(args) >= 2 else 1)
 
     # The TEMPLATE is the precondition. config.yaml is this script's output, so
     # requiring it to pre-exist made a fresh clone unable to bootstrap.

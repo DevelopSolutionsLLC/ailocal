@@ -115,11 +115,13 @@ for _ in $(seq 1 20); do lsof -i :11434 >/dev/null 2>&1 || break; sleep 0.5; don
 # KEEP_ALIVE=-1 is the GLOBAL DEFAULT and it pins `embed`: grepai calls Ollama
 # directly on :11434 (bypassing LiteLLM) and sends no per-request keep_alive, so it
 # inherits this default. Generation models go THROUGH LiteLLM, which sends a
-# per-role keep_alive (architecture -1 / implementation 20m / review 20m /
-# completion -1) that OVERRIDES this global — so the rotating ones self-unload on
-# their TTL. See MODEL_LIFECYCLE.md. MAX_LOADED=5 + NUM_PARALLEL=2: all five
-# capabilities can co-reside — architecture/completion/embeddings pinned (-1) plus
-# implementation/review loaded concurrently (~46 GB peak, fits the ~48 GB GPU budget).
+# per-role keep_alive (architecture 6h / implementation 20m / review 20m /
+# fast 20m / completion 2h) that OVERRIDES this global — nothing generation-side
+# is pinned forever; only embeddings is, since it's small (~370 MB) infrastructure
+# other tools depend on being resident. MAX_LOADED=5 + NUM_PARALLEL=2: all five
+# capabilities can co-reside — embeddings pinned (-1), architecture resident for its
+# 6h TTL, implementation/review/fast (20m) and completion (2h) loaded concurrently
+# within that window (~46 GB peak, fits the ~48 GB GPU budget).
 # MAX_LOADED caps COUNT not size (Ollama refuses an oversized load, never OOMs).
 # OLLAMA_MODELS lives on /Users/Shared (out of any one user's home, matches the
 # other machines). flash-attn + q8 KV cache = the memory/speed tuning.
@@ -162,8 +164,24 @@ info "Ollama.app GUI stopped and its login/watchdog agents disabled — launchd 
 step "Installing com.ailocal.preload ($MODEL_ROLE)"
 BACKEND="$(resolve_backend "$MODEL_ROLE")"
 [ -n "$BACKEND" ] || { warn "could not resolve '$MODEL_ROLE' in models.yaml — using it as a raw tag"; BACKEND="$MODEL_ROLE"; }
+# Resolve the role's actual configured keep_alive rather than hardcoding one here —
+# a second hardcoded copy of the profile's TTL is exactly how this previously drifted
+# out of sync with config/profiles/<tier>.yaml (this preload pinned forever via a
+# hardcoded -1 even after the profile itself moved to a bounded TTL).
+PRELOAD_KEEP_ALIVE="$(python3 "$ROOT_DIR/scripts/sync-models.py" --resolve-keep-alive "$MODEL_ROLE" 2>/dev/null)"
+[ -n "$PRELOAD_KEEP_ALIVE" ] || PRELOAD_KEEP_ALIVE="-1"
+# Ollama's keep_alive field is a Go Duration: -1 must be a bare JSON number
+# (Go's duration parser rejects a quoted "-1" — no unit suffix), while an actual
+# duration like "6h" must be a quoted JSON string.
+if [ "$PRELOAD_KEEP_ALIVE" = "-1" ]; then
+  PRELOAD_KEEP_ALIVE_JSON="-1"
+else
+  PRELOAD_KEEP_ALIVE_JSON="\"$PRELOAD_KEEP_ALIVE\""
+fi
 # Self-contained wrapper in a non-protected dir. Health-gate → skip if resident →
-# empty-prompt load (no inference) → pin with keep_alive:-1. Backend tag baked in.
+# empty-prompt load (no inference) → pin for the role's configured TTL. Backend
+# tag and keep_alive both baked in at install time (the agent can't read the repo
+# under ~/Documents at runtime).
 PRELOAD="$APP_SUPPORT/preload.sh"
 cat > "$PRELOAD" <<WRAP
 #!/bin/sh
@@ -171,7 +189,7 @@ O="http://127.0.0.1:11434"
 for _ in \$(seq 1 60); do curl -fsS -m 3 "\$O/api/version" >/dev/null 2>&1 && break; sleep 2; done
 curl -fsS -m 3 "\$O/api/version" >/dev/null 2>&1 || exit 0   # Ollama never came up — fail gracefully
 curl -fsS -m 5 "\$O/api/ps" 2>/dev/null | grep -q '"$BACKEND"' && exit 0   # already resident
-curl -fsS -m 300 "\$O/api/generate" -d '{"model":"$BACKEND","keep_alive":-1}' >/dev/null 2>&1
+curl -fsS -m 300 "\$O/api/generate" -d '{"model":"$BACKEND","keep_alive":$PRELOAD_KEEP_ALIVE_JSON}' >/dev/null 2>&1
 WRAP
 chmod +x "$PRELOAD"
 cat > "$LA_DIR/com.ailocal.preload.plist" <<PLIST
