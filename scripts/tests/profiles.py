@@ -200,14 +200,24 @@ if settings.exists() and cc:
           f"claude settings.json pct matches the active profile ({tier})",
           f"{env.get('CLAUDE_AUTOCOMPACT_PCT_OVERRIDE')!r} != {cc['pct']!r}")
 
+# Codex's numbers must describe the model CODEX defaults to, not architecture.
+# Deriving them from architecture wrote a compaction limit of 49,152 against a
+# default model whose entire context is 24,576 -- unreachable, because the model
+# 400s on context length long before compaction could fire.
 codex = REPO / "config/clients/codex/config.toml"
-if codex.exists() and cc:
+clients_yaml = (REPO / "config/clients.yaml").read_text()
+m = re.search(r'(?m)^codex:\n(?:.*\n)*?\s*default:\s*(\w+)', clients_yaml)
+cx_cap = m.group(1) if m else "implementation"
+if codex.exists() and cc and cx_cap in PARSED[tier][0]:
     txt = codex.read_text()
-    want = int(cc["window"]) * int(cc["pct"]) // 100
+    cx_ctx = int(PARSED[tier][0][cx_cap]["context"])
+    want = min(int(cc["window"]) * int(cc["pct"]) // 100, cx_ctx * int(cc["pct"]) // 100)
+    check(f"model_context_window = {cx_ctx}" in txt,
+          f"codex window is its OWN default capability '{cx_cap}' ({cx_ctx}), not architecture")
     check(f"model_auto_compact_token_limit = {want}" in txt,
-          f"codex compaction limit matches the active profile ({want})")
-    check(f"model_context_window = {PARSED[tier][0]['architecture']['context']}" in txt,
-          "codex publishes the FULL architecture context, not the compaction window")
+          f"codex compaction limit is {want}")
+    check(want < cx_ctx,
+          f"codex compaction limit ({want}) is reachable within its model context ({cx_ctx})")
 
 # ── README cannot drift from the profiles ───────────────────────────────────
 print("\nDOCUMENTATION")
