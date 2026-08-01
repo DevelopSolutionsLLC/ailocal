@@ -161,9 +161,9 @@ Change a backend in `config/profiles/<tier>.yaml`, run `ailocal sync`, and every
 ailocal clients          # all three (or one: vscode | codex | claude)
 ```
 
-Client state lives in `~/.config/ailocal/`; your cloud `~/.claude` / `~/.codex` are never touched.
+Client state (model routing, base URL, keys) lives in `~/.config/ailocal/`; your cloud `~/.claude` / `~/.codex` sessions keep pointing at Anthropic/OpenAI's cloud, not the local proxy — ailocal never changes which backend they talk to. The one exception is the Python LSP baseline (`pyright-lsp`): it's installed and enabled into both `claude-local` and plain `claude`, since it's a Claude Code plugin wiring up a binary you already have, independent of routing.
 
-- **Claude Code** — `claude-local` (launches on `architecture`, the only tier measured able to sustain a tool loop; `/model` to switch). Plain `claude` stays on cloud.
+- **Claude Code** — `claude-local` (launches on `architecture`, the only tier measured able to sustain a tool loop; `/model` to switch). Plain `claude` stays on cloud for model routing, but gets the same LSP baseline.
 - **Codex** — `codex-local`. Plain `codex` stays on cloud.
 - **VS Code Copilot Chat** — `ailocal-code [path]` opens an isolated VS Code profile with the [LiteLLM Connector](https://marketplace.visualstudio.com/items?itemName=Gethnet.litellm-connector-copilot) wired up; models auto-discover from `/model/info`. To wire it manually: Copilot model-picker → **Manage Models → LiteLLM Connector**, base URL `http://localhost:4000`, key = `LITELLM_MASTER_KEY`, then ⌘⇧P → **LiteLLM: Reload Models**.
 

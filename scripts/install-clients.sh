@@ -532,7 +532,8 @@ if has_target "claude"; then
   fi
 
   echo "  Launch with: claude-local   (reload your shell first: source ~/.zshrc)"
-  echo "  Plain 'claude' in this or any other shell is untouched — still the cloud session."
+  echo "  Plain 'claude' still talks to Anthropic's cloud — model/base URL/keys are untouched."
+  echo "  It does get the same Python LSP baseline (pyright-lsp) installed below."
 fi
 
 # ── Minimum Python LSP baseline (ailocal-owned) ────────────────────────────
@@ -553,38 +554,75 @@ fi
 #
 # A plugin only wires up a binary the user already has, so this checks for the
 # server before installing the plugin rather than advertising a dead tool.
+# Applied to BOTH the isolated claude-local root AND the user's own ~/.claude
+# (plain cloud `claude`). Earlier this only touched claude-local, on the theory
+# that ailocal owns only the local-model workflow — but the LSP baseline isn't
+# LiteLLM/routing behavior, it's a Claude Code plugin wiring up a binary the
+# user already has, and there is no reason for the exact same fix to not apply
+# to a client's cloud session too. ailocal's other guarantee — that client
+# CONFIG (models, base URL, keys) for cloud sessions is never touched — still
+# holds; this only installs+enables one plugin, same as a user could do by hand.
 lsp_baseline() {
-  local root="$HOME/.config/ailocal/claude"
-  command -v claude >/dev/null 2>&1 || { skip "claude not on PATH — no LSP baseline"; return 0; }
-  [ -d "$root" ] || { skip "$root missing — no LSP baseline"; return 0; }
+  local root="$1" label="$2"
+  command -v claude >/dev/null 2>&1 || { skip "claude not on PATH — no LSP baseline ($label)"; return 0; }
+  [ -d "$root" ] || { skip "$root missing — no LSP baseline ($label)"; return 0; }
 
   if ! command -v pyright-langserver >/dev/null 2>&1; then
-    warn "pyright-langserver not installed — claude-local has NO Python LSP."
+    warn "pyright-langserver not installed — $label has NO Python LSP."
     warn "  Install it, then re-run this script:  npm i -g pyright"
     return 0
   fi
 
   # Idempotent: the marketplace update and install are both no-ops when current,
-  # but checking first keeps a re-run quiet and fast.
-  if CLAUDE_CONFIG_DIR="$root" claude plugin list 2>/dev/null \
-       | grep -q 'pyright-lsp@claude-plugins-official'; then
-    info "Python LSP baseline already present (pyright-lsp)"
+  # but checking first keeps a re-run quiet and fast. IMPORTANT: `claude plugin
+  # install` does NOT enable the plugin — a plugin can be present but disabled,
+  # and `claude plugin list` still lists it either way. Checking only for
+  # presence (not the "enabled" status line) let a disabled plugin report as
+  # "already present" on every future re-run, permanently hiding the gap:
+  # claude-local silently had no working LSP with no error anywhere. Check the
+  # actual enabled state and fix it forward rather than treating install as done.
+  local plugin_status
+  plugin_status="$(CLAUDE_CONFIG_DIR="$root" claude plugin list 2>/dev/null)"
+  if printf '%s' "$plugin_status" | grep -q 'pyright-lsp@claude-plugins-official'; then
+    if printf '%s' "$plugin_status" | grep -A2 'pyright-lsp@claude-plugins-official' | grep -q 'enabled'; then
+      info "Python LSP baseline already present and enabled ($label)"
+      return 0
+    fi
+    warn "pyright-lsp plugin present but disabled ($label) — enabling"
+    # A live `claude` session already open on this same root can race the
+    # plugin-state write (its own background settings sync competes with this
+    # enable call), producing a transient failure that clears on retry. Two
+    # attempts with a short pause covers that without masking a real failure.
+    local _try
+    for _try in 1 2; do
+      if CLAUDE_CONFIG_DIR="$root" claude plugin enable \
+           pyright-lsp@claude-plugins-official >/dev/null 2>&1; then
+        info "Python LSP baseline enabled ($label)"
+        return 0
+      fi
+      [ "$_try" = 1 ] && sleep 2
+    done
+    warn "pyright-lsp enable failed — $label has no working Python LSP"
+    warn "  If a live 'claude' session has $root open, close it and re-run."
     return 0
   fi
 
   CLAUDE_CONFIG_DIR="$root" claude plugin marketplace update \
     claude-plugins-official >/dev/null 2>&1 || true
   if CLAUDE_CONFIG_DIR="$root" claude plugin install \
+       pyright-lsp@claude-plugins-official >/dev/null 2>&1 \
+     && CLAUDE_CONFIG_DIR="$root" claude plugin enable \
        pyright-lsp@claude-plugins-official >/dev/null 2>&1; then
-    info "Python LSP baseline installed (pyright-lsp)"
+    info "Python LSP baseline installed and enabled ($label)"
   else
-    warn "pyright-lsp install failed — claude-local has no Python LSP"
+    warn "pyright-lsp install/enable failed — $label has no Python LSP"
   fi
 }
 
 if has_target "claude"; then
   step "Python LSP baseline (ailocal-owned minimum)"
-  lsp_baseline
+  lsp_baseline "$HOME/.config/ailocal/claude" "claude-local"
+  lsp_baseline "$HOME/.claude" "claude (cloud)"
 fi
 
 # ── Broader language servers: Cadence installs its own ────────────────────
