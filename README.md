@@ -142,16 +142,16 @@ maximum, not a guarantee that two parallel requests can each consume all of it.
 `128gb` mirrors `64gb` exactly for this release. It is not claimed to be faster or
 more capable, because nothing has been measured on 128 GB hardware.
 
-| Capability | Backend | ctx / keep_alive |
-|---|---|---|
-| `architecture` | qwen3-coder:30b | 96K / 6h — shared big-context hub: design, deep reasoning, large agent prompts |
-| `implementation` | qwen2.5-coder:14b | 16K / 20m — everyday coding, features, tests |
-| `review` | gpt-oss:20b | 16K / 20m — code review, bug & security |
-| `fast` | qwen3.5:2b | 32K / 20m — classification, summarisation, cheap tool-driven lookups |
-| `completion` | qwen2.5-coder:3b | 4K / 2h — inline autocomplete (FIM) **only**; never a chat tier |
-| `embeddings` | nomic-embed-text | 8K / resident (never evicts) — retrieval infrastructure |
+| Capability | Purpose |
+|---|---|
+| `architecture` | Shared big-context hub: design, deep reasoning, large agent prompts |
+| `implementation` | Everyday coding, features, tests |
+| `review` | Code review, bug & security |
+| `fast` | Classification, summarisation, cheap tool-driven lookups |
+| `completion` | Inline autocomplete (FIM) **only**; never a chat tier |
+| `embeddings` | Retrieval infrastructure |
 
-Nothing generation-side stays resident forever — `architecture` holds for a full working session (6h) rather than indefinitely, so a genuinely idle machine eventually frees that memory. Only `embeddings` is pinned permanently: it's small (~370 MB) and other tools (grepai) depend on it never reloading.
+Which model backs each capability, its context window, and its `keep_alive` are all tier-specific — see the table above and `config/profiles/<tier>.yaml` for what your detected profile actually runs (`config/active-profile` names it; `ailocal status` shows it live). Nothing generation-side stays resident forever: `architecture` holds for a bounded number of hours to survive a working session without reload cost, then frees on genuine idle; the rotating capabilities (`implementation`/`review`/`fast`/`completion`) self-unload sooner. Only `embeddings` is pinned permanently — it's small (~370 MB) and other tools (grepai) depend on it never reloading. Exact durations live in the profile YAML, not here, so this doc can't drift from what's actually configured.
 
 Order in the `/model` picker follows the key order of the active profile.
 

@@ -46,7 +46,8 @@ Two source files drive everything:
 (`qwen3-coder:30b-a3b-q4_K_M`). The router owns context, sampling, and per-role
 lifecycle. Agents request a capability; they never name a model.
 
-**`completion` is FIM/autocomplete only** — 3B at `num_ctx` 4096. Never map a
+**`completion` is FIM/autocomplete only** — a small dedicated model (tier-
+specific: check `config/profiles/<tier>.yaml`) at `num_ctx` 4096. Never map a
 conversational alias to it and never use it as a fallback target; a real agent
 turn routed there hard-400s. Context-window fallbacks must move **up**.
 `sync-models.py` hard-fails if any Claude slot resolves to `completion`, so this
