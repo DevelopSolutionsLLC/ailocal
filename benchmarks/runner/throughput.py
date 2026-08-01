@@ -105,7 +105,7 @@ def run(args):
                 measured = cache[ckey]["measured"]
             else:
                 try:
-                    text, measured, scale, iters = F.calibrate(
+                    text, measured, scale, iters = F.ratio_calibrate(
                         lambda t: measure_tokens(ollama, tag, t), target, args.variant)
                     cache[ckey] = {"scale": scale, "measured": measured,
                                    "iterations": iters,

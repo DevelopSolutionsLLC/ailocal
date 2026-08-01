@@ -108,6 +108,36 @@ def build(target_tokens, variant="late", secret=None, scale=1.0, nonce=0):
     return "".join(parts), secret
 
 
+def ratio_calibrate(measure, target, variant="late", tol=0.01, probe_tokens=3000):
+    """Cheap calibration: establish chars-per-token ONCE on a SMALL sample, then
+    jump straight to the target size and verify.
+
+    The naive loop -- build at target, measure, rescale, repeat -- costs up to 8
+    FULL-SIZE requests per cell. On a 26B model at 64K that is minutes each and
+    it dominated the entire matrix runtime. Tokenisation of this fixture text is
+    effectively linear in length, so one small measurement fixes the ratio and
+    two large requests suffice.
+
+    Returns (text, measured_tokens, scale, requests_used).
+    """
+    small, _ = build(probe_tokens, variant, scale=1.0)
+    got = measure(small)
+    if not got:
+        raise RuntimeError("backend reported no prompt_eval_count")
+    scale = (target / got) * (probe_tokens / target)   # tokens-per-unit-scale
+    used = 1
+    for _ in range(3):
+        text, _ = build(target, variant, scale=scale)
+        n = measure(text)
+        used += 1
+        if n and abs(n - target) / target <= tol:
+            return text, n, scale, used
+        if not n:
+            break
+        scale *= target / n
+    return text, n, scale, used
+
+
 def calibrate(measure, target, variant="late", tol=0.01, max_iter=8):
     """Find a scale whose MEASURED token count is within tol of target.
 
