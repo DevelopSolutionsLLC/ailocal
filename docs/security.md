@@ -31,21 +31,31 @@ container, so the repository can look patched while the old image keeps serving.
 
 | Image | Pin | Fixable critical/high |
 |---|---|---|
-| `ghcr.io/berriai/litellm` | `sha256:28b10a63…` (1.94.1) | none |
+| `ghcr.io/berriai/litellm` | `sha256:a1745e62…` (1.93.0) | **5 fixable HIGH — accepted, see below** |
 | `searxng/searxng` | `sha256:79c2be18…` | none |
 | `qdrant/qdrant` (Cadence) | `v1.18.3@sha256:0bd98fa7…` | 1 critical, 10 high — see below |
 
-### LiteLLM 1.93.0 → 1.94.1
+### LiteLLM 1.94.1 → REVERTED to 1.93.0
 
-A security upgrade, adopted 2026-07-30. 1.93.0 carried five fixable HIGH
-findings — `pyasn1` 0.6.3 (×3) and `pypdf` 6.13.3 (×2). 1.94.1 ships `pyasn1`
-0.6.4 and `pypdf` 6.14.2, and Scout reports no vulnerable package. Versions were
-confirmed inside the running container with `importlib.metadata`, not read off
-the scanner. The base image is Wolfi (Chainguard), not Alpine.
+**1.94.1 breaks codex-local.** Every turn through the custom-provider path ends in
+`stream disconnected before completion: stream closed before response.completed`
+after 10 reconnect attempts. On 1.93.0 the identical command returns normally.
 
-Validated by the full gate — 17/17, including persona injection (the coupling
-that breaks silently when routing changes) and a real end-to-end benchmark
-against the local model.
+The 1.94.1 upgrade passed a 17/17 gate, which is exactly the problem: **nothing
+in the gate drives a real Codex session**, so an Anthropic-route-only validation
+declared a release safe that was broken for one of two local clients.
+
+**Accepted security cost:** 1.93.0 carries the 5 fixable HIGH findings below that
+1.94.1 fixes. All are loopback-only. Re-upgrade when the Codex streaming
+regression is resolved upstream; re-run a real `codex exec` turn before adopting.
+
+### The findings 1.93.0 still carries
+
+`pyasn1` 0.6.3 (×3) and `pypdf` 6.13.3 (×2) — five fixable HIGH, all fixed in
+1.94.1 (`pyasn1` 0.6.4, `pypdf` 6.14.2). Versions confirmed inside the running
+container with `importlib.metadata`, not read off the scanner. Base image is
+Wolfi (Chainguard), not Alpine. Nothing here is remotely reachable: LiteLLM binds
+to 127.0.0.1 only, asserted by `ailocal security` on every run.
 
 **The `anthropic_stream_logging_fix.py` shim is still required.** It works around
 an upstream crash in `_handle_anthropic_messages_response_logging`. Re-read from
@@ -212,4 +222,12 @@ shell and a minimal PATH.
 3. Update the digest, and any version variable beside it, in the same commit.
 4. `ailocal start` — a compose edit alone does not restart the container.
 5. `scripts/test-all.sh --full`.
+5b. **Drive a real `codex exec` turn.** The gate exercises the Anthropic route;
+    it does NOT drive a real Codex session, which is how 1.94.1 shipped a 17/17
+    pass while being completely broken for codex-local:
+
+        CODEX_HOME=~/.config/ailocal/codex OPENAI_BASE_URL=http://127.0.0.1:4000/v1 \
+        OPENAI_API_KEY=<key> codex exec --skip-git-repo-check 'reply with only OK'
+
+    A `stream disconnected before completion` here means do not adopt the image.
 6. `ailocal security` to confirm declared and running digests agree.
