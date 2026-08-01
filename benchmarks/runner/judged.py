@@ -95,6 +95,8 @@ def run(args):
     tags = [e["tag"] for e in m["models"]]
     if args.model:
         tags = [t for t in tags if t == args.model]
+    for x in (getattr(args, "exclude", None) or []):
+        tags = [t for t in tags if t != x]
 
     caps = {}
     cp = os.path.join(C.RESULTS, "capabilities.json")
@@ -178,6 +180,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--suite", required=True, choices=("architecture", "review"))
     ap.add_argument("--model")
+    ap.add_argument("--exclude", action="append",
+                    help="skip a model tag; repeatable")
     ap.add_argument("--reasoning", action="append")
     ap.add_argument("--force", action="store_true")
     sys.exit(run(ap.parse_args()))

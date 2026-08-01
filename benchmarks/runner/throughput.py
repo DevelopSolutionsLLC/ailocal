@@ -73,6 +73,8 @@ def run(args):
     tags = [e["tag"] for e in m["models"]]
     if args.model:
         tags = [t for t in tags if t == args.model]
+    for x in (getattr(args, "exclude", None) or []):
+        tags = [t for t in tags if t != x]
     targets = args.context or m["context_targets"]
     versions = C.software_versions(ollama)
 
@@ -195,6 +197,8 @@ def run(args):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model")
+    ap.add_argument("--exclude", action="append",
+                    help="skip a model tag; repeatable")
     ap.add_argument("--context", type=int, action="append")
     ap.add_argument("--reasoning", default="default")
     ap.add_argument("--variant", default="late", choices=("late", "distributed"))
