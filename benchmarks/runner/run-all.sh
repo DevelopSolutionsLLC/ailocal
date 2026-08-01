@@ -14,4 +14,4 @@ step "3/5 fast coding (executed tests)";        "$B" run --suite fastcode    "$@
 step "4/5 code understanding (CRUXEval-O)";     "$B" run --suite cruxeval    "$@" || true
 step "5/5 architecture + review";               "$B" run --suite architecture "$@" || true
                                                 "$B" run --suite review      "$@" || true
-step "report"; "$B" report
+step "report"; "$B" report; python3 "$ROOT/benchmarks/runner/export_lmeval.py"
