@@ -118,7 +118,12 @@ def run(args):
             off = abs(measured - target) / target
             label = "ok" if off <= 0.01 else f"OFF-TARGET {off*100:.1f}%"
 
-            for phase, reps in (("cold", m["runs"]["cold"]), ("warm", m["runs"]["warm"])):
+            # Fewer warm reps at giant contexts. A 262,144-token cold prefill is
+            # ~5 min on gemma4 and 20+ on qwen3-coder; three warm reps there costs
+            # hours to shrink an error bar on a cell whose ranking is already
+            # unambiguous. Small contexts keep the full 3 for dispersion.
+            warm_reps = m["runs"]["warm"] if target <= 65536 else 1
+            for phase, reps in (("cold", m["runs"]["cold"]), ("warm", warm_reps)):
                 samples = []
                 for rep in range(reps):
                     key = "|".join(str(x) for x in (

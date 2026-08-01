@@ -31,10 +31,10 @@
     }
   ],
   "context_targets": [
-    24576,
     32768,
-    49152,
-    65536
+    65536,
+    131072,
+    262144
   ],
   "reasoning_modes": {
     "off": {
@@ -232,9 +232,10 @@
       "large prompt (measured separately, and the reason sessions stalled)."
     ],
     "benchmark_range": [
-      24576,
-      65536
+      32768,
+      262144
     ],
-    "rationale": "kept for run comparability with completed cells, NOT a memory limit"
+    "rationale": "Sweeps to each model's NATIVE ceiling, now that measurement showed declaring a large window costs nothing at rest (gemma4 16.0G at both 131072 and 262144). gpt-oss:20b caps at 131072 and the probe skips 262144 for it with a reason rather than faking a 256K result.",
+    "cost_warning": "COLD PREFILL is the real cost and it is large. Measured ~850 tok/s (gemma4) and ~200 tok/s (qwen3-coder) at scale, so a single cold 262,144-token prompt is roughly 5 min on gemma4 and over 20 min on qwen3-coder. With 1 cold + 3 warm reps per cell this is hours per model at 256K. Run 256K deliberately, not casually."
   }
 }
