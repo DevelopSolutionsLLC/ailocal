@@ -118,6 +118,12 @@ litellm_settings:
     # docstring for the three client call sites and what this does NOT prove.
     - compat_routes.proxy_handler_instance
     - persona_injector.proxy_handler_instance
+    # Translates reasoning_effort -> Ollama's native `think`. LiteLLM 1.93.0
+    # accepts reasoning_effort and drops it unmapped (BerriAI/litellm#15059):
+    # measured `high` overlaps `none` entirely, so the control does nothing.
+    # `think` IS forwarded and IS monotonic. An explicit `think` in the request
+    # wins, so a manual override always beats this translation.
+    - reasoning_router.proxy_handler_instance
     # Restores context-window validation for local models. LiteLLM's
     # register_model strips the provider prefix from the key while the router's
     # pre-call check looks it up WITH the prefix, so max_input_tokens is never
