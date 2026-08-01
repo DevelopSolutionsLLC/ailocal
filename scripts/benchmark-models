@@ -30,6 +30,7 @@ case "$cmd" in
       review)     exec python3 "$R/judged.py" --suite review ${args+"${args[@]}"} ;;
       compete)    exec python3 "$R/compete.py"    ${args+"${args[@]}"} ;;
       ruler)      exec python3 "$R/ruler.py"      ${args+"${args[@]}"} ;;
+      humaneval)  exec python3 "$R/humaneval.py"  ${args+"${args[@]}"} ;;
       all)        exec bash "$ROOT/benchmarks/runner/run-all.sh" ${args+"${args[@]}"} ;;
       *) echo "unknown suite: $suite" >&2; exit 2 ;;
     esac ;;
