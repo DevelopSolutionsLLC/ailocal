@@ -1,0 +1,40 @@
+{
+  "//": [
+    "Benchmark manifest — DATA, not code. Add/remove/rename models here; the",
+    "runner never hard-codes a tag.",
+    "",
+    "JSON, not YAML, DELIBERATELY. PyYAML is absent on this host and the repo's",
+    "yaml-dependent tests run inside the LiteLLM container to get it. This",
+    "harness cannot: it must control Ollama model residency and read host memory",
+    "and swap, which are not visible from inside a container. Zero dependencies",
+    "beats a hand-rolled parser for a nested document."
+  ],
+  "schema_version": 1,
+  "models": [
+    {"tag": "gemma4:26b-mlx"},
+    {"tag": "qwen3.5:9b"},
+    {"tag": "qwen3.5:4b"},
+    {"tag": "qwen3.5:2b"},
+    {"tag": "gpt-oss:20b"},
+    {"tag": "qwen3-coder:30b-a3b-q4_K_M"}
+  ],
+  "context_targets": [24576, 32768, 49152, 65536],
+  "reasoning_modes": {
+    "off":      {"think": false},
+    "standard": {"think": true},
+    "deep":     {"think": "high"}
+  },
+  "completion_limit": 8192,
+  "fixed_params": {"temperature": 0, "top_p": 1.0, "seed": 42},
+  "runs": {"cold": 1, "warm": 3},
+  "limits": {
+    "per_run_timeout_s": 1800,
+    "min_free_memory_pct": 8,
+    "max_swap_growth_gb": 12,
+    "min_free_disk_gb": 20
+  },
+  "endpoint": {
+    "proxy": "http://127.0.0.1:4000",
+    "ollama": "http://127.0.0.1:11434"
+  }
+}

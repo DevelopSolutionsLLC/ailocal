@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# benchmark-models — reusable model benchmark suite. See benchmarks/README.md.
+#
+#   benchmark-models plan                 capability probe + execution plan
+#   benchmark-models run --suite throughput [--model X] [--context N] [--reasoning M]
+#   benchmark-models resume               continue; completed runs are skipped
+#   benchmark-models score                score completed runs
+#   benchmark-models report               JSONL + CSV + Markdown
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+R="$ROOT/benchmarks/runner"
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  plan)    exec python3 "$R/probe.py" "$@" ;;
+  run)
+    suite=throughput
+    args=()
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --suite) suite="$2"; shift 2 ;;
+        *) args+=("$1"); shift ;;
+      esac
+    done
+    case "$suite" in
+      throughput) exec python3 "$R/throughput.py" ${args+"${args[@]}"} ;;
+      *) echo "unknown suite: $suite" >&2; exit 2 ;;
+    esac ;;
+  resume)  exec python3 "$R/throughput.py" "$@" ;;   # resume == run; completed keys are skipped
+  score)   exec python3 "$R/report.py" --score "$@" ;;
+  report)  exec python3 "$R/report.py" "$@" ;;
+  *) sed -n '2,9p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac
