@@ -33,8 +33,7 @@
   "context_targets": [
     32768,
     65536,
-    131072,
-    262144
+    131072
   ],
   "reasoning_modes": {
     "off": {
@@ -257,9 +256,10 @@
     ],
     "benchmark_range": [
       32768,
-      262144
+      131072
     ],
-    "rationale": "Sweeps to each model's NATIVE ceiling, now that measurement showed declaring a large window costs nothing at rest (gemma4 16.0G at both 131072 and 262144). gpt-oss:20b caps at 131072 and the probe skips 262144 for it with a reason rather than faking a 256K result.",
-    "cost_warning": "COLD PREFILL is the real cost and it is large. Measured ~850 tok/s (gemma4) and ~200 tok/s (qwen3-coder) at scale, so a single cold 262,144-token prompt is roughly 5 min on gemma4 and over 20 min on qwen3-coder. With 1 cold + 3 warm reps per cell this is hours per model at 256K. Run 256K deliberately, not casually."
+    "rationale": "32K/64K/128K is the largest range EVERY model can run, so the matrix is uniform and no cell is skipped: gpt-oss:20b's native ceiling is exactly 131072. Declaring a large window costs nothing at rest (measured: gemma4 16.0G at both 131072 and 262144), so this range is chosen for comparability and cost, not memory.",
+    "cost_warning": "COLD PREFILL is the real cost and it is large. Measured ~850 tok/s (gemma4) and ~200 tok/s (qwen3-coder) at scale, so a single cold 262,144-token prompt is roughly 5 min on gemma4 and over 20 min on qwen3-coder. With 1 cold + 3 warm reps per cell this is hours per model at 256K. Run 256K deliberately, not casually.",
+    "why_not_256k": "Dropped deliberately. (1) COST: a cold 262,144-token prefill is ~5 min on gemma4 and 20+ min on qwen3-coder, hours of wall time for two models. (2) NOT UNIFORM: gpt-oss cannot reach it, so 256K compares 5 models not 6. (3) SUSPECT: cloudflare/cloudflare-docs#29731 reports gemma-4-26b-a4b's real context is 131072 despite 256K documentation, and accepting a 256K prompt is not evidence of using it. Native ceilings stay recorded so 256K can be run deliberately later."
   }
 }
