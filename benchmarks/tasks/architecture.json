@@ -1,0 +1,40 @@
+{
+  "//": [
+    "Task A — architecture. Scored on machine-checkable claims, NOT prose quality.",
+    "",
+    "The fixture describes a synthetic system with a deliberate ownership",
+    "conflict: two services both write the same table, one through an ORM and",
+    "one through raw SQL in a cron job. A legacy file is a decoy. The correct",
+    "boundary is that writes must be owned by ONE service; the tempting wrong",
+    "answer is to add a lock or a retry, which treats the symptom.",
+    "",
+    "SCORING is keyword-gated on evidence the model can only have obtained by",
+    "reading the fixture: the specific files, the conflicting writer, and the",
+    "constraint that forbids the naive fix. Anti-signals penalise the two known",
+    "wrong turns (add a distributed lock; rewrite everything as microservices).",
+    "This is coarse -- it measures whether the right boundary was identified, not",
+    "whether the plan is elegant. It is deliberately NOT an LLM-judged score,",
+    "because judging prose with another model measures agreement, not correctness."
+  ],
+  "schema_version": 1,
+  "tasks": [
+    {
+      "id": "arch01_ownership_boundary",
+      "statement": "You are reviewing a small system. Files:\n\n--- billing/service.py ---\nclass BillingService:\n    def charge(self, account_id, cents):\n        # writes via SQLAlchemy ORM\n        row = self.db.query(Ledger).filter_by(account=account_id).one()\n        row.balance -= cents\n        self.db.commit()\n\n--- reports/nightly_cron.py ---\ndef reconcile():\n    # runs 02:00 daily, writes the SAME ledger table via raw SQL\n    conn.execute(\"UPDATE ledger SET balance = balance + :adj WHERE account = :a\", ...)\n    conn.commit()\n\n--- docs/adr/ADR-004.md ---\n# ADR-004: the ledger is the system of record.\n# Any component may READ the ledger. Writes are the responsibility of the\n# owning service. This ADR is ACCEPTED and has not been superseded.\n\n--- legacy/old_ledger_v1.py ---\n# DEPRECATED 2019. Unused. Kept for historical reference only.\nclass LedgerV1: ...\n\n--- constraints.md ---\n# The nightly reconcile MUST complete within its window and MUST NOT hold\n# long-running locks against the live billing path.\n\nA new requirement asks that reconciliation adjustments become visible to billing immediately rather than the next morning.\n\nIdentify the real architectural boundary being violated, propose the smallest complete design, name the files that must change, and state the migration and compatibility risks. Do not redesign anything unrelated.",
+      "signals": {
+        "required": [
+          ["ADR-004", "adr-004", "adr 004"],
+          ["ownership", "owner", "owning service", "single writer", "one writer"],
+          ["nightly_cron", "reconcile", "cron"],
+          ["billing/service.py", "billingservice", "billing service"]
+        ],
+        "anti": [
+          ["distributed lock", "advisory lock", "select for update", "mutex"],
+          ["microservice", "event sourcing", "rewrite the system", "kafka"],
+          ["ledgerv1", "old_ledger_v1"]
+        ]
+      },
+      "notes": "required: 1 point each for identifying the ADR, the ownership/single-writer boundary, the offending writer, and the owning service. anti: -1 each for proposing a lock (constraints.md forbids it), an unrequested rearchitecture, or citing the deprecated decoy file."
+    }
+  ]
+}

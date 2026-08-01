@@ -1,0 +1,83 @@
+{
+  "//": [
+    "Task C — fast bounded coding. Deterministic, executable, exact.",
+    "",
+    "LEAKAGE RULE: `tests` NEVER enters the prompt. The model sees only",
+    "`statement` and `signature`; the runner executes its output against the",
+    "hidden tests afterwards. Reference solutions are not stored here at all --",
+    "correctness is decided by execution, not by string-matching an answer.",
+    "",
+    "Each task is small enough that a fast model should finish quickly, which is",
+    "the point: this category rewards responsiveness, and a model that reasons",
+    "for 3000 tokens about an off-by-one is penalised on efficiency even when it",
+    "gets the answer right."
+  ],
+  "schema_version": 1,
+  "tasks": [
+    {
+      "id": "fc01_pure_function",
+      "kind": "pure_function",
+      "statement": "Write a Python function `chunk(items, size)` that splits a list into consecutive sublists of length `size`. The final chunk may be shorter. If `size` is less than 1, raise ValueError. Return a list of lists.",
+      "signature": "def chunk(items, size):",
+      "tests": [
+        ["assert chunk([1,2,3,4,5], 2) == [[1,2],[3,4],[5]]"],
+        ["assert chunk([], 3) == []"],
+        ["assert chunk([1,2,3], 5) == [[1,2,3]]"],
+        ["assert chunk([1,2,3,4], 2) == [[1,2],[3,4]]"],
+        ["try:\n    chunk([1], 0)\n    assert False, 'should raise'\nexcept ValueError:\n    pass"]
+      ]
+    },
+    {
+      "id": "fc02_off_by_one",
+      "kind": "bugfix",
+      "statement": "This function should return the LAST `n` elements of a list, in original order. It has an off-by-one defect. Return the corrected full function.\n\ndef last_n(items, n):\n    if n <= 0:\n        return []\n    return items[len(items) - n - 1:]",
+      "signature": "def last_n(items, n):",
+      "tests": [
+        ["assert last_n([1,2,3,4,5], 2) == [4,5]"],
+        ["assert last_n([1,2,3], 3) == [1,2,3]"],
+        ["assert last_n([1,2,3], 10) == [1,2,3]"],
+        ["assert last_n([1,2,3], 0) == []"],
+        ["assert last_n([], 2) == []"]
+      ]
+    },
+    {
+      "id": "fc03_validation",
+      "kind": "validation",
+      "statement": "Write `parse_port(value)` that accepts a string or int and returns an int TCP port. It must reject: non-numeric strings, values below 1, values above 65535, booleans, and floats with a fractional part. Raise ValueError with any message for invalid input. Accept a float like 80.0 and return 80.",
+      "signature": "def parse_port(value):",
+      "tests": [
+        ["assert parse_port('80') == 80"],
+        ["assert parse_port(443) == 443"],
+        ["assert parse_port(80.0) == 80"],
+        ["assert parse_port('65535') == 65535"],
+        ["for bad in ['x', '', '0', '65536', -1, 0, 70000, True, 80.5]:\n    try:\n        parse_port(bad)\n        assert False, f'accepted {bad!r}'\n    except ValueError:\n        pass"]
+      ]
+    },
+    {
+      "id": "fc04_serialization_edge",
+      "kind": "bugfix",
+      "statement": "Write `to_csv_row(values)` returning a single CSV row string. Rules: fields containing a comma, a double quote, or a newline must be wrapped in double quotes; a literal double quote is escaped by doubling it. None becomes an empty field. Do not append a trailing newline.",
+      "signature": "def to_csv_row(values):",
+      "tests": [
+        ["assert to_csv_row(['a','b']) == 'a,b'"],
+        ["assert to_csv_row(['a,b','c']) == '\"a,b\",c'"],
+        ["assert to_csv_row(['say \"hi\"']) == '\"say \"\"hi\"\"\"'"],
+        ["assert to_csv_row([None,'x']) == ',x'"],
+        ["assert to_csv_row(['line1\\nline2']) == '\"line1\\nline2\"'"]
+      ]
+    },
+    {
+      "id": "fc05_config_transform",
+      "kind": "transform",
+      "statement": "Write `flatten_config(d, prefix='')` that flattens a nested dict into a single-level dict whose keys are dot-joined paths. Lists are left as values, not expanded. An empty nested dict produces no key at all.",
+      "signature": "def flatten_config(d, prefix=''):",
+      "tests": [
+        ["assert flatten_config({'a':1}) == {'a':1}"],
+        ["assert flatten_config({'a':{'b':2}}) == {'a.b':2}"],
+        ["assert flatten_config({'a':{'b':{'c':3}},'d':4}) == {'a.b.c':3,'d':4}"],
+        ["assert flatten_config({'a':{}}) == {}"],
+        ["assert flatten_config({'a':[1,2]}) == {'a':[1,2]}"]
+      ]
+    }
+  ]
+}
