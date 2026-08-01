@@ -57,7 +57,7 @@ architecture:
   context: 98304
   temperature: 0.1
   num_predict: 16384
-  keep_alive: -1
+  keep_alive: 6h
   persona: true
   purpose: [architecture, complex refactoring, multi-step debugging, design, repository-wide planning, large interactive/agent prompts]
   strengths: [large 64K input window shared across clients, holds a whole subsystem in view, strong code generation]
@@ -196,7 +196,7 @@ completion:
   context: 4096
   temperature: 0.1
   num_predict: 128
-  keep_alive: 20m
+  keep_alive: 2h
   purpose: [inline completion, FIM, quick syntax fixes, small transforms]
   strengths: [very fast, tiny footprint, native FIM tokens]
   weaknesses: [no deep reasoning, short context]

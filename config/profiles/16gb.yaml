@@ -30,7 +30,7 @@ architecture:
   context: 65536
   temperature: 0.1
   num_predict: 8192
-  keep_alive: -1
+  keep_alive: 6h
   persona: true
   purpose: [architecture, refactoring, multi-step debugging, design]
   strengths: [shared resident primary - no load/evict churn, native tool calling, 64K context]
@@ -47,7 +47,7 @@ implementation:
   context: 65536
   temperature: 0.1
   num_predict: 8192
-  keep_alive: -1
+  keep_alive: 6h
   persona: true
   purpose: [everyday coding, features, tests]
   strengths: [same resident backend as architecture - no reload between roles]
@@ -64,7 +64,7 @@ review:
   context: 65536
   temperature: 0.2
   num_predict: 8192
-  keep_alive: -1
+  keep_alive: 6h
   persona: true
   purpose: [code review, bug detection, security review]
   strengths: [reasoning enabled for review depth, no separate model to load]
@@ -83,7 +83,7 @@ fast:
   context: 65536
   temperature: 0.0
   num_predict: 4096
-  keep_alive: -1
+  keep_alive: 6h
   persona: true
   purpose: [task classification, summarisation, quick edits, tool-driven lookups]
   strengths: [no extra model resident - shares the primary]
@@ -103,9 +103,9 @@ completion:
   context: 4096
   temperature: 0.1
   num_predict: 128
-  # Rotating, not pinned: a 16 GB machine should not hold this resident beside the
-  # primary when the editor is idle.
-  keep_alive: 20m
+  # Rotating, not pinned: self-unloads after 2h idle rather than staying resident
+  # beside the primary indefinitely. ~1 GB footprint keeps this cheap to reload.
+  keep_alive: 2h
   persona: false
   purpose: [inline completion, FIM, quick syntax fixes]
   strengths: [native FIM tokens, very fast, ~1 GB footprint]
@@ -122,7 +122,7 @@ embeddings:
   context: 2048
   temperature: 0.0
   num_predict: 0
-  keep_alive: 20m
+  keep_alive: -1
   persona: false
   purpose: [semantic search, retrieval]
   strengths: [tiny, fast, well-understood]
