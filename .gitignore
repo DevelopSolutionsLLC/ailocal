@@ -75,3 +75,10 @@ config/clients/claude/settings.json
 config/clients/continue/config.json by install-clients.sh.
 # Was hand-maintained and drifted (stale capability table, pointed at a deleted file).
 .github/copilot-instructions.md
+
+# Benchmark output. Raw runs, CSV and generated reports are machine- and
+# run-specific; committing them would publish one laptop's numbers as fact.
+# The harness, manifest and README ARE tracked.
+/benchmarks/reports/*
+!/benchmarks/reports/.gitkeep
+/benchmarks/fixtures/calibration.json
