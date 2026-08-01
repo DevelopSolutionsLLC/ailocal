@@ -45,7 +45,28 @@
     },
     "deep": {
       "think": "high"
-    }
+    },
+    "//": [
+      "RESEARCHED, not assumed. Logical names map to Ollama's top-level `think`.",
+      "",
+      "KNOWN UPSTREAM CONSTRAINTS (github issues, verified against local measurement):",
+      " * ollama/ollama#13353 \u2014 Qwen renderers IGNORE the think parameter. Our probe",
+      "   measured qwen3.5 standard==deep (765/765 chars); the cause is the renderer,",
+      "   not the model. Qwen is effectively 2-mode (off / on) on Ollama today.",
+      " * Thinking level 'medium' is reported unsupported for Qwen on Ollama; only",
+      "   off/on are honoured. A 3-level sweep on Qwen measures the same thing twice.",
+      " * ABSENCE of `think` means thinking ENABLED (Ollama default), so a 'default'",
+      "   mode is a thinking run, not a neutral one. Do not treat it as baseline.",
+      " * BerriAI/litellm#15059 \u2014 reasoning_effort is accepted and dropped unmapped;",
+      "   this is why config/litellm/reasoning_router.py translates it to `think`.",
+      " * gpt-oss: think=false does not silence it (measured 111 chars). Its real",
+      "   lever is the SYSTEM PROMPT ('Reasoning: low|medium|high'), which gives 3",
+      "   monotonic levels. See model_settings.",
+      "",
+      "CONSEQUENCE: 'deep' is only meaningful for models with a working level control",
+      "(gpt-oss via system prompt; gemma4 measured distinct). For Qwen, run off/standard",
+      "only -- the probe already skips ignored modes with a machine-readable reason."
+    ]
   },
   "completion_limit": 8192,
   "fixed_params": {
@@ -163,5 +184,6 @@
         "note": "No thinking capability (probe: standard/deep rejected). Non-thinking only."
       }
     }
-  }
+  },
+  "context_targets_note": "Context ceilings are read from Ollama /api/show (gemma4/qwen 262144, gpt-oss 131072) and were NOT cross-checked against vendor documentation. Ollama's advertised context can differ from a model's trained context; the probe measures what is ACTUALLY accepted, which is the number used."
 }
