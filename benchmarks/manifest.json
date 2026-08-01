@@ -104,8 +104,21 @@
       "that would truncate thinking and score it as a wrong answer."
     ],
     "defaults": {
-      "num_predict": 8192,
-      "num_predict_thinking": 32768
+      "num_predict": 32768,
+      "num_predict_thinking": 32768,
+      "//": [
+        "32768 for every suite. num_predict is a CEILING, not a target: it costs",
+        "nothing unless the model actually generates that far, and a low ceiling",
+        "silently TRUNCATES a correct-but-long answer and scores it wrong.",
+        "",
+        "SOURCED: Gemma 4 max output is 32,768 (Google model card). Qwen recommends",
+        "32,768 for most queries (81,920 for highly complex). gpt-oss publishes no",
+        "figure that I could find -- it inherits 32,768 rather than a guess.",
+        "",
+        "COST: at ~50 tok/s a full 32,768-token response is ~11 minutes. The",
+        "per-run timeout (1800s) is the backstop, and `truncated` is recorded so a",
+        "cut-off answer is visible rather than mistaken for a wrong one."
+      ]
     },
     "models": {
       "gemma4:26b-mlx": {
@@ -123,7 +136,10 @@
         "max_context": 262144,
         "context_native": 262144,
         "context_source": "Ollama /api/show (gemma4.context_length). Google card NOT located; treat as unverified.",
-        "context_verified": false
+        "context_verified": false,
+        "max_output": 32768,
+        "max_output_source": "ai.google.dev Gemma 4 model card",
+        "context_caveat": "cloudflare/cloudflare-docs#29731 reports gemma-4-26b-a4b real context is 131072, not the documented 256K. Our MLX tag reports and ACCEPTS 262144, so the 256K cell for this model warrants scrutiny before it is trusted."
       },
       "gpt-oss:20b": {
         "source": "github.com/openai/gpt-oss + model card arXiv:2508.10925 \u2014 temp 1.0, top_p 1.0",
@@ -144,7 +160,9 @@
         "note": "MEASURED: the system-prompt lever gives 3 monotonic levels (108/204/216) where ollama think gives 2 (off==standard==111). Sampling params are NOT its reasoning control.",
         "context_native": 131072,
         "context_source": "openai/gpt-oss model card \u2014 128K",
-        "context_verified": true
+        "context_verified": true,
+        "max_output": 32768,
+        "max_output_source": "NOT PUBLISHED \u2014 inherits the default"
       },
       "qwen3.5:9b": {
         "source": "huggingface.co/Qwen/Qwen3.5 family card",
@@ -165,21 +183,27 @@
         "max_context": 262144,
         "context_native": 262144,
         "context_source": "Ollama /api/show (qwen35.context_length). Vendor card not separately confirmed for this tag.",
-        "context_verified": false
+        "context_verified": false,
+        "max_output": 32768,
+        "max_output_source": "Qwen card \u2014 32768 recommended, 81920 for complex"
       },
       "qwen3.5:4b": {
         "same_as": "qwen3.5:9b",
         "max_context": 262144,
         "context_native": 262144,
         "context_source": "Ollama /api/show (qwen35.context_length). Vendor card not separately confirmed for this tag.",
-        "context_verified": false
+        "context_verified": false,
+        "max_output": 32768,
+        "max_output_source": "Qwen card \u2014 32768 recommended, 81920 for complex"
       },
       "qwen3.5:2b": {
         "same_as": "qwen3.5:9b",
         "max_context": 262144,
         "context_native": 262144,
         "context_source": "Ollama /api/show (qwen35.context_length). Vendor card not separately confirmed for this tag.",
-        "context_verified": false
+        "context_verified": false,
+        "max_output": 32768,
+        "max_output_source": "Qwen card \u2014 32768 recommended, 81920 for complex"
       },
       "qwen3-coder:30b-a3b-q4_K_M": {
         "source": "qwen.readthedocs.io quickstart \u2014 non-thinking instruct settings",
