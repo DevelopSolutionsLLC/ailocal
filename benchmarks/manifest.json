@@ -206,29 +206,35 @@
   "context_targets_note": "Context ceilings are read from Ollama /api/show (gemma4/qwen 262144, gpt-oss 131072) and were NOT cross-checked against vendor documentation. Ollama's advertised context can differ from a model's trained context; the probe measures what is ACTUALLY accepted, which is the number used.",
   "context_policy": {
     "//": [
-      "IDEAL vs PRACTICAL context are different numbers and the difference matters",
-      "on a 64 GB machine.",
+      "CORRECTED 2026-08-01 by measurement. An earlier revision claimed native",
+      "windows 'do not fit in 64 GB'. That was WRONG and was never measured.",
       "",
-      "IDEAL = the model's native trained window (context_native above).",
-      "PRACTICAL = what fits alongside weights without paging. KV cache is allocated",
-      "per slot as num_ctx x OLLAMA_NUM_PARALLEL, so a 262,144 window on a 26B model",
-      "does not fit in 64 GB and would swap -- which this project already measured as",
-      "the cause of a 13-minute stall.",
+      "MEASURED resident size at rest, immediately after load:",
+      "  gpt-oss:20b     num_ctx 131072 -> 12.7G   (vs 11.9G at 16K: +0.8G)",
+      "  gemma4:26b-mlx  num_ctx 131072 -> 16.0G",
+      "  gemma4:26b-mlx  num_ctx 262144 -> 16.0G   <- IDENTICAL to 131072",
       "",
-      "MEASURED resident cost on this machine (weights + KV at the stated ctx):",
-      "  gemma4:26b-mlx  17.5G @16K   22.1G @98K",
-      "  gpt-oss:20b     11.9G @16K",
-      "  qwen3.5:9b       5.5G @16K",
-      "  qwen3.5:2b       2.4G @16K",
+      "Ollama does NOT eagerly allocate the full KV cache. Resident size tracks the",
+      "context actually USED, not the context DECLARED. Declaring a model's full",
+      "native window therefore costs approximately nothing at rest.",
       "",
-      "So the benchmark sweeps 24K-64K: inside every model's native window, and",
-      "inside what 64 GB holds without paging. Native ceilings are recorded so a",
-      "128 GB profile can raise them on evidence rather than on the spec sheet."
+      "The earlier '22.1G at 98K' figure was captured MID-REQUEST, while a large",
+      "prompt was being evaluated -- that is used context, not declared context.",
+      "Confusing the two produced a memory policy that was simply false.",
+      "",
+      "WHAT ACTUALLY COSTS MEMORY: filling the window. A long session that really",
+      "reaches 128K pays for 128K of KV, and OLLAMA_NUM_PARALLEL multiplies it per",
+      "slot. So the constraint is concurrent USED context, not the declared ceiling.",
+      "",
+      "CONSEQUENCE FOR PROFILES: config/profiles/*.yaml currently caps architecture",
+      "at 98,304 on a 64 GB machine. That cap is not justified by memory at rest.",
+      "The real limits are the model's native window and the cold-prefill time of a",
+      "large prompt (measured separately, and the reason sessions stalled)."
     ],
     "benchmark_range": [
       24576,
       65536
     ],
-    "rationale": "within native window for all models AND resident on 64 GB"
+    "rationale": "kept for run comparability with completed cells, NOT a memory limit"
   }
 }
