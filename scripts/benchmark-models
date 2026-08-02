@@ -1,0 +1,401 @@
+#!/usr/bin/env python3
+"""benchmark-models — optional developer utility.
+
+Not part of install, update or the regression gate. Never modifies a profile.
+See docs/BENCHMARK.md.
+"""
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "scripts" / "lib"))
+import benchmark as B  # noqa: E402
+
+
+def cmd_setup(args):
+    """Install optional benchmark tooling into an isolated venv OUTSIDE the repo."""
+    cfg = B.load_config()
+    base = B.venv_bin("python").parent.parent
+    if not base.exists():
+        print(f"creating venv at {base}")
+        subprocess.run([sys.executable, "-m", "venv", str(base)], check=True)
+    for name, spec in (cfg.get("engines") or {}).items():
+        print(f"installing {name}: {spec}")
+        subprocess.run([str(B.venv_bin("pip")), "install", "-q", spec], check=True)
+    print("done — nothing was installed into the ailocal runtime")
+    return 0
+
+
+def cmd_doctor(args):
+    ok = True
+    cfg = B.load_config()
+    print(f"lm_eval binary       {B.venv_bin('lm_eval')} "
+          f"{'ok' if B.venv_bin('lm_eval').exists() else 'MISSING (run: setup)'}")
+    ok &= B.venv_bin("lm_eval").exists()
+    healthy = B.litellm_healthy()
+    print(f"litellm health       {'ok' if healthy else 'DOWN'}")
+    ok &= healthy
+    if healthy:
+        al = B.aliases()
+        prod = [a for a in al if a.startswith("ailocal-")]
+        leaked = [a for a in al if a.startswith(B.ALIAS_PREFIX)]
+        print(f"production aliases   {len(prod)}")
+        print(f"leaked bench aliases {leaked or 'none'}")
+        ok &= not leaked
+    res = B.resident()
+    print(f"ollama resident      {res or 'none'}")
+    print(f"output ceiling       {cfg['output_ceiling']}")
+    print(f"results              {B.state_dir()}")
+    return 0 if ok else 1
+
+
+def _selection(args):
+    models = []
+    if args.models:
+        models = [m.strip() for m in args.models.split(",") if m.strip()]
+    return B.select(profile=args.profile, explicit=models or None)
+
+
+def cmd_plan(args):
+    """Preview. Loads no model and starts no inference."""
+    cfg = B.load_config()
+    sel = _selection(args)
+    print(f"hardware        {sel['ram_gb']} GB -> detected tier {sel['detected_tier']}")
+    print(f"selection mode  {sel['mode']}")
+    print(f"profile         {sel['tier'] or '(explicit models)'}")
+    if sel["mode"] == B.EXPLICIT:
+        print("  NOTE: candidate models only — this does NOT benchmark the "
+              "shipped profile")
+    print(f"output ceiling  {cfg['output_ceiling']} (every scored request)")
+    print(f"contexts        {args.contexts}")
+    print()
+    cells = 0
+    for tag, e in sel["models"].items():
+        spec = (cfg.get("models") or {}).get(tag, {})
+        modes = str(spec.get("modes", "none")).split(",")
+        preset = spec.get("preset", "?")
+        state = "installed" if e["installed"] else "MISSING (pull required)"
+        native = e.get("context_length") or 0
+        fits = [c for c in args.contexts
+                if native and c + cfg["output_ceiling"] <= native]
+        unsup = [c for c in args.contexts if c not in fits]
+        n = len(modes) * len(fits) * len(args.suites)
+        cells += n
+        print(f"  {tag}")
+        print(f"      roles {e['capabilities'] or ['candidate']}  {state}  "
+              f"digest {e['digest'] or '-'}")
+        print(f"      preset {preset}  modes {modes}  native ctx {native}")
+        if unsup:
+            print(f"      UNSUPPORTED_TOTAL_WINDOW at {unsup} "
+                  f"(input + {cfg['output_ceiling']} exceeds {native})")
+        print(f"      cells {n}")
+    print(f"\nsuites          {args.suites}")
+    print(f"planned cells   {cells}")
+    print(f"litellm restart {'required' if sel['models'] else 'no'}")
+    return 0
+
+
+def cmd_run(args):
+    cfg = B.load_config()
+    sel = _selection(args)
+    ceiling = cfg["output_ceiling"]
+    run_id = B.new_run_id()
+    out = B.run_dir(run_id)
+    print(f"run {run_id}  ->  {out}")
+    print(f"mode {sel['mode']} | profile {sel['tier']} | ceiling {ceiling}")
+
+    entries, cells = {}, []
+    for tag, e in sel["models"].items():
+        if not e["installed"]:
+            print(f"  skip {tag}: not installed (NOT_RUN)")
+            continue
+        spec = (cfg.get("models") or {}).get(tag, {})
+        preset = (cfg.get("presets") or {}).get(spec.get("preset"), {})
+        all_modes = str(spec.get("modes", "none")).split(",")
+        # The first mode listed is the model's LOWEST-COST supported mode.
+        modes = all_modes[:1] if args.lowest_mode_only else all_modes
+        for mode in modes:
+            for ctx in args.contexts:
+                native = e.get("context_length") or 0
+                if native and ctx + ceiling > native:
+                    continue  # UNSUPPORTED_TOTAL_WINDOW — never shrink the ask
+                al = B.build_alias(tag, mode, ctx, ceiling, preset)
+                entries[al["model_name"]] = al
+                for suite in args.suites:
+                    cells.append({"model": tag, "mode": mode, "context": ctx,
+                                  "suite": suite,
+                                  "alias": al["model_name"],
+                                  "preset": spec.get("preset"),
+                                  "capabilities": e["capabilities"],
+                                  "in_profile": e["in_profile"],
+                                  "digest": e["digest"]})
+    if not cells:
+        print("nothing to run")
+        return 1
+
+    if not args.allow_runtime_restart:
+        print(f"\n{len(entries)} temporary aliases needed — installing them "
+              f"restarts LiteLLM.\nRe-run with --allow-runtime-restart.")
+        return 3
+
+    manifest = {"run_id": run_id, "selection": sel, "cells": len(cells),
+                "output_ceiling": ceiling, "suites": args.suites,
+                "contexts": args.contexts, "engine": "lm-eval",
+                "config_version": cfg.get("version")}
+    (out / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str))
+
+    print(f"\ninstalling {len(entries)} temporary aliases (one restart)...")
+    ap = B.apply_aliases(list(entries.values()))
+    if not ap["ok"]:
+        print(f"  FAILED: missing {ap['missing']}")
+        B.restore()
+        return 3
+    print(f"  ok — {len(ap['installed'])} bench aliases, "
+          f"{len(ap['production'])} production aliases intact")
+
+    # Smallest model first: the cheap models surface a broken alias or a bad
+    # task name in minutes rather than after a 30 GB model has loaded.
+    order = {m: e.get("size", 0) for m, e in sel["models"].items()}
+    cells.sort(key=lambda c: (order.get(c["model"], 0), c["model"], c["mode"]))
+
+    results, current_model = [], None
+    try:
+        for i, c in enumerate(cells, 1):
+            if c["model"] != current_model:
+                # One model resident at a time. Ollama keeps a model for its
+                # keep_alive, so without this the previous candidate is still
+                # holding memory while the next one loads — six candidates would
+                # be ~50 GB and start swapping. It also makes wall time
+                # comparable: every model pays its own cold load.
+                for other in B.resident():
+                    if other != c["model"]:
+                        B.unload(other)
+                current_model = c["model"]
+                print(f"\n=== {c['model']} (others unloaded; resident: "
+                      f"{B.resident()}) ===")
+            suite = (cfg.get("suites") or {})[c["suite"]]
+            print(f"\n[{i}/{len(cells)}] {c['model']} | {c['context']//1024}K | "
+                  f"mode={c['mode']} | {c['suite']}={suite['task']}", flush=True)
+            # Larger models decode slower, so the same sample legitimately
+            # takes longer; 5 min up to 9B, 10 min for 20-30B.
+            big = (sel["models"].get(c["model"], {}).get("size", 0) > 10e9)
+            r = B.run_lm_eval(c["alias"], suite["task"], args.limit,
+                              out / "external" / f"{c['alias']}-{c['suite']}",
+                              timeout=args.timeout,
+                              sample_timeout=600 if big else 300)
+            r.update({k: c[k] for k in ("model", "mode", "context", "suite",
+                                        "preset", "capabilities", "in_profile",
+                                        "digest")})
+            r["role"] = suite.get("role")
+            r["transport"] = ("MODEL_COMPARISON" if not args.certify
+                              else "PROFILE_CERTIFICATION")
+            results.append(r)
+            with open(out / "telemetry.jsonl", "a") as fh:
+                fh.write(json.dumps(r, default=str) + "\n")
+            top = next(iter(r["scores"].values()), {}) if r["scores"] else {}
+            print(f"    -> rc={r['returncode']} {r['wall_seconds']}s  "
+                  f"[{r.get('confidence','?')}] {top}")
+            if r.get("confidence") not in ("HIGH", None):
+                print(f"       audit: {r['audit']['reason']}")
+    finally:
+        # Restoration runs on success, error AND interrupt.
+        rs = B.restore()
+        print(f"\nruntime restored: {rs['restored']} | "
+              f"production {len(rs['production'])} | leaked {rs['leaked']}")
+
+    (out / "summary.json").write_text(json.dumps(results, indent=2, default=str))
+    _report(out, results, manifest)
+    print(f"\nreport: {out / 'report.md'}")
+    return 0
+
+
+def _report(out: Path, results: list, manifest: dict):
+    L = ["# ailocal benchmark", "",
+         f"run `{manifest['run_id']}` | selection **{manifest['selection']['mode']}** "
+         f"| profile `{manifest['selection']['tier']}` "
+         f"| output ceiling {manifest['output_ceiling']}", "",
+         "Scores come from lm-evaluation-harness. Every request traversed "
+         "authenticated LiteLLM.", ""]
+    if manifest["selection"]["mode"] == B.EXPLICIT:
+        L += ["> Candidate models only — this run does **not** certify the "
+              "shipped profile.", ""]
+    L += ["| model | role | ctx | mode | preset | task | score | wall s | in profile |",
+          "|---|---|---|---|---|---|---|---|---|"]
+    for r in results:
+        for task, metrics in (r["scores"] or {"(no score)": {}}).items():
+            best = next((f"{k}={v:.3f}" for k, v in metrics.items()
+                         if "stderr" not in k), "-")
+            L.append(f"| {r['model']} | {r.get('role','-')} | {r['context']//1024}K "
+                     f"| {r['mode']} | {r['preset']} | {task} | {best} "
+                     f"| {r['wall_seconds']} | {r['in_profile']} |")
+    (out / "report.md").write_text("\n".join(L) + "\n")
+
+
+def cmd_probe(args):
+    """Operational rates for every candidate. Never touches a quality score."""
+    cfg = B.load_config()
+    sel = _selection(args)
+    ceiling = cfg["output_ceiling"]
+    entries, targets = {}, []
+    for tag, e in sel["models"].items():
+        if not e["installed"]:
+            continue
+        spec = (cfg.get("models") or {}).get(tag, {})
+        preset = (cfg.get("presets") or {}).get(spec.get("preset"), {})
+        mode = str(spec.get("modes", "none")).split(",")[0]
+        al = B.build_alias(tag, mode, args.contexts[0], ceiling, preset)
+        entries[al["model_name"]] = al
+        targets.append((tag, al["model_name"], mode, e.get("size", 0)))
+    targets.sort(key=lambda x: x[3])
+
+    if not args.allow_runtime_restart:
+        print("needs --allow-runtime-restart")
+        return 3
+    ap = B.apply_aliases(list(entries.values()))
+    if not ap["ok"]:
+        B.restore()
+        print(f"alias install failed: {ap['missing']}")
+        return 3
+
+    out = B.run_dir(args.run_id or B.new_run_id())
+    rows = []
+    try:
+        for tag, alias, mode, _sz in targets:
+            for other in B.resident():
+                if other != tag:
+                    B.unload(other)
+            print(f"\nprobing {tag} (mode={mode})...", flush=True)
+            r = B.throughput_probe(alias, tag, reps=args.reps)
+            rows.append(r)
+            with open(out / "throughput.jsonl", "a") as fh:
+                fh.write(json.dumps(r, default=str) + "\n")
+            i, o = r["end_to_end_input_rate"], r["end_to_end_output_rate"]
+            c = r["conservative_end_to_end_output_rate"]
+            print(f"  cold_load {r['cold_load_seconds']}s | "
+                  f"in {i.get('median')} tok/s (n={i.get('n')}, cv={i.get('cv')}) | "
+                  f"out {o.get('median') or c.get('median')} tok/s "
+                  f"(n={o.get('n') or c.get('n')}) | "
+                  f"TTFT {r['ttft_s'].get('median')}s | "
+                  f"contaminated {r['invalid_cache_contaminated']}")
+    finally:
+        rs = B.restore()
+        print(f"\nruntime restored: {rs['restored']} | leaked {rs['leaked']}")
+    print(f"\nthroughput: {out / 'throughput.jsonl'}")
+    return 0
+
+
+def cmd_client(args):
+    """Client integration benchmark — a second execution backend.
+
+    Records CLIENT behaviour (sessions, tools, crashes, latency) SEPARATELY from
+    model capability scores. The two answer different questions and must never
+    be combined.
+    """
+    cfg = B.load_config()
+    turns = (cfg.get("client_scenarios") or {}).get(args.scenario)
+    if not turns:
+        print(f"unknown scenario {args.scenario!r}; "
+              f"have {list(cfg.get('client_scenarios') or {})}")
+        return 2
+    turns = [turns[k] for k in sorted(turns)] if isinstance(turns, dict) else turns
+    if args.client not in B.CLIENTS:
+        print(f"unknown client {args.client!r}; have {list(B.CLIENTS)}")
+        return 2
+
+    run_id = B.new_run_id()
+    out = B.run_dir(run_id)
+    # Isolated worktree per run: a mutating scenario must never touch the live
+    # checkout, and two runs must never share a tree.
+    wt = Path(args.cwd) if args.cwd else B.disposable_worktree(run_id)
+    print(f"client={args.client} scenario={args.scenario} "
+          f"turns={len(turns)} cwd={wt} -> {out}")
+    if args.plan:
+        spec = B.CLIENTS[args.client]
+        print("  turn 1 :", " ".join([spec["bin"], *spec["start"]("<prompt>")]))
+        print("  turn 2+:", " ".join([spec["bin"],
+                                      *spec["resume"]("<exact-session-id>",
+                                                      "<prompt>")]))
+        print("  implicit latest-session resume is NEVER used")
+        if not args.cwd:
+            B.remove_worktree(wt)
+        return 0
+    try:
+        r = B.run_client_scenario(args.client, turns, wt, timeout=args.timeout)
+    finally:
+        if not args.cwd:
+            B.remove_worktree(wt)
+    r.update({"scenario": args.scenario, "kind": "CLIENT_INTEGRATION",
+              "run_id": run_id, "client_version": B.client_version(args.client)})
+    (out / "client.json").write_text(json.dumps(r, indent=2, default=str))
+    for rec in r["records"]:
+        print(f"  turn {rec['turn']}: {rec['wall_seconds']}s "
+              f"rc={rec['returncode']} tools={rec['tool_calls']} "
+              f"session={'same' if rec['session_continuous'] else 'CHANGED'}")
+    print(f"\ncompleted {r['turns_completed']}/{r['turns_planned']} turns | "
+          f"session continuous {r['session_continuous']} | "
+          f"tools {r['tool_calls']} | crashes {r['crashes']} | "
+          f"timeouts {r['timeouts']} | {r['wall_seconds']}s")
+    print(f"result: {out / 'client.json'}")
+    return 0 if r["turns_completed"] == r["turns_planned"] else 1
+
+
+def cmd_report(args):
+    out = B.state_dir() / "runs" / args.run_id
+    p = out / "report.md"
+    print(p.read_text() if p.exists() else f"no report at {p}")
+    return 0 if p.exists() else 1
+
+
+def main():
+    p = argparse.ArgumentParser(prog="benchmark-models")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    def common(sp):
+        sp.add_argument("--profile", default=None,
+                        help="auto|16gb|32gb|64gb|128gb")
+        sp.add_argument("--models", default=None, help="comma-separated tags")
+        sp.add_argument("--contexts", default="32768",
+                        type=lambda s: [int(x) for x in s.split(",")])
+        sp.add_argument("--suites", default="fast",
+                        type=lambda s: s.split(","))
+        return sp
+
+    common(sub.add_parser("plan")).set_defaults(fn=cmd_plan)
+    r = common(sub.add_parser("run"))
+    r.add_argument("--limit", type=int, default=None,
+                   help="samples per task (external engine option)")
+    r.add_argument("--timeout", type=int, default=7200)
+    r.add_argument("--allow-runtime-restart", action="store_true")
+    r.add_argument("--lowest-mode-only", action="store_true",
+                   help="one cell per model, at its cheapest supported mode")
+    r.add_argument("--certify", action="store_true",
+                   help="PROFILE_CERTIFICATION through production aliases")
+    r.set_defaults(fn=cmd_run)
+    pr = common(sub.add_parser("probe"))
+    pr.add_argument("--reps", type=int, default=3)
+    pr.add_argument("--run-id", default=None)
+    pr.add_argument("--allow-runtime-restart", action="store_true")
+    pr.set_defaults(fn=cmd_probe)
+    cl = sub.add_parser("client")
+    cl.add_argument("--client", default="claude-local")
+    cl.add_argument("--scenario", default="explore")
+    cl.add_argument("--cwd", default=None)
+    cl.add_argument("--timeout", type=int, default=900)
+    cl.add_argument("--plan", action="store_true",
+                    help="print the exact client commands; start no session")
+    cl.set_defaults(fn=cmd_client)
+    sub.add_parser("setup").set_defaults(fn=cmd_setup)
+    sub.add_parser("doctor").set_defaults(fn=cmd_doctor)
+    rp = sub.add_parser("report")
+    rp.add_argument("run_id")
+    rp.set_defaults(fn=cmd_report)
+
+    args = p.parse_args()
+    return args.fn(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
