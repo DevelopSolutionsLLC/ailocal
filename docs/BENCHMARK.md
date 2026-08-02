@@ -110,6 +110,35 @@ are unreachable from a fresh session per turn.
 `BASIC_SESSION_CONTINUITY_VERIFIED` means exact-id two-turn resume works. It
 says nothing about tools, MCP, compaction or soak behaviour.
 
+### Role alias overrides (advanced diagnostic)
+
+Point one client role at an explicit, already-existing LiteLLM alias for a
+single process:
+
+```sh
+AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE=bench-gemma4-26b-mlx-off-32k claude-local
+```
+
+Also `AILOCAL_IMPLEMENTATION_ALIAS_OVERRIDE`, `AILOCAL_REVIEW_ALIAS_OVERRIDE`
+and `AILOCAL_FAST_ALIAS_OVERRIDE`.
+
+- **Defaults stay profile-controlled.** With no override set, the generated slot
+  block is used verbatim and behaviour is byte-identical to before.
+- **Process-scoped, never persisted.** Nothing is written; a new shell is back
+  to profile defaults.
+- **The alias must already exist.** An override LiteLLM does not serve aborts
+  the launch rather than falling back — a silent fallback would measure the
+  production model while reporting the candidate's name.
+- **Only one role changes.** Overriding architecture leaves implementation,
+  review and fast untouched.
+
+Useful for client-compatibility testing and model comparisons. It exists because
+the slot names are generated and applied through `env`, which overrides the
+inherited environment — so there was otherwise no supported way to run
+`claude-local` with one role on a different model. Defining a second alias named
+`ailocal-architecture` is not an alternative: LiteLLM would hold a duplicate
+`model_name` and choose between two backends ambiguously.
+
 ## Boundaries
 
 - Profile YAML is never edited automatically. The benchmark produces

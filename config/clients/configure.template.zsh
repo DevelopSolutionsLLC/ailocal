@@ -59,6 +59,50 @@ claude-local() {
     ANTHROPIC_DEFAULT_FABLE_MODEL="ailocal-review"
   )
   # >>> END GENERATED claude slots <<<
+
+  # ── Role alias overrides (hand-maintained; OUTSIDE the generated region) ──
+  # Point ONE role at an explicit, already-existing LiteLLM alias for this
+  # process only. Defaults stay profile-controlled: with no override set, the
+  # generated slots above are used verbatim.
+  #
+  # Exists because the slot names are generated and applied through `env`, which
+  # overrides the inherited environment — so there was no supported way to ask
+  # "run claude-local, but with the architecture role on THAT model". Needed for
+  # client-compatibility testing and model comparisons, where creating a second
+  # alias named ailocal-architecture would leave LiteLLM with a duplicate
+  # model_name and an ambiguous choice between two backends.
+  #
+  #   AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE=bench-gemma4-26b-mlx-off-32k claude-local ...
+  #
+  # FAIL CLOSED: an override naming an alias LiteLLM does not serve aborts the
+  # launch. Falling back to production would silently measure the wrong model.
+  local -A _ailocal_ovr=(
+    ANTHROPIC_DEFAULT_OPUS_MODEL   "${AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE:-}"
+    ANTHROPIC_DEFAULT_SONNET_MODEL "${AILOCAL_IMPLEMENTATION_ALIAS_OVERRIDE:-}"
+    ANTHROPIC_DEFAULT_HAIKU_MODEL  "${AILOCAL_FAST_ALIAS_OVERRIDE:-}"
+    ANTHROPIC_DEFAULT_FABLE_MODEL  "${AILOCAL_REVIEW_ALIAS_OVERRIDE:-}"
+  )
+  local _ailocal_models="" _i _name _val
+  for _name in ${(k)_ailocal_ovr}; do
+    [[ -n "${_ailocal_ovr[$_name]}" ]] || continue
+    # One catalogue fetch, only when an override is actually supplied.
+    if [[ -z "$_ailocal_models" ]]; then
+      _ailocal_models=$(curl -fsS -H "Authorization: Bearer $key" \
+        "$base/v1/models" 2>/dev/null) || {
+        echo "claude-local: cannot reach $base/v1/models to validate an alias override" >&2
+        return 1
+      }
+    fi
+    _val="${_ailocal_ovr[$_name]}"
+    if [[ "$_ailocal_models" != *"\"$_val\""* ]]; then
+      echo "claude-local: alias override '$_val' ($_name) is not served by LiteLLM" >&2
+      return 1
+    fi
+    for (( _i = 1; _i <= ${#slots[@]}; _i++ )); do
+      [[ "${slots[_i]%%=*}" == "$_name" ]] && slots[_i]="$_name=$_val"
+    done
+  done
+
   # API_TIMEOUT_MS matches LiteLLM's own `timeout: 900` (config.template.yaml).
   # MEASURED, and the reason the architecture route appeared to "crash" after
   # 10-15 minutes: COLD prompt evaluation on this route is super-linear --
