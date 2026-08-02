@@ -1,0 +1,117 @@
+# Benchmark orchestrator configuration.
+#
+# ailocal owns ORCHESTRATION only: profile selection, temporary authenticated
+# LiteLLM aliases, vendor presets, reasoning mapping, runtime restoration and
+# telemetry. External tools own datasets, prompting, scoring and validation.
+
+version: 1
+
+# Pinned optional developer tooling. NOT installed by ailocal install/update.
+engines:
+  lm-eval: "lm-eval[api]==0.4.12"
+
+# Every scored request. A MAXIMUM, not a target — short answers stop naturally.
+# Consistent with vendor guidance: Qwen recommends 32,768 for normal use and
+# Gemma 4's card caps output there.
+output_ceiling: 32768
+
+# Realized context may differ from the semantic target by this much before the
+# cell is flagged. Chasing exact equality cost hours in the discarded framework
+# for no measurable gain.
+context_tolerance: 0.02
+
+# Vendor inference presets. VERIFIED against official documentation 2026-08-01.
+# Ollama's baked tag defaults are deliberately NOT used: for qwen3.5 they are the
+# GENERAL thinking preset (temp 1.0 / presence_penalty 1.5), while Qwen publishes
+# a separate CODING preset. Benchmarking code on the general preset measures the
+# wrong configuration.
+presets:
+  # huggingface.co/Qwen/Qwen3.5-9B and /Qwen3.5-4B publish IDENTICAL values.
+  qwen35:
+    temperature: 0.6
+    top_p: 0.95
+    top_k: 20
+    min_p: 0.0
+    presence_penalty: 0.0
+    repeat_penalty: 1.0
+  # github.com/QwenLM/Qwen3-Coder; matches the Ollama tag exactly.
+  qwen3coder:
+    temperature: 0.7
+    top_p: 0.8
+    top_k: 20
+    repeat_penalty: 1.05
+  # ai.google.dev/gemma/docs/core/model_card_4
+  gemma4:
+    temperature: 1.0
+    top_p: 0.95
+    top_k: 64
+  # OpenAI recommends temp 1.0 / top_p 1.0 and explicitly warns AGAINST
+  # repetition penalties, noting clients enable them by default — so it is
+  # PINNED to 1.0 rather than omitted.
+  gptoss:
+    temperature: 1.0
+    top_p: 1.0
+    repeat_penalty: 1.0
+
+# Reasoning controls, verified against the installed backend. `doctor` confirms
+# the backend still accepts them. Unsupported modes are omitted, never emulated
+# through prompt text.
+models:
+  "qwen3.5:2b":                 {preset: qwen35,     modes: "off,on"}
+  "qwen3.5:4b":                 {preset: qwen35,     modes: "off,on"}
+  "qwen3.5:9b":                 {preset: qwen35,     modes: "off,on"}
+  "qwen3-coder:30b-a3b-q4_K_M": {preset: qwen3coder, modes: "none"}
+  "gemma4:26b-mlx":             {preset: gemma4,     modes: "off,on"}
+  # medium is SUPPORTED_CONTROL_UNPROVEN_DISTINCT — accepted and documented, but
+  # its output length overlapped low at three samples. Retained deliberately.
+  "gpt-oss:20b":                {preset: gptoss,     modes: "low,medium,high"}
+
+# Requested tag -> installed identity, where upstream naming differs.
+resolve:
+  "qwen3-coder:30b": "qwen3-coder:30b-a3b-q4_K_M"
+
+# Suites. `task` names belong to the external engine.
+suites:
+  # gsm8k is a REASONING SCREEN, not a coding score. It decides whether thinking
+  # pays for its latency; it does not decide the fast role.
+  reasoning-screen: {engine: lm-eval, task: gsm8k,           role: screen}
+  # Executable coding correctness.
+  #
+  # MUST be the *_instruct variant for chat models. Plain `humaneval_plus` is a
+  # COMPLETION task: it stops on ['\ndef','\nclass',...] and expects the model to
+  # continue the function body directly. A chat model answers "Looking at this
+  # function, I need to..." instead, the stop sequence fires on the first line,
+  # and the filter concatenates prompt + prose into invalid Python. MEASURED:
+  # every one of six models scored 0.000 on humaneval_plus while qwen3-coder
+  # scored 0.8 on humaneval_instruct. That was a harness misuse, not six failing
+  # models.
+  coding:           {engine: lm-eval, task: humaneval_instruct_robust, role: implementation}
+  code-understanding: {engine: lm-eval, task: cruxeval_output, role: review}
+  # EvalPlus's MBPP+ — a second executable coding set, independent of HumanEval.
+  # Upstream extractor is broken for chat models (#3793/#3447); see
+  # config/benchmark-tasks/utils.py. Dataset/tests/metric remain lm-eval's.
+  coding2:          {engine: lm-eval, task: mbpp_plus_robust, role: implementation}
+
+# Client integration scenarios. NOT capability benchmarks — these exercise the
+# client (session persistence, compaction, tool routing, MCP, hooks) which
+# lm-eval cannot see because it bypasses the client entirely.
+#
+# `turns` reuse ONE conversation on purpose: long sessions and compaction are
+# where client bugs live, and a fresh session per turn never reaches them.
+client_scenarios:
+  # Two turns, no repository mutation. Its only job is to prove that an EXACT
+  # session id can be captured and resumed.
+  smoke:
+    - "Reply with exactly: READY. Do not use any tools."
+    - "What single word did you reply with a moment ago? Answer from memory."
+  explore:
+    - "Explore this repository and summarise its architecture in five bullets. Do not modify anything."
+    - "Which component owns hardware profile selection? Name the file."
+    - "What did you say owned profile selection? Answer from memory, do not re-read files."
+  soak:
+    - "Summarise what scripts/lib/benchmark.py does. Do not modify anything."
+    - "List three things it deliberately does NOT own."
+    - "Name the external tool that owns scoring."
+    - "Continue: what transport must every scored request use?"
+    - "Continue: what is the output ceiling, in tokens?"
+    - "From memory only, restate all four answers you have given so far."
