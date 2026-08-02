@@ -158,6 +158,24 @@ check(al["model_name"].startswith("bench-"),
 check(B.tier_for_gb(63) == "32gb" and B.tier_for_gb(64) == "64gb",
       "tier ladder never rounds up")
 
+# A client key is NOT the master key. When env.sh's 12-character placeholder won
+# over the proxy's real 51-character key, LiteLLM reported `No connected db.` on
+# every request — an unrecognised key is looked up in a key database that does
+# not exist here, so a credential fault reads as a database fault.
+check(B._key_from("export LITELLM_MASTER_KEY=sk-master\n"
+                  "export ANTHROPIC_API_KEY=placeholder\n",
+                  "LITELLM_MASTER_KEY") == "sk-master",
+      "master key is read from an exported shell assignment")
+check(B._key_from('LITELLM_MASTER_KEY="sk-dotenv"\n',
+                  "LITELLM_MASTER_KEY") == "sk-dotenv",
+      "master key is read from a bare .env assignment")
+check(B._key_from("export ANTHROPIC_API_KEY=placeholder\n",
+                  "LITELLM_MASTER_KEY") is None,
+      "a client key is never mistaken for the master key")
+check(B.api_key() == B._key_from((REPO / ".env").read_text(),
+                                 "LITELLM_MASTER_KEY"),
+      "api_key() resolves the master key, not a client placeholder")
+
 install = (REPO / "scripts" / "install.sh").read_text()
 for gb in ("128", "64", "32", "16"):
     check(f"-ge {gb}" in install,

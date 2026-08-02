@@ -191,17 +191,39 @@ def _json(url: str, payload=None, key: str = None, timeout: int = 60,
         return json.loads(r.read().decode())
 
 
+def _key_from(text: str, var: str):
+    m = re.search(rf'^\s*(?:export\s+)?{var}=["\']?([^"\'\s]+)', text, re.M)
+    return m.group(1) if m else None
+
+
 def api_key() -> str:
-    for var in ("LITELLM_MASTER_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+    """The LiteLLM master key.
+
+    Order matters. `config/clients/env.sh` carries ANTHROPIC_API_KEY and
+    OPENAI_API_KEY for the CLIENTS, and those are not necessarily the master
+    key — measured, they were 12-character placeholders while the running proxy
+    held a 51-character key. Preferring them produced `No connected db.` on
+    every request: an unrecognised key sends LiteLLM to a key database that does
+    not exist here, so a CREDENTIAL fault surfaces as a database error. The
+    master key is therefore resolved from its own sources first, and the client
+    variables remain only as a last resort.
+    """
+    if os.environ.get("LITELLM_MASTER_KEY"):
+        return os.environ["LITELLM_MASTER_KEY"]
+    for path in (REPO / ".env", REPO / "config" / "clients" / "env.sh"):
+        if path.exists():
+            found = _key_from(path.read_text(), "LITELLM_MASTER_KEY")
+            if found:
+                return found
+    for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
         if os.environ.get(var):
             return os.environ[var]
     env = REPO / "config" / "clients" / "env.sh"
     if env.exists():
-        for var in ("LITELLM_MASTER_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
-            m = re.search(rf'^\s*export\s+{var}=["\']?([^"\'\s]+)',
-                          env.read_text(), re.M)
-            if m:
-                return m.group(1)
+        for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+            found = _key_from(env.read_text(), var)
+            if found:
+                return found
     raise RuntimeError("no LiteLLM API key found — is the stack running?")
 
 
