@@ -1,0 +1,30 @@
+# lm-eval's mbpp_plus_instruct with chat-compatible code extraction.
+#
+# Dataset (evalplus/mbppplus), tests, execution and pass@1 remain lm-eval's.
+# ONLY the extractor changes, per upstream issues #3793/#3447 — see utils.py.
+task: mbpp_plus_robust
+dataset_path: evalplus/mbppplus
+dataset_name: null
+unsafe_code: true
+output_type: generate_until
+test_split: test
+doc_to_text: "{{prompt if prompt is defined else text}} Your code should satisfy the following assertion:\n{{test_list[0]}}"
+doc_to_target: "{{test_list[0]}}"
+gen_prefix: "Here is a solution to this programming problem:\n```python\n"
+target_delimiter: ""
+num_fewshot: 0
+metric_list:
+  - metric: !function utils.pass_at_1
+    aggregation: mean
+    higher_is_better: true
+filter_list:
+  - name: "extract_code"
+    filter:
+      - function: "custom"
+        filter_fn: !function utils.build_predictions_mbpp
+generation_kwargs:
+  max_gen_toks: 1024
+  until: []
+  do_sample: false
+metadata:
+  version: 1.0
