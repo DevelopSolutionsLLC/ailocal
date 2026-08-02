@@ -215,7 +215,7 @@ def _text(alias: str, prompt: str, key: str, timeout: int) -> dict:
             "completion_tokens": usage.get("completion_tokens")}
 
 
-def run_task(alias: str, rows: list, key: str, ceiling: int,
+def run_task(task: str, alias: str, rows: list, key: str, ceiling: int,
              target_input: int, timeout: int = 1800,
              progress=None) -> dict:
     """Score one task. Invalid samples are recorded and EXCLUDED from the score.
@@ -238,6 +238,8 @@ def run_task(alias: str, rows: list, key: str, ceiling: int,
         except Exception as e:  # noqa: BLE001
             rec = {"error": "ERROR", "detail": f"{type(e).__name__}: {e}"[:200]}
         state = classify(rec, target_input, ceiling)
+        # `response` is truncated for storage only. Scoring below uses the FULL
+        # text — a needle can sit past 500 characters of preamble.
         entry = {"index": row.get("index", i), "validity": state,
                  "prompt_tokens": rec.get("prompt_tokens"),
                  "completion_tokens": rec.get("completion_tokens"),
@@ -258,7 +260,13 @@ def run_task(alias: str, rows: list, key: str, ceiling: int,
                 s["prompt_tokens"] for s in samples if s["prompt_tokens"]),
             "target_input_tokens": target_input,
             "wall_seconds": round(sum(s["wall_seconds"] or 0 for s in samples), 1),
-            "score": None}
+            "mean_wall_seconds": round(
+                sum(s["wall_seconds"] or 0 for s in samples) / len(rows), 1),
+            "completion_tokens_total": sum(
+                s["completion_tokens"] or 0 for s in samples),
+            # Only VALID samples reach the metric. An invalid cell is absence of
+            # evidence, not a zero.
+            "score": score(task, preds, refs) if preds else None}
 
 
 def _counts(it) -> dict:
