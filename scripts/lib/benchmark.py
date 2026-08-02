@@ -259,7 +259,13 @@ def model_info(tag: str) -> dict:
         if k.endswith(".context_length"):
             ctx = int(v)
             break
+    # /api/show carries no digest; /api/tags does. The digest is what pins a
+    # result to an exact set of weights, so a run manifest without it cannot be
+    # reproduced after a model is re-pulled under the same tag.
+    entry = installed().get(tag) or {}
     return {"context_length": ctx,
+            "digest": entry.get("digest", ""),
+            "size_bytes": entry.get("size"),
             "ollama_capabilities": d.get("capabilities") or []}
 
 
