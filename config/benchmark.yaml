@@ -108,6 +108,16 @@ client_scenarios:
     - "Explore this repository and summarise its architecture in five bullets. Do not modify anything."
     - "Which component owns hardware profile selection? Name the file."
     - "What did you say owned profile selection? Answer from memory, do not re-read files."
+  # Planning/delegation comparison. Runs against a SEEDED defect in a disposable
+  # worktree, so it measures diagnosis on a real repository rather than recall.
+  # Ground truth lives only in the run manifest outside Git — never in the tree
+  # the candidate sees. Turn 3 restates from memory on purpose: continuity under
+  # real load is what the two-turn smoke cannot reach.
+  planner:
+    - "Installation on this 32 GB machine pulls the wrong models. `./scripts/status.sh` reports profile 32gb and config/active-profile contains 32gb, but model pulling behaves as though the profile were 64gb, consuming more disk than the tier allows. Investigate and produce a PLAN ONLY. Do not modify files. Required output: (1) most likely root cause and the evidence needed to prove it; (2) relevant system boundaries and likely files; (3) dependency-ordered task graph; (4) subagent assignment per task; (5) exact concise prompt for each subagent; (6) validation plan; (7) risks, non-goals, stop conditions."
+    - "Which single function or configuration-resolution boundary is most likely the root cause? State what evidence would confirm or reject it."
+    - "Without rereading your prior response, restate the task graph in dependency order, including the assigned subagent for each task."
+
   soak:
     - "Summarise what scripts/lib/benchmark.py does. Do not modify anything."
     - "List three things it deliberately does NOT own."

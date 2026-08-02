@@ -892,7 +892,10 @@ def run_client_turn(client: str, prompt: str, session: str, cwd: Path,
         "prompt_tokens": usage.get("input_tokens") or usage.get("prompt_tokens"),
         "completion_tokens": (usage.get("output_tokens")
                               or usage.get("completion_tokens")),
-        "stdout_tail": out[-1200:], "stderr_tail": err[-600:],
+        # stdout_tail keeps existing consumers cheap; stdout_full is the scored
+        # evidence. A planning answer runs far past 1,200 characters, and
+        # scoring a truncated plan measures the tail, not the plan.
+        "stdout_tail": out[-1200:], "stdout_full": out, "stderr_tail": err[-600:],
         "telemetry_before": before, "telemetry_after": telemetry(),
         "crashed": rc not in (0, None),
     }
@@ -980,3 +983,42 @@ def run_client_scenario(client: str, turns: list, cwd: Path,
         "ttft_first_turn": records[0]["wall_seconds"] if records else None,
         "records": records,
     }
+
+
+def served_models_since(seconds: int = 120) -> set:
+    """Alias names LiteLLM actually served recently, from the proxy's own log.
+
+    The authoritative answer to "which model ran". Client-reported identity is
+    not evidence: a benchmark once completed nine clean turns while every
+    request silently served the production alias, because settings.json's
+    `model` key outranks the ANTHROPIC_DEFAULT_* slot vars.
+    """
+    try:
+        r = subprocess.run(["docker", "logs", "ailocal-litellm",
+                            "--since", f"{seconds}s"],
+                           capture_output=True, text=True, timeout=60)
+    except Exception:
+        return set()
+    text = (r.stdout or "") + (r.stderr or "")
+    return set(re.findall(r"(?:bench-[a-z0-9.-]+|ailocal-[a-z]+)", text))
+
+
+def verify_routing(alias: str, model: str, cwd, key: str = None) -> dict:
+    """Prove the client reaches `alias` BEFORE any scored turn runs.
+
+    One probe through the real client, then the proxy log is checked for the
+    exact alias. Fail closed: a routing mismatch invalidates everything that
+    would follow it, so the caller must abort rather than continue.
+    """
+    probe = run_client_turn("claude-local", "Reply ONLY with OK.", None, cwd,
+                            timeout=300)
+    served = served_models_since(180)
+    info = model_info(model)
+    ok = alias in served
+    return {"state": "VERIFIED" if ok else "INVALID_ROUTING",
+            "requested_alias": alias, "served_aliases": sorted(served),
+            "alias_served": ok,
+            "expected_digest": info.get("digest", ""),
+            "probe_rc": probe.get("returncode"),
+            "probe_session": probe.get("session_id"),
+            "probe_wall_seconds": probe.get("wall_seconds")}

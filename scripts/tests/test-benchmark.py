@@ -6,8 +6,10 @@ a chat model's answer survives the journey into lm-eval's executor. Three
 consecutive defects were interface faults that looked exactly like model
 failures, so these are fixture-driven and deliberately style-agnostic.
 """
+import re
 import sys
 from pathlib import Path
+import pathlib
 
 REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO / "config" / "benchmark-tasks"))
@@ -175,6 +177,33 @@ check(B._key_from("export ANTHROPIC_API_KEY=placeholder\n",
 check(B.api_key() == B._key_from((REPO / ".env").read_text(),
                                  "LITELLM_MASTER_KEY"),
       "api_key() resolves the master key, not a client placeholder")
+
+# The planner scenario must match the run manifest verbatim. If the YAML and the
+# manifest drift, three candidates get scored against a rubric written for a
+# different question. Whitespace is normalised because the manifest wraps for
+# readability; nothing else may differ. Skipped when the fixture is absent so the
+# gate stays green on a machine that never built it.
+import os  # noqa: E402
+_manifest = pathlib.Path(
+    os.environ.get("XDG_STATE_HOME", pathlib.Path.home() / ".local/state")
+) / "ailocal/benchmark/planner/HANDOFF.md"
+if _manifest.exists():
+    _turns = B.load_config()["client_scenarios"]["planner"]
+    check(len(_turns) == 3, "planner scenario declares exactly three turns")
+    _md = _manifest.read_text()
+
+    def _norm(s):
+        return " ".join(s.split())
+
+    _body = _md.split("## Three turns")[1].split("## Rubric")[0]
+    _blocks = re.split(r"\nT[123]:", _body)[1:]
+    check(len(_blocks) == 3, "manifest declares exactly three turns")
+    for _i, (_want, _got) in enumerate(zip(_blocks, _turns), 1):
+        check(_norm(_want) == _norm(_got),
+              f"planner turn {_i} matches the run manifest verbatim",
+              f"manifest={_norm(_want)[:120]!r} yaml={_norm(_got)[:120]!r}")
+    check(all("--continue" not in x and "--last" not in x for _turns_ in [_turns] for x in _turns_),
+          "planner turns never instruct an implicit resume")
 
 install = (REPO / "scripts" / "install.sh").read_text()
 for gb in ("128", "64", "32", "16"):

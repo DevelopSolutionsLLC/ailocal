@@ -110,6 +110,31 @@ are unreachable from a fresh session per turn.
 `BASIC_SESSION_CONTINUITY_VERIFIED` means exact-id two-turn resume works. It
 says nothing about tools, MCP, compaction or soak behaviour.
 
+### Benchmark invariant: verify the served model
+
+**A planner benchmark is INVALID unless the served model is independently
+verified before candidate scoring begins.**
+
+Client-reported identity is not evidence. A nine-turn, three-candidate run once
+completed with clean sessions, zero errors and full restoration while every
+request served the *production* alias — because `settings.json` pins `model`,
+which outranks the `ANTHROPIC_DEFAULT_*` slot variables. The tests passed
+because they asserted the override reached the client environment, which it did.
+They never asserted which model answered.
+
+Verified precedence (code.claude.com/docs/en/settings):
+
+    --model  >  settings.json "model"  >  ANTHROPIC_DEFAULT_*_MODEL
+
+`verify_routing()` sends one probe through the real client and then reads
+LiteLLM's own log for the exact `bench-*` alias. A mismatch is
+`INVALID_ROUTING`: abort, clean up, restore — never continue.
+
+Related instrumentation note: `claude -p --output-format json` emits a single
+result object and reports **zero tool calls even when the model read files**.
+Do not read that as "the repository was not inspected" — determine repository
+usage from response evidence and input-token counts instead.
+
 ### Role alias overrides (advanced diagnostic)
 
 Point one client role at an explicit, already-existing LiteLLM alias for a

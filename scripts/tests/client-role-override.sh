@@ -62,6 +62,25 @@ check $([ "$(grep -c '^OPUS=' <<<"$out")" = 0 ] && echo 0 || echo 1) \
 check $(grep -q "not served by LiteLLM" <<<"$out" && echo 0 || echo 1) \
   "unknown override explains itself on stderr" "$out"
 
+# OUTCOME, not configuration. The previous suite proved the slot variable reached
+# the client and passed while nine turns silently served the production model:
+# settings.json pins `model`, which OUTRANKS ANTHROPIC_DEFAULT_*. Verified
+# precedence (code.claude.com/docs/en/settings):
+#   --model > settings.json "model" > ANTHROPIC_DEFAULT_*_MODEL
+tpl="$ROOT_DIR/config/clients/configure.template.zsh"
+check $(grep -q -- '--model "$AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE"' "$tpl" && echo 0 || echo 1) \
+  "architecture override passes --model, the highest-precedence mechanism"
+check $(grep -q 'claude "${_model_args\[@\]}" "$@"' "$tpl" && echo 0 || echo 1) \
+  "--model args reach the claude invocation"
+check $([ -z "$(AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE= zsh -c "source '$CONFIGURE'; typeset -p _model_args" 2>/dev/null)" ] && echo 0 || echo 1) \
+  "no override adds no --model argument (defaults untouched)"
+# The proxy log is the only authority on which model actually ran. Asserted here
+# as a capability; the benchmark calls it live before every candidate.
+check $(grep -q "def served_models_since" "$ROOT_DIR/scripts/lib/benchmark.py" && echo 0 || echo 1) \
+  "harness can read served aliases from the proxy log"
+check $(grep -q "INVALID_ROUTING" "$ROOT_DIR/scripts/lib/benchmark.py" && echo 0 || echo 1) \
+  "routing mismatch is classified INVALID_ROUTING, not warned about"
+
 # The override block is hand-maintained and MUST live outside the spliced region,
 # or sync-models.py would erase it on the next regeneration.
 tpl="$ROOT_DIR/config/clients/configure.template.zsh"
