@@ -82,6 +82,16 @@ claude-local() {
     ANTHROPIC_DEFAULT_HAIKU_MODEL  "${AILOCAL_FAST_ALIAS_OVERRIDE:-}"
     ANTHROPIC_DEFAULT_FABLE_MODEL  "${AILOCAL_REVIEW_ALIAS_OVERRIDE:-}"
   )
+  # VERIFIED precedence (code.claude.com/docs/en/settings):
+  #   --model  >  settings.json "model"  >  ANTHROPIC_DEFAULT_*_MODEL
+  # Our settings.json pins model=ailocal-architecture, so the slot vars alone are
+  # silently outranked — a benchmark override propagated perfectly and served the
+  # production model anyway. The architecture override therefore also passes
+  # --model, the highest-priority supported mechanism. The slot rewrite below
+  # still matters: it redirects the subagent/background tiers.
+  local -a _model_args=()
+  [[ -n "${AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE:-}" ]] && \
+    _model_args=(--model "$AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE")
   local _ailocal_models="" _i _name _val
   for _name in ${(k)_ailocal_ovr}; do
     [[ -n "${_ailocal_ovr[$_name]}" ]] || continue
@@ -121,7 +131,7 @@ claude-local() {
     CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1 \
     CLAUDE_CODE_DISABLE_1M_CONTEXT=1 \
     API_TIMEOUT_MS="${AILOCAL_API_TIMEOUT_MS:-900000}" \
-    claude "$@"
+    claude "${_model_args[@]}" "$@"
 }
 
 codex-local() {
