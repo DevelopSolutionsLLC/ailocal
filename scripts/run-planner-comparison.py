@@ -455,6 +455,33 @@ TIMING_KEYS = ("wall_seconds", "duration_ms", "duration_api_ms", "total_ms",
                "ttft_first_turn", "telemetry", "llm_api_duration_ms")
 
 
+_ALIAS_RE = re.compile(r"bench-[a-z0-9.\-]+")
+_EMBEDDED = (
+    # Matches the KEY and the first nested key name without requiring a
+    # balanced-brace match, which failed on one record and left the probe
+    # model's name behind. Presence in only one file would itself be a weak
+    # asymmetry even though the probe model is public and identical for all.
+    re.compile(r'\\?"modelUsage\\?":\s*\{\s*\\?"[^"\\]*\\?"'),
+    re.compile(r'\\?"canonicalModel\\?":\s*\\?"[^"\\]*\\?"'),
+    re.compile(r'\\?"(?:duration_ms|duration_api_ms|total_cost_usd)\\?":\s*[0-9.]+'),
+)
+
+
+def redact_text(t: str) -> str:
+    """Redact identity INSIDE string values, not just in keys.
+
+    The client's terminal result is embedded in `stdout_full` as serialized
+    JSON, so key-based stripping never touched it: the first scoring copies
+    carried `"canonicalModel":"bench-<model>-<mode>-<ctx>"` as plain text, and a
+    bench alias names its model outright. Model FAMILY names are deliberately
+    left alone -- the planner task is about model pulling, every candidate
+    discusses them, so they carry no signal about who answered."""
+    t = _ALIAS_RE.sub("<ALIAS-REDACTED>", t)
+    for rx in _EMBEDDED:
+        t = rx.sub("<IDENTITY-REDACTED>", t)
+    return t
+
+
 def strip_identity(obj, drop_timing: bool = True):
     """Remove anything that names the model, or that hints at it.
 
@@ -473,6 +500,8 @@ def strip_identity(obj, drop_timing: bool = True):
         return out
     if isinstance(obj, list):
         return [strip_identity(v, drop_timing) for v in obj]
+    if isinstance(obj, str):
+        return redact_text(obj)
     return obj
 
 
@@ -546,7 +575,10 @@ def main() -> int:
     out = Path(a.output_dir) if a.output_dir else \
         Path.home() / ".local/state/ailocal/benchmark/planner" / a.run_id
     env = environment_state()
-    wts = prepare_worktrees(a.run_id, a.dry_run)
+    # Validation and dry-run must not create real git worktrees: neither runs
+    # the cleanup path, so both leaked one worktree per candidate per
+    # invocation until this was caught.
+    wts = prepare_worktrees(a.run_id, a.dry_run or a.validate_private_routing)
     manifest = build_manifest(a.run_id, a.turns, a.probe_model, wts)
 
     if a.validate_private_routing:
