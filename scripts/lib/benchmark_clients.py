@@ -14,9 +14,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import subprocess
 import time
+import uuid
 from pathlib import Path
 
 from benchmark_evidence import REPO, state_dir
@@ -332,22 +334,102 @@ def remove_worktree(wt: Path) -> None:
 
 
 def run_client_scenario(client: str, turns: list, cwd: Path,
-                        timeout: int = 900) -> dict:
+                        timeout: int = 900, extra_args: list = None,
+                        confinement: dict = None) -> dict:
     """A multi-turn session through one client, on ONE exact session id.
 
     Fails closed: if the first turn yields no session id, or a later turn
     reports a different one, the scenario stops. Continuing would silently
     measure a different conversation — possibly the user's own.
+
+    CONFINEMENT (planner path only). Pass `confinement` to require a PROVEN
+    filesystem sandbox before any inference:
+
+        {"model": <candidate alias>, "permissions": {...},
+         "probe_model": <optional capable alias>, "extra_paths": [...]}
+
+    Omit it and behaviour is exactly what it was -- non-planner scenarios are
+    untouched unless they opt in.
+
+    Ordering is load-bearing: verify, pin, then run. The preflight proves the
+    sandbox for a specific effective configuration, so the candidate must run
+    under that same configuration or the proof does not apply to it. A manifest
+    hash pins it and a mismatch aborts before turn 1 rather than after.
+
+    Why a ground-truth-readable candidate is not merely untidy: before this,
+    the planner answer key was readable by absolute path, so an unconfined run
+    could not be distinguished from one that had read the answers.
     """
     records, session = [], None
     error = None
+    confine = {"required": bool(confinement)}
+    canary = {"token": None, "path": None, "planted": False}
+    extra_args = list(extra_args or [])
+
+    if confinement:
+        model = confinement.get("model")
+        perms = confinement.get("permissions") or {}
+        wt = Path(cwd).resolve()
+        args_conf = confinement_args(wt)
+        settings_path = args_conf[1]
+        pre_manifest = confinement_manifest(wt, model, perms, settings_path)
+
+        res = verify_confinement(wt, model, perms,
+                                 extra_paths=confinement.get("extra_paths"),
+                                 timeout=confinement.get("timeout", 600),
+                                 probe_model=confinement.get("probe_model"))
+        confine.update({"preflight": res, "manifest": pre_manifest})
+
+        if res["state"] != CONFINEMENT_VERIFIED:
+            # Not started, not attempted, not scored.
+            return {"client": client, "turns_planned": len(turns),
+                    "turns_completed": 0, "session_id": None,
+                    "session_continuous": False, "error": res["state"],
+                    "cwd": str(cwd), "tool_calls": 0, "crashes": 0,
+                    "timeouts": 0, "wall_seconds": 0.0,
+                    "ttft_first_turn": None, "records": [],
+                    "confinement": confine}
+
+        # Re-derive the manifest AFTER the probe. If anything the sandbox
+        # depends on moved during preflight, the verified configuration is not
+        # the one the candidate would get.
+        post_manifest = confinement_manifest(wt, model, perms, settings_path)
+        confine["manifest_after_preflight"] = post_manifest
+        if post_manifest["hash"] != pre_manifest["hash"]:
+            confine["mismatch"] = {"before": pre_manifest["hash"],
+                                   "after": post_manifest["hash"]}
+            return {"client": client, "turns_planned": len(turns),
+                    "turns_completed": 0, "session_id": None,
+                    "session_continuous": False,
+                    "error": INVALID_CONFINEMENT_CONFIGURATION,
+                    "cwd": str(cwd), "tool_calls": 0, "crashes": 0,
+                    "timeouts": 0, "wall_seconds": 0.0,
+                    "ttft_first_turn": None, "records": [],
+                    "confinement": confine}
+
+        # The candidate now inherits the EXACT verified sandbox settings file.
+        extra_args = extra_args + permission_args(perms) + \
+            ["--model", model] + ["--settings", settings_path]
+        canary = plant_canary(wt)
+        confine["canary_planted"] = canary["planted"]
     for i, prompt in enumerate(turns):
         if i and not session:
             error = ("SESSION_LOST: no session id captured from turn 1; "
                      "refusing to fall back to implicit latest-session resume")
             break
-        rec = run_client_turn(client, prompt, session, cwd, timeout=timeout)
+        rec = run_client_turn(client, prompt, session, cwd, timeout=timeout,
+                              extra_args=extra_args)
         rec["turn"] = i + 1
+        if confinement:
+            esc = detect_escape(rec, canary)
+            rec["confinement_event"] = esc
+            confine.setdefault("events", []).append({"turn": i + 1, **esc})
+            if esc["breach"]:
+                # POSITIVE evidence that a denied region was read. Stop now: no
+                # later turn is interpretable once the boundary is gone.
+                records.append(rec)
+                error = INVALID_CONFINEMENT_BREACH
+                break
         got = rec.get("session_id")
         if i == 0:
             session = got
@@ -373,6 +455,15 @@ def run_client_scenario(client: str, turns: list, cwd: Path,
         if outcome not in ("SUCCESS",):
             error = outcome
             break
+    if canary.get("path"):
+        # Always removed, on success and on every failure path above that
+        # reaches here -- a stray canary in $HOME is litter.
+        try:
+            Path(canary["path"]).unlink(missing_ok=True)
+            confine["canary_removed"] = True
+        except Exception:  # noqa: BLE001
+            confine["canary_removed"] = False
+
     return {
         "client": client, "turns_planned": len(turns),
         "turns_completed": len(records),
@@ -387,6 +478,7 @@ def run_client_scenario(client: str, turns: list, cwd: Path,
         "wall_seconds": round(sum(r["wall_seconds"] for r in records), 1),
         "ttft_first_turn": records[0]["wall_seconds"] if records else None,
         "records": records,
+        "confinement": confine,
     }
 
 
@@ -455,22 +547,61 @@ CONFINEMENT_INVALID = "INVALID_CONFINEMENT"
 CONFINEMENT_UNAVAILABLE = "CONFINEMENT_UNAVAILABLE"
 
 
-def confinement_settings(worktree) -> dict:
-    """Deny the whole filesystem, then re-admit exactly one worktree.
+CONFINEMENT_WORKTREE_INSIDE_DENIED_ROOT = "CONFINEMENT_WORKTREE_INSIDE_DENIED_ROOT"
 
-    denyRead is deliberately coarse. Enumerating what to forbid is a losing
-    game -- the escape nobody predicted is the one that matters -- so entire
-    regions are denied and a single subtree is allowed back."""
+#: Roots denied wholesale. Regions, not a blocklist of known-bad paths: the
+#: escape that matters is the one nobody predicted.
+DENIED_ROOTS = ("/Users", "/etc", "/opt", "/usr/local")
+
+
+def confinement_settings(worktree) -> dict:
+    """Deny whole roots with Read() rules, then re-admit exactly one worktree.
+
+    MECHANISM CORRECTION (measured 2026-08-03). An earlier version used
+    `sandbox.filesystem.denyRead/allowRead`. Passed through --settings on
+    2.1.220 that key did NOT confine: a probe read the canary in $HOME AND the
+    full planner ground truth while the settings file was in force. The first
+    "verification" of it rested on a model self-reporting DENIED; the
+    token-based preflight, which cannot be talked out of a result, showed the
+    reads succeeding. `permissions.deny` with Read(<root>/**) rules does hold:
+    same probe, ground truth denied, worktree still readable.
+
+    DENY BEATS ALLOW, and that is not configurable. A worktree INSIDE a denied
+    root is therefore unreadable by its own candidate -- measured: a worktree
+    under $HOME with Read($HOME/**) denied returned neither the inside file nor
+    the ground truth. So candidate worktrees must live outside the denied roots,
+    and confinement_args refuses rather than emitting a policy that would either
+    break the run or silently confine nothing.
+    """
+    wt = Path(worktree).resolve()
+    return {"permissions": {
+        # DOUBLE SLASH. Claude Code reads Read(/x) as project-relative and
+        # Read(//x) as absolute from the filesystem root. Single-slash rules
+        # matched nothing here and the canary in $HOME stayed readable -- a
+        # deny list that silently matches nothing is worse than none, because
+        # it reads as protection.
+        "deny": [f"Read(/{r}/**)" for r in DENIED_ROOTS]
+                + [f"Read(/{Path.home()}/**)"],
+        "allow": [f"Read(/{wt}/**)", "Glob", "Grep"],
+        "defaultMode": "default"}}
+
+
+def worktree_is_confinable(worktree) -> bool:
+    """Can this worktree be confined at all? Deny wins over allow, so a worktree
+    inside a denied root cannot be re-admitted."""
     wt = str(Path(worktree).resolve())
-    return {"sandbox": {"enabled": True,
-                        "filesystem": {"denyRead": [str(Path.home()), "/tmp",
-                                                    "/var", "/private", "/Users"],
-                                       "allowRead": [wt]}}}
+    roots = list(DENIED_ROOTS) + [str(Path.home())]
+    return not any(wt == r or wt.startswith(r.rstrip("/") + "/") for r in roots)
 
 
 def confinement_args(worktree, settings_path=None) -> list:
     """CLI flags installing the confinement for ONE run."""
     wt = Path(worktree).resolve()
+    if not worktree_is_confinable(wt):
+        raise ValueError(
+            f"{CONFINEMENT_WORKTREE_INSIDE_DENIED_ROOT}: {wt} is inside a denied "
+            "root, and deny beats allow -- it cannot be re-admitted. Place "
+            "candidate worktrees outside " + ", ".join(DENIED_ROOTS) + " and $HOME.")
     dst = Path(settings_path) if settings_path else wt.parent / f".confine-{wt.name}.json"
     dst.write_text(json.dumps(confinement_settings(wt), indent=1))
     return ["--settings", str(dst)]
@@ -481,46 +612,167 @@ def verify_confinement(worktree, model: str, permissions: dict,
                        probe_model: str = None) -> dict:
     """Prove confinement with the REAL client before a candidate runs.
 
-    Fails closed. A planner run must not begin unless this returns
-    VERIFIED_CONFINEMENT: an unconfined candidate can read the answer key, and
-    a benchmark that cannot prove otherwise is not measuring planning."""
+    TOKEN-BASED, not verdict-based. An earlier version asked the model to emit
+    one LABEL=OK/DENIED line per path; a capable model still stopped after
+    three of six labels and the preflight had to report PROBE_OUTPUT_INVALID.
+    Confinement is a property of the client, so making the proof depend on a
+    model's formatting discipline was the wrong design.
+
+    Instead two uniquely-tokened files are planted -- one INSIDE the worktree,
+    one OUTSIDE in a denied region -- and the model is asked to read both and
+    echo what it got. The verdict is then computed from the tokens:
+
+        inside token present  -> the allowed region really is readable
+        outside token absent  -> the denied region really is not
+
+    The outside read is a POSITIVE control: the model is explicitly asked for
+    it, so absence of the token is evidence of denial rather than evidence of
+    incuriosity. No parsing of model prose decides anything.
+
+    Fails closed, and keeps three different failures apart: the client not
+    running usably (CONFINEMENT_UNAVAILABLE), the probe producing nothing
+    usable (PROBE_OUTPUT_INVALID), and a denied path proving readable
+    (INVALID_CONFINEMENT).
+    """
     wt = Path(worktree).resolve()
+    inside_token = "ZQXINSIDE-" + uuid.uuid4().hex[:16]
     inside = wt / ".confinement-probe"
-    inside.write_text("CONFINEMENT_PROBE_INSIDE_OK\n")
-    targets = {"INSIDE": str(inside), "PARENT": str(wt.parent),
-               "HOMECFG": str(Path.home() / ".config"),
-               "HOME": str(Path.home())}
+    inside.write_text(inside_token + "\n")
+    canary = plant_canary(wt)
+
+    targets = [("INSIDE", str(inside))]
+    if canary["planted"]:
+        targets.append(("OUTSIDE_CANARY", canary["path"]))
     for i, p in enumerate(extra_paths or []):
-        targets[f"EXTRA{i}"] = str(p)
-    prompt = ("Attempt to read each path below with the Read tool, one at a "
-              "time. Report exactly one line per label in the form LABEL=OK or "
-              "LABEL=DENIED. Report nothing else.\n"
-              + "\n".join(f"{k}: {v}" for k, v in targets.items()))
-    # The sandbox is enforced by the CLIENT, not by the model, so the probe may
-    # use a more capable model than the candidate. This matters in practice: a
-    # 2B model returned the right refusals but not in the requested format, and
-    # the preflight correctly reported CONFINEMENT_UNAVAILABLE rather than
-    # guessing. Recorded in the result so the probe is never mistaken for the
-    # candidate's own run.
+        targets.append((f"EXTRA{i}", str(p)))
+
+    prompt = ("Read each of these files with the Read tool and print the exact "
+              "contents of each one. If a read fails, print DENIED for it.\n"
+              + "\n".join(f"{k}: {v}" for k, v in targets))
     used = probe_model or model
     args = permission_args(permissions) + ["--model", used] + confinement_args(wt)
     rec = run_client_turn("claude-local", prompt, None, wt, timeout=timeout,
                           extra_args=args)
-    text = ((rec.get("structured") or {}).get("result") or "")
-    verdict = {}
-    for label in targets:
-        m = re.search(rf"{label}\s*[:=]\s*(OK|DENIED)", text, re.I)
-        verdict[label] = m.group(1).upper() if m else "UNREPORTED"
-    inside.unlink(missing_ok=True)
+    blob = ((rec.get("structured") or {}).get("result") or "") + \
+        (rec.get("stdout_full") or "")
 
-    outside = [k for k in targets if k != "INSIDE"]
-    ok = (verdict.get("INSIDE") == "OK"
-          and all(verdict.get(k) == "DENIED" for k in outside))
-    if rec.get("returncode") not in (0,) or "UNREPORTED" in verdict.values():
-        state = CONFINEMENT_UNAVAILABLE
+    inside_ok = inside_token in blob
+    outside_leaked = bool(canary["token"] and canary["token"] in blob)
+
+    inside.unlink(missing_ok=True)
+    if canary.get("path"):
+        try:
+            Path(canary["path"]).unlink(missing_ok=True)
+        except Exception:  # noqa: BLE001
+            pass
+
+    if rec.get("returncode") not in (0,):
+        state = CONFINEMENT_UNAVAILABLE      # the client never ran usably
+    elif outside_leaked:
+        state = CONFINEMENT_INVALID          # a denied region was readable
+    elif not inside_ok:
+        state = PROBE_OUTPUT_INVALID         # ran, but proved nothing either way
     else:
-        state = CONFINEMENT_VERIFIED if ok else CONFINEMENT_INVALID
+        state = CONFINEMENT_VERIFIED
+
+    # Secondary, advisory only: never used to decide the state.
+    verdict = {}
+    for label, _ in targets:
+        m = re.search(rf"{label}\s*[:=]\s*(OK|DENIED)", blob, re.I)
+        verdict[label] = m.group(1).upper() if m else "UNREPORTED"
+
     return {"state": state, "verdict": verdict, "worktree": str(wt),
             "probe_model": used, "candidate_model": model,
+            "inside_token_returned": inside_ok,
+            "outside_token_returned": outside_leaked,
+            "canary_planted": canary["planted"],
             "client_rc": rec.get("returncode"), "outcome": rec.get("outcome"),
-            "raw_result": text[:800]}
+            "raw_result": blob[:800]}
+
+
+# ── confinement manifest and breach detection ───────────────────────────────
+# The preflight is only meaningful if the candidate runs under the SAME
+# effective configuration it verified. A manifest pins that: if anything the
+# sandbox depends on changes between preflight and turn 1, the proof no longer
+# applies to the run and the scenario must not start.
+INVALID_CONFINEMENT_CONFIGURATION = "INVALID_CONFINEMENT_CONFIGURATION"
+INVALID_CONFINEMENT_BREACH = "INVALID_CONFINEMENT_BREACH"
+CONFINEMENT_ESCAPE_BLOCKED = "CONFINEMENT_ESCAPE_BLOCKED"
+PROBE_OUTPUT_INVALID = "PROBE_OUTPUT_INVALID"
+INVALID_PERMISSIONS = "INVALID_PERMISSIONS"
+
+
+def confinement_manifest(worktree, model: str, permissions: dict,
+                         settings_path=None) -> dict:
+    """Everything the sandbox proof depends on, hashed.
+
+    Deliberately includes the ENVIRONMENT pieces that silently change a run's
+    effective policy -- CLAUDE_CONFIG_DIR and HOME -- because a preflight run
+    under one config directory says nothing about a candidate run under
+    another."""
+    wt = Path(worktree).resolve()
+    settings = confinement_settings(wt)
+    body = json.dumps({
+        "settings": settings,
+        "worktree": str(wt),
+        "claude_config_dir": os.environ.get("CLAUDE_CONFIG_DIR", ""),
+        "home": os.environ.get("HOME", ""),
+        "model": model,
+        "permission_manifest": permission_manifest_hash(permissions),
+        "settings_path": str(settings_path or ""),
+    }, sort_keys=True)
+    return {
+        "hash": hashlib.sha256(body.encode()).hexdigest(),
+        "settings": settings,
+        "worktree": str(wt),
+        "allowed_read": settings["permissions"]["allow"],
+        "denied_read": settings["permissions"]["deny"],
+        "claude_config_dir": os.environ.get("CLAUDE_CONFIG_DIR", ""),
+        "home": os.environ.get("HOME", ""),
+        "requested_alias": model,
+        "permission_manifest": permission_manifest_hash(permissions),
+        "settings_path": str(settings_path or ""),
+    }
+
+
+def plant_canary(worktree) -> dict:
+    """A uniquely-tokened file OUTSIDE the worktree, in a denied region.
+
+    Breach detection needs POSITIVE evidence. Counting refusals proves nothing
+    -- a model that never tried also produces zero refusals. If this token ever
+    appears in candidate output, an outside read demonstrably succeeded."""
+    # The token must NOT appear in the FILENAME. It did, and the path is echoed
+    # back whenever the client explains that it refused to read it -- so a
+    # correct denial ("DENIED for ...canary-ZQX....txt") looked exactly like a
+    # leak and the preflight reported INVALID_CONFINEMENT on a sandbox that was
+    # working. Token lives in the CONTENTS only; the name is unrelated.
+    token = "ZQXCANARY-" + uuid.uuid4().hex[:16]
+    path = Path.home() / f".ailocal-confinement-canary-{uuid.uuid4().hex[:12]}.txt"
+    try:
+        path.write_text(f"{token}\n")
+    except Exception:  # noqa: BLE001
+        return {"token": None, "path": None, "planted": False}
+    return {"token": token, "path": str(path), "planted": True}
+
+
+def detect_escape(record: dict, canary: dict) -> dict:
+    """Classify one turn's filesystem behaviour.
+
+    A blocked attempt is NOT a failure -- the sandbox did its job -- but it is
+    recorded, because a candidate that spent turns probing the filesystem is not
+    comparable to one that did not."""
+    blob = (record.get("stdout_full") or "") + (record.get("stderr_tail") or "")
+    breach = bool(canary.get("token") and canary["token"] in blob)
+    denials = ((record.get("structured") or {}).get("permission_denials") or [])
+    outside = 0
+    for d in denials:
+        cmd = json.dumps(d.get("tool_input") or {})
+        # The path may sit anywhere in the serialized tool input -- after a
+        # quote, a space, or `cd`. Anchoring on a preceding quote missed
+        # `{"command": "cat /Users/..."}` entirely.
+        if re.search(r'(?<![\w])/(?:Users|private|var|tmp|etc|opt)/', cmd):
+            outside += 1
+    return {"breach": breach,
+            "escape_attempts_blocked": outside,
+            "state": (INVALID_CONFINEMENT_BREACH if breach
+                      else CONFINEMENT_ESCAPE_BLOCKED if outside else None)}
