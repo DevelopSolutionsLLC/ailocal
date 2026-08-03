@@ -126,8 +126,8 @@ def main() -> int:
     check("import profile_config" in bench, "benchmark uses the shared resolver")
     check("re.finditer" not in bench.split("def parse_profile")[1].split("def ")[0],
           "benchmark's parse_profile no longer parses YAML itself")
-    check("load_effective" in bench,
-          "benchmark reads the generated artifact for the active tier")
+    check("effective_tiers" in bench,
+          "benchmark reads the generated artifact (all tiers)")
 
     print("\nBENCHMARK AND PRODUCTION AGREE ON EVERY ROLE")
     import benchmark as B
@@ -216,14 +216,51 @@ def main() -> int:
         check(k in arch, f"role carries {k}")
     check(P.active_tier() == eff["tier"], "runtime tier comes from the artifact")
 
+
+    print("\nALL TIERS COME FROM GENERATED DATA — NO RUNTIME YAML")
+    tiers = P.effective_tiers()
+    check(sorted(tiers) == sorted(P.TIERS), f"all four tiers normalized {sorted(tiers)}")
+    for t in P.TIERS:
+        blk = tiers[t]
+        check(blk["source_profile_sha256"], f"{t} records its source hash")
+        check(len(blk["roles"]) >= 4, f"{t} carries {len(blk['roles'])} roles")
+    check(P.effective_role_for_tier("32gb", "architecture")["model"],
+          "a non-active tier resolves from generated data")
+    try:
+        P.effective_role_for_tier("999gb", "architecture"); got = "NO ERROR"
+    except P.ProfileError as e:
+        got = e.code
+    check(got == P.EFFECTIVE_PROFILE_SCHEMA_INVALID, "unknown tier fails closed")
+
+    import benchmark as _B
+    for t in P.TIERS:
+        a = _B.parse_profile(t)
+        b = {r: {"active": c["model"], "context": c["context"], "enabled": c["enabled"]}
+             for r, c in tiers[t]["roles"].items()}
+        check(a == b, f"{t}: benchmark cross-tier == generated data")
+    bsrc = (REPO / "scripts" / "lib" / "benchmark.py").read_text()
+    check("effective_tiers" in bsrc and "re.finditer" not in
+          bsrc.split("def parse_profile")[1].split("def ")[0],
+          "benchmark parse_profile reads generated data, parses no YAML")
+
+    # Shell consumers must not parse YAML either.
+    for name in ("start.sh", "doctor.sh", "install-models.sh"):
+        src = (REPO / "scripts" / name).read_text()
+        check("active:" not in src or "grep -E" not in src.split("active:")[0][-80:],
+              f"{name} does not grep|sed profile YAML")
+    check("effective-profile.json" in (REPO / "scripts" / "install-models.sh").read_text(),
+          "install-models.sh consumes the generated artifact")
+
     print("\nSTALENESS AND CORRUPTION FAIL CLOSED")
     import shutil as _sh
     box = Path(tempfile.mkdtemp(prefix="eff-"))
     (box / "config" / "profiles").mkdir(parents=True)
     _sh.copy(REPO / "config" / "effective-profile.json", box / "config")
     _sh.copy(REPO / "config" / "active-profile", box / "config")
-    _sh.copy(REPO / "config" / "profiles" / f"{eff['tier']}.yaml",
-             box / "config" / "profiles")
+    # ALL tiers: the artifact now normalizes every tier and validates every
+    # source hash, so a fixture carrying only the active profile is incomplete.
+    for _t in P.TIERS:
+        _sh.copy(REPO / "config" / "profiles" / f"{_t}.yaml", box / "config" / "profiles")
     check(P.load_effective(box)["tier"] == eff["tier"], "a faithful copy validates")
 
     def expect(code, mutate, label):

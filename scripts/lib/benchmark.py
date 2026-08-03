@@ -262,28 +262,21 @@ def _scalar(v):
 
 
 def parse_profile(tier: str) -> dict:
-    """{capability: {active, context, enabled}} — COMPATIBILITY WRAPPER.
+    """{capability: {active, context, enabled}} for ANY tier, from generated data.
 
-    The parsing itself moved to profile_config, which is now the only profile
-    parser in the repository. This shape is preserved because existing callers
-    read exactly these three keys; it is not a second implementation."""
+    This used to parse profile YAML for non-active tiers, which was the last
+    runtime path contradicting "sync-models is the sole YAML consumer" — and it
+    kept a second parser reachable from live code. Cross-tier benchmark planning
+    now reads the normalized all-tier artifact, and a stale or missing tier
+    fails closed instead of silently parsing whatever is on disk."""
     import profile_config as _pc
-    # Reads the generated artifact for the ACTIVE tier, and the profile only
-    # when asked about a different one (benchmark planning across tiers). No
-    # runtime YAML fallback for the active tier.
-    if tier == _pc.active_tier():
-        roles = _pc.load_effective()["roles"]
-        return {r: {"active": c["model"], "context": c["context"],
-                    "enabled": c["enabled"]} for r, c in roles.items()}
-    out = {}
-    for role in _pc.ROLES:
-        try:
-            c = _pc.resolve_role(tier, role)
-        except _pc.ProfileError:
-            continue
-        out[role] = {"active": c["active"], "context": c["context"],
-                     "enabled": c["enabled"]}
-    return out
+    roles = _pc.effective_tiers()[tier]["roles"] if tier in _pc.effective_tiers() \
+        else None
+    if roles is None:
+        raise _pc.ProfileError(_pc.EFFECTIVE_PROFILE_SCHEMA_INVALID,
+                               f"tier {tier!r} not in generated data")
+    return {r: {"active": c["model"], "context": c["context"],
+                "enabled": c["enabled"]} for r, c in roles.items()}
 
 
 def select(profile: str = None, explicit=None) -> dict:
