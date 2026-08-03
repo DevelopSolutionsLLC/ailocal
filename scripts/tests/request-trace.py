@@ -70,6 +70,56 @@ def load_completion_helpers():
     return ns
 
 
+def context_metadata_checks() -> None:
+    """Configured context geometry must be reportable WITHOUT the registry.
+
+    declared_context_tokens was permanently null for every bench-* alias: the
+    registry does not know temporary aliases, and the fallback looked under
+    litellm_params.model_info, which is a SIBLING of litellm_params rather than
+    a child. So the one field that could have shown an over-admission was the
+    one guaranteed to be empty.
+    """
+    print("\ncontext admission metadata")
+    ns = load_helpers()
+    budget = ns["_context_budget"]
+
+    # The exact planner geometry.
+    data = {"model": "bench-x", "max_tokens": 8192,
+            "litellm_params": {"num_ctx": 40960, "num_predict": 8192},
+            "model_info": {"max_input_tokens": 45875}}
+    out = budget(None, data, {"input_tokens_estimated_total": 39157})
+    check(out["configured_num_ctx"] == 40960, "configured num_ctx recorded (40960)")
+    check(out["configured_num_predict"] == 8192,
+          "configured num_predict recorded (8192)")
+    check(out["usable_input_tokens"] == 32768,
+          "usable input = num_ctx - reserved output (32768)")
+    check(out["admission_limit_tokens"] == 45875,
+          "admission limit read without the registry (45875)")
+    check(out["admission_exceeds_usable_input"] is True,
+          "admission ABOVE physical capacity is flagged in the record")
+    check(out["model_native_context_tokens"] is None
+          and out["model_native_context_availability"]
+          == "not_exposed_by_litellm_hook",
+          "the model's native window is not fabricated")
+
+    # num_predict -1 is Ollama's INFINITE, not a reservation of 1 token.
+    neg = budget(None, {"model": "m", "litellm_params":
+                        {"num_ctx": 24576, "num_predict": -1}}, {})
+    check(neg["configured_num_predict"] == -1, "negative num_predict is preserved")
+    check(neg["usable_input_tokens"] is None
+          and neg["usable_input_availability"] == "num_predict_unbounded_or_absent",
+          "unbounded num_predict ⇒ usable input NOT computable, not the full window")
+    check(neg["admission_exceeds_usable_input"] is False,
+          "no usable figure ⇒ no over-admission claim")
+
+    # A safe geometry must not be flagged.
+    safe = budget(None, {"model": "m", "litellm_params":
+                         {"num_ctx": 40960, "num_predict": 8192},
+                         "model_info": {"max_input_tokens": 32768}}, {})
+    check(safe["admission_exceeds_usable_input"] is False,
+          "admission within capacity is not flagged")
+
+
 def schema_and_dialect_checks() -> None:
     """The two schema faults that each cost a wasted run."""
     print("\nschema normalization and stream dialects")
@@ -303,6 +353,7 @@ def main() -> int:
 
     completion_evidence_checks()
     schema_and_dialect_checks()
+    context_metadata_checks()
     historical_compatibility_checks()
 
     print()

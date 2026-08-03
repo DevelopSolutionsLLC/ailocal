@@ -394,24 +394,66 @@ def _context_budget(self_registry, data, components) -> dict:
             declared = self_registry.max_context(d.get("model"))
     except Exception:
         declared = None
+    # The fallback below looked under litellm_params.model_info, but model_info
+    # is a SIBLING of litellm_params in the deployment config, not nested inside
+    # it -- so this path never resolved and declared_context_tokens was
+    # permanently null for every bench-* alias (the registry does not know
+    # temporary aliases either). Both locations are now tried, in the order
+    # LiteLLM actually populates them.
     if declared is None:
-        try:
-            declared = ((d.get("litellm_params") or {}).get("model_info") or {}) \
-                .get("max_input_tokens")
-        except Exception:
-            declared = None
+        for src in (d.get("model_info"),
+                    (d.get("litellm_params") or {}).get("model_info")):
+            try:
+                if isinstance(src, dict) and src.get("max_input_tokens"):
+                    declared = src["max_input_tokens"]
+                    break
+            except Exception:  # noqa: BLE001
+                continue
 
     requested_out = d.get("max_tokens") or d.get("max_completion_tokens")
     total_in = components.get("input_tokens_estimated_total")
     headroom = None
     if isinstance(declared, int) and isinstance(total_in, int):
         headroom = declared - total_in - (requested_out if isinstance(requested_out, int) else 0)
+    # CONFIGURED geometry, read straight from the deployment. These do not
+    # depend on the production registry, which is why they are the only context
+    # numbers a temporary bench-* alias can report at all. They are CONFIGURED
+    # values and are named as such: none of them is a provider measurement, and
+    # the physical window is num_ctx, never the admission threshold.
+    lp = d.get("litellm_params") or {}
+    num_ctx = lp.get("num_ctx")
+    num_predict = lp.get("num_predict")
+    usable_in = None
+    if isinstance(num_ctx, int) and isinstance(num_predict, int) and num_predict > 0:
+        # num_predict -1 means INFINITE generation in Ollama and -2 fill-context;
+        # neither reserves a knowable amount, so usable input is not computable
+        # rather than silently equal to the whole window.
+        usable_in = num_ctx - num_predict
+    elif isinstance(num_ctx, int) and num_predict in (None, -1, -2):
+        usable_in = None
+
     return {
         "requested_output_tokens": requested_out if isinstance(requested_out, int) else None,
         "declared_context_tokens": declared if isinstance(declared, int) else None,
         "effective_backend_context_tokens": None,
         "effective_backend_context_availability": "not_measured_by_this_hook",
         "context_headroom_tokens": headroom,
+        "configured_num_ctx": num_ctx if isinstance(num_ctx, int) else None,
+        "configured_num_predict": num_predict if isinstance(num_predict, int) else None,
+        "usable_input_tokens": usable_in,
+        "usable_input_availability": (
+            None if usable_in is not None else "num_predict_unbounded_or_absent"),
+        # What the pre-call guard will ADMIT. Recorded next to usable_input so
+        # admission > physical capacity is visible in the record itself rather
+        # than needing to be recomputed by a reader.
+        "admission_limit_tokens": declared if isinstance(declared, int) else None,
+        "admission_exceeds_usable_input": (
+            bool(isinstance(declared, int) and usable_in is not None
+                 and declared > usable_in)),
+        # The model's own trained window. NOT visible from inside the proxy --
+        # it needs an Ollama /api/show call this hook must not make.
+        "model_native_context_tokens": None,
+        "model_native_context_availability": "not_exposed_by_litellm_hook",
     }
 
 
