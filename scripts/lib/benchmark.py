@@ -268,12 +268,19 @@ def parse_profile(tier: str) -> dict:
     parser in the repository. This shape is preserved because existing callers
     read exactly these three keys; it is not a second implementation."""
     import profile_config as _pc
+    # Reads the generated artifact for the ACTIVE tier, and the profile only
+    # when asked about a different one (benchmark planning across tiers). No
+    # runtime YAML fallback for the active tier.
+    if tier == _pc.active_tier():
+        roles = _pc.load_effective()["roles"]
+        return {r: {"active": c["model"], "context": c["context"],
+                    "enabled": c["enabled"]} for r, c in roles.items()}
     out = {}
     for role in _pc.ROLES:
         try:
             c = _pc.resolve_role(tier, role)
         except _pc.ProfileError:
-            continue          # a tier legitimately need not define every role
+            continue
         out[role] = {"active": c["active"], "context": c["context"],
                      "enabled": c["enabled"]}
     return out
