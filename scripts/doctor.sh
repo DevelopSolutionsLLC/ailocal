@@ -105,7 +105,16 @@ else
 fi
 
 # Derive required models from the model manifest — single source of truth.
-_TIER="$(cat "$ROOT_DIR/config/active-profile" 2>/dev/null || echo 64gb)"
+# Resolved ONCE for the whole script, fail closed. doctor previously re-read the
+# marker five times and parsed the profile YAML with sed, which breaks on any
+# comment or reordering -- and profiles are heavily commented.
+_TIER="$("$ROOT_DIR/scripts/profile-config" active-tier)" || {
+  echo "  ✗ cannot resolve the active profile — refusing to report on an assumed tier" >&2
+  exit 1; }
+_PROFILE_JSON="$("$ROOT_DIR/scripts/profile-config" profile-summary --tier "$_TIER")" || {
+  echo "  ✗ active profile is invalid — refusing to report on an assumed tier" >&2
+  exit 1; }
+_pf() { printf '%s' "$_PROFILE_JSON" | "$ROOT_DIR/scripts/profile-json" "$@"; }
   _PROFILE="$ROOT_DIR/config/profiles/${_TIER}.yaml"
   required_models=($(grep -E '^\s*active:' "$_PROFILE" | sed 's/.*active:[[:space:]]*//'))
 if has ollama && ollama list >/dev/null 2>&1; then
@@ -214,7 +223,7 @@ fi
 # it while it is happening.
 step "Architecture route"
 
-ARCH_MODEL="$(sed -n 's/^  active: *//p' config/profiles/"$(cat config/active-profile 2>/dev/null || echo 64gb)".yaml 2>/dev/null | head -1)"
+ARCH_MODEL="$(_pf roles architecture model)"
 if [ -n "$ARCH_MODEL" ]; then
   PS_JSON="$(curl -s --max-time 5 http://127.0.0.1:11434/api/ps 2>/dev/null || echo '{}')"
   if echo "$PS_JSON" | grep -q "$ARCH_MODEL"; then
@@ -254,7 +263,7 @@ fi
 # Parallelism and the KV consequence. num_ctx is allocated PER SLOT, so this is
 # the single setting that decides both memory and cache locality.
 NPAR="$(launchctl getenv OLLAMA_NUM_PARALLEL 2>/dev/null || echo '')"
-ARCH_CTX="$(sed -n '/^architecture:/,/^[a-z]/p' config/profiles/"$(cat config/active-profile 2>/dev/null || echo 64gb)".yaml 2>/dev/null | sed -n 's/^  context: *//p' | head -1)"
+ARCH_CTX="$(_pf roles architecture context)"
 [ -n "$NPAR" ] && [ -n "$ARCH_CTX" ] && \
   info "OLLAMA_NUM_PARALLEL=$NPAR, architecture context=$ARCH_CTX (KV is allocated per slot)"
 
@@ -277,8 +286,8 @@ CC_WIN="$(python3 -c "
 import json,os
 try: print(json.load(open(os.path.expanduser('~/.config/ailocal/claude/settings.json')))['env'].get('CLAUDE_CODE_AUTO_COMPACT_WINDOW',''))
 except Exception: print('')" 2>/dev/null)"
-PROF_WIN="$(sed -n '/^compaction:/,/^[a-z]/p' config/profiles/"$(cat config/active-profile 2>/dev/null || echo 64gb)".yaml 2>/dev/null | sed -n 's/^  window: *//p' | cut -d'#' -f1 | tr -d ' ' | head -1)"
-PROF_PCT="$(sed -n '/^compaction:/,/^[a-z]/p' config/profiles/"$(cat config/active-profile 2>/dev/null || echo 64gb)".yaml 2>/dev/null | sed -n 's/^  pct: *//p' | cut -d'#' -f1 | tr -d ' ' | head -1)"
+PROF_WIN="$(_pf compaction window)"
+PROF_PCT="$(_pf compaction pct)"
 if [ -z "$CC_WIN" ]; then
   warn "claude-local has NO auto-compaction window — long sessions will grow into the stall"
   echo "      fix:  ailocal clients"

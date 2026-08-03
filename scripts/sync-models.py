@@ -5,7 +5,8 @@ Single source of truth (both TRACKED — no gitignored intermediate):
   config/profiles/<tier>.yaml  WHAT each capability is (backend `active`, context, sampling,
                         keep_alive, persona, decision metadata), per RAM tier. Edit the profile
                         directly. The active tier is config/active-profile (machine-specific,
-                        written by install.sh from detected RAM) or `--profile <tier>`; default 64gb.
+                        written by install.sh from detected RAM) or `--profile <tier>`. There is NO
+                        default tier: an unresolvable marker is an error.
   config/clients.yaml   WHICH capability each client surface uses (launch defaults, Codex
                         profiles, Continue entries, compat aliases).
 
@@ -37,6 +38,9 @@ ROOT = Path(__file__).resolve().parent.parent
 PROFILES_DIR   = ROOT / "config/profiles"
 # Interactive-compaction thresholds, read from the profile's `compaction:` block.
 COMPACTION = {}
+
+sys.path.insert(0, str(ROOT / "scripts" / "lib"))
+import profile_config as _pc  # noqa: E402
 
 ACTIVE_PROFILE = ROOT / "config/active-profile"   # one line, e.g. "64gb" (machine-specific)
 CLIENTS_YAML   = ROOT / "config/clients.yaml"
@@ -116,15 +120,14 @@ def flow_dict(v):
 
 # ── profile resolution ─────────────────────────────────────────────────────────
 def resolve_tier(explicit=None):
-    """Which RAM profile is active: an explicit --profile wins; else the tracked-intent
-    config/active-profile marker (written by install.sh from detected RAM); else 64gb."""
+    """Which RAM profile is active: an explicit --profile wins, else the marker.
+
+    Delegates to profile_config, which FAILS CLOSED. The previous version fell
+    through to a hardcoded tier, so a missing or empty marker silently
+    regenerated every client and the proxy for the wrong hardware."""
     if explicit:
         return explicit
-    if ACTIVE_PROFILE.exists():
-        t = ACTIVE_PROFILE.read_text().strip()
-        if t:
-            return t
-    return "64gb"
+    return _pc.resolve_active_tier(ROOT)
 
 
 def profile_path(tier=None, explicit=None):
@@ -137,6 +140,36 @@ def profile_path(tier=None, explicit=None):
 
 # ── config loading ────────────────────────────────────────────────────────────
 def load_models_yaml(path):
+    """Read a profile via the shared parser. Kept as a named function because the
+    generator calls it in several places; the parsing is no longer local."""
+    data = _pc.parse_profile_text(Path(path).read_text())
+    models = {}
+    for section, fields in data.items():
+        if not isinstance(fields, dict):
+            continue          # top-level scalars such as disk_gb
+        out = {}
+        for k, v in fields.items():
+            # sync-models' downstream contract is STRINGS: flow_list() and
+            # flow_dict() parse them at the point of use. The shared parser
+            # returns real lists, so re-serialize to the raw form rather than
+            # changing every call site -- that is a separate task, and doing it
+            # here silently double-quoted every list element in
+            # capabilities.generated.json.
+            if isinstance(v, list):
+                out[k] = "[" + ", ".join(str(x) for x in v) + "]"
+            elif isinstance(v, bool):
+                out[k] = "true" if v else "false"
+            elif v is None:
+                out[k] = ""
+            else:
+                out[k] = str(v)
+        models[section] = out
+    models.pop("disk_gb", None)
+    COMPACTION.update(models.pop("compaction", {}))
+    return models
+
+
+def _legacy_load_models_yaml(path):
     """Read a profile (config/profiles/<tier>.yaml) into an ordered dict:
     capability -> {field: scalar-string}. List fields stay as their raw "[a, b, c]"
     string; use flow_list() at the point of use. Top-level scalars (disk_gb, status,

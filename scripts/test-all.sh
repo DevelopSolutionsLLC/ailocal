@@ -111,6 +111,11 @@ run "planner comparison driver (safe defaults, locking, blinding)" \
 # Cadence, so an ailocal-only machine got the tool switched on with nothing behind
 # it. This drives pyright-langserver over stdio against a real repo file and
 # requires real symbols back — presence of a plugin is not capability.
+# config/profiles/*.yaml are the ONLY authoritative deployment config, and
+# config/active-profile has no implicit default. These prove there is one
+# parser and that every entry point fails closed rather than assuming 64gb.
+run "profile resolver (single parser, fail-closed, no 64gb default)" \
+    python3 scripts/tests/profile-config.py
 run "hardware profiles (schema, tiers, dedup)" \
     python3 scripts/tests/profiles.py
 run "Python LSP baseline for claude-local (real documentSymbol)" \
