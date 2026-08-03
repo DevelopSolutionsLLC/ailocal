@@ -271,7 +271,7 @@ EFFECTIVE_PROFILE_STALE_SOURCE = "EFFECTIVE_PROFILE_STALE_SOURCE"
 EFFECTIVE_PROFILE_HASH_INVALID = "EFFECTIVE_PROFILE_HASH_INVALID"
 EFFECTIVE_PROFILE_SCHEMA_INVALID = "EFFECTIVE_PROFILE_SCHEMA_INVALID"
 
-SUPPORTED_SCHEMA_VERSIONS = (1,)
+SUPPORTED_SCHEMA_VERSIONS = (2,)
 
 
 def _sha(path: Path) -> str:
@@ -315,11 +315,32 @@ def load_effective(repo_root=None) -> dict:
     if data.get("active_profile_sha256") and \
             _sha(marker) != data["active_profile_sha256"]:
         raise ProfileError(EFFECTIVE_PROFILE_STALE_TIER, "marker changed")
-    src = root / data["source_profile"]
-    if data.get("source_profile_sha256") and _sha(src) != data["source_profile_sha256"]:
-        raise ProfileError(EFFECTIVE_PROFILE_STALE_SOURCE,
-                           "profile edited since generation — run `ailocal sync`")
+    # EVERY normalized tier is checked, not just the active one: benchmark
+    # cross-tier planning reads them, and a stale 32gb block would otherwise be
+    # served silently on a 64gb machine.
+    for t, blk in (data.get("tiers") or {}).items():
+        src = root / blk["source_profile"]
+        if blk.get("source_profile_sha256") and _sha(src) != blk["source_profile_sha256"]:
+            raise ProfileError(EFFECTIVE_PROFILE_STALE_SOURCE,
+                               f"{t} profile edited since generation — run `ailocal sync`")
     return data
+
+
+def effective_tiers(repo_root=None) -> dict:
+    """Every normalized tier. The only cross-tier source at runtime."""
+    return load_effective(repo_root)["tiers"]
+
+
+def effective_role_for_tier(tier: str, role: str, repo_root=None) -> dict:
+    """One role from ANY tier, from generated data. No YAML, no fallback."""
+    tiers = effective_tiers(repo_root)
+    if tier not in tiers:
+        raise ProfileError(EFFECTIVE_PROFILE_SCHEMA_INVALID,
+                           f"tier {tier!r} not in generated data")
+    roles = tiers[tier]["roles"]
+    if role not in roles:
+        raise ProfileError(ROLE_MISSING, f"{tier}.{role}")
+    return roles[role]
 
 
 def active_tier(repo_root=None) -> str:
