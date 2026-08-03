@@ -483,10 +483,26 @@ step "Configuring environment (.env)"
 # Run the service stack, client install, and healthcheck automatically.
 run_next_steps() {
   # Sync models.yaml → litellm config so LiteLLM sees the latest model choices.
-  if has python3 && [ -f "$ROOT_DIR/scripts/sync-models.py" ]; then
-    echo
-    step "Syncing model config"
-    python3 "$ROOT_DIR/scripts/sync-models.py" || true
+  # FAIL CLOSED. This was `|| true`, so a profile that failed to parse — or an
+  # unresolvable active-profile marker — left the previous generation in place
+  # and the install continued to install-models.sh, which then pulled whatever
+  # the stale config named. Every downstream consumer reads generated state, so
+  # a generation failure must stop the install rather than be tolerated.
+  if ! has python3; then
+    error "python3 is required to generate model configuration"
+    exit 1
+  fi
+  if [ ! -f "$ROOT_DIR/scripts/sync-models.py" ]; then
+    error "scripts/sync-models.py is missing — cannot generate model configuration"
+    exit 1
+  fi
+  echo
+  step "Syncing model config"
+  if ! python3 "$ROOT_DIR/scripts/sync-models.py"; then
+    error "model configuration generation FAILED — stopping before any model is pulled."
+    error "Existing generated files were left untouched for diagnosis, and are"
+    error "marked unusable: their recorded source hashes no longer match."
+    exit 1
   fi
 
   echo

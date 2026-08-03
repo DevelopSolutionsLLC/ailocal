@@ -28,7 +28,9 @@ region — edit config/profiles/<tier>.yaml / config/clients.yaml and re-run.
 """
 
 import collections
+import hashlib
 import json
+import os
 import re
 import sys
 from datetime import datetime, timezone
@@ -95,6 +97,23 @@ def truthy(v):
 
 
 def flow_list(v):
+    """Accept an already-typed list unchanged.
+
+    The profile parser returns real lists; config/clients.yaml is still read by
+    the legacy line reader below and yields raw "[a, b]" strings. Making this
+    idempotent removes the need to reserialize typed values back into strings
+    just to reparse them -- which is what the previous shim did, and what
+    double-quoted every element in capabilities.generated.json.
+    Remaining raw-string callers: load_clients_yaml() (config/clients.yaml).
+    """
+    if isinstance(v, list):
+        return v
+    if v is None:
+        return []
+    return _flow_list_from_str(v)
+
+
+def _flow_list_from_str(v):
     """Parse a flow-style list "[a, b, c]" -> ["a","b","c"]; tolerate a bare scalar."""
     if v is None:
         return []
@@ -147,48 +166,11 @@ def load_models_yaml(path):
     for section, fields in data.items():
         if not isinstance(fields, dict):
             continue          # top-level scalars such as disk_gb
-        out = {}
-        for k, v in fields.items():
-            # sync-models' downstream contract is STRINGS: flow_list() and
-            # flow_dict() parse them at the point of use. The shared parser
-            # returns real lists, so re-serialize to the raw form rather than
-            # changing every call site -- that is a separate task, and doing it
-            # here silently double-quoted every list element in
-            # capabilities.generated.json.
-            if isinstance(v, list):
-                out[k] = "[" + ", ".join(str(x) for x in v) + "]"
-            elif isinstance(v, bool):
-                out[k] = "true" if v else "false"
-            elif v is None:
-                out[k] = ""
-            else:
-                out[k] = str(v)
-        models[section] = out
+        # Typed values pass through as-is. flow_list() is idempotent and the
+        # scalar consumers coerce with truthy()/int() at the point of use, so
+        # no string round-trip is needed.
+        models[section] = dict(fields)
     models.pop("disk_gb", None)
-    COMPACTION.update(models.pop("compaction", {}))
-    return models
-
-
-def _legacy_load_models_yaml(path):
-    """Read a profile (config/profiles/<tier>.yaml) into an ordered dict:
-    capability -> {field: scalar-string}. List fields stay as their raw "[a, b, c]"
-    string; use flow_list() at the point of use. Top-level scalars (disk_gb, status,
-    profile) are ignored — only indented `key: value` under a capability is captured."""
-    models, current = {}, None
-    for line in Path(path).read_text().splitlines():
-        s = line.rstrip()
-        if not s or s.lstrip().startswith("#"):
-            continue
-        if not s.startswith(" ") and s.endswith(":"):
-            current = s[:-1].strip()
-            models[current] = {}
-        elif current and ":" in s and s.startswith(" "):
-            k, _, v = s.strip().partition(":")
-            models[current][k.strip()] = v.split("#", 1)[0].strip()
-    models.pop("disk_gb", None)
-    # `compaction` is a CLIENT tuning knob, not a capability. Leaving it in the
-    # map would publish an "ailocal-compaction" model to every client and add a
-    # phantom row to every generated capability table.
     COMPACTION.update(models.pop("compaction", {}))
     return models
 
@@ -399,7 +381,7 @@ def regen_litellm(models, clients):
     text = LITELLM_TEMPLATE.read_text()
     text, s1 = splice(text, ML_BEGIN, ML_END, gen_model_list(models), "model_list")
     text, s2 = splice(text, AL_BEGIN, AL_END, gen_alias_block(models, clients), "model_group_alias")
-    LITELLM_CONFIG.write_text(text)
+    stage(LITELLM_CONFIG, text)
     return s1 and s2
 
 
@@ -420,7 +402,7 @@ def write_caps_json(models):
             "strengths": flow_list(info.get("strengths")),
             "weaknesses": flow_list(info.get("weaknesses")),
         })
-    CAPS_JSON.write_text(json.dumps(
+    stage(CAPS_JSON, json.dumps(
         {"generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
          "capabilities": caps}, indent=2) + "\n")
     return True
@@ -481,7 +463,7 @@ def write_integration_contract(models):
             },
         },
     }
-    CONTRACT_JSON.write_text(json.dumps(contract, indent=2, sort_keys=True) + "\n")
+    stage(CONTRACT_JSON, json.dumps(contract, indent=2, sort_keys=True) + "\n")
     return True
 
 
@@ -556,7 +538,7 @@ def regen_catalog(models):
             "truncation_policy": {"mode": "tokens", "limit": 10000},
         })
         prio += 5
-    CODEX_CATALOG.write_text(json.dumps({"models": entries}, indent=2) + "\n")
+    stage(CODEX_CATALOG, json.dumps({"models": entries}, indent=2) + "\n")
     return True
 
 
@@ -642,7 +624,7 @@ def regen_copilot_repo_md(models):
     text = COPILOT_REPO_TPL.read_text()
     text, spliced = splice(text, CP_BEGIN, CP_END, gen_copilot_capabilities(models),
                            "copilot capabilities")
-    COPILOT_REPO_MD.write_text(text)
+    stage(COPILOT_REPO_MD, text)
     return spliced
 
 
@@ -651,7 +633,7 @@ def regen_configure_zsh(clients):
         return False
     text = CONFIGURE_ZSH_TPL.read_text()
     text, spliced = splice(text, CS_BEGIN, CS_END, gen_slot_block(clients), "claude slots")
-    CONFIGURE_ZSH.write_text(text)
+    stage(CONFIGURE_ZSH, text)
     return spliced
 
 
@@ -690,7 +672,7 @@ def regen_claude_settings(models, clients):
         data["//"].append(
             f"Auto-compaction: window {win} x {pct}% = {int(win)*int(pct)//100} tokens "
             f"(profile-owned). NOT the model limit - architecture keeps its full context.")
-    CLAUDE_SETTINGS.write_text(json.dumps(data, indent=2) + "\n")
+    stage(CLAUDE_SETTINGS, json.dumps(data, indent=2) + "\n")
     return True
 
 
@@ -703,7 +685,7 @@ def _set_toml_model(path, model):
         text = re.sub(r'(?m)^model\s*=.*$', f'model = "{model}"', text, count=1)
     else:
         text = f'model = "{model}"\n' + text
-    path.write_text(text)
+    stage(path, text)
     return True
 
 
@@ -717,7 +699,7 @@ def regen_codex(models, clients):
         text = re.sub(r'(?m)^model\s*=.*$', f'model = "{mn(default)}"', text, count=1)
         text = re.sub(r'(?m)^# Valid models:.*$',
                       "# Valid models: " + " | ".join(mn(k) for k in models.keys()), text, count=1)
-        CODEX_CONFIG.write_text(text)
+        stage(CODEX_CONFIG, text)
         done = True
         # Codex's own compactor, same policy as claude-local. These keys must be
         # TOP-LEVEL: Codex does not reliably honour them inside a named profile,
@@ -741,7 +723,7 @@ def regen_codex(models, clients):
                     text = re.sub(rf'(?m)^{key}\s*=.*$', f'{key} = {val}', text, count=1)
                 else:
                     text = f'{key} = {val}\n' + text
-            CODEX_CONFIG.write_text(text)
+            stage(CODEX_CONFIG, text)
     if "plan" in profiles:
         _set_toml_model(CODEX_PLAN, mn(profiles["plan"]))
     if "review" in profiles:
@@ -779,7 +761,7 @@ def regen_continue(models, clients):
         "Chat/edit go through LiteLLM (4000); autocomplete hits Ollama (11434) directly for FIM.",
         "Models: " + " | ".join(mn(k) for k in models.keys()),
     ]
-    CONTINUE_CONFIG.write_text(json.dumps(data, indent=2) + "\n")
+    stage(CONTINUE_CONFIG, json.dumps(data, indent=2) + "\n")
     return True
 
 
@@ -816,6 +798,96 @@ def parse_profile_flag(argv):
     return tier, rest
 
 
+EFFECTIVE_SCHEMA_VERSION = 1
+EFFECTIVE_JSON = ROOT / "config/effective-profile.json"
+
+
+def build_effective_profile(tier, path):
+    """The canonical post-generation view of the deployed role configuration.
+
+    A DEDICATED artifact rather than an extension of capabilities.generated.json:
+    that file's documented purpose is the resolved-capability view for
+    `ailocal status`, it is consumed by ten call sites including the LiteLLM
+    container, and overloading it would couple the proxy's capability contract
+    to profile internals such as sampling parameters.
+
+    Hashes of BOTH inputs are recorded so a consumer can tell that generated
+    state no longer matches the profile it came from -- staleness is detectable
+    rather than assumed away."""
+    roles = {}
+    for role in _pc.ROLES:
+        try:
+            c = _pc.resolve_role(tier, role, ROOT)
+        except _pc.ProfileError:
+            continue
+        roles[role] = {k: c[k] for k in (
+            "model", "context", "num_predict", "reasoning", "temperature",
+            "top_p", "top_k", "repeat_penalty", "keep_alive", "persona",
+            "enabled", "name", "preferred")}
+    body = {
+        "schema_version": EFFECTIVE_SCHEMA_VERSION,
+        "generator": "sync-models.py",
+        "tier": tier,
+        "source_profile": str(Path(path).relative_to(ROOT)),
+        "source_profile_sha256": _sha_file(path),
+        "active_profile_sha256": _sha_file(ACTIVE_PROFILE),
+        "compaction": dict(COMPACTION),
+        "roles": roles,
+    }
+    body["config_sha256"] = _sha_text(
+        json.dumps(body, sort_keys=True, separators=(",", ":")))
+    body["generated_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return body
+
+
+def _sha_file(path):
+    p = Path(path)
+    return hashlib.sha256(p.read_bytes()).hexdigest() if p.exists() else ""
+
+
+def _sha_text(text):
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+# ── atomic generation ───────────────────────────────────────────────────────
+# Outputs are STAGED and only replaced once every generator has succeeded. A
+# partial generation is worse than no generation: LiteLLM would serve one
+# profile's aliases while the clients pointed at another's, and nothing would
+# report a problem. Nothing here is replaced if any step raises.
+_STAGE: dict = {}
+
+
+def stage(path, text):
+    """Record an output. Written only by flush_stage()."""
+    _STAGE[Path(path)] = text
+
+
+def flush_stage():
+    """Write every staged output atomically, then swap them in.
+
+    os.replace() is atomic within a filesystem, so a reader either sees the old
+    file or the new one -- never a half-written one."""
+    tmp = {}
+    try:
+        for path, text in _STAGE.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            t = path.with_suffix(path.suffix + ".tmp-sync")
+            t.write_text(text)
+            tmp[path] = t
+        for path, t in tmp.items():
+            os.replace(t, path)
+    finally:
+        for t in tmp.values():
+            try:
+                Path(t).unlink(missing_ok=True)
+            except Exception:  # noqa: BLE001
+                pass
+    n = len(_STAGE)
+    _STAGE.clear()
+    return n
+
+
+
 def main():
     tier, args = parse_profile_flag(sys.argv[1:])
 
@@ -830,7 +902,8 @@ def main():
     if not LITELLM_TEMPLATE.exists():
         print(f"Error: {LITELLM_TEMPLATE} not found", file=sys.stderr); sys.exit(1)
 
-    path = profile_path(explicit=tier)
+    tier = resolve_tier(tier)          # fail-closed; never an implicit default
+    path = profile_path(tier=tier)
     step(f"Reading {path.relative_to(ROOT)} + config/clients.yaml")
     models = load_models_yaml(path)
     clients = load_clients_yaml()
@@ -843,6 +916,10 @@ def main():
     ok("litellm config regenerated" if regen_litellm(models, clients) else "litellm config unchanged/skipped")
 
     step("Writing derived files")
+    stage(EFFECTIVE_JSON,
+          json.dumps(build_effective_profile(tier, path), indent=2,
+                     sort_keys=True) + "\n")
+    ok("effective-profile.json")
     ok("capabilities.generated.json") if write_caps_json(models) else warn("caps json skipped")
     ok("model_catalog.json") if regen_catalog(models) else warn("catalog skipped")
     ok("claude/settings.json") if regen_claude_settings(models, clients) else warn("claude settings skipped")
@@ -852,6 +929,8 @@ def main():
     ok("codex config + profiles") if regen_codex(models, clients) else warn("codex skipped")
     ok("continue/config.json") if regen_continue(models, clients) else warn("continue skipped")
 
+    n = flush_stage()
+    ok(f"{n} generated files replaced atomically")
     step("Done — restart LiteLLM (`ailocal start`) and re-run `ailocal clients` "
          "to deploy the regenerated client configs.")
 
