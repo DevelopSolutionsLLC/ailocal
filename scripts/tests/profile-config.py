@@ -159,6 +159,50 @@ def main() -> int:
     check(r.returncode == 0, "validate passes for the current repository")
 
 
+
+    print("\nPRODUCTION ADMISSION RESPECTS PHYSICAL GEOMETRY")
+    import importlib.util as _il2
+    _sp2 = _il2.spec_from_file_location("_sm2", REPO / "scripts" / "sync-models.py")
+    _sm2 = _il2.module_from_spec(_sp2); _sp2.loader.exec_module(_sm2)
+
+    # num_ctx holds prompt AND generation. Advertising the whole window as
+    # admissible input is KNOWN_ISSUES #19: accepted by pre-call, then trimmed
+    # from the FRONT by Ollama with HTTP 200 and no error.
+    admit, note = _sm2.admission_for("architecture", 98304, 16384)
+    check(admit == 81920 and not note, "finite reserve: 98304-16384 = 81920")
+    admit, note = _sm2.admission_for("review", 24576, 4096)
+    check(admit == 20480, "finite reserve: 24576-4096 = 20480")
+
+    # -1 is Ollama INFINITE: no arithmetic is possible, so none is invented.
+    admit, note = _sm2.admission_for("implementation", 24576, -1)
+    check(admit == 24576 and note == _sm2.OUTPUT_RESERVE_UNBOUNDED,
+          "num_predict -1 preserves num_ctx and is MARKED unsafe, not silently reserved")
+
+    # Invalid geometry must fail generation, never clamp.
+    for ctx, np_, label in ((4096, 4096, "reserve == window"),
+                            (4096, 8192, "reserve > window"),
+                            (0, 128, "zero window")):
+        try:
+            _sm2.admission_for("x", ctx, np_); raised = False
+        except SystemExit:
+            raised = True
+        check(raised, f"invalid geometry rejected, not clamped ({label})")
+
+    # Every generated finite-output alias must satisfy the invariant.
+    import re as _re
+    cfg = (REPO / "config" / "litellm" / "config.yaml").read_text()
+    checked = 0
+    for blk in cfg.split("  - model_name: ")[1:]:
+        name = blk.split("\n")[0].strip()
+        g = lambda k: (int(m.group(1)) if (m := _re.search(rf"{k}:\s*(-?\d+)", blk)) else None)
+        ctx, np_, mit = g("num_ctx"), g("num_predict"), g("max_input_tokens")
+        if ctx is None or mit is None or np_ is None or np_ <= 0:
+            continue
+        checked += 1
+        check(mit <= ctx - np_,
+              f"{name}: admits {mit} <= {ctx}-{np_} = {ctx-np_}")
+    check(checked >= 3, f"invariant checked on {checked} finite-output aliases")
+
     print("\nGENERATED ARTIFACT IS AUTHORITATIVE AT RUNTIME")
     eff = P.load_effective()
     check(eff["schema_version"] in P.SUPPORTED_SCHEMA_VERSIONS,
