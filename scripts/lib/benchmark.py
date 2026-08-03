@@ -71,6 +71,12 @@ from benchmark_runtime import (  # noqa: E402,F401
     unload,
 )
 from benchmark_clients import (  # noqa: E402,F401
+    CONFINEMENT_INVALID,
+    CONFINEMENT_UNAVAILABLE,
+    CONFINEMENT_VERIFIED,
+    confinement_args,
+    confinement_settings,
+    verify_confinement,
     CLIENTS,
     CLIENT_ENV,
     IMPLICIT_RESUME,
