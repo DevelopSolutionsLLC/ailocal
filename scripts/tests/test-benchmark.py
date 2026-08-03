@@ -388,6 +388,56 @@ check(int(32768 * B.PRECALL_MARGIN) > e["model_info"]["max_input_tokens"],
       "the over-count margin is no longer applied to admission")
 
 
+# ── planner worktree confinement ────────────────────────────────────────────
+# Permissions gate TOOLS, not PATHS. Measured with the real client, same
+# permission contract, one cheap turn each: without confinement INSIDE, PARENT,
+# the ailocal config, the Cadence repo AND the ground-truth handoff all read OK;
+# with confinement only INSIDE reads OK. So this is a scoring-validity
+# invariant, not a hardening preference.
+print("\nplanner worktree confinement")
+import json as _js, shutil, tempfile, pathlib as _pl
+_wt = _pl.Path(tempfile.mkdtemp(prefix="confine-test-")).resolve()
+cs = B.confinement_settings(_wt)
+fs = cs["sandbox"]["filesystem"]
+check(cs["sandbox"]["enabled"] is True, "sandbox is enabled")
+check(fs["allowRead"] == [str(_wt)], "exactly one directory is re-admitted")
+check(str(_pl.Path.home()) in fs["denyRead"], "$HOME is denied")
+check(any(d == "/Users" for d in fs["denyRead"]), "all user homes are denied")
+check(str(_wt) not in fs["denyRead"], "the worktree itself is not denied")
+
+# The ground truth and the escape target must fall inside a denied region
+# WITHOUT being enumerated: naming them would only block the escapes we already
+# know about.
+gt = _pl.Path.home() / ".local/state/ailocal/benchmark/planner/HANDOFF.md"
+cad = _pl.Path("/Users/vtchevalier/Documents/DevelopSolutions/cadence")
+for label, target in (("ground truth", gt), ("cadence repo", cad)):
+    covered = any(str(target).startswith(d.rstrip("/") + "/") for d in fs["denyRead"])
+    check(covered, f"{label} falls inside a denied region without being named")
+check(not any("cadence" in d.lower() or "HANDOFF" in d for d in fs["denyRead"]),
+      "no path is denied by name — the policy is regions, not a blocklist")
+
+args = B.confinement_args(_wt)
+check(args[0] == "--settings" and _pl.Path(args[1]).is_file(),
+      "confinement is installed through --settings, per run")
+written = _js.loads(_pl.Path(args[1]).read_text())
+check(written == cs, "the settings file carries exactly the computed policy")
+check(_pl.Path(args[1]).parent != _wt,
+      "the settings file is NOT written inside the candidate worktree")
+
+check({B.CONFINEMENT_VERIFIED, B.CONFINEMENT_INVALID, B.CONFINEMENT_UNAVAILABLE}
+      == {"VERIFIED_CONFINEMENT", "INVALID_CONFINEMENT", "CONFINEMENT_UNAVAILABLE"},
+      "preflight reports three distinct states, so unavailable != invalid")
+
+# No model-name-specific behaviour anywhere in the confinement path.
+import inspect as _insp
+_src = (_insp.getsource(B.confinement_settings) + _insp.getsource(B.confinement_args)
+        + _insp.getsource(B.verify_confinement))
+check(not re.search(r"qwen|gemma|gpt-oss|llama|deepseek", _src, re.I),
+      "confinement contains no model-name branches")
+_pl.Path(args[1]).unlink(missing_ok=True)
+shutil.rmtree(_wt, ignore_errors=True)
+
+
 print()
 if failures:
     print(f"FAILED ({len(failures)})")
