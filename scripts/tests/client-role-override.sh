@@ -76,9 +76,21 @@ check $([ -z "$(AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE= zsh -c "source '$CONFIGURE'
   "no override adds no --model argument (defaults untouched)"
 # The proxy log is the only authority on which model actually ran. Asserted here
 # as a capability; the benchmark calls it live before every candidate.
-check $(grep -q "def served_models_since" "$ROOT_DIR/scripts/lib/benchmark.py" && echo 0 || echo 1) \
+# Asserted through the IMPORT surface, not by grepping a file: these moved to
+# benchmark_clients.py in the module split and the old grep asserted their
+# location rather than their existence. Callers reach them via `import
+# benchmark`, so that is what is checked.
+check $(python3 -c "
+import sys, inspect; sys.path.insert(0, '$ROOT_DIR/scripts/lib')
+import benchmark as B
+assert callable(B.served_models_since)
+" >/dev/null 2>&1 && echo 0 || echo 1) \
   "harness can read served aliases from the proxy log"
-check $(grep -q "INVALID_ROUTING" "$ROOT_DIR/scripts/lib/benchmark.py" && echo 0 || echo 1) \
+check $(python3 -c "
+import sys, inspect; sys.path.insert(0, '$ROOT_DIR/scripts/lib')
+import benchmark as B
+assert 'INVALID_ROUTING' in inspect.getsource(B.verify_routing)
+" >/dev/null 2>&1 && echo 0 || echo 1) \
   "routing mismatch is classified INVALID_ROUTING, not warned about"
 
 # The override block is hand-maintained and MUST live outside the spliced region,
