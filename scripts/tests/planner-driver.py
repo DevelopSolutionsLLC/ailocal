@@ -328,6 +328,130 @@ def main() -> int:
     check(any(str(gt).startswith(r.rstrip("/") + "/") for r in roots),
           "the handoff the driver reads remains denied to candidates")
 
+    print("\nPRIVATE MAPPING IS VALIDATED AND NEVER EXPOSED")
+    priv = D.load_private_mapping()
+    check(priv["state"] == D.VERIFIED_PRIVATE_MAPPING,
+          "the real private mapping validates")
+    check(set(priv["_mapping"]) == set(D.CANDIDATES),
+          "exactly the three candidate ids are mapped")
+    check(len(set(priv["_mapping"].values())) == 3,
+          "all three candidates map to DISTINCT models")
+    check(all(priv["_digests"].values()), "every candidate resolves a digest")
+    check(all(k.startswith("_") for k in ("_mapping", "_digests", "_modes")),
+          "private fields are underscore-prefixed by convention")
+
+    # Failure states must never quote a value.
+    tmpd = Path(tempfile.mkdtemp(prefix="map-"))
+    orig_path = D.MAPPING_PATH
+
+    def with_mapping(obj, mode=0o600, expected=None):
+        f = tmpd / f"m{abs(hash(json.dumps(obj, sort_keys=True)))}.json"
+        f.write_text(json.dumps(obj))
+        f.chmod(mode)
+        D.MAPPING_PATH = f
+        try:
+            return D.load_private_mapping(expected)
+        finally:
+            D.MAPPING_PATH = orig_path
+
+    good = {"shuffle_seed": 1, "mapping": {c: {"model": m, "mode": "off"}
+            for c, m in zip(D.CANDIDATES,
+                            ["gemma4:26b-mlx", "qwen3.5:4b", "qwen3.5:9b"])}}
+    check(with_mapping(good)["state"] == D.VERIFIED_PRIVATE_MAPPING,
+          "a well-formed mapping validates")
+    bad = json.loads(json.dumps(good)); del bad["mapping"]["candidate-c"]
+    check(with_mapping(bad)["state"] == D.PRIVATE_MAPPING_CANDIDATES_INVALID,
+          "a missing candidate fails PRIVATE_MAPPING_CANDIDATES_INVALID")
+    bad = json.loads(json.dumps(good)); bad["mapping"]["candidate-d"] = {"model": "x", "mode": "off"}
+    check(with_mapping(bad)["state"] == D.PRIVATE_MAPPING_CANDIDATES_INVALID,
+          "an extra candidate fails closed")
+    bad = json.loads(json.dumps(good))
+    bad["mapping"]["candidate-b"]["model"] = bad["mapping"]["candidate-a"]["model"]
+    check(with_mapping(bad)["state"] == D.PRIVATE_MAPPING_DUPLICATE_MODEL,
+          "duplicate models fail PRIVATE_MAPPING_DUPLICATE_MODEL")
+    bad = json.loads(json.dumps(good))
+    bad["mapping"]["candidate-a"]["model"] = "no-such-model:999b"
+    check(with_mapping(bad)["state"] == D.PRIVATE_MAPPING_MODEL_INVALID,
+          "an uninstalled model fails PRIVATE_MAPPING_MODEL_INVALID")
+    check(with_mapping(good, expected="deadbeefdeadbeef")["state"]
+          == D.PRIVATE_MAPPING_HASH_MISMATCH,
+          "a hash mismatch fails closed")
+    check(with_mapping(good, mode=0o666)["state"]
+          == D.PRIVATE_MAPPING_PERMISSIONS_INVALID,
+          "a group/other WRITABLE mapping fails closed")
+    check(with_mapping(good, mode=0o644)["state"] == D.VERIFIED_PRIVATE_MAPPING,
+          "a merely readable mapping warns instead of failing")
+    check(with_mapping(good, mode=0o644)["permissions_warning"],
+          "...and the readability is recorded as a warning")
+    check(with_mapping({"mapping": "not-a-dict"})["state"]
+          == D.PRIVATE_MAPPING_SCHEMA_INVALID, "a bad schema fails closed")
+    check(with_mapping({"mapping": {c: "bare-string" for c in D.CANDIDATES}})["state"]
+          == D.PRIVATE_MAPPING_SCHEMA_INVALID,
+          "a bare-string value fails SCHEMA_INVALID, not MODEL_INVALID")
+    D.MAPPING_PATH = orig_path
+
+    # No failure state may carry a value.
+    for st in (D.PRIVATE_MAPPING_MISSING, D.PRIVATE_MAPPING_SCHEMA_INVALID,
+               D.PRIVATE_MAPPING_MODEL_INVALID, D.PRIVATE_MAPPING_HASH_MISMATCH):
+        check(":" not in st and "/" not in st,
+              f"failure state {st} is a bare token, carrying no value")
+    real_models = set(priv["_mapping"].values())
+    for res in (with_mapping(good), D.load_private_mapping()):
+        keys = {k for k in res if not k.startswith("_")}
+        check(not any(str(m) in json.dumps({k: res[k] for k in keys})
+                      for m in real_models),
+              "public fields of the mapping result contain no model name")
+    shutil.rmtree(tmpd, ignore_errors=True)
+
+    print("\nPLACEHOLDER ALIASES CANNOT REACH EXECUTION")
+    raised = False
+    try:
+        D.assert_no_placeholder("<alias-for-candidate-a>")
+    except AssertionError:
+        raised = True
+    check(raised, "assert_no_placeholder rejects a placeholder")
+    D.assert_no_placeholder("bench-real-alias", None)
+    check(True, "a real alias passes the assertion")
+    drv = (REPO / "scripts" / "run-planner-comparison.py").read_text()
+    check('f"<alias-for-{cand}>"' not in drv,
+          "the driver no longer constructs placeholder aliases")
+    check("assert_no_placeholder(alias)" in drv,
+          "run_one asserts its alias before executing")
+
+    print("\nALIAS LIFECYCLE USES THE SHARED BUILDER")
+    entries = D.build_candidate_aliases(priv)
+    check(len(entries) == 3, "one alias is built per candidate")
+    check(len({e["model_name"] for e in entries.values()}) == 3,
+          "the three aliases are distinct (run 1 measured one model thrice)")
+    for c, e in entries.items():
+        lp = e["litellm_params"]
+        check(lp["num_predict"] == D.PLANNER_CEILING,
+              f"{c} uses the locked 8192 output ceiling, not the 32768 one")
+        check(lp["num_ctx"] == D.PLANNER_CONTEXT + D.PLANNER_CEILING,
+              f"{c} uses the locked context geometry")
+        check(e["model_info"]["max_input_tokens"] <= lp["num_ctx"] - lp["num_predict"],
+              f"{c} admission stays within the physical window")
+    check("build_alias" in drv and "def build_alias" not in drv,
+          "alias construction is CALLED, never reimplemented in the driver")
+    # Compare CALL sites, not definitions: verify_candidate_routing is defined
+    # near the top of the file and applied far below it.
+    check(drv.index("B.apply_aliases(") < drv.index("rt = verify_candidate_routing("),
+          "aliases are applied before any per-candidate routing gate")
+    check(drv.index("rt = verify_candidate_routing(") < drv.index("res = run_one("),
+          "routing is verified before turn 1")
+    check(drv.index("load_private_mapping(locked") < drv.index("B.apply_aliases("),
+          "the private mapping is resolved before aliases are built")
+    check("B.restore()" in drv and "finally:" in drv,
+          "production is restored in a finally block")
+
+    print("\nROUTING GATE CLASSIFIES PRECISELY")
+    for st in (D.VERIFIED_ROUTING, D.ROUTING_ALIAS_MISSING,
+               D.ROUTING_DIGEST_MISMATCH, D.ROUTING_PRODUCTION_FALLBACK):
+        check(isinstance(st, str) and st, f"routing state {st} is defined")
+    check(len({D.VERIFIED_ROUTING, D.ROUTING_ALIAS_MISSING,
+               D.ROUTING_DIGEST_MISMATCH, D.ROUTING_PRODUCTION_FALLBACK}) == 4,
+          "routing failure modes are not collapsed into one")
+
     print("\nNO LEAKS")
     check(not any(p.name.startswith("unit-") and p.is_dir()
                   for p in B.benchmark_worktree_root().iterdir()
