@@ -427,3 +427,100 @@ def verify_routing(alias: str, model: str, cwd, key: str = None) -> dict:
             "probe_rc": probe.get("returncode"),
             "probe_session": probe.get("session_id"),
             "probe_wall_seconds": probe.get("wall_seconds")}
+
+
+# ── worktree confinement ────────────────────────────────────────────────────
+# WHY THIS EXISTS. A planner candidate read an unrelated repository and the
+# ground-truth answer key. Permissions were never the gap: they control WHICH
+# TOOLS may run, not WHICH PATHS an allowed tool may touch. With Read allowed,
+# an absolute path anywhere on the machine was readable.
+#
+# MEASURED, same prompt, same permission contract, one cheap turn each:
+#   without confinement   INSIDE=OK PARENT=OK AILOCAL_CFG=OK CADENCE=OK
+#                         GROUNDTRUTH=OK      <- the answer key was readable
+#   with confinement      INSIDE=OK PARENT=DENIED AILOCAL_CFG=DENIED
+#                         CADENCE=DENIED GROUNDTRUTH=DENIED
+#
+# The mechanism is Claude Code's OWN filesystem sandbox (2.1.220), configured
+# per run through --settings. It is a process-level boundary, not a prompt
+# instruction and not a path regex: sandbox.filesystem.denyRead removes whole
+# regions and allowRead re-admits exactly the worktree.
+#
+# macOS sandbox-exec was evaluated first and rejected: on macOS 26.6 every
+# invocation aborted with SIGABRT, including reads INSIDE the allowed subpath.
+# --add-dir was rejected because it EXPANDS the accessible set; the documented
+# flag has no deny semantics and confines nothing.
+CONFINEMENT_VERIFIED = "VERIFIED_CONFINEMENT"
+CONFINEMENT_INVALID = "INVALID_CONFINEMENT"
+CONFINEMENT_UNAVAILABLE = "CONFINEMENT_UNAVAILABLE"
+
+
+def confinement_settings(worktree) -> dict:
+    """Deny the whole filesystem, then re-admit exactly one worktree.
+
+    denyRead is deliberately coarse. Enumerating what to forbid is a losing
+    game -- the escape nobody predicted is the one that matters -- so entire
+    regions are denied and a single subtree is allowed back."""
+    wt = str(Path(worktree).resolve())
+    return {"sandbox": {"enabled": True,
+                        "filesystem": {"denyRead": [str(Path.home()), "/tmp",
+                                                    "/var", "/private", "/Users"],
+                                       "allowRead": [wt]}}}
+
+
+def confinement_args(worktree, settings_path=None) -> list:
+    """CLI flags installing the confinement for ONE run."""
+    wt = Path(worktree).resolve()
+    dst = Path(settings_path) if settings_path else wt.parent / f".confine-{wt.name}.json"
+    dst.write_text(json.dumps(confinement_settings(wt), indent=1))
+    return ["--settings", str(dst)]
+
+
+def verify_confinement(worktree, model: str, permissions: dict,
+                       extra_paths=None, timeout: int = 600,
+                       probe_model: str = None) -> dict:
+    """Prove confinement with the REAL client before a candidate runs.
+
+    Fails closed. A planner run must not begin unless this returns
+    VERIFIED_CONFINEMENT: an unconfined candidate can read the answer key, and
+    a benchmark that cannot prove otherwise is not measuring planning."""
+    wt = Path(worktree).resolve()
+    inside = wt / ".confinement-probe"
+    inside.write_text("CONFINEMENT_PROBE_INSIDE_OK\n")
+    targets = {"INSIDE": str(inside), "PARENT": str(wt.parent),
+               "HOMECFG": str(Path.home() / ".config"),
+               "HOME": str(Path.home())}
+    for i, p in enumerate(extra_paths or []):
+        targets[f"EXTRA{i}"] = str(p)
+    prompt = ("Attempt to read each path below with the Read tool, one at a "
+              "time. Report exactly one line per label in the form LABEL=OK or "
+              "LABEL=DENIED. Report nothing else.\n"
+              + "\n".join(f"{k}: {v}" for k, v in targets.items()))
+    # The sandbox is enforced by the CLIENT, not by the model, so the probe may
+    # use a more capable model than the candidate. This matters in practice: a
+    # 2B model returned the right refusals but not in the requested format, and
+    # the preflight correctly reported CONFINEMENT_UNAVAILABLE rather than
+    # guessing. Recorded in the result so the probe is never mistaken for the
+    # candidate's own run.
+    used = probe_model or model
+    args = permission_args(permissions) + ["--model", used] + confinement_args(wt)
+    rec = run_client_turn("claude-local", prompt, None, wt, timeout=timeout,
+                          extra_args=args)
+    text = ((rec.get("structured") or {}).get("result") or "")
+    verdict = {}
+    for label in targets:
+        m = re.search(rf"{label}\s*[:=]\s*(OK|DENIED)", text, re.I)
+        verdict[label] = m.group(1).upper() if m else "UNREPORTED"
+    inside.unlink(missing_ok=True)
+
+    outside = [k for k in targets if k != "INSIDE"]
+    ok = (verdict.get("INSIDE") == "OK"
+          and all(verdict.get(k) == "DENIED" for k in outside))
+    if rec.get("returncode") not in (0,) or "UNREPORTED" in verdict.values():
+        state = CONFINEMENT_UNAVAILABLE
+    else:
+        state = CONFINEMENT_VERIFIED if ok else CONFINEMENT_INVALID
+    return {"state": state, "verdict": verdict, "worktree": str(wt),
+            "probe_model": used, "candidate_model": model,
+            "client_rc": rec.get("returncode"), "outcome": rec.get("outcome"),
+            "raw_result": text[:800]}
