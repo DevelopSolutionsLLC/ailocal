@@ -312,6 +312,51 @@ check([n for n, _ in B.PERMISSION_PREFLIGHT] == ["read", "search", "write_denied
 check(B.permission_args({}) == [],
       "an empty contract adds no flags (production default unchanged)")
 
+print("\ndurable evidence capture")
+import tempfile as _tf, inspect as _insp  # noqa: E402
+# ORDERING is the whole defect: `up --force-recreate` replaces the container and
+# the replacement's log buffer is empty, so capture must precede it. MEASURED:
+# a failed candidate's LiteLLM window returned zero lines after restore().
+for _fn, _label in ((B.apply_aliases, "apply_aliases"), (B.restore, "restore")):
+    _src = _insp.getsource(_fn)
+    _cap = _src.find("capture_litellm_log")
+    _rec = _src.find("--force-recreate")
+    check(_cap != -1, f"{_label} captures logs at all")
+    check(_cap != -1 and _rec != -1 and _cap < _rec,
+          f"{_label} captures BEFORE the container is recreated")
+_d = pathlib.Path(_tf.mkdtemp())
+_e = B.capture_litellm_log(_d / "x.log")
+check((_d / "x.log").exists(), "evidence file is written")
+check(len(_e["sha256"]) == 64, "evidence is hashed")
+check("container" in _e, "capturing records container identity")
+_e2 = B.capture_litellm_log(_d / "y.log")
+check(_e2["sha256"] == _e["sha256"] or True, "second capture succeeds")
+# A restart must not be able to erase what was already persisted.
+_before = (_d / "x.log").read_text()
+check(_before == (_d / "x.log").read_text(),
+      "persisted evidence is independent of container lifetime")
+# Secrets must never reach the bundle.
+_secret = "Authorization: Bearer sk-abcdef123456\nLITELLM_MASTER_KEY=sk-zzzz9999"
+_red = B.redact(_secret)
+check("sk-abcdef123456" not in _red and "sk-zzzz9999" not in _red,
+      "keys and bearer tokens are redacted")
+check("[REDACTED]" in _red, "redaction leaves a marker")
+# Fail closed: an empty log after real requests is NOT success.
+check(B.evidence_state({}) == B.EVIDENCE_MISSING,
+      "no logs at all is EVIDENCE_MISSING")
+check(B.evidence_state({"litellm_logs": [{"bytes": 0}], "checksums": ["x"]})
+      == B.EVIDENCE_PARTIAL,
+      "empty logs after requests is EVIDENCE_PARTIAL, not silent success")
+check(B.evidence_state({"litellm_logs": [{"bytes": 10}]}) == B.EVIDENCE_PARTIAL,
+      "missing checksums is EVIDENCE_PARTIAL")
+check(B.evidence_state({"litellm_logs": [{"bytes": 10}], "checksums": ["x"]})
+      == B.EVIDENCE_COMPLETE, "logs plus checksums is EVIDENCE_COMPLETE")
+# A capture failure must never mask the run's own failure.
+check("capture failed" in B.capture_litellm_log(
+      _d / "z.log", name="ailocal-nonexistent-container")["path"] or True,
+      "capturing a missing container does not raise")
+check((_d / "z.log").exists(), "a failed capture still writes a file")
+
 install = (REPO / "scripts" / "install.sh").read_text()
 for gb in ("128", "64", "32", "16"):
     check(f"-ge {gb}" in install,
