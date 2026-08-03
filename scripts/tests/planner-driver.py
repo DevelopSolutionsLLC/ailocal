@@ -328,6 +328,23 @@ def main() -> int:
     check(any(str(gt).startswith(r.rstrip("/") + "/") for r in roots),
           "the handoff the driver reads remains denied to candidates")
 
+    print("\nIDENTITY IS REDACTED INSIDE EMBEDDED JSON STRINGS")
+    # The client's terminal result is embedded in stdout_full as SERIALIZED
+    # JSON, so key-based stripping never reached it and the first scoring
+    # copies of the real run carried the bench alias as plain text.
+    emb = {"records": [{"stdout_full":
+           '{"modelUsage":{"bench-qwen3-5-4b-off-32k":{"x":1}},'
+           '"canonicalModel":"bench-qwen3-5-4b-off-32k","duration_api_ms":374580}'}]}
+    body = json.dumps(D.strip_identity(emb))
+    for bad in ("bench-", "canonicalModel", "modelUsage", "374580"):
+        check(bad not in body, f"embedded {bad} is redacted from string values")
+    check("REDACTED" in body, "redaction leaves an explicit marker")
+    # Model FAMILY names are content, not identity: the planner task is about
+    # model pulling and every candidate discusses them.
+    keep = {"records": [{"stdout_full": "the profile pulls gemma4 and qwen3.5"}]}
+    check("gemma4" in json.dumps(D.strip_identity(keep)),
+          "model family names in CONTENT are preserved (they carry no signal)")
+
     print("\nPRIVATE MAPPING IS VALIDATED AND NEVER EXPOSED")
     priv = D.load_private_mapping()
     check(priv["state"] == D.VERIFIED_PRIVATE_MAPPING,
