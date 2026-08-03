@@ -52,6 +52,22 @@ def _classify_event(item) -> str | None:
     the question ("did the user see anything?") is the same in each.
     """
     try:
+        # /v1/messages delivers RAW SSE FRAMES (`bytes`), not objects -- measured
+        # 2026-08-03. Every branch below assumed a mapping, so on the Anthropic
+        # route this returned None for every event and first_visible_text_ms was
+        # silently null for the entire life of this file.
+        #
+        # This is deliberately MARKER DETECTION, not SSE parsing: the frame is
+        # tested for the two event signatures that answer "did the user see
+        # text", and nothing is decoded, framed, buffered or reassembled. A
+        # second SSE parser beside LiteLLM's own is exactly what must not be
+        # built here, and anything richer than this would be one.
+        if isinstance(item, (bytes, bytearray)):
+            if b'"type": "text_delta"' in item or b'"type":"text_delta"' in item:
+                return "text"
+            if b"tool_use" in item or b"input_json_delta" in item:
+                return "tool"
+            return None
         # Events arrive as PYDANTIC MODELS on most routes, not dicts. An earlier
         # version read __dict__, which does not expose pydantic fields, so every
         # event classified as None and first_visible_text_ms was always null --
@@ -92,6 +108,21 @@ def _classify_event(item) -> str | None:
     except Exception:  # noqa: BLE001
         return None
     return None
+
+
+def _resolved_backend(st, data):
+    """The backend tag, ONLY when it is genuinely distinguishable.
+
+    By the time the success callback fires, LiteLLM has rewritten `model` from
+    the requested alias to the tag that served it. Before that it still holds
+    the alias. So `model` is the backend model exactly when it differs from the
+    alias we recorded at pre-call time; when they are equal we know nothing and
+    return None rather than repeating the alias under a second name.
+    """
+    d = data or {}
+    alias = (st or {}).get("requested_alias")
+    current = d.get("model")
+    return current if (alias and current and current != alias) else None
 
 
 def _completion_fields(acc, saw_any_event):
@@ -183,7 +214,15 @@ KEY = "_ailocal_trace"
 # reason, which means a null on a v3 stream_end record is a MEASUREMENT ("the
 # provider sent none") rather than a gap. That is a change of meaning, so it
 # takes a bump. v2 records remain readable and must still be read as "unknown".
-EVENT_VERSION = 3
+# 3 -> 4 (2026-08-03): `model` was OVERLOADED and is no longer emitted. On
+# pre-call and stream_end records it held the requested ALIAS; on completion
+# records LiteLLM has already resolved it, so the same field held the BACKEND
+# tag. A reproduction run was wasted joining cases on it. New records emit
+# `requested_alias` and `resolved_backend_model` as separate fields.
+# READING HISTORY: v1-v3 records still carry `model`. Interpret it by phase --
+# alias on pre_call/stream_end, backend model on completion. Historical files
+# are never rewritten.
+EVENT_VERSION = 4
 
 # A stable identity for THIS proxy process. The startup connect-refused burst was
 # only diagnosable because every failing record shared one container lifetime; with
@@ -458,11 +497,18 @@ class RequestTrace(CustomLogger):
             "client": client,
             "route": route,
             "model_class": model_class,
-            "backend_model": backend,
             "request_id": st.get("request_id"),
             "ts": st.get("t_start"),
             "call_type": call_type,
-            "model": (data or {}).get("model"),
+            # The alias the CLIENT asked for, carried from the pre-call hook
+            # through the shared per-request state so it is identical on every
+            # record of one request -- including the completion record, where
+            # LiteLLM has already rewritten `model` to the backend tag.
+            "requested_alias": st.get("requested_alias") or (data or {}).get("model"),
+            # What actually served it. On pre-call this is litellm_params.model
+            # ("ollama_chat/<tag>"); on completion LiteLLM has resolved it into
+            # `model` itself. Never inferred from the alias.
+            "resolved_backend_model": backend or _resolved_backend(st, data),
             "stream": bool((data or {}).get("stream")),
             "user_agent": ua[:80],
             "tools_declared": len(tools),
@@ -502,6 +548,11 @@ class RequestTrace(CustomLogger):
             # what it observed is worse than one missing the field.
             if st is not None and call_type:
                 st["call_type"] = call_type
+            # Capture the REQUESTED alias here and nowhere else. This is the
+            # only hook that sees it before LiteLLM resolves it, and the state
+            # dict travels with the request into every later hook.
+            if st is not None and (data or {}).get("model"):
+                st.setdefault("requested_alias", data["model"])
         except Exception:
             pass
         return data
