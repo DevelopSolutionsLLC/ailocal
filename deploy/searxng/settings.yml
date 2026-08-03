@@ -91,6 +91,26 @@ use_default_settings:
       - pypi
       - npm
       - docker hub
+      # Research tier, added 2026-08-03. All three are API-backed and keyless,
+      # so they never take the scraper/CAPTCHA path. Chosen over wikipedia
+      # because they populate results[] -- see the wikipedia note below.
+      - arxiv
+      - crossref
+      # `semantic scholar` is deliberately NOT here. MEASURED 2026-08-03: the
+      # engine posts to https://www.semanticscholar.org/api/1/search (their
+      # internal website API, not the public one), which now answers
+      #     HTTP 202, Content-Type: text/html
+      # i.e. a bot-challenge interstitial. semantic_scholar.py:108 calls
+      # resp.json() with no content-type check, so every one of those becomes
+      # `JSONDecodeError: Expecting value: line 1 column 1 (char 0)` plus a full
+      # traceback -- 12 of them in one day here.
+      #
+      # There is no configuration fix: the URL is hardcoded in the engine. The
+      # official keyless API (api.semanticscholar.org/graph/v1/paper/search)
+      # returns correct JSON and would work, but reaching it needs an engine
+      # change, which is upstream's to make. Dropped from keep_only rather than
+      # `disabled: true` so it is never loaded and therefore cannot fail --
+      # same reasoning as wikidata/ahmia/torch above. See docs/upstream-issues.md.
 
 engines:
   # ── Scraped general-web: OPT-IN ONLY (`disabled: true`), 2026-07-28 ───────
@@ -152,7 +172,18 @@ engines:
     categories: [general, it]
     disabled: false
 
-  # Returns nothing on technical queries; kept for non-code lookups only.
+  # MEASURED 2026-08-03: wikipedia contributes NOTHING model-visible, and the
+  # previous note here ("returns nothing on technical queries") was wrong about
+  # why. It answers fine -- but in `infoboxes[]`, not `results[]`:
+  #   !wikipedia Albert Einstein -> results: 0, infoboxes: 1 (correct summary+URL)
+  # LiteLLM's SearXNG transform_search_response() iterates ONLY
+  # response_json.get("results", []), so infoboxes and answers are discarded
+  # before the model sees them. Same 0 results on "France" and "photosynthesis",
+  # so this is not a technical-query effect.
+  #
+  # Kept enabled: it is free, it costs one API-backed request, and the moment
+  # LiteLLM reads infoboxes it starts working with no change here. Do not cite
+  # it as general-knowledge coverage until then.
   - name: wikipedia
     shortcut: wp
     categories: [general]
@@ -195,6 +226,56 @@ engines:
     shortcut: dh
     categories: [general, it]
     disabled: false
+
+  # ── Research tier, added 2026-08-03 ───────────────────────────────────────
+  # `categories: [general, science]` is load-bearing, not decoration. Upstream
+  # ships these as science-only, and LiteLLM sends no `categories` param, so
+  # SearXNG resolves the request to `general` -- a science-only engine would
+  # never be queried at all. Tagging them `general` is what puts them in the
+  # default result set, exactly as [general, it] does for the coding engines.
+  #
+  # crossref ships `disabled: true` upstream and needs an explicit false, plus
+  # upstream's own 30 s timeout (it is the slowest of the three).
+  #
+  # `weight: 0.3` is REQUIRED, and was added after it broke coding search.
+  # MEASURED 2026-08-03 at the default weight of 1:
+  #   "docker compose healthcheck syntax" -> top 3 became
+  #     crossref "Docker for Data Science", arxiv "Vulnerability Analysis of
+  #     2500 Docker Hub...", semantic scholar "BIoTA: ..."
+  # i.e. academic papers displaced the Docker documentation on a pure coding
+  # query. These three answer nearly every query with ~38 results, so at equal
+  # weight they dominate ranking regardless of topic. 0.3 keeps them present
+  # (they still surface on genuine research queries, where the coding engines
+  # return noise) without letting them outrank a direct documentation hit.
+  # Re-measure both query classes if this value is changed.
+  - name: arxiv
+    shortcut: arx
+    categories: [general, science]
+    weight: 0.3
+    disabled: false
+  # MEASURED 2026-08-03 against api.crossref.org, from the response headers:
+  #   public pool (no mailto):  x-rate-limit-limit: 1  interval: 1s  (public-array)
+  #   polite pool (mailto UA):  x-rate-limit-limit: 3  interval: 1s  (polite-array)
+  # ONE request per second, not the 50/s that Crossref's older blog posts and
+  # much of the internet still quote -- limits were revised from 2025-12-01.
+  #
+  # A blended search issues one crossref request, so normal use fits inside 1/s.
+  # Every 429 observed here was produced by back-to-back diagnostic probes, not
+  # by search traffic; scripts/diag-search-engines.py now paces itself for this.
+  #
+  # The polite pool would triple headroom and is entered purely by putting
+  # "mailto:<address>" in the User-Agent, which SearXNG supports globally via
+  # `outgoing.useragent_suffix`. NOT enabled here: that suffix is sent to EVERY
+  # engine, not just crossref, so it would publish a contact address to every
+  # upstream we query. That is a privacy decision for the operator, not a
+  # default. Enable deliberately if the headroom is ever needed.
+  - name: crossref
+    shortcut: cr
+    categories: [general, science]
+    timeout: 30
+    weight: 0.3
+    disabled: false
+  # semantic scholar is intentionally absent -- see the keep_only note above.
 
 ui:
   show_about: false
