@@ -205,6 +205,78 @@ if _manifest.exists():
     check(all("--continue" not in x and "--last" not in x for _turns_ in [_turns] for x in _turns_),
           "planner turns never instruct an implicit resume")
 
+print("\nclient result classification")
+# The authoritative fixture is a REAL captured failure: run2 candidate-a turn 2.
+# rc=1, stderr EMPTY, and a complete self-describing JSON result on STDOUT. It
+# was reported as CLIENT_CRASH, which sent the investigation to the transport
+# layer for days while the client's own explanation sat unparsed on disk.
+_A = pathlib.Path(
+    os.environ.get("XDG_STATE_HOME", pathlib.Path.home() / ".local/state")
+) / "ailocal/benchmark/planner/run2/candidate-a.full.json"
+if _A.exists():
+    import json as _j
+    _rec = [r for r in _j.loads(_A.read_text())["scenario"]["records"]
+            if r["turn"] == 2][0]
+    _s = B.parse_client_result(_rec["stdout_full"])
+    _o = B.classify_client_outcome(_s, _rec["returncode"], False)
+    check(_rec["returncode"] == 1 and not (_rec.get("stderr_tail") or ""),
+          "fixture is the real rc=1 / empty-stderr case")
+    check(_o == "CLIENT_OUTPUT_LIMIT",
+          "real candidate-a fixture classifies CLIENT_OUTPUT_LIMIT", _o)
+    check(_o != "CLIENT_PROCESS_CRASH",
+          "real candidate-a fixture is NOT a process crash", _o)
+    for _k in ("is_error", "terminal_reason", "result", "num_turns",
+               "permission_denials", "modelUsage"):
+        check(_k in _s, f"structured result preserves {_k}")
+else:
+    check(True, "candidate-a fixture absent on this machine (skipped)")
+
+_OK = _json_dump = None
+import json as _json
+_success = _json.dumps({"type": "result", "is_error": False,
+                        "terminal_reason": "completed", "num_turns": 3,
+                        "session_id": "s-1", "result": "done"})
+check(B.classify_client_outcome(B.parse_client_result(_success), 0, False)
+      == "SUCCESS", "structured successful result classifies SUCCESS")
+# A true crash: the process died with nothing usable to say.
+check(B.classify_client_outcome(B.parse_client_result(""), 1, False)
+      == "CLIENT_PROCESS_CRASH",
+      "no structured result + non-zero rc classifies CLIENT_PROCESS_CRASH")
+check(B.classify_client_outcome(B.parse_client_result("Segmentation fault"), 139,
+                                False) == "CLIENT_PROCESS_CRASH",
+      "unparseable output + non-zero rc is still a crash")
+_generic = _json.dumps({"type": "result", "is_error": True,
+                        "terminal_reason": "api_error",
+                        "result": "API Error: upstream refused the request"})
+check(B.classify_client_outcome(B.parse_client_result(_generic), 1, False)
+      == "CLIENT_API_ERROR", "generic api_error classifies CLIENT_API_ERROR")
+_limit = _json.dumps({"type": "result", "is_error": True,
+                      "terminal_reason": "api_error",
+                      "result": "API Error: Claude's response exceeded the 8192 "
+                                "output token maximum."})
+check(B.classify_client_outcome(B.parse_client_result(_limit), 1, False)
+      == "CLIENT_OUTPUT_LIMIT",
+      "output-limit match does not depend on the 32000 literal")
+_denied = _json.dumps({"type": "result", "is_error": False,
+                       "terminal_reason": "completed",
+                       "permission_denials": [{"tool_name": "Bash"}]})
+check(B.classify_client_outcome(B.parse_client_result(_denied), 1, False)
+      == "CLIENT_PERMISSION_DENIED",
+      "denials decide the outcome only when the turn also failed")
+check(B.classify_client_outcome(B.parse_client_result(_denied), 0, False)
+      == "SUCCESS", "denials on a SUCCESSFUL turn do not fail it")
+check(B.classify_client_outcome(B.parse_client_result(_success), 0, True)
+      == "CLIENT_TIMEOUT", "a timeout outranks a structured result")
+# JSONL stream shape (Codex-style), not one object.
+_stream = ('{"type":"thread.started","thread_id":"t-9"}\n'
+           + _json.dumps({"type": "result", "is_error": False,
+                          "terminal_reason": "completed"}))
+check(B.classify_client_outcome(B.parse_client_result(_stream), 0, False)
+      == "SUCCESS", "a JSONL stream's terminal result is found")
+# Old records predate `structured`/`outcome` and must still load.
+check(B.classify_client_outcome({}, 0, False) == "UNKNOWN",
+      "records without a structured result remain readable")
+
 install = (REPO / "scripts" / "install.sh").read_text()
 for gb in ("128", "64", "32", "16"):
     check(f"-ge {gb}" in install,
