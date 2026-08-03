@@ -126,6 +126,8 @@ def main() -> int:
     check("import profile_config" in bench, "benchmark uses the shared resolver")
     check("re.finditer" not in bench.split("def parse_profile")[1].split("def ")[0],
           "benchmark's parse_profile no longer parses YAML itself")
+    check("load_effective" in bench,
+          "benchmark reads the generated artifact for the active tier")
 
     print("\nBENCHMARK AND PRODUCTION AGREE ON EVERY ROLE")
     import benchmark as B
@@ -155,6 +157,104 @@ def main() -> int:
           "an unknown role exits non-zero with a code on stderr")
     r = subprocess.run([cli, "validate"], capture_output=True, text=True)
     check(r.returncode == 0, "validate passes for the current repository")
+
+
+    print("\nGENERATED ARTIFACT IS AUTHORITATIVE AT RUNTIME")
+    eff = P.load_effective()
+    check(eff["schema_version"] in P.SUPPORTED_SCHEMA_VERSIONS,
+          f"schema_version is supported ({eff['schema_version']})")
+    for k in ("tier", "roles", "source_profile", "source_profile_sha256",
+              "active_profile_sha256", "config_sha256", "generated_at"):
+        check(k in eff, f"artifact records {k}")
+    arch = eff["roles"]["architecture"]
+    for k in ("model", "context", "num_predict", "reasoning", "temperature",
+              "top_p", "top_k", "repeat_penalty", "keep_alive", "persona"):
+        check(k in arch, f"role carries {k}")
+    check(P.active_tier() == eff["tier"], "runtime tier comes from the artifact")
+
+    print("\nSTALENESS AND CORRUPTION FAIL CLOSED")
+    import shutil as _sh
+    box = Path(tempfile.mkdtemp(prefix="eff-"))
+    (box / "config" / "profiles").mkdir(parents=True)
+    _sh.copy(REPO / "config" / "effective-profile.json", box / "config")
+    _sh.copy(REPO / "config" / "active-profile", box / "config")
+    _sh.copy(REPO / "config" / "profiles" / f"{eff['tier']}.yaml",
+             box / "config" / "profiles")
+    check(P.load_effective(box)["tier"] == eff["tier"], "a faithful copy validates")
+
+    def expect(code, mutate, label):
+        b = Path(tempfile.mkdtemp(prefix="eff-"))
+        _sh.copytree(box / "config", b / "config")
+        mutate(b)
+        try:
+            P.load_effective(b)
+            got = "NO ERROR"
+        except P.ProfileError as e:
+            got = e.code
+        check(got == code, f"{label} ⇒ {code} (got {got})")
+        _sh.rmtree(b, ignore_errors=True)
+
+    expect(P.EFFECTIVE_PROFILE_MISSING,
+           lambda b: (b / "config" / "effective-profile.json").unlink(),
+           "artifact deleted")
+    expect(P.EFFECTIVE_PROFILE_STALE_TIER,
+           lambda b: (b / "config" / "active-profile").write_text("32gb\n"),
+           "active-profile changed")
+    expect(P.EFFECTIVE_PROFILE_STALE_SOURCE,
+           lambda b: (b / "config" / "profiles" / f"{eff['tier']}.yaml")
+                     .write_text("architecture:\n  role: x\n  active: y\n  context: 1\n"),
+           "source profile edited")
+
+    def corrupt(b):
+        f = b / "config" / "effective-profile.json"
+        d = json.loads(f.read_text())
+        d["config_sha256"] = "0" * 64
+        f.write_text(json.dumps(d))
+    expect(P.EFFECTIVE_PROFILE_HASH_INVALID, corrupt, "config hash corrupted")
+
+    def bad_schema(b):
+        f = b / "config" / "effective-profile.json"
+        d = json.loads(f.read_text())
+        d["schema_version"] = 99
+        f.write_text(json.dumps(d))
+    expect(P.EFFECTIVE_PROFILE_SCHEMA_INVALID, bad_schema, "unsupported schema")
+    _sh.rmtree(box, ignore_errors=True)
+
+    print("\nNO RUNTIME YAML FALLBACK, NO REDUNDANT WRAPPER")
+    cli_src = (REPO / "scripts" / "profile-config").read_text()
+    check("effective_role" in cli_src and "active_tier" in cli_src,
+          "the CLI reads the artifact")
+    check(not (REPO / "scripts" / "profile-json").exists(),
+          "scripts/profile-json is deleted (jq is already a dependency)")
+    check("_legacy_load_models_yaml" not in sync,
+          "the dead legacy parser is deleted")
+    # Behavioural, not textual: typed values must survive generation without a
+    # string round-trip. A prose mention of "reserialize" is not the defect.
+    import importlib.util as _il
+    _sp = _il.spec_from_file_location("_sm", REPO / "scripts" / "sync-models.py")
+    _sm = _il.module_from_spec(_sp)
+    _sp.loader.exec_module(_sm)
+    _models = _sm.load_models_yaml(REPO / "config" / "profiles" /
+                                   f"{P.active_tier()}.yaml")
+    _pref = _models["architecture"]["preferred"]
+    check(isinstance(_pref, list),
+          f"lists stay typed through generation (preferred is {type(_pref).__name__})")
+    check(_sm.flow_list(_pref) is _pref,
+          "flow_list is idempotent — no list→string→list round-trip")
+    check(_sm.flow_list("[a, b]") == ["a", "b"],
+          "flow_list still parses raw strings for config/clients.yaml")
+    check("jq -r" in (REPO / "scripts" / "doctor.sh").read_text(),
+          "doctor.sh uses jq, not a bespoke extractor")
+
+    print("\nGENERATION IS ATOMIC AND INSTALL FAILS CLOSED")
+    check("flush_stage" in sync and "os.replace" in sync,
+          "outputs are staged and swapped atomically")
+    inst = (REPO / "scripts" / "install.sh").read_text()
+    check("sync-models.py\" || true" not in inst and "|| true" not in
+          inst.split("Syncing model config")[1].split("step ")[0],
+          "install.sh no longer swallows a generation failure")
+    check("stopping before any model is pulled" in inst,
+          "install.sh stops before install-models.sh on generation failure")
 
     print("\nGENERATED FILES ARE OUTPUTS, NOT SOURCES")
     for gen in ("config/capabilities.generated.json", "config/integration-contract.json"):

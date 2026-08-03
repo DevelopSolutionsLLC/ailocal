@@ -179,10 +179,21 @@ hardcoded `64gb` in eight places across four shell scripts, which silently
 installs the 64 GB model set on a smaller machine — the same failure shape the
 planner benchmark was built around.
 
-`scripts/lib/profile_config.py` is the **only** profile parser and resolver.
-Do not add a second one. It hand-parses the profile subset because PyYAML is not
-available to the host interpreter and the shell entry points must work before
-any venv exists.
+`scripts/lib/profile_config.py` is the **only** profile parser and resolver, and
+it parses YAML **only at generation time**, called only by `sync-models.py`.
+Runtime consumers read `config/effective-profile.json` with the standard-library
+`json` module. Do not add a second parser and do not add a runtime YAML
+fallback — a fallback hides a stale or failed generation behind a value that
+looks fine.
+
+The constrained parser supports exactly the constructs the four profiles use and
+rejects anything else. It is **not** a YAML implementation and is not claimed to
+be better than PyYAML. It exists because core ailocal has no managed Python
+dependency environment today (no `requirements.txt`, `pyproject.toml`, or venv —
+the only venv is the lazily-created benchmark one for lm-eval/RULER), and
+introducing one solely to read four small files at generation time was judged
+disproportionate. **If core ailocal ever gains other Python dependencies, adopt a
+managed venv and PyYAML and delete this parser.**
 
 Shell scripts **do not parse YAML**. They query `scripts/profile-config`
 (`active-tier`, `role <r> [--field f]`, `profile-summary`, `validate`), which
@@ -196,3 +207,34 @@ Benchmark consumers use the same resolver; `benchmark.parse_profile()` is a thin
 compatibility wrapper. Model capability metadata and profile schema expansion
 (provider, seed, min_p, tool/thinking support, quirks) are separate follow-up
 work and are deliberately not in the schema yet.
+
+## Before writing a tool, check what is already here
+
+A previous session hit "PyYAML is not importable from `python3`" and wrote a
+249-line YAML parser plus two CLIs. That was the wrong move, and the cost was
+~500 lines to remove four parsers. What it skipped:
+
+- **`jq` is already a hard dependency** (`install.sh` preflight). Shells parse
+  JSON with `jq`. A bespoke JSON extractor was written anyway and then deleted.
+- **`/usr/bin/ruby` ships with macOS and has YAML.** A dependency-free
+  YAML→JSON conversion existed the whole time.
+- **A venv pattern already exists** (`scripts/benchmark-models setup`).
+- **The real question was never asked**: *which callers need YAML at all?* The
+  answer was one — `sync-models.py`, at generation time.
+
+So, before adding code:
+
+1. `command -v <tool>` and check `install.sh`'s dependency list — the thing may
+   already be installed and required.
+2. **Search the internet.** Version-specific behaviour, available flags, and
+   whether a maintained library already solves it are all one search away.
+   Guessing from first principles and then building around the guess is how a
+   200-line workaround gets written for a solved problem.
+3. Prefer: existing dependency → standard library → maintained library in a
+   managed environment → new code. In that order.
+4. If a constraint seems to force a large implementation, **state the constraint
+   and verify it** before building on it. "X is unavailable *here*" rarely means
+   "X is unavailable".
+
+Generated artifacts are outputs. Parse once, at generation time, and let
+everything downstream read JSON.
