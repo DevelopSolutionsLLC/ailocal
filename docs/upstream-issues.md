@@ -68,6 +68,62 @@ Draft issue awaiting review: [`docs/upstream/litellm-infoboxes.md`](upstream/lit
 
 ---
 
+## "0 searches" is a counter artifact, not a failed search
+
+Claude Code may report **0 searches** — `usage.server_tool_use.web_search_requests
+= 0` — while the model has in fact received a full result set. **A zero counter
+here is expected and is not evidence of zero retrieved results.**
+
+That field counts **Anthropic-hosted, server-side** web search only. Under
+ailocal the search is executed by LiteLLM's `websearch_interception` and comes
+back as an ordinary `tool_result` block, so Anthropic's servers never run a
+search and the counter is structurally always zero.
+
+Traced end-to-end on 2026-08-03 with the query `python asyncio semaphore`:
+
+| Boundary | Observed |
+|---|---|
+| Claude Code tool call | `{"name":"WebSearch","input":{"query":"python asyncio semaphore"}}` |
+| SearXNG JSON | **75 results** — crossref 20, github 15, stackoverflow 10, mdn 10, docker hub 10, arxiv 10 |
+| Claude Code `tool_result` | **22,033 chars, 50 `Title:`, 50 `URL:`** |
+| `usage.server_tool_use.web_search_requests` | **0** |
+
+The string `0 results` / `no results` appears nowhere in the response stream —
+the only zero anywhere in the trace is that counter.
+
+**Authoritative success evidence is the `WebSearch` tool call plus a non-empty
+`tool_result`, never the counter.** Do not attempt to alter Claude Code's
+counter, and do not treat it as a search failure.
+
+Related upstream: [#31902][31902], whose title records the same symptom
+("Claude Code returns 'Did 0 searches'").
+
+### Why it cannot currently be fixed in configuration
+
+Established by reading the installed LiteLLM 1.93.0:
+
+- **Native Anthropic search blocks DO exist in 1.93.0.** `websearch_interception`
+  carries `WEBSEARCH_EMIT_NATIVE_BLOCKS_KEY`, `build_web_search_tool_result_block`,
+  and an injection path into the agentic loop, gated on
+  `is_anthropic_native_web_search_tool(t)`. Emitting native
+  `web_search_tool_result` blocks is therefore **not** the missing piece.
+- **The usage counter is never written by the interception path.**
+  `server_tool_use` / `web_search_requests` appears only in Perplexity and xAI
+  cost-calculation modules. Nothing in `websearch_interception` sets it.
+
+So native blocks and the counter are **independent**, and it is the counter —
+not the block type — that Claude Code displays. No LiteLLM configuration
+setting, callback, or response hook in 1.93.0 writes that field, which is why
+this is documented rather than fixed here.
+
+**[UNVERIFIED]** Whether a newer LiteLLM populates `server_tool_use` for
+proxy-side search has not been tested. Any such upgrade must be validated in an
+isolated container first: 1.94.1 was previously reverted here for breaking Codex
+streaming. Until that experiment runs, do not state that the zero counter is
+permanently unavoidable — only that 1.93.0 cannot set it.
+
+---
+
 ## Search profiles are not achievable in configuration
 
 `websearch_interception` binds **one** search tool at initialisation:
