@@ -362,6 +362,32 @@ for gb in ("128", "64", "32", "16"):
     check(f"-ge {gb}" in install,
           f"install.sh still uses the {gb} GB threshold this ladder mirrors")
 
+# ── context admission must never exceed the physical window ─────────────────
+# MEASURED (scripts/repro-context-admission.py, qwen3.5:2b, num_ctx 40,960):
+# a 43,645-token prompt was ADMITTED by the old margin-based threshold, then
+# Ollama silently truncated it to 20,482 -- HTTP 200, finish_reason=stop, no
+# error, system prompt gone, final instruction not followed. Admission above
+# capacity is therefore a fail-closed invariant, not a tuning preference.
+print("\ncontext admission")
+for ctx, ceil in ((32768, 8192), (24576, 4096), (8192, 2048), (98304, 16384)):
+    e = B.build_alias("qwen3.5:2b", "off", ctx, ceil, {})
+    lp, mi = e["litellm_params"], e["model_info"]
+    usable = lp["num_ctx"] - lp["num_predict"]
+    check(mi["max_input_tokens"] <= usable,
+          f"admission {mi['max_input_tokens']} <= usable input {usable} "
+          f"(num_ctx {lp['num_ctx']})")
+    check(lp["num_ctx"] == ctx + ceil,
+          f"num_ctx is input+output ({lp['num_ctx']})")
+    check(mi["max_output_tokens"] == lp["num_predict"],
+          "declared output ceiling matches num_predict")
+
+e = B.build_alias("qwen3.5:2b", "off", 32768, 8192, {})
+check(e["model_info"]["max_input_tokens"] == 32768,
+      "planner geometry admits exactly 32,768, not the old 45,875")
+check(int(32768 * B.PRECALL_MARGIN) > e["model_info"]["max_input_tokens"],
+      "the over-count margin is no longer applied to admission")
+
+
 print()
 if failures:
     print(f"FAILED ({len(failures)})")
