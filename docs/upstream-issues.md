@@ -98,29 +98,66 @@ counter, and do not treat it as a search failure.
 Related upstream: [#31902][31902], whose title records the same symptom
 ("Claude Code returns 'Did 0 searches'").
 
-### Why it cannot currently be fixed in configuration
+### Root cause — a dropped content block, NOT the usage counter
 
-Established by reading the installed LiteLLM 1.93.0:
+An earlier revision of this document blamed `usage.server_tool_use.web_search_requests`.
+**That was wrong and is corrected here.** Claude Code counts **`server_tool_use`
+content blocks**, as upstream states in [#31687][31687]:
 
-- **Native Anthropic search blocks DO exist in 1.93.0.** `websearch_interception`
-  carries `WEBSEARCH_EMIT_NATIVE_BLOCKS_KEY`, `build_web_search_tool_result_block`,
-  and an injection path into the agentic loop, gated on
-  `is_anthropic_native_web_search_tool(t)`. Emitting native
-  `web_search_tool_result` blocks is therefore **not** the missing piece.
-- **The usage counter is never written by the interception path.**
-  `server_tool_use` / `web_search_requests` appears only in Perplexity and xAI
-  cost-calculation modules. Nothing in `websearch_interception` sets it.
+> "Anthropic-native clients require both blocks to render citation cards.
+> Without the `server_tool_use` block, clients report 'Did 0 searches' even
+> though the search ran and results were returned."
 
-So native blocks and the counter are **independent**, and it is the counter —
-not the block type — that Claude Code displays. No LiteLLM configuration
-setting, callback, or response hook in 1.93.0 writes that field, which is why
-this is documented rather than fixed here.
+**Claude Code sends two request shapes** (captured on the wire, 2026-08-03):
 
-**[UNVERIFIED]** Whether a newer LiteLLM populates `server_tool_use` for
-proxy-side search has not been tested. Any such upgrade must be validated in an
-isolated container first: 1.94.1 was previously reverted here for breaking Codex
-streaming. Until that experiment runs, do not state that the zero counter is
-permanently unavoidable — only that 1.93.0 cannot set it.
+| Request | Tools | WebSearch declaration |
+|---|---|---|
+| main conversation | 41 | `name="WebSearch"`, no `type` — plain function tool |
+| standalone sub-request | 1 | **`name="web_search"`, `type="web_search_20250305"`** — Anthropic-native |
+
+So the native contract *is* used, and LiteLLM's detector agrees — tested
+directly in-container, `is_anthropic_native_web_search_tool(...)` returns
+**True** for that exact tool. `handler.py` then correctly builds both blocks on
+the short-circuit path.
+
+**They are dropped at response serialization.** In `litellm/types/llms/anthropic.py`
+the `AnthropicResponse` content union admits only:
+
+```
+AnthropicResponseContentBlockText | ...ToolUse | ...Thinking | ...RedactedThinking
+```
+
+`grep -c server_tool_use` on that file returns **0**. The blocks are built, fail
+to match the union, and never reach the client.
+
+**First failing boundary: Anthropic response model validation. Owner: LiteLLM.**
+Not Claude Code, not the Anthropic API, not the interception logic.
+
+### Upstream status — NOT fixed as of v1.95.0
+
+Verified by isolated container test on 2026-08-03 (v1.95.0, digest
+`sha256:af806882b7a6…`), replaying the captured native request against both
+versions:
+
+| | 1.93.0 (prod) | 1.95.0 (isolated) |
+|---|---|---|
+| content types | `['text']` | `['text']` |
+| `server_tool_use` | 0 | **0** |
+| `web_search_tool_result` | 0 | **0** |
+
+**Identical. Upgrading does not fix this.** The relevant upstream PRs are all
+still open — [#31209][31209] (the exact missing block types), [#31672][31672],
+[#32196][32196], [#31182][31182] — and [#31687][31687] was closed unmerged.
+
+Production therefore stays on 1.93.0. Re-test when #31209 lands; do not upgrade
+for this reason alone, and validate Codex-local streaming on any upgrade (1.94.1
+was reverted here for breaking it).
+
+[31182]: https://github.com/BerriAI/litellm/pull/31182
+[31209]: https://github.com/BerriAI/litellm/pull/31209
+[31672]: https://github.com/BerriAI/litellm/pull/31672
+[31687]: https://github.com/BerriAI/litellm/pull/31687
+[32196]: https://github.com/BerriAI/litellm/pull/32196
 
 ---
 
