@@ -11,11 +11,24 @@ down). So runner policy is not uniform across models and must not be assumed
 from one measurement -- which is why this exists as a repeatable diagnostic
 rather than a note.
 
-OPEN: whether the first-loaded context actually CONSTRAINS later requests. A
-40,000-token prompt sent to a 98,304-declared alias, while the runner reported
-24,576, returned prompt_eval_count 40,013 -- more than the reported context.
-Resolve before deciding whether three roles may share one model at different
-geometries.
+RESOLVED 2026-08-03: the first-loaded context does NOT constrain later requests
+on the MLX runner. A 40,013-token prompt through a 98,304-declared alias, while
+/api/ps reported 24,576, completed in 47.7s with no reload and NO "truncating
+input prompt" line in the server log. /api/ps reports the LOAD-TIME context and
+is not authoritative for what inference will accept.
+
+So the axis is the RUNNER, not the model family:
+  mlx        dynamic per-request context   (gemma4:26b-mlx)
+  llama_cpp  fixed runner window, front-truncates
+             (llama_server.go:314 "truncating input prompt"
+              limit=20482 prompt=43647 keep=4 new=20482)
+
+Recorded as intrinsic capability in config/litellm/registry.yaml under
+runtime_engines, WITH the tested Ollama/MLX versions -- this is observed runner
+behaviour, not a documented contract, and must be revalidated after upgrades.
+
+Admission policy stays conservative for both: dynamic context is a reason a role
+may safely declare a larger window, never a reason to relax max_input_tokens.
 
 DIAGNOSTIC ONLY — temporary aliases, no profile changes. The question that gates
 same-model role unification: when three roles share one model at three different
