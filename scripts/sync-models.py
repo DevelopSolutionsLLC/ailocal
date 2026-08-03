@@ -227,6 +227,55 @@ def ctx_of(info):
 
 
 # ── LiteLLM model_list ─────────────────────────────────────────────────────────
+def _int_or_none(v):
+    if isinstance(v, int):
+        return v
+    if isinstance(v, str) and v.strip().lstrip("-").isdigit():
+        return int(v.strip())
+    return None
+
+
+OUTPUT_RESERVE_UNBOUNDED = "OUTPUT_RESERVE_UNBOUNDED_UNSAFE_FOR_STRICT_ADMISSION"
+
+
+def admission_for(role, num_ctx, num_predict):
+    """How much INPUT this alias may admit, and why.
+
+    num_ctx is the PHYSICAL window and it holds prompt AND generation. Advertising
+    the whole window as admissible input is the defect measured in
+    KNOWN_ISSUES #19: LiteLLM's pre-call check accepts a prompt that leaves no
+    room for the reply, Ollama then trims from the FRONT, and the caller gets
+    HTTP 200 with finish_reason=stop and a silently truncated prompt. Measured
+    on qwen3.5:2b at num_ctx 40960: 43,645 tokens admitted -> 20,482 evaluated,
+    system prompt gone, task instruction not followed.
+
+    Returns (max_input_tokens, note). Invalid finite geometry RAISES rather than
+    clamping: a clamp would hide exactly the misconfiguration this exists to
+    surface.
+    """
+    if not isinstance(num_ctx, int) or num_ctx <= 0:
+        raise SystemExit(f"invalid geometry: {role} num_ctx={num_ctx!r}")
+    # num_predict -1 is Ollama's INFINITE and -2 is fill-context. Neither reserves
+    # a knowable amount, so no arithmetic is possible and none is invented. The
+    # deployed value is preserved and the role is MARKED, not silently treated as
+    # though it reserved nothing. A real reserve arrives with the schema
+    # migration (context_input + max_output), not here.
+    if num_predict in (-1, -2):
+        return num_ctx, OUTPUT_RESERVE_UNBOUNDED
+    if num_predict in (None, "", 0):
+        return num_ctx, "no output reserve declared"
+    if not isinstance(num_predict, int) or num_predict < 0:
+        raise SystemExit(f"invalid geometry: {role} num_predict={num_predict!r}")
+    if num_predict >= num_ctx:
+        raise SystemExit(
+            f"invalid geometry: {role} reserves {num_predict} output tokens from "
+            f"a {num_ctx}-token window — nothing would be left for the prompt")
+    admit = num_ctx - num_predict
+    if admit <= 0:
+        raise SystemExit(f"invalid geometry: {role} admits {admit} input tokens")
+    return admit, ""
+
+
 def gen_role_block(role, info):
     num_ctx = ctx_of(info)
     backend = backend_of(info)
@@ -275,6 +324,7 @@ def gen_role_block(role, info):
     vision    = truthy(info.get("vision", "false"))
     parallel  = not reasoning
     max_out   = min(16384, max(1024, num_ctx // 4))
+    _admit, _admit_note = admission_for(role, num_ctx, _int_or_none(info.get("num_predict")))
     desc      = info.get("role", "")
 
     params = [
@@ -342,7 +392,7 @@ def gen_role_block(role, info):
     # parser rejects the file outright, and it made validate-deployment.sh fail
     # on a defect that had nothing to do with the deployment.
     mi += [
-        f"      max_input_tokens: {num_ctx}",
+        f"      max_input_tokens: {_admit}",
         f"      max_output_tokens: {max_out}",
     ]
     header = f"  # {mn(role)} — {desc} ({backend})\n" if desc else ""
