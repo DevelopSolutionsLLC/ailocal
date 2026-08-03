@@ -161,6 +161,66 @@ def main() -> int:
 
 
 
+
+    print("\nCOMPACTION AND PROVIDER HAVE ONE OWNER")
+    # Both clients derive from the SAME profile block. Codex additionally clamps
+    # to its default model's window — a documented client correction, not a
+    # second source: using architecture's window wrote a limit Codex's default
+    # model could never reach.
+    eff = P.load_effective()
+    comp = eff["compaction"]
+    check(comp.get("window") and comp.get("pct"),
+          f"profile owns compaction ({comp.get('window')} x {comp.get('pct')}%)")
+    claude = json.loads((REPO / "config/clients/claude/settings.json").read_text())
+    env = claude.get("env", {})
+    check(env.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW") == str(comp["window"])
+          and env.get("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE") == str(comp["pct"]),
+          "Claude compaction is generated from the profile block verbatim")
+
+    codex = (REPO / "config/clients/codex/config.toml").read_text()
+    import re as _r
+    cw = int(_r.search(r"model_context_window\s*=\s*(\d+)", codex).group(1))
+    cl = int(_r.search(r"model_auto_compact_token_limit\s*=\s*(\d+)", codex).group(1))
+    impl = P.effective_role("implementation")
+    check(cw == impl["total_context"],
+          f"Codex context window == implementation total_context ({cw})")
+    check(cl == min(comp["window"] * comp["pct"] // 100,
+                    int(impl["total_context"] * comp["pct"] / 100)),
+          f"Codex trigger derives from the SAME percentage policy ({cl})")
+    # The regression this guards: the codex block read a key the geometry
+    # migration deleted, so it silently never regenerated and kept stale values.
+    sync = (REPO / "scripts" / "sync-models.py").read_text()
+    check('cx_ctx = _geom(' in sync,
+          "Codex compaction reads shared geometry, not a removed key")
+    check("codex compaction cannot be derived" in sync,
+          "Codex compaction fails closed instead of silently skipping")
+
+    # Provider is a profile value, not a model-name sniff.
+    check(P.effective_role("embeddings").get("provider") == "ollama",
+          "embeddings declares provider: ollama in the profile")
+    # BEHAVIOURAL: a role declaring provider: ollama must get the ollama route
+    # even when the model is not called "nomic". A prose mention of the old
+    # conditional is not the defect — this is the third test in this suite to
+    # trip on its own explanatory comment.
+    import importlib.util as _il4
+    _s4 = _il4.spec_from_file_location("_sm4", REPO / "scripts" / "sync-models.py")
+    _sm4 = _il4.module_from_spec(_s4); _s4.loader.exec_module(_sm4)
+    blk = _sm4.gen_role_block("embeddings", {
+        "active": "some-other-embedder:1b", "provider": "ollama",
+        "context_input": 2048, "role": "E"})
+    check("model: ollama/some-other-embedder:1b" in blk,
+          "provider comes from the profile, not from the model name")
+    blk = _sm4.gen_role_block("fast", {
+        "active": "nomic-shaped-name:1b", "context_input": 100,
+        "max_output": 10, "role": "F"})
+    check("model: ollama_chat/nomic-shaped-name:1b" in blk,
+          "a nomic-SHAPED name no longer forces the embedding route")
+    cfg = (REPO / "config/litellm/config.yaml").read_text()
+    check("model: ollama/nomic-embed-text" in cfg,
+          "embeddings still generates the ollama (non-chat) route")
+    check(cfg.count("model: ollama_chat/") == 5,
+          "the five chat roles still use ollama_chat")
+
     print("\nEXPLICIT CONTEXT AND OUTPUT GEOMETRY")
     for t in P.TIERS:
         prof = P.load_profile(t)

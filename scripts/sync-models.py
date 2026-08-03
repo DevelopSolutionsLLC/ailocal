@@ -296,7 +296,11 @@ def gen_role_block(role, info):
     backend = backend_of(info)
     ka = norm_keep_alive(info.get("keep_alive"))
 
-    if role == "embeddings" or truthy(info.get("embedding", "false")) or backend.startswith("nomic") or "embed" in role:
+    # Provider comes from the profile. This used to sniff the role name and the
+    # model tag (`backend.startswith("nomic")`) — a model-name conditional that
+    # broke the moment an embedding model was not called "nomic".
+    provider = (info.get("provider") or "").strip() or "ollama_chat"
+    if provider == "ollama":
         # `ollama`, NOT `ollama_chat`. LiteLLM has no embeddings route for the
         # ollama_chat provider: an /v1/embeddings call against it fails with
         # "Unmapped LLM provider for this endpoint. You passed
@@ -313,7 +317,7 @@ def gen_role_block(role, info):
         lines = [
             f"  - model_name: {mn(role)}",
             f"    litellm_params:",
-            f"      model: ollama/{backend}",
+            f"      model: {provider}/{backend}",
             f"      api_base: os.environ/OLLAMA_URL",
             f"      num_ctx: {num_ctx}",
         ]
@@ -348,7 +352,7 @@ def gen_role_block(role, info):
     params = [
         f"  - model_name: {mn(role)}",
         f"    litellm_params:",
-        f"      model: ollama_chat/{backend}",
+        f"      model: {provider}/{backend}",
         f"      api_base: os.environ/OLLAMA_URL",
         f"      num_ctx: {num_ctx}",
     ]
@@ -784,8 +788,17 @@ def regen_codex(models, clients):
         # fire, because the model would 400 on context length first. The window
         # must describe the model Codex will really talk to.
         win, pct = COMPACTION.get("window"), COMPACTION.get("pct")
-        cx_ctx = (models.get(default) or {}).get("context")
-        if win and pct and cx_ctx:
+        # total_context from the SHARED geometry. This read `.get("context")`,
+        # a key the geometry migration removed, so the guard below silently
+        # failed and this file was never regenerated -- it simply kept its
+        # pre-migration contents, which looked correct only because the value
+        # had not changed yet. Fail loudly instead of skipping.
+        cx_ctx = _geom(models.get(default) or {})["total_context"]
+        if not (win and pct and cx_ctx):
+            raise SystemExit(
+                "codex compaction cannot be derived: "
+                f"window={win!r} pct={pct!r} total_context={cx_ctx!r}")
+        if True:
             # Never advertise a compaction point the model cannot reach.
             trigger = min(int(win) * int(pct) // 100, int(int(cx_ctx) * int(pct) / 100))
             arch_ctx = cx_ctx
@@ -896,7 +909,9 @@ def build_effective_profile(active_tier, path):
             except _pc.ProfileError:
                 continue
             roles[role] = {k: c[k] for k in (
-                "model", "context", "num_predict", "reasoning", "temperature",
+                "model", "provider", "context_input", "max_output",
+                "total_context", "max_input_tokens", "context", "num_predict",
+                "reasoning", "temperature",
                 "top_p", "top_k", "repeat_penalty", "keep_alive", "persona",
                 "enabled", "name", "preferred")}
         data = _pc.load_profile(t, ROOT)
