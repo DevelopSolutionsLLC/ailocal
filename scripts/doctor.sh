@@ -117,8 +117,8 @@ _PROFILE_JSON="$("$ROOT_DIR/scripts/profile-config" profile-summary --tier "$_TI
 # jq is already a hard install dependency (install.sh preflight), so the
 # summary is queried with it rather than with a bespoke extractor.
 _pf() { printf '%s' "$_PROFILE_JSON" | jq -r "$1"; }
-  _PROFILE="$ROOT_DIR/config/profiles/${_TIER}.yaml"
-  required_models=($(grep -E '^\s*active:' "$_PROFILE" | sed 's/.*active:[[:space:]]*//'))
+  # From the generated artifact, already resolved once above. No YAML parsing.
+  required_models=($(printf '%s' "$_PROFILE_JSON" | jq -r '.roles[].model' | sort -u))
 if has ollama && ollama list >/dev/null 2>&1; then
   installed_models=$(ollama list 2>/dev/null | awk 'NR>1 {print $1}')
   missing_models=()

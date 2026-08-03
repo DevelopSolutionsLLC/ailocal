@@ -848,11 +848,11 @@ def parse_profile_flag(argv):
     return tier, rest
 
 
-EFFECTIVE_SCHEMA_VERSION = 1
+EFFECTIVE_SCHEMA_VERSION = 2
 EFFECTIVE_JSON = ROOT / "config/effective-profile.json"
 
 
-def build_effective_profile(tier, path):
+def build_effective_profile(active_tier, path):
     """The canonical post-generation view of the deployed role configuration.
 
     A DEDICATED artifact rather than an extension of capabilities.generated.json:
@@ -864,25 +864,44 @@ def build_effective_profile(tier, path):
     Hashes of BOTH inputs are recorded so a consumer can tell that generated
     state no longer matches the profile it came from -- staleness is detectable
     rather than assumed away."""
-    roles = {}
-    for role in _pc.ROLES:
-        try:
-            c = _pc.resolve_role(tier, role, ROOT)
-        except _pc.ProfileError:
-            continue
-        roles[role] = {k: c[k] for k in (
-            "model", "context", "num_predict", "reasoning", "temperature",
-            "top_p", "top_k", "repeat_penalty", "keep_alive", "persona",
-            "enabled", "name", "preferred")}
+    def tier_block(t):
+        prof_path = PROFILES_DIR / f"{t}.yaml"
+        roles = {}
+        for role in _pc.ROLES:
+            try:
+                c = _pc.resolve_role(t, role, ROOT)
+            except _pc.ProfileError:
+                continue
+            roles[role] = {k: c[k] for k in (
+                "model", "context", "num_predict", "reasoning", "temperature",
+                "top_p", "top_k", "repeat_penalty", "keep_alive", "persona",
+                "enabled", "name", "preferred")}
+        data = _pc.load_profile(t, ROOT)
+        return {"source_profile": str(prof_path.relative_to(ROOT)),
+                "source_profile_sha256": _sha_file(prof_path),
+                "compaction": data.get("compaction", {}),
+                "roles": roles}
+
+    # EVERY tier is normalized here, at generation time. Benchmark cross-tier
+    # planning previously parsed non-active profile YAML at runtime, which
+    # contradicted "sync-models is the sole YAML consumer" and left a second
+    # parser reachable from live code. One indexed artifact removes that without
+    # creating four unrelated files.
+    tiers = {t: tier_block(t) for t in _pc.TIERS
+             if (PROFILES_DIR / f"{t}.yaml").exists()}
     body = {
         "schema_version": EFFECTIVE_SCHEMA_VERSION,
         "generator": "sync-models.py",
-        "tier": tier,
-        "source_profile": str(Path(path).relative_to(ROOT)),
-        "source_profile_sha256": _sha_file(path),
+        "active_tier": active_tier,
         "active_profile_sha256": _sha_file(ACTIVE_PROFILE),
-        "compaction": dict(COMPACTION),
-        "roles": roles,
+        "tiers": tiers,
+        # Retained so the active tier is reachable without indexing, and so a
+        # v1 consumer's mental model still holds.
+        "tier": active_tier,
+        "source_profile": tiers[active_tier]["source_profile"],
+        "source_profile_sha256": tiers[active_tier]["source_profile_sha256"],
+        "compaction": tiers[active_tier]["compaction"],
+        "roles": tiers[active_tier]["roles"],
     }
     body["config_sha256"] = _sha_text(
         json.dumps(body, sort_keys=True, separators=(",", ":")))
