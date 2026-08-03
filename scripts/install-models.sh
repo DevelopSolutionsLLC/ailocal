@@ -11,7 +11,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 OLLAMA="${OLLAMA_CLI:-ollama}"
-_TIER="$(cat "$ROOT_DIR/config/active-profile" 2>/dev/null || echo 64gb)"
+# Fail closed: no implicit tier. A suppressed read falling through to a
+# hardcoded 64gb is what silently installs the wrong model set on a
+# smaller machine. Resolve once, here, and reuse.
+_TIER="$("$ROOT_DIR/scripts/profile-config" active-tier)" || {
+  echo "  ✗ cannot resolve the active profile (see error above)" >&2; exit 1; }
 MODELS_YAML="$ROOT_DIR/config/profiles/${_TIER}.yaml"   # active profile (tracked SoT)
 
 # ── Helpers ────────────────────────────────────────────────────────────────
