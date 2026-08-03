@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import statistics
 import sys
 import time
@@ -70,6 +71,21 @@ CLASSIFIERS = (
     ("TIMEOUT", ("timeout", "timed out")),
     ("NETWORK", ("connection", "transport", "dns", "unreachable")),
 )
+
+
+# Engines reached through a keyed upstream API. Probing these spends real
+# quota, and their error strings are the only place a credential could
+# plausibly surface, so both are handled explicitly below.
+KEYED_ENGINES = {"braveapi"}
+
+# Defence in depth. This tool talks only to SearXNG and never reads .env, so it
+# has no key to leak -- but SearXNG error text can echo an upstream URL or
+# header, so anything token-shaped is scrubbed before it is printed.
+_SECRET_RE = re.compile(r"(?i)\b(?:BS[A-Za-z0-9_-]{10,}|[A-Za-z0-9_-]{28,})\b")
+
+
+def redact(text: str) -> str:
+    return _SECRET_RE.sub("<REDACTED>", text)
 
 
 def classify(messages: list[str]) -> str | None:
@@ -141,18 +157,18 @@ def probe_engine(base: str, engine: dict, classes: list[str], repeat: int,
                 for entry in payload.get("unresponsive_engines") or []:
                     if isinstance(entry, (list, tuple)) and len(entry) >= 2:
                         if entry[0] == name:
-                            errors.append(str(entry[1]))
+                            errors.append(redact(str(entry[1])))
                     elif entry:
-                        errors.append(str(entry))
+                        errors.append(redact(str(entry)))
                 # Wikipedia-class engines answer in infoboxes[], which LiteLLM
                 # discards -- recorded, never counted as a result.
                 # See docs/upstream-issues.md.
                 if not counts[-1] and payload.get("infoboxes"):
                     errors.append("infoboxes-only (not model-visible)")
             except urllib.error.URLError as exc:
-                errors.append(f"transport: {exc.reason}")
+                errors.append(redact(f"transport: {exc.reason}"))
             except Exception as exc:  # noqa: BLE001 - report, never abort the sweep
-                errors.append(f"{type(exc).__name__}: {exc}")
+                errors.append(redact(f"{type(exc).__name__}: {exc}"))
 
         kind_class = classify(errors)
         if kind_class in ("RATE_LIMITED", "CAPTCHA"):
@@ -286,6 +302,9 @@ def main() -> int:
     for r in records:
         counts[r["status"]] = counts.get(r["status"], 0) + 1
     print("\n" + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
+    keyed = sorted({r["engine"] for r in records if r["engine"] in KEYED_ENGINES})
+    if keyed:
+        print(f"\nQuota note: {', '.join(keyed)} use a keyed upstream API; each probe\n            spends real quota. Brave measured 50 req/s, so a sweep is cheap,\n            but --extended doubles it. Keys are never read by this tool.")
     print("\nEMPTY on a specialist engine usually means 'no content for THIS "
           "query', not broken.\nDiagnostic only — nothing was changed. Record "
           "this output and the date next to any\nenable/disable decision in "
