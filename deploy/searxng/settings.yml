@@ -96,6 +96,12 @@ use_default_settings:
       # because they populate results[] -- see the wikipedia note below.
       - arxiv
       - crossref
+      # General-web tier. `braveapi` is the API-backed engine
+      # (api.search.brave.com, X-Subscription-Token) and is NOT the same as
+      # `brave`, which scrapes search.brave.com and takes no key. Upstream
+      # ships braveapi `inactive: true` with an empty api_key, and it already
+      # fails closed on its own: "No API key provided" is raised by the engine.
+      - braveapi
       # `semantic scholar` is deliberately NOT here. MEASURED 2026-08-03: the
       # engine posts to https://www.semanticscholar.org/api/1/search (their
       # internal website API, not the public one), which now answers
@@ -276,6 +282,34 @@ engines:
     weight: 0.3
     disabled: false
   # semantic scholar is intentionally absent -- see the keep_only note above.
+
+  # ── General web: Brave Search API, added 2026-08-03 ───────────────────────
+  # THIS FILE IS THE TRACKED SOURCE AND MUST NEVER CONTAIN THE KEY. The literal
+  # below is a placeholder; scripts/lib/compose.sh renders a runtime copy into
+  # $AILOCAL_STATE/searxng/settings.yml with the value of BRAVE_API from .env,
+  # and Compose mounts ONLY that rendered copy. The rendered file lives outside
+  # the checkout, so it cannot be committed even by accident.
+  #
+  # `inactive: true` upstream means it is not loaded at all unless listed in
+  # keep_only, so removing it from keep_only fully disables Brave without
+  # touching this block -- and the renderer only requires a key when the
+  # placeholder is actually present.
+  #
+  # engine: braveapi is required. Without it, `name: braveapi` would fall back
+  # to loading the SCRAPER (`brave`), which ignores the key entirely and is the
+  # rate-limited path this integration exists to avoid.
+  # `inactive: false` is REQUIRED and is not the same as `disabled`. Upstream
+  # ships braveapi `inactive: true`, and engines/__init__.py drops an inactive
+  # engine before load -- keep_only cannot override it. Measured: with only
+  # keep_only set, /config listed 13 engines and no brave at all, silently.
+  #   inactive -> exists at all;  disabled -> queried by default vs bang-only.
+  - name: braveapi
+    engine: braveapi
+    shortcut: brv
+    categories: [general, web]
+    api_key: "__BRAVE_API_KEY__"
+    inactive: false
+    disabled: false
 
 ui:
   show_about: false
