@@ -25,6 +25,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -59,16 +60,126 @@ def sha(path_or_text) -> str:
     return hashlib.sha256(str(path_or_text).encode()).hexdigest()[:16]
 
 
-def turn_prompts(n: int) -> list:
-    """The prompt set, read from the handoff that already holds it.
+PROMPTS_VERIFIED = "PROMPTS_VERIFIED"
+PROMPTS_MISSING = "PROMPTS_MISSING"
+PROMPTS_DUPLICATED = "PROMPTS_DUPLICATED"
+PROMPTS_MALFORMED = "PROMPTS_MALFORMED"
+PROMPT_COUNT_INVALID = "PROMPT_COUNT_INVALID"
+PROMPT_HASH_MISMATCH = "PROMPT_HASH_MISMATCH"
 
-    Deliberately NOT redefined here: the prompts are part of the fixture, and a
-    driver that carries its own copy can silently diverge from the one the
-    previous run used."""
-    src = PLANNER / "HANDOFF.md"
+#: Bumped when the PARSER changes, so a hash computed by an older parser is
+#: never silently compared against one computed by a newer one.
+PROMPT_SCHEMA_VERSION = "handoff-Tn-v1"
+
+_SECTION = "## Three turns"
+_TURN = re.compile(r"^T(\d+):[ \t]?(.*)$")
+
+
+def extract_prompts(source: Path = None) -> dict:
+    """The three turn prompts, verbatim, from the authoritative handoff.
+
+    HANDOFF.md is the source of truth and the driver reads it from the
+    GROUND-TRUTH side of the confinement boundary -- candidates cannot, and the
+    confinement policy still denies it. There is deliberately NO hard-coded
+    copy: a second copy drifts, and then the prompt hash certifies a prompt set
+    nobody actually sent.
+
+    FILE STRUCTURE (measured, not assumed):
+        ## Three turns (identical for every candidate, one session)
+        T1: <first line>
+            <continuation lines, indented four spaces>
+        <blank>
+        T2: ...
+        T3: ...
+        ## <next heading>   <- section ends here
+
+    WHAT IS AND IS NOT PROMPT CONTENT. The `Tn:` label is a document marker, and
+    the four-space continuation indent is Markdown wrapping; neither was ever
+    sent to a model. Both are removed. Everything else -- line breaks, internal
+    spacing, punctuation, backticks, parenthesised numbering -- is preserved
+    byte for byte. This is the only normalisation performed and it is stated
+    rather than done quietly.
+
+    Fails closed with a specific reason; never returns placeholders.
+    """
+    src = Path(source) if source else (PLANNER / "HANDOFF.md")
     if not src.exists():
-        return []
-    return [f"[planner turn {i + 1}]" for i in range(n)]
+        return {"state": PROMPTS_MISSING, "prompts": [], "reason": "no HANDOFF.md"}
+    text = src.read_text()
+    if _SECTION not in text:
+        return {"state": PROMPTS_MISSING, "prompts": [],
+                "reason": f"no '{_SECTION}' section"}
+
+    body = text.split(_SECTION, 1)[1]
+    # The section ends at the next heading; anything after it is other content.
+    end = body.find("\n## ")
+    body = body[:end] if end != -1 else body
+
+    blocks, order, current = {}, [], None
+    for line in body.splitlines():
+        m = _TURN.match(line)
+        if m:
+            n = int(m.group(1))
+            if n in blocks:
+                return {"state": PROMPTS_DUPLICATED, "prompts": [],
+                        "reason": f"T{n} appears more than once"}
+            blocks[n] = [m.group(2)]
+            order.append(n)
+            current = n
+            continue
+        if current is None:
+            continue
+        if line.startswith("    "):
+            blocks[current].append(line[4:])       # uniform continuation indent
+        elif not line.strip():
+            current = None                          # blank line closes a block
+        else:
+            # A non-indented, non-blank line inside the section that is not a
+            # new Tn: marker means the delimiters are not what this parser was
+            # written against. Refuse rather than guess where the prompt ends.
+            return {"state": PROMPTS_MALFORMED, "prompts": [],
+                    "reason": f"unexpected line in section: {line[:60]!r}"}
+
+    if not blocks:
+        return {"state": PROMPTS_MISSING, "prompts": [], "reason": "no Tn: blocks"}
+    if order != sorted(order) or order != list(range(1, len(order) + 1)):
+        return {"state": PROMPTS_MALFORMED, "prompts": [],
+                "reason": f"turn numbering is not 1..n in order: {order}"}
+    if len(blocks) != 3:
+        return {"state": PROMPT_COUNT_INVALID, "prompts": [],
+                "reason": f"expected exactly 3 prompts, found {len(blocks)}"}
+
+    prompts = ["\n".join(blocks[n]).strip() for n in order]
+    if any(not p for p in prompts):
+        return {"state": PROMPTS_MALFORMED, "prompts": [],
+                "reason": "an extracted prompt is empty"}
+    return {"state": PROMPTS_VERIFIED, "prompts": prompts,
+            "source": str(src), "source_hash": sha(src),
+            "schema": PROMPT_SCHEMA_VERSION,
+            "lengths": [len(p) for p in prompts],
+            "hash": prompt_set_hash(prompts)}
+
+
+def prompt_set_hash(prompts: list) -> str:
+    """One canonical hash over ORDER, LENGTH, BYTES and parser version.
+
+    Lengths are hashed alongside the bytes so that a prompt boundary moving --
+    the same characters split differently between two turns -- changes the hash
+    even though the concatenation would not."""
+    h = hashlib.sha256()
+    h.update(PROMPT_SCHEMA_VERSION.encode())
+    for i, p in enumerate(prompts):
+        h.update(f"|{i}|{len(p)}|".encode())
+        h.update(p.encode())
+    return h.hexdigest()[:16]
+
+
+def turn_prompts(n: int) -> list:
+    """The prompts actually sent. Raises rather than degrading to placeholders."""
+    res = extract_prompts()
+    if res["state"] != PROMPTS_VERIFIED:
+        raise RuntimeError(f"{res['state']}: {res.get('reason')}")
+    return res["prompts"][:n]
 
 
 # ── environment ─────────────────────────────────────────────────────────────
@@ -131,12 +242,21 @@ def build_manifest(run_id: str, turns: int, probe_model: str,
                                   "rev-parse", "HEAD"],
                                  capture_output=True, text=True).stdout.strip()[:12]
     mapping = PLANNER / "run2" / "MAPPING.private.json"
+    _p = extract_prompts()
     return {
         "run_id": run_id,
         "branch": branch, "commit": head,
         "fixture_commit": seeded_head,
         "seeded_file_hash": sha(PLANNER / "seeded" / "scripts" / "install-models.sh"),
-        "prompt_set_hash": sha("|".join(turn_prompts(turns))),
+        # Hashes only. The prompts themselves stay OUT of the public manifest:
+        # T1 states the symptom, and while it does not reveal the seeded root
+        # cause, the public record has no need to carry it.
+        "prompt_state": _p["state"],
+        "prompt_count": len(_p.get("prompts") or []),
+        "prompt_set_hash": _p.get("hash", "UNAVAILABLE"),
+        "prompt_source_hash": _p.get("source_hash", "UNAVAILABLE"),
+        "prompt_schema_version": PROMPT_SCHEMA_VERSION,
+        "prompt_lengths": _p.get("lengths", []),
         "rubric_hash": sha(RUBRIC),
         "rubric_path": str(RUBRIC),
         "candidate_ids": list(CANDIDATES),
@@ -173,6 +293,7 @@ def _ollama_version() -> str:
 
 
 LOCKED_FIELDS = ("fixture_commit", "seeded_file_hash", "prompt_set_hash",
+                 "prompt_source_hash", "prompt_schema_version", "prompt_count",
                  "rubric_hash", "candidate_ids", "shuffle_seed",
                  "permission_manifest", "confinement_policy_version",
                  "expected_turns", "ground_truth_path_hash")
@@ -294,13 +415,16 @@ def main() -> int:
         for c in CANDIDATES:
             g = gate_report(c, wts[c], env, True)
             ready = (g["confinement"] == "POLICY READY"
-                     and env["state"] != INVALID_ENVIRONMENT)
+                     and env["state"] != INVALID_ENVIRONMENT
+                     and manifest["prompt_state"] == PROMPTS_VERIFIED)
             ready_all &= ready
             print(f"{c:<12}{g['worktree_class']:<40}{a.turns:<6}"
                   f"{'DEFERRED':<10}{g['permissions']:<22}{g['confinement']:<15}"
                   f"{'LOCKED':<9}{g['environment']:<22}{'YES' if ready else 'NO'}")
         print()
-        for k in ("fixture_commit", "seeded_file_hash", "prompt_set_hash",
+        for k in ("prompt_state", "prompt_count", "prompt_set_hash",
+                  "prompt_source_hash", "prompt_schema_version", "prompt_lengths",
+                  "fixture_commit", "seeded_file_hash",
                   "rubric_hash", "ground_truth_path_hash", "private_mapping_hash",
                   "worktree_root", "evidence_root", "client_version",
                   "litellm_version", "ollama_version"):
@@ -331,6 +455,18 @@ def main() -> int:
     else:
         locked_path.write_text(json.dumps(manifest, indent=1, default=str))
         locked = manifest
+
+    # Recomputed HERE, after the manifest locked, and again on every resume:
+    # a prompt edited between locking and turn 1 would otherwise be certified by
+    # a hash of the prompts it replaced.
+    live = extract_prompts()
+    if live["state"] != PROMPTS_VERIFIED:
+        print(f"{live['state']}: {live.get('reason')}", file=sys.stderr)
+        return 6
+    if live["hash"] != locked.get("prompt_set_hash"):
+        print(f"{INVALID_RUN_MANIFEST}: {PROMPT_HASH_MISMATCH} "
+              f"{locked.get('prompt_set_hash')} -> {live['hash']}", file=sys.stderr)
+        return 5
 
     targets = [a.candidate] if a.candidate else list(CANDIDATES)
     results = {}

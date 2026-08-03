@@ -206,6 +206,128 @@ def main() -> int:
     check(rub.index("Score correctness") < rub.index("Reveal the model mapping"),
           "quality is scored before identity is revealed")
 
+    print("\nPROMPTS COME FROM THE AUTHORITATIVE HANDOFF")
+    real = D.extract_prompts()
+    check(real["state"] == D.PROMPTS_VERIFIED, "the real handoff parses PROMPTS_VERIFIED")
+    check(len(real["prompts"]) == 3, "exactly three prompts are extracted")
+    check(real["prompts"][0].startswith("Installation on this 32 GB machine"),
+          "T1 is first and is the investigation prompt")
+    check(real["prompts"][1].startswith("Which single function"),
+          "T2 is second")
+    check(real["prompts"][2].startswith("Without rereading"), "T3 is third")
+    check("\n" in real["prompts"][0], "multiline prompt content is preserved")
+    check(real["lengths"] == [604, 137, 129],
+          f"prompt lengths are stable {real['lengths']}")
+    # Independent corroboration: KNOWN_ISSUES #6 records run 2's prompt as
+    # 604 chars. Matching that is stronger evidence the parser reproduces the
+    # bytes actually sent than any self-consistent hash would be.
+    check(real["lengths"][0] == 604,
+          "T1 is 604 chars, matching the independently recorded run-2 figure")
+    check(not any(re.match(r"^T\d+:", p) for p in real["prompts"]),
+          "the Tn: document marker is not part of any prompt")
+    check(not any(l.startswith("    ") for p in real["prompts"]
+                  for l in p.splitlines()),
+          "Markdown continuation indent is removed")
+
+    # The prompts must not hand the candidate the seeded root cause.
+    for leak in ("config/profiles/active-profile", "2>/dev/null",
+                 "hardcoded", "precedence"):
+        check(not any(leak in p for p in real["prompts"]),
+              f"no prompt reveals the ground truth ({leak!r})")
+
+    print("\nPROMPT EXTRACTION FAILS CLOSED")
+    tmp = Path(tempfile.mkdtemp(prefix="ph-"))
+
+    def parse(body):
+        f = tmp / f"h{abs(hash(body))}.md"
+        f.write_text("# x\n\n## Three turns (identical)\n\n" + body + "\n\n## Next\n")
+        return D.extract_prompts(f)["state"]
+
+    good = ("T1: alpha\n    more alpha\n\nT2: beta\n\nT3: gamma")
+    check(parse(good) == D.PROMPTS_VERIFIED, "a well-formed section parses")
+    check(parse("T1: a\n\nT2: b") == D.PROMPT_COUNT_INVALID,
+          "a missing third prompt fails PROMPT_COUNT_INVALID")
+    check(parse("T1: a\n\nT2: b\n\nT2: c\n\nT3: d") == D.PROMPTS_DUPLICATED,
+          "a duplicated section fails PROMPTS_DUPLICATED")
+    check(parse("T1: a\n\nT2: b\n\nT3: c\n\nT4: d") == D.PROMPT_COUNT_INVALID,
+          "an extra fourth prompt fails closed")
+    check(parse("T1: a\n\nT3: c\n\nT2: b") == D.PROMPTS_MALFORMED,
+          "out-of-order numbering fails PROMPTS_MALFORMED")
+    check(parse("T1: a\nnot indented continuation\n\nT2: b\n\nT3: c")
+          == D.PROMPTS_MALFORMED, "a malformed delimiter fails PROMPTS_MALFORMED")
+    check(parse("T1: \n\nT2: b\n\nT3: c") == D.PROMPTS_MALFORMED,
+          "an empty prompt fails closed")
+    missing = tmp / "nosection.md"
+    missing.write_text("# nothing here\n")
+    check(D.extract_prompts(missing)["state"] == D.PROMPTS_MISSING,
+          "a file without the section fails PROMPTS_MISSING")
+    check(D.extract_prompts(tmp / "absent.md")["state"] == D.PROMPTS_MISSING,
+          "a missing file fails PROMPTS_MISSING")
+
+    # There must be no placeholder path back into the driver.
+    drv_src = (REPO / "scripts" / "run-planner-comparison.py").read_text()
+    check("[planner turn" not in drv_src,
+          "no placeholder prompt text survives anywhere in the driver")
+    raised = False
+    try:
+        D.turn_prompts.__globals__["extract_prompts"]  # sanity
+        orig_extract = D.extract_prompts
+        D.extract_prompts = lambda *a, **k: {"state": D.PROMPTS_MISSING,
+                                             "reason": "forced"}
+        try:
+            D.turn_prompts(3)
+        except RuntimeError:
+            raised = True
+        finally:
+            D.extract_prompts = orig_extract
+    except Exception:  # noqa: BLE001
+        pass
+    check(raised, "turn_prompts RAISES rather than degrading to placeholders")
+
+    print("\nPROMPT HASHING IS CANONICAL")
+    h = D.prompt_set_hash(real["prompts"])
+    check(h == real["hash"], "the reported hash is reproducible")
+    mutated = list(real["prompts"]); mutated[1] = mutated[1] + " "
+    check(D.prompt_set_hash(mutated) != h, "one trailing byte changes the hash")
+    reordered = [real["prompts"][1], real["prompts"][0], real["prompts"][2]]
+    check(D.prompt_set_hash(reordered) != h, "reordering changes the hash")
+    split = ["a" + "b", "c"] ; joined = ["a", "bc"]
+    check(D.prompt_set_hash(split) != D.prompt_set_hash(joined),
+          "moving a boundary between prompts changes the hash (lengths are hashed)")
+    check(h != "349bde5142478d07",
+          "the placeholder hash is gone and cannot be reproduced")
+
+    # Unrelated prose in HANDOFF.md must not move the prompt hash.
+    alt = tmp / "prose.md"
+    src_text = (D.PLANNER / "HANDOFF.md").read_text()
+    alt.write_text(src_text.replace("## Cleanup", "## Cleanup notes CHANGED"))
+    check(D.extract_prompts(alt)["hash"] == h,
+          "editing unrelated prose does not change the prompt hash")
+    check(D.extract_prompts(alt)["source_hash"] != real["source_hash"],
+          "...but the SOURCE hash does change, so the edit is still visible")
+    shutil.rmtree(tmp, ignore_errors=True)
+
+    print("\nPUBLIC MANIFEST CARRIES HASHES, NOT PROMPTS")
+    for p in real["prompts"]:
+        check(p[:40] not in json.dumps(man), "no prompt text appears in the public manifest")
+    check(man.get("prompt_set_hash") and man.get("prompt_source_hash"),
+          "the manifest carries the prompt and source hashes")
+    check(man.get("prompt_state") == D.PROMPTS_VERIFIED,
+          "the manifest records the prompt verification state")
+    check("prompt_set_hash" in D.LOCKED_FIELDS
+          and "prompt_source_hash" in D.LOCKED_FIELDS,
+          "prompt hashes are LOCKED fields")
+    tampered = dict(man); tampered["prompt_set_hash"] = "x"
+    check(not D.manifest_is_locked(tampered, man)[0],
+          "a changed prompt hash fails closed after the manifest locks")
+
+    print("\nCANDIDATE CONFINEMENT STILL DENIES THE HANDOFF")
+    gt = D.PLANNER / "HANDOFF.md"
+    pol = B.confinement_settings(B.benchmark_worktree_root() / "x")
+    roots = [d[len("Read(/"):-len("/**)")] for d in pol["permissions"]["deny"]]
+    check(any(str(gt).startswith(r.rstrip("/") + "/") for r in roots),
+          "the handoff the driver reads remains denied to candidates")
+
     print("\nNO LEAKS")
     check(not any(p.name.startswith("unit-") and p.is_dir()
                   for p in B.benchmark_worktree_root().iterdir()
