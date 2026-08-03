@@ -646,6 +646,44 @@ shutil.rmtree(_ext, ignore_errors=True)
 shutil.rmtree(_sib, ignore_errors=True)
 
 
+# ── benchmark and production share ONE geometry ─────────────────────────────
+# build_alias used to compute `num_ctx = context + ceiling` itself. That is how
+# it enforced the admission invariant production did not, and how the two paths
+# could disagree about what the same profile field meant.
+print("\nshared geometry")
+import profile_config as _pc
+for ci, mo in ((32768, 8192), (65536, 4096), (81920, 16384), (3968, 128)):
+    al = B.build_alias("m", "off", ci, mo, {})
+    g = _pc.geometry(ci, mo)
+    lp, mi = al["litellm_params"], al["model_info"]
+    check(lp["num_ctx"] == g["num_ctx"],
+          f"{ci}+{mo}: num_ctx from geometry() ({g['num_ctx']})")
+    check(lp["num_predict"] == g["num_predict"], f"{ci}+{mo}: num_predict derived")
+    check(mi["max_input_tokens"] == g["max_input_tokens"] == ci,
+          f"{ci}+{mo}: admission == context_input by construction")
+    check(mi["max_output_tokens"] == mo, f"{ci}+{mo}: advertised output == reserve")
+
+# The completed planner geometry must survive exactly.
+pl = B.build_alias("qwen3.5:4b", "off", 32768, 8192, {})
+check(pl["litellm_params"]["num_ctx"] == 40960
+      and pl["litellm_params"]["num_predict"] == 8192
+      and pl["model_info"]["max_input_tokens"] == 32768,
+      "planner overlay preserved: 32768 in + 8192 out = 40960 total")
+
+# keep_alive is an explicit overlay, not a literal buried in the builder.
+check(B.build_alias("m", "off", 100, 10, {}, keep_alive="6h")["litellm_params"]["keep_alive"] == "6h",
+      "keep_alive is overridable, not hardcoded")
+
+src = (REPO / "scripts" / "lib" / "benchmark_runtime.py").read_text()
+# Behavioural, not textual: num_ctx must come from the geometry RESULT, not be
+# recomputed. A prose mention of the old formula is not the defect.
+check('"num_ctx": g["num_ctx"]' in src and "_pc.geometry(" in src,
+      "num_ctx is taken from geometry(), not recomputed inline")
+check(src.count("THINK_MODES") >= 2 and src.count('{"off": False, "on": True') == 1,
+      "one thinking-mode mapping, not two")
+check(not re.search(r'"if model ==|model\.startswith\("(qwen|gemma|gpt)', src),
+      "no model-name conditionals in the alias builder")
+
 print()
 if failures:
     print(f"FAILED ({len(failures)})")

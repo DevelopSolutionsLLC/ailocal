@@ -157,41 +157,54 @@ def alias_name(model: str, mode: str, context: int) -> str:
     return f"{ALIAS_PREFIX}{slug}-{mode}-{context // 1024}k"
 
 
-def build_alias(model: str, mode: str, context: int, ceiling: int,
-                preset: dict) -> dict:
-    """One deployment carrying VENDOR settings.
+#: Reasoning-mode vocabulary. ONE mapping, here, because the benchmark speaks
+#: modes ("off"/"on"/"low"/"medium"/"high") while the profile speaks a boolean
+#: `reasoning`. Both reach the same `think` parameter; two mappings would drift.
+THINK_MODES = {"off": False, "on": True,
+               "low": "low", "medium": "medium", "high": "high"}
 
-    They live in the alias because this stack IGNORES client generation
-    parameters — measured, max_tokens of 50 and of 300 both returned 1492
-    completion tokens.
+
+def build_alias(model: str, mode: str, context: int, ceiling: int,
+                preset: dict, keep_alive: str = None) -> dict:
+    """A temporary benchmark deployment: production geometry + explicit overlay.
+
+    GEOMETRY IS NOT COMPUTED HERE. It comes from profile_config.geometry(), the
+    same function sync-models calls, so a benchmark alias and a production alias
+    cannot disagree about what num_ctx, num_predict or admission mean. This
+    function previously did `num_ctx = context + ceiling` itself, which is how
+    build_alias enforced the admission invariant that production did not.
+
+    `context` is the INPUT budget and `ceiling` the OUTPUT reserve — the same
+    context_input / max_output the profiles now declare.
+
+    Vendor generation settings live in the alias because this stack ignores
+    client generation parameters: measured, a per-request max_tokens of 512
+    against an alias declaring num_predict 32768 returned 4,199 tokens.
+
+    keep_alive defaults to the caller's choice rather than a hardcoded literal;
+    benchmarks that want production behaviour pass the profile's value.
     """
-    think = {"off": False, "on": True,
-             "low": "low", "medium": "medium", "high": "high"}.get(mode)
+    import profile_config as _pc
+    g = _pc.geometry(context, ceiling)
+    think = THINK_MODES.get(mode)
     params = {"model": f"ollama_chat/{model}",
               "api_base": "os.environ/OLLAMA_URL",
-              "num_ctx": context + ceiling,
-              "num_predict": ceiling,
-              "keep_alive": "10m", **preset}
+              "num_ctx": g["num_ctx"],
+              "num_predict": g["num_predict"],
+              "keep_alive": keep_alive or "10m", **preset}
     if think is not None:
         params["think"] = think
     return {"model_name": alias_name(model, mode, context),
             "litellm_params": params,
-            # ADMISSION = the physical window minus the output reservation, and
-            # never more. It was `context * PRECALL_MARGIN`, which admitted
+            # Admission is g["max_input_tokens"], which IS context_input by
+            # construction. It was `context * PRECALL_MARGIN`, which admitted
             # 45,875 tokens into a 40,960-token window. MEASURED consequence
-            # (scripts/repro-context-admission.py, qwen3.5:2b, this geometry):
-            #   37,680 tokens -> evaluated in full, all 5 sentinels returned
-            #   43,645 tokens -> ADMITTED, then Ollama SILENTLY truncated to
-            #                    20,482. HTTP 200, finish_reason=stop, no error.
-            #                    The system prompt, the early and middle content
-            #                    were gone and the final instruction was not
-            #                    followed. Ollama trims from the FRONT.
-            #   51,601 tokens -> rejected by litellm._pre_call_checks (400).
-            # So the guard was correct at its threshold and the threshold was
-            # wrong. Failing closed costs a loud rejection; failing open costs a
-            # silently corrupted run that still looks successful.
-            "model_info": {"max_input_tokens": context,
-                           "max_output_tokens": ceiling,
+            # (scripts/repro-context-admission.py, qwen3.5:2b): 43,645 tokens
+            # ADMITTED, then Ollama silently truncated to 20,482 — HTTP 200,
+            # finish_reason=stop, system prompt gone. Failing closed costs a
+            # loud rejection; failing open costs a corrupted run that looks fine.
+            "model_info": {"max_input_tokens": g["max_input_tokens"],
+                           "max_output_tokens": g["max_output"],
                            "input_cost_per_token": 0, "output_cost_per_token": 0,
                            "supports_reasoning": think is not None}}
 

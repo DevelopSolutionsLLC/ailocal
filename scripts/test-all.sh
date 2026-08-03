@@ -114,6 +114,12 @@ run "planner comparison driver (safe defaults, locking, blinding)" \
 # config/profiles/*.yaml are the ONLY authoritative deployment config, and
 # config/active-profile has no implicit default. These prove there is one
 # parser and that every entry point fails closed rather than assuming 64gb.
+# The benchmark library owns alias construction, evidence capture, admission
+# geometry and restoration. It was NOT in the gate: a whole suite could fail
+# while the gate reported green, which is how a benchmark-only regression
+# reaches a planner run unnoticed.
+run "benchmark library (aliases, geometry, evidence, confinement)" \
+    python3 scripts/tests/test-benchmark.py
 run "profile resolver (single parser, fail-closed, no 64gb default)" \
     python3 scripts/tests/profile-config.py
 run "hardware profiles (schema, tiers, dedup)" \
