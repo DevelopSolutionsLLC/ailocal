@@ -92,6 +92,21 @@ suites:
   # config/benchmark-tasks/utils.py. Dataset/tests/metric remain lm-eval's.
   coding2:          {engine: lm-eval, task: mbpp_plus_robust, role: implementation}
 
+# Read-only permission contract for the planner scenario. DECLARED, not
+# inherited: Claude Code's settings.json here has `permissions: {}`, so the
+# planner run relied on undeclared defaults. In print mode nothing can be
+# approved interactively, so Bash and Write were denied silently while
+# Read/Glob/Grep were allowed — and one candidate burned 31 internal turns
+# replanning around a denial the benchmark never intended to impose.
+#
+# Bash is allowed only for an explicit read-only command set, never wholesale.
+# `./scripts/status.sh` is on it because the scenario prompt names that command
+# as the reported symptom; denying it makes the task unanswerable as written.
+planner_permissions:
+  allowed: "Read,Glob,Grep,Bash(./scripts/status.sh),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(cat:*),Bash(ls:*),Bash(head:*),Bash(wc:*)"
+  denied: "Write,Edit,NotebookEdit,WebFetch,WebSearch,Task,Bash(git commit:*),Bash(git push:*),Bash(rm:*),Bash(curl:*),Bash(pip:*),Bash(brew:*)"
+  mode: "default"
+
 # Client integration scenarios. NOT capability benchmarks — these exercise the
 # client (session persistence, compaction, tool routing, MCP, hooks) which
 # lm-eval cannot see because it bypasses the client entirely.

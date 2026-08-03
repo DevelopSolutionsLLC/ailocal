@@ -277,6 +277,41 @@ check(B.classify_client_outcome(B.parse_client_result(_stream), 0, False)
 check(B.classify_client_outcome({}, 0, False) == "UNKNOWN",
       "records without a structured result remain readable")
 
+print("\nplanner permission contract")
+_pp = B.load_config()["planner_permissions"]
+_args = B.permission_args(_pp)
+check("--allowedTools" in _args and "--disallowedTools" in _args
+      and "--permission-mode" in _args,
+      "contract emits allowed/denied/mode CLI flags")
+check("--dangerously-skip-permissions" not in _args,
+      "never bypasses permissions (planning-only must not be able to write)")
+# Read/Glob/Grep are what a read-only investigation actually needs.
+for _tool in ("Read", "Glob", "Grep"):
+    check(_tool in _pp["allowed"], f"{_tool} is allowed for read-only investigation")
+# MEASURED: candidate-b attempted Write to config/active-profile despite a
+# PLAN ONLY instruction; the seeded fixture survived only because Write was
+# denied. It must stay denied explicitly, not by accident.
+for _tool in ("Write", "Edit", "Task"):
+    check(_tool in _pp["denied"], f"{_tool} is explicitly denied")
+# The scenario prompt names ./scripts/status.sh as the reported symptom, so
+# denying it makes the task unanswerable as written.
+check("Bash(./scripts/status.sh)" in _pp["allowed"],
+      "the command the prompt cites is runnable")
+check("Bash)" not in _pp["allowed"].replace("Bash(", "") and
+      ",Bash," not in "," + _pp["allowed"] + ",",
+      "Bash is never allowed wholesale, only per-command")
+for _cmd in ("Bash(git commit:*)", "Bash(git push:*)", "Bash(rm:*)"):
+    check(_cmd in _pp["denied"], f"{_cmd} is denied")
+_h = B.permission_manifest_hash(_pp)
+check(_h == B.permission_manifest_hash(dict(_pp)),
+      "manifest hash is stable for identical contracts")
+check(_h != B.permission_manifest_hash({**_pp, "allowed": "Read"}),
+      "manifest hash changes when the contract changes")
+check([n for n, _ in B.PERMISSION_PREFLIGHT] == ["read", "search", "write_denied"],
+      "preflight probes read, search and a forbidden write")
+check(B.permission_args({}) == [],
+      "an empty contract adds no flags (production default unchanged)")
+
 install = (REPO / "scripts" / "install.sh").read_text()
 for gb in ("128", "64", "32", "16"):
     check(f"-ge {gb}" in install,
