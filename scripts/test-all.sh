@@ -94,6 +94,12 @@ run "tool-call repair (repairs real calls, refuses examples)" \
 # disjoint and sum to the reported total.
 run "E1 trace schema, redaction and token reconciliation" \
     python3 scripts/tests/request-trace.py
+# The planner comparison is the one benchmark whose SETUP has repeatedly been the
+# defect: it once measured a single model three times, and candidates could read
+# the answer key. These prove safe defaults, manifest locking, confinement wiring
+# and identity-stripped scoring copies -- with no inference.
+run "planner comparison driver (safe defaults, locking, blinding)" \
+    python3 scripts/tests/planner-driver.py
 # E3. Declared num_ctx vs what the backend actually serves. nomic-embed-text silently
 # CLIPS at 2048 rather than erroring, so an over-declaration yields successful-looking
 # embeddings of truncated text — no error to notice, just quietly worse vectors. The
