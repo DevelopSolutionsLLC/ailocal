@@ -401,9 +401,10 @@ _wt = _pl.Path("/private/var/folders/ailocal-test-wt")   # outside every denied 
 cs = B.confinement_settings(_wt)
 fs = cs["permissions"]
 check(fs["defaultMode"] == "default", "confinement does not relax the permission mode")
-check(B.worktree_is_confinable(_wt) is True, "a worktree outside denied roots is confinable")
-check(B.worktree_is_confinable(_pl.Path.home() / "x") is False,
-      "a worktree inside $HOME is NOT confinable — deny beats allow")
+check(B.worktree_is_confinable(_wt) == B.OUTSIDE_OWNED_TEMP_ROOT,
+      "a path outside the owned root is refused with a reason")
+check(B.worktree_is_confinable(_pl.Path.home() / "x") == B.INSIDE_DENIED_ROOT,
+      "a worktree inside $HOME is refused: deny beats allow")
 check(fs["allow"] == [f"Read(/{_wt}/**)", "Glob", "Grep"],
       "exactly one directory is re-admitted")
 check(f"Read(/{_pl.Path.home()}/**)" in fs["deny"], "$HOME is denied")
@@ -424,7 +425,7 @@ for label, target in (("ground truth", gt), ("cadence repo", cad)):
 check(not any("cadence" in d.lower() or "HANDOFF" in d for d in fs["deny"]),
       "no path is denied by name — the policy is regions, not a blocklist")
 
-_wt2 = _pl.Path(tempfile.mkdtemp(prefix="confine-args-")).resolve()
+_wt2 = _pl.Path(tempfile.mkdtemp(dir=B.benchmark_worktree_root())).resolve()
 args = B.confinement_args(_wt2)
 check(args[0] == "--settings" and _pl.Path(args[1]).is_file(),
       "confinement is installed through --settings, per run")
@@ -480,7 +481,7 @@ def _stub_turn(calls, session="sess-1", stdout="", denials=None):
 
 
 def _run(state, calls, stdout="", denials=None, wt=None):
-    wt = wt or _pl.Path(tempfile.mkdtemp(prefix="conf-scn-")).resolve()
+    wt = wt or _pl.Path(tempfile.mkdtemp(dir=B.benchmark_worktree_root())).resolve()
     orig_turn, orig_ver = _bc.run_client_turn, _bc.verify_confinement
     _bc.run_client_turn = _stub_turn(calls, stdout=stdout, denials=denials)
     _bc.verify_confinement = lambda *a, **k: {"state": state, "verdict": {},
@@ -523,7 +524,7 @@ shutil.rmtree(wt, ignore_errors=True)
 
 # Non-planner scenarios must be untouched.
 calls = []
-_wt2 = _pl.Path(tempfile.mkdtemp(prefix="conf-plain-")).resolve()
+_wt2 = _pl.Path(tempfile.mkdtemp(dir=B.benchmark_worktree_root())).resolve()
 _orig = _bc.run_client_turn
 _bc.run_client_turn = _stub_turn(calls)
 try:
@@ -557,6 +558,92 @@ shutil.rmtree(wt, ignore_errors=True)
 check(not re.search(r"qwen|gemma|gpt-oss|llama|deepseek",
                     _insp.getsource(_bc.run_client_scenario), re.I),
       "scenario confinement has no model-name branches")
+
+
+# ── worktrees live outside every denied root ────────────────────────────────
+# Deny beats allow and cannot be overridden, so a worktree under $HOME is
+# unreadable by its own candidate. Measured before this moved: such a run
+# returned neither its own file nor the ground truth.
+print("\nexternal worktree root")
+_root = B.benchmark_worktree_root()
+check(not str(_root).startswith(str(_pl.Path.home())),
+      f"owned worktree root is outside $HOME ({_root})")
+check(_root.is_dir(), "owned worktree root exists")
+check((_root.stat().st_mode & 0o077) == 0,
+      "owned worktree root is private to this user")
+check(str(_root) == str(_root.resolve()),
+      "owned worktree root is already fully resolved (no symlink surprises)")
+
+_ext = _pl.Path(tempfile.mkdtemp(dir=_root)).resolve()
+check(B.worktree_is_confinable(_ext) == B.CONFINABLE,
+      "a worktree under the owned root is CONFINABLE")
+check(B.worktree_is_confinable(B.state_dir()) == B.INSIDE_DENIED_ROOT,
+      "the evidence root is refused as a worktree location")
+check(B.worktree_is_confinable(B.state_dir() / "planner") == B.INSIDE_DENIED_ROOT,
+      "the ground-truth root is refused as a worktree location")
+
+# A symlink that LOOKS confinable but resolves into $HOME must be caught, since
+# the policy is written against the resolved path.
+_link = _root / "sneaky-link"
+_link.unlink(missing_ok=True)
+_link.symlink_to(_pl.Path.home())
+check(B.worktree_is_confinable(_link) == B.SYMLINK_TARGET_DENIED,
+      "a symlink resolving into $HOME is refused, not followed")
+_link.unlink(missing_ok=True)
+
+# Sibling isolation: siblings share the owned root, which cannot itself be
+# denied, so each must be named explicitly.
+_sib = _pl.Path(tempfile.mkdtemp(dir=_root)).resolve()
+_cs = B.confinement_settings(_ext, deny_extra=[_sib])
+check(f"Read(/{_sib}/**)" in _cs["permissions"]["deny"],
+      "a sibling worktree is explicitly denied")
+check(f"Read(/{_ext}/**)" in _cs["permissions"]["allow"],
+      "the candidate's own worktree stays allowed alongside sibling denial")
+
+_m = B.confinement_manifest(_ext, "alias", {"allowed": "Read", "denied": "Bash",
+                                            "mode": "default"}, deny_extra=[_sib])
+check(len({_m["candidate_worktree_root"], _m["evidence_root"],
+           _m["ground_truth_root"]}) == 3,
+      "manifest records candidate/evidence/ground-truth roots separately")
+check(_m["evidence_root"].startswith(str(_pl.Path.home())),
+      "evidence stays inside $HOME — i.e. inside a denied root")
+check(_m["sibling_worktrees_denied"] == [str(_sib)],
+      "manifest records which siblings were denied")
+
+# Cleanup must never delete anything it did not create.
+import benchmark_clients as _bc2
+for label, target, want in (
+        ("$HOME", _pl.Path.home(), "REFUSED_PROTECTED_PATH"),
+        ("repo", B.REPO, "REFUSED_PROTECTED_PATH"),
+        ("evidence root", B.state_dir(), "REFUSED_PROTECTED_PATH"),
+        ("owned root itself", _root, "REFUSED_PROTECTED_PATH"),
+        ("/etc", _pl.Path("/etc"), "REFUSED_OUTSIDE_OWNED_ROOT")):
+    check(_bc2._cleanup_is_safe(target) == want,
+          f"cleanup refuses {label} ({want})")
+check(_bc2._cleanup_is_safe(_ext) == "SAFE",
+      "cleanup accepts a worktree inside the owned root")
+_bad = B.remove_worktree(_pl.Path.home())
+check(_bad["removed"] is False and _bad["status"] == B.WORKTREE_CLEANUP_FAILED,
+      "an unsafe cleanup reports WORKTREE_CLEANUP_FAILED and deletes nothing")
+check(_pl.Path.home().is_dir(), "$HOME still exists after a refused cleanup")
+
+# Orphan sweeping: a killed run leaves a settings file and a $HOME canary that
+# nothing else will ever remove.
+_orphan = _root / ".confine-does-not-exist.json"
+_orphan.write_text("{}")
+_can = _pl.Path.home() / ".ailocal-confinement-canary-testonly.txt"
+_can.write_text("x")
+_sw = B.sweep_worktree_root()
+check(not _orphan.exists(), "an orphaned settings file is swept")
+check(not _can.exists(), "an orphaned $HOME canary is swept")
+_live = _root / ".confine-" + "" if False else _root / f".confine-{_ext.name}.json"
+_live.write_text("{}")
+B.sweep_worktree_root()
+check(_live.exists(), "a settings file whose worktree still exists is NOT swept")
+_live.unlink(missing_ok=True)
+
+shutil.rmtree(_ext, ignore_errors=True)
+shutil.rmtree(_sib, ignore_errors=True)
 
 
 print()

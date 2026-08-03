@@ -16,7 +16,9 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -315,22 +317,98 @@ def client_version(client: str) -> str:
 
 
 def disposable_worktree(run_id: str) -> Path:
-    """An isolated git worktree per run.
+    """An isolated git worktree per run, OUTSIDE every denied root.
 
     Scenarios that mutate code must never touch the live checkout, and two runs
-    must never share a tree.
+    must never share a tree. It now also must not live under $HOME: deny beats
+    allow, so a worktree inside a denied root is unreadable by its own
+    candidate and the run aborts at preflight instead of starting unconfined.
+
+    Durable evidence and the planner ground truth deliberately stay where they
+    were, under state_dir() inside $HOME -- which is a DENIED root. That is the
+    separation: the candidate can see its worktree and nothing else, while the
+    evidence it must not read sits somewhere it cannot reach.
     """
-    wt = state_dir() / "worktrees" / run_id
+    wt = benchmark_worktree_root() / run_id
     wt.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(["git", "-C", str(REPO), "worktree", "add", "--detach",
                     str(wt), "HEAD"], capture_output=True, text=True, timeout=120)
     return wt
 
 
-def remove_worktree(wt: Path) -> None:
-    """Remove the tree; evidence already lives in the run directory."""
-    subprocess.run(["git", "-C", str(REPO), "worktree", "remove", "--force",
-                    str(wt)], capture_output=True, text=True, timeout=120)
+def _cleanup_is_safe(wt: Path) -> str:
+    """Refuse to recursively delete anything we did not create.
+
+    A benchmark that rm -rf's an unverified path once is a benchmark nobody runs
+    again. Checked against RESOLVED paths, so a symlink cannot smuggle the
+    target somewhere else."""
+    try:
+        p = Path(wt).resolve()
+    except Exception:  # noqa: BLE001
+        return "UNRESOLVABLE"
+    forbidden = [Path.home(), Path(REPO).resolve(), state_dir().resolve(),
+                 Path("/"), benchmark_worktree_root()]
+    if any(p == f.resolve() for f in forbidden):
+        return "REFUSED_PROTECTED_PATH"
+    root = str(benchmark_worktree_root())
+    if not str(p).startswith(root.rstrip("/") + "/"):
+        return "REFUSED_OUTSIDE_OWNED_ROOT"
+    return "SAFE"
+
+
+def sweep_worktree_root() -> dict:
+    """Remove per-run settings files whose worktree no longer exists.
+
+    A crashed or timed-out run leaves its .confine-*.json behind, and those
+    accumulate in the owned root forever. Only orphans are touched: a settings
+    file whose worktree is still present belongs to a live run."""
+    root = benchmark_worktree_root()
+    removed = []
+    # Canaries live in $HOME by design (it must be a denied region). A killed
+    # run cannot clean up after itself, so orphans are swept here rather than
+    # left to accumulate in the user's home directory.
+    for c in Path.home().glob(".ailocal-confinement-canary-*.txt"):
+        try:
+            c.unlink()
+            removed.append(c.name)
+        except Exception:  # noqa: BLE001
+            pass
+    for f in root.glob(".confine-*.json"):
+        name = f.name[len(".confine-"):-len(".json")]
+        if not (root / name).exists():
+            try:
+                f.unlink()
+                removed.append(f.name)
+            except Exception:  # noqa: BLE001
+                pass
+    return {"orphans_removed": removed}
+
+
+def remove_worktree(wt: Path) -> dict:
+    """Deregister then delete, and only inside the owned root.
+
+    Returns a status rather than raising: a cleanup failure must be reported
+    without masking the scenario result that preceded it."""
+    verdict = _cleanup_is_safe(wt)
+    if verdict != "SAFE":
+        return {"removed": False, "status": WORKTREE_CLEANUP_FAILED,
+                "reason": verdict, "path": str(wt)}
+    git = subprocess.run(["git", "-C", str(REPO), "worktree", "remove", "--force",
+                          str(wt)], capture_output=True, text=True, timeout=120)
+    leftover = Path(wt).exists()
+    if leftover:
+        try:
+            shutil.rmtree(Path(wt).resolve(), ignore_errors=False)
+        except Exception as exc:  # noqa: BLE001
+            return {"removed": False, "status": WORKTREE_CLEANUP_FAILED,
+                    "reason": f"rmtree: {type(exc).__name__}", "path": str(wt),
+                    "git_rc": git.returncode}
+    # The per-run settings file lives beside the worktree, not inside it.
+    for stray in Path(wt).parent.glob(f".confine-{Path(wt).name}.json"):
+        stray.unlink(missing_ok=True)
+    sweep_worktree_root()
+    return {"removed": not Path(wt).exists(), "status": "OK",
+            "git_rc": git.returncode, "path": str(wt)}
 
 
 def run_client_scenario(client: str, turns: list, cwd: Path,
@@ -370,9 +448,12 @@ def run_client_scenario(client: str, turns: list, cwd: Path,
         model = confinement.get("model")
         perms = confinement.get("permissions") or {}
         wt = Path(cwd).resolve()
-        args_conf = confinement_args(wt)
+        args_conf = confinement_args(
+            wt, deny_extra=confinement.get("sibling_worktrees") or ())
         settings_path = args_conf[1]
-        pre_manifest = confinement_manifest(wt, model, perms, settings_path)
+        pre_manifest = confinement_manifest(
+            wt, model, perms, settings_path,
+            deny_extra=confinement.get("sibling_worktrees") or ())
 
         res = verify_confinement(wt, model, perms,
                                  extra_paths=confinement.get("extra_paths"),
@@ -393,7 +474,9 @@ def run_client_scenario(client: str, turns: list, cwd: Path,
         # Re-derive the manifest AFTER the probe. If anything the sandbox
         # depends on moved during preflight, the verified configuration is not
         # the one the candidate would get.
-        post_manifest = confinement_manifest(wt, model, perms, settings_path)
+        post_manifest = confinement_manifest(
+            wt, model, perms, settings_path,
+            deny_extra=confinement.get("sibling_worktrees") or ())
         confine["manifest_after_preflight"] = post_manifest
         if post_manifest["hash"] != pre_manifest["hash"]:
             confine["mismatch"] = {"before": pre_manifest["hash"],
@@ -554,7 +637,7 @@ CONFINEMENT_WORKTREE_INSIDE_DENIED_ROOT = "CONFINEMENT_WORKTREE_INSIDE_DENIED_RO
 DENIED_ROOTS = ("/Users", "/etc", "/opt", "/usr/local")
 
 
-def confinement_settings(worktree) -> dict:
+def confinement_settings(worktree, deny_extra=()) -> dict:
     """Deny whole roots with Read() rules, then re-admit exactly one worktree.
 
     MECHANISM CORRECTION (measured 2026-08-03). An earlier version used
@@ -574,6 +657,12 @@ def confinement_settings(worktree) -> dict:
     break the run or silently confine nothing.
     """
     wt = Path(worktree).resolve()
+    # SIBLINGS MUST BE NAMED. The owned worktree root is not a denied root -- it
+    # cannot be, since deny beats allow and the candidate must read its own tree
+    # inside it. So a sibling candidate's worktree is only hidden by denying it
+    # explicitly. This is bounded enumeration of paths we created ourselves, not
+    # a blocklist of guessed-at dangers.
+    siblings = [f"Read(/{Path(d).resolve()}/**)" for d in deny_extra]
     return {"permissions": {
         # DOUBLE SLASH. Claude Code reads Read(/x) as project-relative and
         # Read(//x) as absolute from the filesystem root. Single-slash rules
@@ -581,29 +670,86 @@ def confinement_settings(worktree) -> dict:
         # deny list that silently matches nothing is worse than none, because
         # it reads as protection.
         "deny": [f"Read(/{r}/**)" for r in DENIED_ROOTS]
-                + [f"Read(/{Path.home()}/**)"],
+                + [f"Read(/{Path.home()}/**)"] + siblings,
         "allow": [f"Read(/{wt}/**)", "Glob", "Grep"],
         "defaultMode": "default"}}
 
 
-def worktree_is_confinable(worktree) -> bool:
-    """Can this worktree be confined at all? Deny wins over allow, so a worktree
-    inside a denied root cannot be re-admitted."""
-    wt = str(Path(worktree).resolve())
+INSIDE_DENIED_ROOT = "INSIDE_DENIED_ROOT"
+OUTSIDE_OWNED_TEMP_ROOT = "OUTSIDE_OWNED_TEMP_ROOT"
+SYMLINK_TARGET_DENIED = "SYMLINK_TARGET_DENIED"
+ROOT_NOT_PRIVATE = "ROOT_NOT_PRIVATE"
+CONFINABLE = "CONFINABLE"
+WORKTREE_CLEANUP_FAILED = "WORKTREE_CLEANUP_FAILED"
+
+
+def benchmark_worktree_root() -> Path:
+    """The one directory candidate worktrees may live in.
+
+    OUTSIDE $HOME by necessity, not preference: deny beats allow and cannot be
+    overridden, so a worktree under a denied root is unreadable by its own
+    candidate. state_dir() is under $HOME, which is why worktrees had to move.
+
+    The system temp dir is resolved rather than hard-coded: on macOS TMPDIR is a
+    per-user directory under /var/folders that REALPATHS to /private/var/folders,
+    and a policy written against the unresolved path matches nothing.
+    """
+    root = Path(tempfile.gettempdir()).resolve() / "ailocal-benchmark" / "worktrees"
+    root.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(root.parent, 0o700)
+        os.chmod(root, 0o700)
+    except Exception:  # noqa: BLE001
+        pass
+    return root
+
+
+def worktree_is_confinable(worktree) -> str:
+    """Can this exact path be confined? Returns a REASON, never a bare bool.
+
+    "No" has several causes with different fixes -- a path under $HOME, a path
+    outside the owned root, a symlink pointing somewhere denied, a world-readable
+    root -- and collapsing them to False sends the next reader looking in the
+    wrong place.
+    """
+    raw = Path(worktree)
+    wt = raw.resolve()                      # symlinks resolved BEFORE any check
     roots = list(DENIED_ROOTS) + [str(Path.home())]
-    return not any(wt == r or wt.startswith(r.rstrip("/") + "/") for r in roots)
+
+    def under(path, root):
+        root = root.rstrip("/")
+        return str(path) == root or str(path).startswith(root + "/")
+
+    if any(under(wt, r) for r in roots):
+        # A symlink that LOOKS confinable but resolves into a denied root is the
+        # interesting case: the policy is written against the resolved path, so
+        # the candidate would simply be unable to read its own tree.
+        return SYMLINK_TARGET_DENIED if raw.is_symlink() or str(raw) != str(wt) \
+            else INSIDE_DENIED_ROOT
+
+    owned = benchmark_worktree_root()
+    if not under(wt, str(owned)):
+        return OUTSIDE_OWNED_TEMP_ROOT
+
+    try:
+        if (owned.stat().st_mode & 0o077) != 0:
+            return ROOT_NOT_PRIVATE
+    except Exception:  # noqa: BLE001
+        return ROOT_NOT_PRIVATE
+    return CONFINABLE
 
 
-def confinement_args(worktree, settings_path=None) -> list:
+def confinement_args(worktree, settings_path=None, deny_extra=()) -> list:
     """CLI flags installing the confinement for ONE run."""
     wt = Path(worktree).resolve()
-    if not worktree_is_confinable(wt):
+    verdict = worktree_is_confinable(wt)
+    if verdict != CONFINABLE:
         raise ValueError(
-            f"{CONFINEMENT_WORKTREE_INSIDE_DENIED_ROOT}: {wt} is inside a denied "
-            "root, and deny beats allow -- it cannot be re-admitted. Place "
-            "candidate worktrees outside " + ", ".join(DENIED_ROOTS) + " and $HOME.")
+            f"{verdict}: {wt} cannot be confined. Deny beats allow, so a "
+            "worktree under a denied root is unreadable by its own candidate. "
+            f"Create it under {benchmark_worktree_root()}.")
     dst = Path(settings_path) if settings_path else wt.parent / f".confine-{wt.name}.json"
-    dst.write_text(json.dumps(confinement_settings(wt), indent=1))
+    dst.write_text(json.dumps(confinement_settings(wt, deny_extra), indent=1))
     return ["--settings", str(dst)]
 
 
@@ -703,7 +849,7 @@ INVALID_PERMISSIONS = "INVALID_PERMISSIONS"
 
 
 def confinement_manifest(worktree, model: str, permissions: dict,
-                         settings_path=None) -> dict:
+                         settings_path=None, deny_extra=()) -> dict:
     """Everything the sandbox proof depends on, hashed.
 
     Deliberately includes the ENVIRONMENT pieces that silently change a run's
@@ -711,7 +857,7 @@ def confinement_manifest(worktree, model: str, permissions: dict,
     under one config directory says nothing about a candidate run under
     another."""
     wt = Path(worktree).resolve()
-    settings = confinement_settings(wt)
+    settings = confinement_settings(wt, deny_extra)
     body = json.dumps({
         "settings": settings,
         "worktree": str(wt),
@@ -732,6 +878,12 @@ def confinement_manifest(worktree, model: str, permissions: dict,
         "requested_alias": model,
         "permission_manifest": permission_manifest_hash(permissions),
         "settings_path": str(settings_path or ""),
+        # The three roots kept apart, resolved, so a reader never has to infer
+        # which one the candidate could see.
+        "candidate_worktree_root": str(benchmark_worktree_root()),
+        "evidence_root": str(state_dir().resolve()),
+        "ground_truth_root": str((state_dir() / "planner").resolve()),
+        "sibling_worktrees_denied": [str(Path(d).resolve()) for d in deny_extra],
     }
 
 
