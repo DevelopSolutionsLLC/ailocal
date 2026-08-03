@@ -222,11 +222,6 @@ def norm_keep_alive(v):
     return "-1" if s.lower() in ("forever", "persistent") else s
 
 
-def ctx_of(info):
-    return int(info.get("context") or info.get("num_ctx") or info.get("context_window") or 32768)
-
-
-# ── LiteLLM model_list ─────────────────────────────────────────────────────────
 def _int_or_none(v):
     if isinstance(v, int):
         return v
@@ -234,6 +229,26 @@ def _int_or_none(v):
         return int(v.strip())
     return None
 
+def _geom(info):
+    """Derived geometry for a role, from the ONE implementation.
+
+    sync-models must not re-derive num_ctx / num_predict / admission. It reads
+    context_input + max_output straight from the profile and hands them to
+    profile_config.geometry(), which is the same function every other consumer
+    calls. There is deliberately no default: a role missing context_input is a
+    migration error, not a 32768 guess -- the old fallback silently rewrote
+    every alias to 32768 when the schema changed.
+    """
+    return _pc.geometry(_int_or_none(info.get("context_input")),
+                        _int_or_none(info.get("max_output")))
+
+
+def ctx_of(info):
+    """Total physical window (Ollama num_ctx). Derived, never configured."""
+    return _geom(info)["num_ctx"]
+
+
+# ── LiteLLM model_list ─────────────────────────────────────────────────────────
 
 OUTPUT_RESERVE_UNBOUNDED = "OUTPUT_RESERVE_UNBOUNDED_UNSAFE_FOR_STRICT_ADMISSION"
 
@@ -323,8 +338,11 @@ def gen_role_block(role, info):
     merge     = truthy(info.get("merge", "false"))
     vision    = truthy(info.get("vision", "false"))
     parallel  = not reasoning
-    max_out   = min(16384, max(1024, num_ctx // 4))
-    _admit, _admit_note = admission_for(role, num_ctx, _int_or_none(info.get("num_predict")))
+    # Was min(16384, max(1024, num_ctx // 4)) -- a derivation with no owner that
+    # disagreed with num_predict. max_output is now declared in the profile.
+    max_out   = _geom(info)["max_output"] or min(16384, max(1024, num_ctx // 4))
+    _g = _geom(info)
+    _admit, _admit_note = admission_for(role, _g["num_ctx"], _g["num_predict"])
     desc      = info.get("role", "")
 
     params = [
@@ -339,9 +357,14 @@ def gen_role_block(role, info):
     # decides which to set. A value of 1.0 means NO penalty and is set
     # explicitly rather than relying on a backend default.
     for key in ("temperature", "top_p", "top_k", "repetition_penalty",
-                "repeat_penalty", "num_predict"):
+                "repeat_penalty"):
         if info.get(key) not in (None, ""):
             params.append(f"      {key}: {info[key]}")
+    # num_predict is DERIVED from max_output. It is the only ceiling the backend
+    # honours: a per-request max_tokens of 512 against an alias declaring 32768
+    # returned 4,199 tokens (measured, LiteLLM 1.93.0 ollama_chat).
+    if _g["num_predict"] is not None:
+        params.append(f"      num_predict: {_g['num_predict']}")
     if ka is not None:
         params.append(f"      keep_alive: {ka}")
     if merge:

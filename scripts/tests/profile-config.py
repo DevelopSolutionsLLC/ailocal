@@ -44,7 +44,7 @@ def sandbox(marker=None, profile_text=None) -> Path:
     return root
 
 
-GOOD = "architecture:\n  role: Lead\n  active: m:1\n  context: 100\n"
+GOOD = "architecture:\n  role: Lead\n  active: m:1\n  context_input: 100\n  max_output: 20\n"
 
 
 def main() -> int:
@@ -64,12 +64,12 @@ def main() -> int:
         ("missing profile file", sandbox(marker="64gb"), P.PROFILE_FILE_MISSING, "load"),
         ("malformed yaml", sandbox(marker="64gb", profile_text="  stray: 1\n"),
          P.PROFILE_YAML_INVALID, "load"),
-        ("non-integer context",
+        ("non-integer context_input",
          sandbox(marker="64gb",
-                 profile_text="architecture:\n  role: L\n  active: m\n  context: x\n"),
+                 profile_text="architecture:\n  role: L\n  active: m\n  context_input: x\n"),
          P.ROLE_CONFIG_INVALID, "load"),
         ("role missing required field",
-         sandbox(marker="64gb", profile_text="architecture:\n  role: L\n  context: 10\n"),
+         sandbox(marker="64gb", profile_text="architecture:\n  role: L\n  context_input: 10\n"),
          P.PROFILE_SCHEMA_INVALID, "load"),
     ]
     for label, root, expect, kind in cases:
@@ -159,6 +159,74 @@ def main() -> int:
     check(r.returncode == 0, "validate passes for the current repository")
 
 
+
+
+    print("\nEXPLICIT CONTEXT AND OUTPUT GEOMETRY")
+    for t in P.TIERS:
+        prof = P.load_profile(t)
+        for r in P.ROLES:
+            if r not in prof:
+                continue
+            raw = prof[r]
+            check("context" not in raw, f"{t}.{r}: legacy `context` is gone")
+            check(isinstance(raw.get("context_input"), int),
+                  f"{t}.{r}: declares context_input")
+            check(raw.get("max_output") != -1, f"{t}.{r}: no num_predict/-1 reserve")
+            c = P.resolve_role(t, r)
+            check(c["total_context"] == c["context_input"] + (c["max_output"] or 0),
+                  f"{t}.{r}: total_context is derived, not configured")
+            check(c["num_ctx"] == c["total_context"], f"{t}.{r}: num_ctx == total_context")
+            check(c["max_input_tokens"] == c["context_input"],
+                  f"{t}.{r}: admission == context_input BY CONSTRUCTION")
+            if c["max_output"]:
+                check(c["num_predict"] == c["max_output"],
+                      f"{t}.{r}: num_predict == max_output")
+
+    # A profile still carrying `context` has not been migrated — that is an
+    # error, not a fallback: guessing which of the two old meanings was intended
+    # is how both survived side by side.
+    box = Path(tempfile.mkdtemp(prefix="legacy-"))
+    (box / "config" / "profiles").mkdir(parents=True)
+    (box / "config" / "active-profile").write_text("64gb")
+    (box / "config" / "profiles" / "64gb.yaml").write_text(
+        "architecture:\n  role: L\n  active: m\n  context: 4096\n")
+    try:
+        P.load_profile("64gb", box); got = "NO ERROR"
+    except P.ProfileError as e:
+        got = e.code
+    check(got == P.PROFILE_SCHEMA_INVALID, f"legacy `context` fails closed (got {got})")
+    (box / "config" / "profiles" / "64gb.yaml").write_text(
+        "architecture:\n  role: L\n  active: m\n  context_input: 100\n  max_output: -1\n")
+    try:
+        P.load_profile("64gb", box); got = "NO ERROR"
+    except P.ProfileError as e:
+        got = e.code
+    check(got == P.ROLE_CONFIG_INVALID, f"max_output -1 fails closed (got {got})")
+    shutil.rmtree(box, ignore_errors=True)
+
+    # Geometry is derived in ONE place.
+    g = P.geometry(1000, 200)
+    check(g["total_context"] == 1200 and g["num_ctx"] == 1200
+          and g["num_predict"] == 200 and g["max_input_tokens"] == 1000,
+          "geometry() derives all four values from the two declared ones")
+    sync_src = (REPO / "scripts" / "sync-models.py").read_text()
+    check("_pc.geometry(" in sync_src,
+          "sync-models calls the shared geometry, does not re-derive it")
+    check("min(16384, max(1024, num_ctx // 4))" not in sync_src.split("max_out   =")[1][:120]
+          or "_geom(info)[\"max_output\"]" in sync_src,
+          "max_output_tokens comes from the profile, not a //4 heuristic")
+
+    # Advertised must equal enforced: they disagreed before (fast advertised
+    # 12288 while enforcing 4096).
+    import re as _re3
+    cfg3 = (REPO / "config" / "litellm" / "config.yaml").read_text()
+    for blk in cfg3.split("  - model_name: ")[1:]:
+        name = blk.split("\n")[0].strip()
+        gg = lambda k: (int(m.group(1)) if (m := _re3.search(rf"{k}:\s*(-?\d+)", blk)) else None)
+        np_, mo = gg("num_predict"), gg("max_output_tokens")
+        if np_ is None or mo is None:
+            continue
+        check(np_ == mo, f"{name}: advertised max_output_tokens == enforced num_predict")
 
     print("\nPRODUCTION ADMISSION RESPECTS PHYSICAL GEOMETRY")
     import importlib.util as _il2

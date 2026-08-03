@@ -63,9 +63,9 @@ for tier in PROFILES:
             continue
         active = caps[cap].get("active")
         check(bool(active), f"{tier}.{cap} names a backend", "active is empty")
-        ctx = caps[cap].get("context")
+        ctx = caps[cap].get("context_input")
         check(ctx is not None and ctx.isdigit() and int(ctx) > 0,
-              f"{tier}.{cap} context is a positive integer", f"got {ctx!r}")
+              f"{tier}.{cap} context_input is a positive integer", f"got {ctx!r}")
 
 
 # ── the agreed tier design ──────────────────────────────────────────────────
@@ -76,9 +76,14 @@ for tier, primary in (("16gb", "qwen3.5:4b"), ("32gb", "qwen3.5:9b")):
     check(all(caps[c].get("active") == primary for c in SHARED),
           f"{tier} shares {primary} across {', '.join(SHARED)}",
           {c: caps[c].get("active") for c in SHARED}.__repr__())
-    check(all(caps[c].get("context") == "65536" for c in SHARED),
-          f"{tier} primary context is 65536")
-    check(caps["architecture"].get("num_predict") == "8192",
+    # After the geometry migration these declare INPUT, and total_context
+    # (= input + output) is what used to be called `context`.
+    check(all(int(caps[c]["context_input"]) + int(caps[c].get("max_output") or 0) == 65536
+              for c in SHARED),
+          f"{tier} primary total_context is 65536")
+    # num_predict is now DERIVED from max_output; the profile declares the
+    # intent, not the backend parameter name.
+    check(caps["architecture"].get("max_output") == "8192",
           f"{tier} primary output ceiling is 8192")
     check(caps["completion"].get("active") == "qwen2.5-coder:1.5b",
           f"{tier} completion uses qwen2.5-coder:1.5b (native FIM)")
@@ -87,17 +92,20 @@ for tier, primary in (("16gb", "qwen3.5:4b"), ("32gb", "qwen3.5:9b")):
 c64, _ = PARSED["64gb"]
 c128, _ = PARSED["128gb"]
 for cap in CAPABILITIES:
-    for field in ("active", "context", "num_predict", "keep_alive", "temperature"):
+    for field in ("active", "context_input", "max_output", "keep_alive", "temperature"):
         check(c64[cap].get(field) == c128[cap].get(field),
               f"128gb.{cap}.{field} equals 64gb",
               f"64={c64[cap].get(field)!r} 128={c128[cap].get(field)!r}")
 
-check(c64["architecture"]["context"] == "98304",
-      "64gb architecture context is 98304, not the stale 64K")
+check(int(c64["architecture"]["context_input"]) + int(c64["architecture"]["max_output"])
+      == 98304,
+      "64gb architecture total_context is 98304, not the stale 64K")
 
 # Capability must never DECREASE as memory grows.
 for cap in CAPABILITIES:
-    ctxs = [int(PARSED[t][0][cap]["context"]) for t in PROFILES]
+    # embeddings has no max_output (embedding route, no generation).
+    ctxs = [int(PARSED[t][0][cap]["context_input"])
+            + int(PARSED[t][0][cap].get("max_output") or 0) for t in PROFILES]
     check(ctxs[3] >= ctxs[2],
           f"128gb.{cap} context is not below 64gb", f"{ctxs[2]} -> {ctxs[3]}")
 
@@ -106,7 +114,7 @@ for cap in CAPABILITIES:
 print("\nEMBEDDINGS")
 for tier in PROFILES:
     caps, _ = PARSED[tier]
-    ctx = int(caps["embeddings"]["context"])
+    ctx = int(caps["embeddings"]["context_input"])
     check(ctx <= 2048,
           f"{tier} embeddings context within nomic-embed-text's real 2048 limit",
           f"declares {ctx}")
@@ -175,7 +183,7 @@ for tier in PROFILES:
         continue
     win, pct = int(c["window"]), int(c["pct"])
     trig = win * pct // 100
-    arch = int(caps["architecture"]["context"])
+    arch = int(caps["architecture"]["context_input"]) + int(caps["architecture"].get("max_output") or 0)
     check(trig < arch,
           f"{tier} compaction trigger ({trig}) is below the architecture max ({arch})")
     check(trig < DANGER,
@@ -210,7 +218,8 @@ m = re.search(r'(?m)^codex:\n(?:.*\n)*?\s*default:\s*(\w+)', clients_yaml)
 cx_cap = m.group(1) if m else "implementation"
 if codex.exists() and cc and cx_cap in PARSED[tier][0]:
     txt = codex.read_text()
-    cx_ctx = int(PARSED[tier][0][cx_cap]["context"])
+    _cx = PARSED[tier][0][cx_cap]
+    cx_ctx = int(_cx["context_input"]) + int(_cx.get("max_output") or 0)
     want = min(int(cc["window"]) * int(cc["pct"]) // 100, cx_ctx * int(cc["pct"]) // 100)
     check(f"model_context_window = {cx_ctx}" in txt,
           f"codex window is its OWN default capability '{cx_cap}' ({cx_ctx}), not architecture")
@@ -225,7 +234,8 @@ readme = (REPO / "README.md").read_text()
 
 # The capability table quotes the 64gb contexts. A hand-maintained table is
 # exactly how "64K" survived a profile that had moved to 98304.
-ctx_k = round(int(c64["architecture"]["context"]) / 1024)
+ctx_k = round((int(c64["architecture"]["context_input"])
+               + int(c64["architecture"].get("max_output") or 0)) / 1024)
 check(f"{ctx_k}K" in readme,
       f"README states the real 64gb architecture context ({ctx_k}K)",
       "README still quotes a stale figure")
