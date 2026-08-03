@@ -45,17 +45,24 @@ NON_ROLE_SECTIONS = ("compaction",)
 #: Required on EVERY role, because every consumer reads them. Everything else is
 #: optional and returns None when absent -- no defaults are injected here, since
 #: a value this module invents would not be one any generated config ever had.
-REQUIRED_ROLE_FIELDS = ("role", "active", "context")
+REQUIRED_ROLE_FIELDS = ("role", "active", "context_input")
+
+#: LEGACY. `context` meant the TOTAL window in production and the INPUT budget in
+#: the benchmark — the ambiguity behind the over-admission defect fixed in
+#: 23d2c19. It is now an error, not a fallback: a profile carrying it has not
+#: been migrated, and guessing which meaning was intended is how the two
+#: interpretations survived side by side.
+LEGACY_CONTEXT_FIELD = "context"
 
 #: Optional, with their current behaviour when absent:
 #:   reasoning      -> None; sync-models treats absent as non-thinking
 #:   temperature/top_p/top_k/repeat_penalty -> None; omitted from generated params
-#:   num_predict    -> None; omitted, backend default applies
+#:   num_predict    -> DERIVED from max_output by geometry(); never configured
 #:   keep_alive     -> None; omitted, Ollama default applies
 #:   persona        -> None; treated as no persona injection
 #:   preferred/purpose/strengths/weaknesses -> [] (documentation only)
-OPTIONAL_ROLE_FIELDS = ("reasoning", "temperature", "top_p", "top_k",
-                        "repeat_penalty", "num_predict", "keep_alive",
+OPTIONAL_ROLE_FIELDS = ("max_output", "reasoning", "temperature", "top_p", "top_k",
+                        "repeat_penalty", "keep_alive",
                         "persona", "preferred", "purpose", "strengths",
                         "weaknesses")
 
@@ -213,12 +220,55 @@ def load_profile(tier: str, repo_root=None) -> dict:
 def _validate_role(role: str, cfg) -> None:
     if not isinstance(cfg, dict):
         raise ProfileError(ROLE_CONFIG_INVALID, role)
+    if LEGACY_CONTEXT_FIELD in cfg:
+        raise ProfileError(PROFILE_SCHEMA_INVALID,
+                           f"{role} still uses legacy `context`; migrate to "
+                           "context_input + max_output")
     missing = [f for f in REQUIRED_ROLE_FIELDS if cfg.get(f) in (None, "")]
     if missing:
         raise ProfileError(PROFILE_SCHEMA_INVALID,
                            f"{role} missing {', '.join(missing)}")
-    if not isinstance(cfg.get("context"), int):
-        raise ProfileError(ROLE_CONFIG_INVALID, f"{role}.context is not an integer")
+    ci = cfg.get("context_input")
+    if not isinstance(ci, int) or ci <= 0:
+        raise ProfileError(ROLE_CONFIG_INVALID, f"{role}.context_input invalid")
+    mo = cfg.get("max_output")
+    if mo is None:
+        return                      # embedding route: no generation, no reserve
+    if not isinstance(mo, int) or mo <= 0:
+        # -1/-2 (Ollama infinite/fill) are rejected: an unbounded reserve makes
+        # admission uncomputable, which is how implementation ended up admitting
+        # its whole window.
+        raise ProfileError(ROLE_CONFIG_INVALID,
+                           f"{role}.max_output must be a positive integer")
+
+
+
+def geometry(context_input, max_output):
+    """THE derivation. Every consumer calls this; none recomputes it.
+
+        total_context     = context_input + max_output   -> Ollama num_ctx
+        num_predict       = max_output                   -> backend ceiling
+        max_input_tokens  = context_input                -> admission
+
+    Admission equals context_input BY CONSTRUCTION, so the over-admission class
+    of defect cannot recur: there is no second place to get it wrong.
+
+    max_output is the only ceiling that binds. Measured on LiteLLM 1.93.0
+    ollama_chat: a per-request max_tokens of 512 against an alias declaring
+    num_predict 32768 returned 4,199 tokens. Client limits are advisory here.
+    """
+    if not isinstance(context_input, int) or context_input <= 0:
+        raise ProfileError(ROLE_CONFIG_INVALID, f"context_input={context_input!r}")
+    if max_output is None:
+        return {"context_input": context_input, "max_output": None,
+                "total_context": context_input, "num_ctx": context_input,
+                "num_predict": None, "max_input_tokens": context_input}
+    if not isinstance(max_output, int) or max_output <= 0:
+        raise ProfileError(ROLE_CONFIG_INVALID, f"max_output={max_output!r}")
+    total = context_input + max_output
+    return {"context_input": context_input, "max_output": max_output,
+            "total_context": total, "num_ctx": total,
+            "num_predict": max_output, "max_input_tokens": context_input}
 
 
 def resolve_role(tier: str, role: str, repo_root=None) -> dict:
@@ -238,7 +288,11 @@ def resolve_role(tier: str, role: str, repo_root=None) -> dict:
            "model": active, "active": active,
            "enabled": bool(active)
                       and active.lower() not in ("none", "false", "disabled"),
-           "context": cfg.get("context")}
+           **geometry(cfg.get("context_input"), cfg.get("max_output"))}
+    # `context` is retained as an ALIAS for total_context so existing readers
+    # (benchmark cross-tier planning, status) keep working. It is derived, never
+    # configured.
+    out["context"] = out["total_context"]
     for f in OPTIONAL_ROLE_FIELDS:
         out[f] = cfg.get(f)
     return out

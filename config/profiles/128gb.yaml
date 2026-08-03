@@ -119,9 +119,9 @@ architecture:
   # model's thinking/vision did not pay for ~2x slower generation.
   preferred: [qwen3-coder:30b-a3b-q4_K_M]
   reasoning: true          # gpt-oss:20b HAS thinking; qwen3-coder did not
-  context: 98304
+  context_input: 81920
+  max_output: 16384
   temperature: 0.1
-  num_predict: 16384
   keep_alive: 6h
   persona: true
   purpose: [architecture, complex refactoring, multi-step debugging, design, repository-wide planning, large interactive/agent prompts]
@@ -153,9 +153,9 @@ implementation:
   # VERIFIED capabilities: tools YES, insert YES, thinking NO.
   preferred: [qwen2.5-coder:14b-instruct-q4_K_M, qwen3-coder:30b-a3b-q4_K_M]
   reasoning: true
-  context: 24576
+  context_input: 16384
+  max_output: 8192
   temperature: 0.1
-  num_predict: -1
   keep_alive: -1           # same physical model as architecture; one resident copy
   persona: true
   purpose: [implementation, features, refactoring, tests, shell, python, typescript]
@@ -175,9 +175,9 @@ review:
   active: gemma4:26b-mlx
   preferred: [gpt-oss:20b, deepseek-coder-v2:16b-lite-instruct-q4_K_M]
   reasoning: true          # VERIFIED: thinking AND tools (deepseek had NO tools)
-  context: 24576
+  context_input: 20480
+  max_output: 4096
   temperature: 0.2
-  num_predict: 4096
   keep_alive: -1           # same physical model as architecture; one resident copy
   persona: true
   purpose: [code review, bug detection, security review, alternative solutions]
@@ -223,9 +223,9 @@ fast:
   # max_tokens 8 and 64 (finish_reason=length). This tier answers one word; it
   # must not think itself out of its budget.
   reasoning: false
-  context: 49152
+  context_input: 45056
+  max_output: 4096
   temperature: 0.0
-  num_predict: 4096
   keep_alive: 20m
   # persona: true, but there is deliberately NO config/instructions/fast.md — this
   # tier receives _core.md ONLY. Verified 2026-07-28: the instructions directory
@@ -258,9 +258,9 @@ completion:
   role: Autocomplete (standby)
   active: qwen2.5-coder:3b-instruct-q4_K_M
   preferred: [qwen2.5-coder:3b-instruct-q4_K_M, qwen2.5-coder:1.5b]
-  context: 4096
+  context_input: 3968
+  max_output: 128
   temperature: 0.1
-  num_predict: 128
   keep_alive: 2h
   purpose: [inline completion, FIM, quick syntax fixes, small transforms]
   strengths: [very fast, tiny footprint, native FIM tokens]
@@ -282,7 +282,7 @@ embeddings:
   # and produced successful-looking embeddings of truncated text. Two inputs sharing
   # a prefix and differing only past the boundary embed BYTE-IDENTICALLY (cosine
   # 1.0000000000); a control differing inside the prefix does not (0.9833).
-  context: 2048
+  context_input: 2048
   keep_alive: -1
   purpose: [semantic search, memory, retrieval for grepai]
   strengths: [always-on, tiny, grepai calls it directly on :11434]
