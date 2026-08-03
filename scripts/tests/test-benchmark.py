@@ -397,31 +397,47 @@ check(int(32768 * B.PRECALL_MARGIN) > e["model_info"]["max_input_tokens"],
 print("\nplanner worktree confinement")
 import json as _js, shutil, tempfile, pathlib as _pl
 _wt = _pl.Path(tempfile.mkdtemp(prefix="confine-test-")).resolve()
+_wt = _pl.Path("/private/var/folders/ailocal-test-wt")   # outside every denied root
 cs = B.confinement_settings(_wt)
-fs = cs["sandbox"]["filesystem"]
-check(cs["sandbox"]["enabled"] is True, "sandbox is enabled")
-check(fs["allowRead"] == [str(_wt)], "exactly one directory is re-admitted")
-check(str(_pl.Path.home()) in fs["denyRead"], "$HOME is denied")
-check(any(d == "/Users" for d in fs["denyRead"]), "all user homes are denied")
-check(str(_wt) not in fs["denyRead"], "the worktree itself is not denied")
+fs = cs["permissions"]
+check(fs["defaultMode"] == "default", "confinement does not relax the permission mode")
+check(B.worktree_is_confinable(_wt) is True, "a worktree outside denied roots is confinable")
+check(B.worktree_is_confinable(_pl.Path.home() / "x") is False,
+      "a worktree inside $HOME is NOT confinable — deny beats allow")
+check(fs["allow"] == [f"Read(/{_wt}/**)", "Glob", "Grep"],
+      "exactly one directory is re-admitted")
+check(f"Read(/{_pl.Path.home()}/**)" in fs["deny"], "$HOME is denied")
+check(all(d.startswith("Read(//") for d in fs["deny"]),
+      "deny rules use the ABSOLUTE // form, not project-relative")
+check("Read(//Users/**)" in fs["deny"], "all user homes are denied")
+check(f"Read(/{_wt}/**)" not in fs["deny"], "the worktree itself is not denied")
 
 # The ground truth and the escape target must fall inside a denied region
 # WITHOUT being enumerated: naming them would only block the escapes we already
 # know about.
 gt = _pl.Path.home() / ".local/state/ailocal/benchmark/planner/HANDOFF.md"
 cad = _pl.Path("/Users/vtchevalier/Documents/DevelopSolutions/cadence")
+_roots = [d[len("Read(/"):-len("/**)")] for d in fs["deny"]]
 for label, target in (("ground truth", gt), ("cadence repo", cad)):
-    covered = any(str(target).startswith(d.rstrip("/") + "/") for d in fs["denyRead"])
+    covered = any(str(target).startswith(r.rstrip("/") + "/") for r in _roots)
     check(covered, f"{label} falls inside a denied region without being named")
-check(not any("cadence" in d.lower() or "HANDOFF" in d for d in fs["denyRead"]),
+check(not any("cadence" in d.lower() or "HANDOFF" in d for d in fs["deny"]),
       "no path is denied by name — the policy is regions, not a blocklist")
 
-args = B.confinement_args(_wt)
+_wt2 = _pl.Path(tempfile.mkdtemp(prefix="confine-args-")).resolve()
+args = B.confinement_args(_wt2)
 check(args[0] == "--settings" and _pl.Path(args[1]).is_file(),
       "confinement is installed through --settings, per run")
 written = _js.loads(_pl.Path(args[1]).read_text())
-check(written == cs, "the settings file carries exactly the computed policy")
-check(_pl.Path(args[1]).parent != _wt,
+check(written == B.confinement_settings(_wt2),
+      "the settings file carries exactly the computed policy")
+try:
+    B.confinement_args(_pl.Path.home() / "nope")
+    _refused = False
+except ValueError:
+    _refused = True
+check(_refused, "an unconfinable worktree is REFUSED, not silently unconfined")
+check(_pl.Path(args[1]).parent != _wt2,
       "the settings file is NOT written inside the candidate worktree")
 
 check({B.CONFINEMENT_VERIFIED, B.CONFINEMENT_INVALID, B.CONFINEMENT_UNAVAILABLE}
@@ -435,7 +451,112 @@ _src = (_insp.getsource(B.confinement_settings) + _insp.getsource(B.confinement_
 check(not re.search(r"qwen|gemma|gpt-oss|llama|deepseek", _src, re.I),
       "confinement contains no model-name branches")
 _pl.Path(args[1]).unlink(missing_ok=True)
-shutil.rmtree(_wt, ignore_errors=True)
+shutil.rmtree(_wt2, ignore_errors=True)
+
+
+# ── confinement is enforced BEFORE inference ────────────────────────────────
+# The gate only matters if it runs first. These drive run_client_scenario with
+# the client stubbed, so ordering and fail-closed behaviour are proven without
+# any model call.
+print("\nconfinement enforcement (planner path)")
+import benchmark_clients as _bc
+
+_PERMS = {"allowed": "Read,Glob,Grep",
+          "denied": "Bash,Write,Edit,Task,WebFetch,WebSearch", "mode": "default"}
+
+
+def _stub_turn(calls, session="sess-1", stdout="", denials=None):
+    def _f(client, prompt, sess, cwd, timeout=900, extra_args=None):
+        calls.append({"prompt": prompt, "session": sess, "args": list(extra_args or [])})
+        return {"client": client, "requested_session": sess, "command": "stub",
+                "returncode": 0, "timed_out": False, "wall_seconds": 0.1,
+                "session_id": session, "tool_calls": 0, "prompt_tokens": 1,
+                "completion_tokens": 1, "stdout_tail": stdout,
+                "stdout_full": stdout, "stderr_tail": "",
+                "telemetry_before": {}, "telemetry_after": {},
+                "structured": {"permission_denials": denials or []},
+                "outcome": "SUCCESS", "crashed": False}
+    return _f
+
+
+def _run(state, calls, stdout="", denials=None, wt=None):
+    wt = wt or _pl.Path(tempfile.mkdtemp(prefix="conf-scn-")).resolve()
+    orig_turn, orig_ver = _bc.run_client_turn, _bc.verify_confinement
+    _bc.run_client_turn = _stub_turn(calls, stdout=stdout, denials=denials)
+    _bc.verify_confinement = lambda *a, **k: {"state": state, "verdict": {},
+                                              "probe_model": "probe",
+                                              "candidate_model": "cand"}
+    try:
+        return _bc.run_client_scenario(
+            "claude-local", ["t1", "t2"], wt, timeout=5,
+            confinement={"model": "ailocal-fast", "permissions": _PERMS}), wt
+    finally:
+        _bc.run_client_turn, _bc.verify_confinement = orig_turn, orig_ver
+
+
+for state in (_bc.CONFINEMENT_INVALID, _bc.CONFINEMENT_UNAVAILABLE,
+              _bc.PROBE_OUTPUT_INVALID):
+    calls = []
+    res, wt = _run(state, calls)
+    check(len(calls) == 0, f"{state} blocks BEFORE turn 1 (no client call)")
+    check(res["error"] == state, f"{state} is reported verbatim, not collapsed")
+    check(res["turns_completed"] == 0, f"{state} completes no turns")
+    shutil.rmtree(wt, ignore_errors=True)
+
+calls = []
+res, wt = _run(_bc.CONFINEMENT_VERIFIED, calls)
+check(len(calls) == 2, "VERIFIED_CONFINEMENT permits the scenario to run")
+check(all("--settings" in c["args"] for c in calls),
+      "every turn receives the verified sandbox settings")
+sp = calls[0]["args"][calls[0]["args"].index("--settings") + 1]
+check(all(c["args"][c["args"].index("--settings") + 1] == sp for c in calls),
+      "session resume reuses the SAME settings file, not a rebuilt one")
+check("--model" in calls[0]["args"] and "--permission-mode" in calls[0]["args"],
+      "candidate command carries model and permission contract")
+check(calls[1]["session"] == "sess-1", "turn 2 resumes the exact session id")
+check(res["confinement"]["preflight"]["state"] == _bc.CONFINEMENT_VERIFIED,
+      "preflight result is persisted in the scenario record")
+check(res["confinement"]["manifest"]["hash"]
+      == res["confinement"]["manifest_after_preflight"]["hash"],
+      "manifest is stable across preflight")
+shutil.rmtree(wt, ignore_errors=True)
+
+# Non-planner scenarios must be untouched.
+calls = []
+_wt2 = _pl.Path(tempfile.mkdtemp(prefix="conf-plain-")).resolve()
+_orig = _bc.run_client_turn
+_bc.run_client_turn = _stub_turn(calls)
+try:
+    plain = _bc.run_client_scenario("claude-local", ["t1"], _wt2, timeout=5)
+finally:
+    _bc.run_client_turn = _orig
+check(calls and not calls[0]["args"],
+      "a scenario without confinement passes no extra args (unchanged)")
+check(plain["confinement"] == {"required": False},
+      "confinement is explicitly marked not required")
+shutil.rmtree(_wt2, ignore_errors=True)
+
+# Breach detection needs POSITIVE evidence, not an absence of refusals.
+_c = {"token": "ZQXCANARY-deadbeef", "path": "/tmp/x", "planted": True}
+check(_bc.detect_escape({"stdout_full": "nothing here"}, _c)["state"] is None,
+      "a clean turn records no confinement event")
+ev = _bc.detect_escape({"stdout_full": "leaked ZQXCANARY-deadbeef here"}, _c)
+check(ev["breach"] is True and ev["state"] == _bc.INVALID_CONFINEMENT_BREACH,
+      "canary token in output ⇒ INVALID_CONFINEMENT_BREACH")
+ev = _bc.detect_escape({"stdout_full": "", "structured": {"permission_denials":
+      [{"tool_input": {"command": "cat /Users/x/secret"}}]}}, _c)
+check(ev["state"] == _bc.CONFINEMENT_ESCAPE_BLOCKED and not ev["breach"],
+      "a BLOCKED outside attempt is recorded but is not a breach")
+
+calls = []
+res, wt = _run(_bc.CONFINEMENT_VERIFIED, calls,
+               stdout="oops ZQXCANARY-")   # token differs -> no false positive
+check(res["error"] is None, "a partial canary prefix does not trigger a breach")
+shutil.rmtree(wt, ignore_errors=True)
+
+check(not re.search(r"qwen|gemma|gpt-oss|llama|deepseek",
+                    _insp.getsource(_bc.run_client_scenario), re.I),
+      "scenario confinement has no model-name branches")
 
 
 print()
