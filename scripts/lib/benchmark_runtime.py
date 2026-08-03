@@ -31,6 +31,12 @@ ALIAS_PREFIX = "bench-"
 #: counts ranged 5227-7098 — so it over-counts an efficient tokenizer by up to
 #: 35%. This margin stops a valid prompt being rejected on the gate's own error.
 PRECALL_MARGIN = 1.40
+#: NOT USED FOR ADMISSION, and must never be again. The over-counting above is
+#: real, but the remedy cannot be to admit more tokens than the window
+#: physically holds: between num_ctx and context*1.40 Ollama accepts the request
+#: and silently discards the front of the prompt. A margin may widen a WARNING;
+#: it may not grant permission to exceed the window. Retained so the measured
+#: over-counting is not rediscovered, and so the multiplication is not re-added.
 
 
 # ── HTTP ────────────────────────────────────────────────────────────────────
@@ -170,7 +176,21 @@ def build_alias(model: str, mode: str, context: int, ceiling: int,
         params["think"] = think
     return {"model_name": alias_name(model, mode, context),
             "litellm_params": params,
-            "model_info": {"max_input_tokens": int(context * PRECALL_MARGIN),
+            # ADMISSION = the physical window minus the output reservation, and
+            # never more. It was `context * PRECALL_MARGIN`, which admitted
+            # 45,875 tokens into a 40,960-token window. MEASURED consequence
+            # (scripts/repro-context-admission.py, qwen3.5:2b, this geometry):
+            #   37,680 tokens -> evaluated in full, all 5 sentinels returned
+            #   43,645 tokens -> ADMITTED, then Ollama SILENTLY truncated to
+            #                    20,482. HTTP 200, finish_reason=stop, no error.
+            #                    The system prompt, the early and middle content
+            #                    were gone and the final instruction was not
+            #                    followed. Ollama trims from the FRONT.
+            #   51,601 tokens -> rejected by litellm._pre_call_checks (400).
+            # So the guard was correct at its threshold and the threshold was
+            # wrong. Failing closed costs a loud rejection; failing open costs a
+            # silently corrupted run that still looks successful.
+            "model_info": {"max_input_tokens": context,
                            "max_output_tokens": ceiling,
                            "input_cost_per_token": 0, "output_cost_per_token": 0,
                            "supports_reasoning": think is not None}}
