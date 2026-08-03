@@ -883,6 +883,7 @@ def run_client_turn(client: str, prompt: str, session: str, cwd: Path,
         except (json.JSONDecodeError, TypeError):
             pass
 
+    structured = parse_client_result(out)
     return {
         "client": client, "requested_session": session,
         "command": " ".join(cmd[:6]) + (" ..." if len(cmd) > 6 else ""),
@@ -897,8 +898,98 @@ def run_client_turn(client: str, prompt: str, session: str, cwd: Path,
         # scoring a truncated plan measures the tail, not the plan.
         "stdout_tail": out[-1200:], "stdout_full": out, "stderr_tail": err[-600:],
         "telemetry_before": before, "telemetry_after": telemetry(),
+        "structured": structured,
+        "outcome": classify_client_outcome(structured, rc, timed_out),
         "crashed": rc not in (0, None),
     }
+
+
+#: Fields Claude Code reports on its terminal result object. Persisted verbatim:
+#: a benchmark that discards the client's own explanation of a failure forces the
+#: next reader to re-derive it from transport logs.
+_CLAUDE_RESULT_KEYS = ("is_error", "terminal_reason", "result", "num_turns",
+                       "subtype", "stop_reason", "session_id", "modelUsage",
+                       "permission_denials", "usage", "api_error_status",
+                       "duration_ms", "duration_api_ms", "thread_id")
+
+
+def parse_client_result(out: str) -> dict:
+    """The client's own terminal result object, if it emitted one.
+
+    Claude Code's `-p --output-format json` writes ONE object to STDOUT and
+    leaves stderr empty — including when it fails. Scanning stderr therefore
+    reveals nothing, which is exactly how a structured, self-describing
+    `api_error` was read as an opaque crash for several days.
+
+    Both shapes are handled: a single object, and a JSONL stream whose last
+    `type: result` line carries the outcome.
+    """
+    if not out or not out.strip():
+        return {}
+    candidates = []
+    stripped = out.strip()
+    try:
+        d = json.loads(stripped)
+        if isinstance(d, dict):
+            candidates.append(d)
+    except (json.JSONDecodeError, TypeError):
+        pass
+    if not candidates:
+        for line in stripped.splitlines():
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                d = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(d, dict) and (d.get("type") == "result"
+                                        or "terminal_reason" in d
+                                        or "is_error" in d):
+                candidates.append(d)
+    if not candidates:
+        return {}
+    d = candidates[-1]
+    return {k: d[k] for k in _CLAUDE_RESULT_KEYS if k in d}
+
+
+#: Substring of Claude Code's own message when its client-side output guard
+#: fires. MEASURED verbatim from run2 candidate-a turn 2:
+#:   "Claude's response exceeded the 32000 output token maximum. To configure
+#:    this behavior, set the CLAUDE_CODE_MAX_OUTPUT_TOKENS environment variable."
+#: Matched loosely (no token count) so a different configured limit still hits.
+_OUTPUT_LIMIT_MARKERS = ("output token maximum", "CLAUDE_CODE_MAX_OUTPUT_TOKENS")
+
+
+def classify_client_outcome(structured: dict, rc, timed_out: bool) -> str:
+    """Outcome, decided by what the client SAID — not by its exit code.
+
+    A non-zero rc alone proves only that the process was unhappy. Claude Code
+    exits 1 for an API error while still reporting, in full, what went wrong and
+    how much work it completed. Collapsing that into CLIENT_PROCESS_CRASH throws
+    away the diagnosis and points the next investigation at the transport layer.
+    A real crash is the case where NO usable terminal result exists.
+    """
+    if timed_out:
+        return "CLIENT_TIMEOUT"
+    if structured:
+        msg = str(structured.get("result") or "")
+        is_error = bool(structured.get("is_error"))
+        reason = str(structured.get("terminal_reason") or "")
+        if is_error or reason == "api_error":
+            if any(m in msg for m in _OUTPUT_LIMIT_MARKERS):
+                return "CLIENT_OUTPUT_LIMIT"
+            return "CLIENT_API_ERROR"
+        # Denials are recorded even on a successful turn; they only DECIDE the
+        # outcome when the turn also failed.
+        if rc not in (0, None) and structured.get("permission_denials"):
+            return "CLIENT_PERMISSION_DENIED"
+        if rc in (0, None):
+            return "SUCCESS"
+        return "UNKNOWN"
+    if rc not in (0, None):
+        return "CLIENT_PROCESS_CRASH"
+    return "UNKNOWN"
 
 
 def client_version(client: str) -> str:
@@ -965,8 +1056,13 @@ def run_client_scenario(client: str, turns: list, cwd: Path,
                 error = (f"SESSION_DIVERGED: expected {session}, got {got}")
                 break
         records.append(rec)
-        if rec["crashed"] or rec["timed_out"]:
-            error = "CLIENT_CRASH" if rec["crashed"] else "CLIENT_TIMEOUT"
+        # The scenario error is the CLASSIFIED outcome, not "CLIENT_CRASH" for
+        # every non-zero exit. Claude Code exits 1 on an API error while
+        # reporting exactly what happened; labelling that a crash discards the
+        # diagnosis and sends the next investigation to the transport layer.
+        outcome = rec.get("outcome") or "UNKNOWN"
+        if outcome not in ("SUCCESS",):
+            error = outcome
             break
     return {
         "client": client, "turns_planned": len(turns),
