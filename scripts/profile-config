@@ -41,14 +41,16 @@ def main() -> int:
     a = ap.parse_args()
 
     try:
+        # Normal operation reads the GENERATED artifact. There is deliberately
+        # no YAML fallback: falling back would hide a stale or failed generation
+        # behind a value that looks fine.
         if a.cmd == "active-tier":
-            print(P.resolve_active_tier())
+            print(P.active_tier())
             return 0
 
-        tier = getattr(a, "tier", None) or P.resolve_active_tier()
-
         if a.cmd == "role":
-            cfg = P.resolve_role(tier, a.role)
+            cfg = (P.resolve_role(a.tier, a.role) if a.tier
+                   else P.effective_role(a.role))
             if a.field:
                 if a.field not in cfg:
                     print(f"{P.ROLE_CONFIG_INVALID}: no field {a.field!r}",
@@ -63,16 +65,17 @@ def main() -> int:
             return 0
 
         if a.cmd == "profile-summary":
-            print(json.dumps(P.profile_summary(tier), indent=1, sort_keys=True))
+            print(json.dumps(P.profile_summary(a.tier) if a.tier
+                             else P.effective_summary(),
+                             indent=1, sort_keys=True))
             return 0
 
         if a.cmd == "validate":
+            P.load_effective()          # staleness and hash validity
             # Validates EVERY tier, not just the active one: a broken 32gb.yaml
             # is a latent failure that only appears on the machine that needs it.
-            for t in P.TIERS:
-                P.load_profile(t)
-            P.load_profile(tier)
-            print(f"ok: {tier} active; all {len(P.TIERS)} profiles valid")
+            tier = P.active_tier()
+            print(f"ok: {tier} active; generated profile state is valid")
             return 0
     except P.ProfileError as e:
         print(f"{e.code}: {e.detail}", file=sys.stderr)

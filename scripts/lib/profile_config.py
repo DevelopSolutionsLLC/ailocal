@@ -28,6 +28,8 @@ than pretending to be a YAML implementation.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from pathlib import Path
 
@@ -84,7 +86,18 @@ def _root(repo_root=None) -> Path:
     return Path(repo_root) if repo_root else REPO_DEFAULT
 
 
-# ── the one parser ──────────────────────────────────────────────────────────
+# ── GENERATION-TIME ONLY: constrained profile-schema parser ─────────────────
+# This is NOT a YAML implementation and must not be used as one. It supports
+# exactly the constructs the four profiles use -- two levels, scalars, flow
+# lists, comments -- and REJECTS anything else rather than guessing.
+#
+# It exists here rather than as PyYAML because core ailocal has no managed
+# Python dependency environment (no requirements.txt, pyproject.toml or venv);
+# introducing one solely to read four small files at generation time was judged
+# disproportionate. That trade-off is documented in AGENTS.md and should be
+# revisited if core ailocal ever gains other Python dependencies.
+#
+# Only sync-models.py calls this. Runtime consumers read the generated JSON.
 _SECTION = re.compile(r"^([a-z_]+):\s*$")
 _FIELD = re.compile(r"^\s+([a-z_]+):[ \t]*(.*)$")
 
@@ -245,3 +258,84 @@ def profile_summary(tier: str, repo_root=None) -> dict:
         "roles": {r: resolve_role(tier, r, repo_root)
                   for r in ROLES if r in data},
     }
+
+
+# ── runtime: read the GENERATED artifact, never the YAML ────────────────────
+# Everything after generation reads this. No consumer falls back to parsing a
+# profile: a fallback would silently resurrect the second parser this whole
+# change exists to remove, and would mask a stale generation instead of
+# reporting it.
+EFFECTIVE_PROFILE_MISSING = "EFFECTIVE_PROFILE_MISSING"
+EFFECTIVE_PROFILE_STALE_TIER = "EFFECTIVE_PROFILE_STALE_TIER"
+EFFECTIVE_PROFILE_STALE_SOURCE = "EFFECTIVE_PROFILE_STALE_SOURCE"
+EFFECTIVE_PROFILE_HASH_INVALID = "EFFECTIVE_PROFILE_HASH_INVALID"
+EFFECTIVE_PROFILE_SCHEMA_INVALID = "EFFECTIVE_PROFILE_SCHEMA_INVALID"
+
+SUPPORTED_SCHEMA_VERSIONS = (1,)
+
+
+def _sha(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else ""
+
+
+def load_effective(repo_root=None) -> dict:
+    """The generated effective profile, validated against its own inputs.
+
+    Staleness is DETECTED, not assumed away: the artifact records the hashes of
+    the profile and the active marker it was generated from, so editing either
+    without re-running sync is an error rather than a silently wrong runtime."""
+    root = _root(repo_root)
+    path = root / "config" / "effective-profile.json"
+    if not path.exists():
+        raise ProfileError(EFFECTIVE_PROFILE_MISSING, str(path))
+    try:
+        data = json.loads(path.read_text())
+    except Exception:  # noqa: BLE001
+        raise ProfileError(EFFECTIVE_PROFILE_SCHEMA_INVALID, str(path))
+    if data.get("schema_version") not in SUPPORTED_SCHEMA_VERSIONS:
+        raise ProfileError(EFFECTIVE_PROFILE_SCHEMA_INVALID,
+                           f"schema_version {data.get('schema_version')!r}")
+    for key in ("tier", "roles", "source_profile", "config_sha256"):
+        if key not in data:
+            raise ProfileError(EFFECTIVE_PROFILE_SCHEMA_INVALID, f"missing {key}")
+
+    body = {k: v for k, v in data.items()
+            if k not in ("config_sha256", "generated_at")}
+    if hashlib.sha256(json.dumps(body, sort_keys=True,
+                                 separators=(",", ":")).encode()).hexdigest() \
+            != data["config_sha256"]:
+        raise ProfileError(EFFECTIVE_PROFILE_HASH_INVALID, "config_sha256")
+
+    marker = root / "config" / "active-profile"
+    if not marker.exists():
+        raise ProfileError(ACTIVE_PROFILE_MISSING, str(marker))
+    if marker.read_text().strip() != data["tier"]:
+        raise ProfileError(EFFECTIVE_PROFILE_STALE_TIER,
+                           "active-profile no longer names the generated tier")
+    if data.get("active_profile_sha256") and \
+            _sha(marker) != data["active_profile_sha256"]:
+        raise ProfileError(EFFECTIVE_PROFILE_STALE_TIER, "marker changed")
+    src = root / data["source_profile"]
+    if data.get("source_profile_sha256") and _sha(src) != data["source_profile_sha256"]:
+        raise ProfileError(EFFECTIVE_PROFILE_STALE_SOURCE,
+                           "profile edited since generation — run `ailocal sync`")
+    return data
+
+
+def active_tier(repo_root=None) -> str:
+    """Runtime tier. Comes from the validated artifact, not the raw marker."""
+    return load_effective(repo_root)["tier"]
+
+
+def effective_role(role: str, repo_root=None) -> dict:
+    data = load_effective(repo_root)
+    if role not in data["roles"]:
+        raise ProfileError(ROLE_MISSING, role)
+    return data["roles"][role]
+
+
+def effective_summary(repo_root=None) -> dict:
+    d = load_effective(repo_root)
+    return {"tier": d["tier"], "compaction": d.get("compaction", {}),
+            "roles": d["roles"], "generated_at": d.get("generated_at"),
+            "config_sha256": d["config_sha256"]}
