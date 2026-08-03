@@ -70,6 +70,65 @@ def load_completion_helpers():
     return ns
 
 
+def schema_and_dialect_checks() -> None:
+    """The two schema faults that each cost a wasted run."""
+    print("\nschema normalization and stream dialects")
+    src = TRACE.read_text()
+    ns: dict = {}
+    exec("import json, os, time\n"
+         + src[src.index("def _classify_event(item)"):src.index("def _completion_fields(")],
+         ns)
+    classify, resolved = ns["_classify_event"], ns["_resolved_backend"]
+
+    # /v1/messages delivers raw SSE bytes. Every branch used to assume a mapping,
+    # so first_visible_text_ms was silently null on the Anthropic route.
+    text_frame = (b'event: content_block_delta\ndata: {"type": '
+                  b'"content_block_delta", "index": 0, "delta": '
+                  b'{"type": "text_delta", "text": "Sure"}}\n\n')
+    check(classify(text_frame) == "text", "raw SSE bytes classify as visible text")
+    check(classify(b'event: message_stop\ndata: {"type": "message_stop"}\n\n') is None,
+          "a non-text SSE frame is not miscounted as text")
+    check(classify(b'data: {"type": "input_json_delta"}\n\n') == "tool",
+          "raw SSE tool frames classify as tool")
+
+    # The object dialects must keep working unchanged.
+    check(classify({"type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "x"}}) == "text",
+          "dict content_block_delta still classifies as text")
+    check(classify({"choices": [{"delta": {"content": "x"}}]}) == "text",
+          "OpenAI delta still classifies as text")
+
+    # `model` was overloaded: alias on pre-call, backend on completion.
+    check(resolved({"requested_alias": "bench-x"}, {"model": "ollama/real"})
+          == "ollama/real", "backend is reported when it differs from the alias")
+    check(resolved({"requested_alias": "bench-x"}, {"model": "bench-x"}) is None,
+          "the alias is never repeated as a backend model")
+    check(resolved({}, {"model": "bench-x"}) is None,
+          "no alias recorded ⇒ no backend claim")
+
+
+def historical_compatibility_checks() -> None:
+    """Real records on disk must stay readable across every schema version."""
+    print("\nhistorical record compatibility")
+    import glob
+    total = bad = 0
+    versions = set()
+    for path in glob.glob(str(Path.home() /
+                              ".local/state/ailocal/captures/traces/*.jsonl")):
+        for line in open(path, errors="replace"):
+            total += 1
+            try:
+                versions.add(json.loads(line).get("event_version"))
+            except Exception:  # noqa: BLE001
+                bad += 1
+    if not total:
+        print("  - no historical records present; skipped")
+        return
+    check(bad == 0, f"all {total} historical records parse ({bad} failures)")
+    check(None in versions or 1 in versions or 2 in versions,
+          f"pre-v4 records are present and readable {sorted(v for v in versions if v)}")
+
+
 def completion_evidence_checks() -> None:
     """What makes a completion record usable as evidence.
 
@@ -243,6 +302,8 @@ def main() -> int:
           "no field carries an unbounded string")
 
     completion_evidence_checks()
+    schema_and_dialect_checks()
+    historical_compatibility_checks()
 
     print()
     if failures:

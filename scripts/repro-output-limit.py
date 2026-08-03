@@ -112,7 +112,11 @@ def trace_records_for(alias: str, since: float) -> list:
                 continue
             if r.get("ts", 0) >= since:
                 rows.append(r)
-    ids = {r.get("request_id") for r in rows if r.get("model") == alias}
+    # `requested_alias` (schema v4+) is identical on every record of a request.
+    # `model` is the v1-v3 fallback and means the alias only on pre-call and
+    # stream_end records -- never on completion records.
+    ids = {r.get("request_id") for r in rows
+           if r.get("requested_alias") == alias or r.get("model") == alias}
     ids.discard(None)
     return sorted((r for r in rows if r.get("request_id") in ids),
                   key=lambda r: r.get("ts", 0))
