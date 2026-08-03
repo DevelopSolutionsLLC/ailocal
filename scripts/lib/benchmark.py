@@ -12,6 +12,7 @@ attempt to reimplement them grew to 42 files before producing a single ranking.
 Every scored request goes through authenticated LiteLLM. Direct Ollama is used
 only for residency and metadata, and can never produce a score.
 """
+import hashlib
 import json
 import os
 import re
@@ -827,8 +828,79 @@ class SessionLost(RuntimeError):
     """The exact session id could not be captured or resumed. Fail closed."""
 
 
+def permission_args(profile: dict) -> list:
+    """Claude Code CLI flags for a DECLARED permission contract.
+
+    Verified flags: --allowedTools / --disallowedTools / --permission-mode /
+    --add-dir. Declaring them matters because the client's settings.json here
+    carries `permissions: {}` — so a benchmark that says nothing inherits
+    whatever print mode defaults to, and print mode cannot approve anything
+    interactively. MEASURED consequence: Bash and Write were denied while
+    Read/Glob/Grep passed, and one candidate spent 31 internal turns replanning
+    around a restriction the benchmark never meant to impose.
+
+    Never use --dangerously-skip-permissions: a planning-only comparison that
+    can write is not planning-only.
+    """
+    args = []
+    if profile.get("allowed"):
+        args += ["--allowedTools", profile["allowed"]]
+    if profile.get("denied"):
+        args += ["--disallowedTools", profile["denied"]]
+    if profile.get("mode"):
+        args += ["--permission-mode", profile["mode"]]
+    return args
+
+
+def permission_manifest_hash(profile: dict) -> str:
+    """Pin the contract so every candidate is provably given the same one."""
+    body = "|".join(f"{k}={profile.get(k, '')}" for k in ("allowed", "denied", "mode"))
+    return hashlib.sha256(body.encode()).hexdigest()
+
+
+#: Read-only probes every planner candidate must be able to perform, and one
+#: write that must fail. Run BEFORE turn 1: a permission defect discovered
+#: during a scored run costs the whole run, which is exactly what happened.
+PERMISSION_PREFLIGHT = (
+    ("read", "Read the file config/active-profile and reply with ONLY its contents."),
+    ("search", "Use Grep to count files matching 'active-profile' under scripts/. "
+               "Reply with ONLY the number."),
+    ("write_denied", "Create a file named PREFLIGHT_MUST_NOT_EXIST.txt containing 'x'. "
+                     "If you cannot, reply with ONLY: DENIED"),
+)
+
+
+def verify_permissions(cwd: Path, profile: dict, extra_args: list = None,
+                       timeout: int = 300) -> dict:
+    """Prove the contract holds through the REAL client before scoring starts.
+
+    Returns state VERIFIED or INVALID_PERMISSIONS. The caller must abort on the
+    latter rather than let a candidate discover it mid-run.
+    """
+    results, ok = {}, True
+    for name, prompt in PERMISSION_PREFLIGHT:
+        rec = run_client_turn("claude-local", prompt, None, cwd, timeout=timeout,
+                              extra_args=(extra_args or []) + permission_args(profile))
+        denials = (rec.get("structured") or {}).get("permission_denials") or []
+        out = (rec.get("structured") or {}).get("result") or ""
+        if name == "write_denied":
+            passed = bool(denials) or "DENIED" in out.upper()
+        else:
+            passed = rec.get("outcome") == "SUCCESS" and not denials
+        results[name] = {"passed": passed, "outcome": rec.get("outcome"),
+                         "denials": [d.get("tool_name") for d in denials],
+                         "reply": out[:200]}
+        ok = ok and passed
+    wrote = (cwd / "PREFLIGHT_MUST_NOT_EXIST.txt").exists()
+    if wrote:
+        ok = False
+    return {"state": "VERIFIED" if ok else "INVALID_PERMISSIONS",
+            "manifest_sha256": permission_manifest_hash(profile),
+            "forbidden_file_created": wrote, "probes": results}
+
+
 def run_client_turn(client: str, prompt: str, session: str, cwd: Path,
-                    timeout: int = 900) -> dict:
+                    timeout: int = 900, extra_args: list = None) -> dict:
     """One turn through a real client, resuming an EXACT session id.
 
     `session` is None only for the first turn. Any later turn without an id is a
@@ -837,6 +909,8 @@ def run_client_turn(client: str, prompt: str, session: str, cwd: Path,
     """
     spec = CLIENTS[client]
     args = spec["resume"](session, prompt) if session else spec["start"](prompt)
+    # Permission flags precede the prompt-bearing args the spec built.
+    args = list(extra_args or []) + args
     # claude-local / codex-local are ZSH FUNCTIONS, not binaries: they export the
     # ailocal base URL, API key and capability-alias slots before calling the
     # real CLI. `command -v` finds them, but subprocess cannot exec them — so
