@@ -583,15 +583,19 @@ def served_models_since(seconds: int = 120) -> set:
     return set(re.findall(r"(?:bench-[a-z0-9.-]+|ailocal-[a-z]+)", text))
 
 
-def verify_routing(alias: str, model: str, cwd, key: str = None) -> dict:
+def verify_routing(alias: str, model: str, cwd, key: str = None,
+                   extra_args: list = None) -> dict:
     """Prove the client reaches `alias` BEFORE any scored turn runs.
 
     One probe through the real client, then the proxy log is checked for the
     exact alias. Fail closed: a routing mismatch invalidates everything that
     would follow it, so the caller must abort rather than continue.
     """
+    # The probe must carry the SAME override, permissions and confinement the
+    # scored turns will use. Verifying routing under a different arg set proves
+    # routing for a request the candidate never makes.
     probe = run_client_turn("claude-local", "Reply ONLY with OK.", None, cwd,
-                            timeout=300)
+                            timeout=300, extra_args=extra_args)
     served = served_models_since(180)
     info = model_info(model)
     ok = alias in served

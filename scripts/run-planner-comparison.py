@@ -226,6 +226,147 @@ def environment_state() -> dict:
             "problems": problems}
 
 
+# ── private mapping (identity boundary) ─────────────────────────────────────
+# EVERYTHING BELOW IS PRIVATE. The mapping resolves candidate ids to models so
+# aliases can be built; nothing derived from it is printed, logged, serialized
+# into the public manifest, or written to a scoring record. Error messages
+# deliberately carry a STATE and never a value -- an exception string is the
+# easiest place for an identity to escape.
+VERIFIED_PRIVATE_MAPPING = "VERIFIED_PRIVATE_MAPPING"
+PRIVATE_MAPPING_MISSING = "PRIVATE_MAPPING_MISSING"
+PRIVATE_MAPPING_PERMISSIONS_INVALID = "PRIVATE_MAPPING_PERMISSIONS_INVALID"
+PRIVATE_MAPPING_SCHEMA_INVALID = "PRIVATE_MAPPING_SCHEMA_INVALID"
+PRIVATE_MAPPING_HASH_MISMATCH = "PRIVATE_MAPPING_HASH_MISMATCH"
+PRIVATE_MAPPING_CANDIDATES_INVALID = "PRIVATE_MAPPING_CANDIDATES_INVALID"
+PRIVATE_MAPPING_MODEL_INVALID = "PRIVATE_MAPPING_MODEL_INVALID"
+PRIVATE_MAPPING_DUPLICATE_MODEL = "PRIVATE_MAPPING_DUPLICATE_MODEL"
+
+VERIFIED_ROUTING = "VERIFIED_ROUTING"
+ROUTING_ALIAS_MISSING = "ROUTING_ALIAS_MISSING"
+ROUTING_DIGEST_MISMATCH = "ROUTING_DIGEST_MISMATCH"
+ROUTING_PRODUCTION_FALLBACK = "ROUTING_PRODUCTION_FALLBACK"
+INVALID_ROUTING = "INVALID_ROUTING"
+
+MAPPING_PATH = PLANNER / "run2" / "MAPPING.private.json"
+#: Locked planner geometry, from HANDOFF.md. NOT a tunable: the output ceiling
+#: is 8192, deliberately not the 32768 benchmark ceiling.
+PLANNER_CONTEXT, PLANNER_CEILING, PLANNER_MODE = 32768, 8192, "off"
+
+
+def load_private_mapping(expected_hash: str = None) -> dict:
+    """Resolve candidate ids to models. PRIVATE — callers must not print it.
+
+    Fails closed on every axis, and the failure NEVER carries a value: a state
+    is returned, the contents are not, and no exception message quotes a model.
+    """
+    p = MAPPING_PATH
+    if not p.exists():
+        return {"state": PRIVATE_MAPPING_MISSING}
+    mode = p.stat().st_mode
+    if mode & 0o022:
+        # Group/other WRITABLE is fatal: a mapping anyone can rewrite cannot
+        # pin a comparison. Group/other READABLE is recorded as a warning
+        # instead -- the locked hash already detects tampering, and refusing to
+        # run over a 0644 file on a single-user machine would be theatre.
+        return {"state": PRIVATE_MAPPING_PERMISSIONS_INVALID}
+    warn = "GROUP_OR_OTHER_READABLE" if (mode & 0o044) else None
+    if expected_hash and sha(p) != expected_hash:
+        return {"state": PRIVATE_MAPPING_HASH_MISMATCH}
+    try:
+        raw = json.loads(p.read_text())
+    except Exception:  # noqa: BLE001
+        return {"state": PRIVATE_MAPPING_SCHEMA_INVALID}
+    if not isinstance(raw, dict) or not isinstance(raw.get("mapping"), dict):
+        return {"state": PRIVATE_MAPPING_SCHEMA_INVALID}
+    m = raw["mapping"]
+    if sorted(m) != sorted(CANDIDATES):
+        return {"state": PRIVATE_MAPPING_CANDIDATES_INVALID}
+    # SCHEMA, read from the file rather than assumed: each candidate maps to
+    # {"model": <tag>, "mode": <thinking mode>}. An earlier version of this
+    # validator expected a bare string and rejected the real file as
+    # MODEL_INVALID -- which is the failure working, but for the wrong reason.
+    if any(not isinstance(v, dict) or not isinstance(v.get("model"), str)
+           or not isinstance(v.get("mode"), str) or not v["model"].strip()
+           for v in m.values()):
+        return {"state": PRIVATE_MAPPING_SCHEMA_INVALID}
+    models = {c: v["model"] for c, v in m.items()}
+    modes = {c: v["mode"] for c, v in m.items()}
+    if len(set(models.values())) != len(models):
+        return {"state": PRIVATE_MAPPING_DUPLICATE_MODEL}
+    installed = B.installed()
+    for v in models.values():
+        if v not in installed and f"{v}:latest" not in installed:
+            return {"state": PRIVATE_MAPPING_MODEL_INVALID}
+    digests = {c: (B.model_info(v).get("digest") or "") for c, v in models.items()}
+    if any(not d for d in digests.values()):
+        return {"state": PRIVATE_MAPPING_MODEL_INVALID}
+    return {"state": VERIFIED_PRIVATE_MAPPING, "_mapping": models,
+            "_modes": modes, "_digests": digests,
+            "shuffle_seed": raw.get("shuffle_seed"),
+            "permissions_warning": warn}
+
+
+PLACEHOLDER = "<alias-for-"
+
+
+def assert_no_placeholder(*values) -> None:
+    """A placeholder alias reaching a client command is how this driver failed
+    its first readiness claim. Assert rather than trust."""
+    for v in values:
+        if v is not None and PLACEHOLDER in str(v):
+            raise AssertionError(
+                "placeholder alias reached execution — refusing to run")
+
+
+def build_candidate_aliases(priv: dict) -> dict:
+    """One temporary alias per candidate, via the existing builder.
+
+    Alias construction is NOT reimplemented here: build_alias() already encodes
+    num_ctx = context + ceiling, the admission ceiling and the model_info block,
+    and a second copy would drift from the one every other benchmark uses."""
+    out = {}
+    for cand in CANDIDATES:
+        model = priv["_mapping"][cand]
+        # The reasoning mode is part of the LOCKED candidate definition and is
+        # taken from the mapping, not from a driver default: overriding it here
+        # would silently change what the comparison measures.
+        mode = (priv.get("_modes") or {}).get(cand, PLANNER_MODE)
+        entry = B.build_alias(model, mode, PLANNER_CONTEXT,
+                              PLANNER_CEILING, {})
+        assert_no_placeholder(entry["model_name"])
+        out[cand] = entry
+    names = [e["model_name"] for e in out.values()]
+    if len(set(names)) != len(names):
+        # Two candidates on one alias is exactly how run 1 measured a single
+        # model three times.
+        raise AssertionError("two candidates resolved to the same alias")
+    return out
+
+
+def verify_candidate_routing(cand: str, alias: str, model: str, digest: str,
+                             wt: Path, extra_args: list) -> dict:
+    """Prove THIS candidate's alias served THIS candidate's weights.
+
+    Public fields carry no identity: state plus a hash. The alias, the model and
+    the digest stay in the private record."""
+    res = B.verify_routing(alias, model, wt, extra_args=extra_args)
+    served = set(res.get("served_aliases") or [])
+    if not res.get("alias_served"):
+        state = (ROUTING_PRODUCTION_FALLBACK
+                 if any(a.startswith("ailocal-") for a in served)
+                 else ROUTING_ALIAS_MISSING)
+    elif digest and res.get("expected_digest") and \
+            res["expected_digest"] != digest:
+        state = ROUTING_DIGEST_MISMATCH
+    else:
+        state = VERIFIED_ROUTING
+    public = {"candidate": cand, "state": state,
+              "routing_evidence_hash": hashlib.sha256(
+                  json.dumps(res, sort_keys=True, default=str).encode()
+              ).hexdigest()[:16]}
+    return {"public": public, "_private": res}
+
+
 # ── run manifest ────────────────────────────────────────────────────────────
 def build_manifest(run_id: str, turns: int, probe_model: str,
                    worktrees: dict) -> dict:
@@ -390,11 +531,14 @@ def main() -> int:
     ap.add_argument("--run-id", default=time.strftime("planner-%Y%m%dT%H%M%SZ",
                                                       time.gmtime()))
     ap.add_argument("--output-dir")
+    ap.add_argument("--validate-private-routing", action="store_true",
+                    help="resolve the private mapping and build aliases "
+                         "WITHOUT inference or any runtime mutation")
     ap.add_argument("--force-rerun", action="store_true",
                     help="re-run a candidate that already completed")
     a = ap.parse_args()
 
-    if not (a.dry_run or a.all or a.candidate):
+    if not (a.dry_run or a.all or a.candidate or a.validate_private_routing):
         print("Refusing to do anything by default. Pass --dry-run, --all, or "
               "--candidate <id>. Inference is never implicit.", file=sys.stderr)
         return 2
@@ -404,6 +548,51 @@ def main() -> int:
     env = environment_state()
     wts = prepare_worktrees(a.run_id, a.dry_run)
     manifest = build_manifest(a.run_id, a.turns, a.probe_model, wts)
+
+    if a.validate_private_routing:
+        # Opens the mapping (authorized), builds alias objects, resolves
+        # digests -- and mutates nothing. Prints candidate ids and states only:
+        # no alias, no model, no digest, no mapping.
+        print(f"PRIVATE ROUTING VALIDATION {a.run_id} — no inference, "
+              f"no runtime mutation\n")
+        priv = load_private_mapping(manifest["private_mapping_hash"])
+        rows = []
+        if priv["state"] != VERIFIED_PRIVATE_MAPPING:
+            for c in CANDIDATES:
+                rows.append((c, priv["state"], "SKIPPED", "SKIPPED", "NO", "NO"))
+        else:
+            try:
+                entries = build_candidate_aliases(priv)
+                built = True
+            except AssertionError:
+                entries, built = {}, False
+            for c in CANDIDATES:
+                e = entries.get(c)
+                alias_ok = bool(e and e["model_name"] and PLACEHOLDER
+                                not in e["model_name"])
+                digest_ok = bool(priv["_digests"].get(c))
+                geom_ok = bool(e and e["litellm_params"]["num_predict"]
+                               == PLANNER_CEILING
+                               and e["litellm_params"]["num_ctx"]
+                               == PLANNER_CONTEXT + PLANNER_CEILING)
+                gate = "YES" if (alias_ok and digest_ok and geom_ok) else "NO"
+                rows.append((c, VERIFIED_PRIVATE_MAPPING,
+                             "VALID" if alias_ok and geom_ok else "INVALID",
+                             "VERIFIED" if digest_ok else "MISSING",
+                             gate, gate))
+        print(f"{'Candidate':<13}{'Mapping':<26}{'Alias build':<13}"
+              f"{'Digest':<10}{'Routing gate configured':<25}Ready")
+        for r in rows:
+            print(f"{r[0]:<13}{r[1]:<26}{r[2]:<13}{r[3]:<10}{r[4]:<25}{r[5]}")
+        ready = all(r[5] == "YES" for r in rows)
+        if priv.get("permissions_warning"):
+            print(f"\n  mapping permissions: {priv['permissions_warning']} "
+                  f"(hash-locked; not fatal)")
+        print(f"\n  geometry: num_ctx {PLANNER_CONTEXT + PLANNER_CEILING}, "
+              f"num_predict {PLANNER_CEILING}, mode '{PLANNER_MODE}' (locked)")
+        print(f"  aliases/models/digests: WITHHELD")
+        print(f"\nREADY: {'YES' if ready else 'NO'}")
+        return 0 if ready else 1
 
     if a.dry_run:
         print(f"DRY RUN {a.run_id} — no inference, no aliases, mapping NOT opened\n")
@@ -468,8 +657,32 @@ def main() -> int:
               f"{locked.get('prompt_set_hash')} -> {live['hash']}", file=sys.stderr)
         return 5
 
+    # ── lifecycle order (private from here down) ────────────────────────
+    priv = load_private_mapping(locked.get("private_mapping_hash"))
+    if priv["state"] != VERIFIED_PRIVATE_MAPPING:
+        print(priv["state"], file=sys.stderr)          # state only, never values
+        return 7
+    if priv.get("permissions_warning"):
+        print(f"  mapping permissions: {priv['permissions_warning']} "
+              f"(hash-locked; not fatal)")
+    entries = build_candidate_aliases(priv)
+    aliases = {c: e["model_name"] for c, e in entries.items()}
+    applied = B.apply_aliases(list(entries.values()))
+    if not applied["ok"]:
+        B.restore()
+        print(f"alias application failed: missing={len(applied['missing'])}",
+              file=sys.stderr)
+        return 8
+    if not B.litellm_healthy():
+        B.restore()
+        print("runtime unhealthy after alias application", file=sys.stderr)
+        return 9
+    print(f"  aliases applied: {len(applied['installed'])} temporary "
+          f"(names withheld)")
+
     targets = [a.candidate] if a.candidate else list(CANDIDATES)
     results = {}
+    routing_public = {}
     try:
         for cand in targets:
             dst = out / f"{cand}.full.json"
@@ -488,7 +701,32 @@ def main() -> int:
                 results[cand] = {"error": "SESSION_LOST", "turns_completed": done}
                 continue
 
-            res = run_one(cand, wts, a, out, session=session, skip=done)
+            # Routing is verified with the SAME override, permissions and
+            # confinement the scored turns use -- otherwise it proves routing
+            # for a request this candidate never makes.
+            gate_args = (B.permission_args(PERMISSIONS)
+                         + ["--model", aliases[cand]]
+                         + B.confinement_args(
+                             wts[cand],
+                             deny_extra=[p for c, p in wts.items() if c != cand]))
+            rt = verify_candidate_routing(
+                cand, aliases[cand], priv["_mapping"][cand],
+                priv["_digests"][cand], wts[cand], gate_args)
+            routing_public[cand] = rt["public"]
+            (out / f"{cand}.routing.private.json").write_text(
+                json.dumps(rt["_private"], indent=1, default=str))
+            if rt["public"]["state"] != VERIFIED_ROUTING:
+                print(f"{cand}: {rt['public']['state']} — stopped before turn 1")
+                results[cand] = {"error": rt["public"]["state"],
+                                 "turns_completed": 0}
+                continue
+            if not B.litellm_healthy():
+                print(f"{cand}: runtime unhealthy — not started")
+                results[cand] = {"error": INVALID_ENVIRONMENT, "turns_completed": 0}
+                continue
+
+            res = run_one(cand, wts, a, out, session=session, skip=done,
+                          alias=aliases[cand])
             results[cand] = res
             merged = _merge(prior, res) if prior else res
             dst.write_text(json.dumps(merged, indent=1, default=str))
@@ -498,7 +736,14 @@ def main() -> int:
                 json.dumps(proof, indent=1))
             state = merged.get("error") or (
                 "COMPLETE" if merged.get("turns_completed") == a.turns else INCOMPLETE)
-            print(f"{cand}: {state} ({merged.get('turns_completed')}/{a.turns})")
+            conf = (merged.get("confinement") or {})
+            pf = (conf.get("preflight") or {}).get("state", "n/a")
+            ev = conf.get("events") or []
+            blocked = sum(e.get("escape_attempts_blocked", 0) for e in ev)
+            print(f"{cand}: {state} ({merged.get('turns_completed')}/{a.turns}) "
+                  f"routing={rt['public']['state']} confinement={pf} "
+                  f"turns_internal={sum((r.get('structured') or {}).get('num_turns') or 0 for r in merged.get('records') or [])} "
+                  f"escapes_blocked={blocked}")
     finally:
         rest = B.restore()
         sweep = B.sweep_worktree_root()
@@ -506,6 +751,8 @@ def main() -> int:
             rm = B.remove_worktree(wt)
             if not rm["removed"]:
                 print(f"  cleanup {c}: {rm['status']} {rm.get('reason','')}")
+        (out / "routing.public.json").write_text(
+            json.dumps(routing_public, indent=1, default=str))
         print(f"restored={rest['restored']} leaked={rest['leaked']} "
               f"swept={len(sweep['orphans_removed'])}")
     return 0
@@ -521,7 +768,8 @@ def _merge(prior: dict, new: dict) -> dict:
     return out
 
 
-def run_one(cand: str, wts: dict, a, out: Path, session=None, skip: int = 0) -> dict:
+def run_one(cand: str, wts: dict, a, out: Path, session=None, skip: int = 0,
+            alias: str = None) -> dict:
     """One candidate, with every gate wired in and siblings denied.
 
     A breach or gate failure stops THIS candidate only: the others were
@@ -529,9 +777,10 @@ def run_one(cand: str, wts: dict, a, out: Path, session=None, skip: int = 0) -> 
     wt = wts[cand]
     siblings = [p for c, p in wts.items() if c != cand]
     prompts = turn_prompts(a.turns)[skip:]
+    assert_no_placeholder(alias)
     return B.run_client_scenario(
         "claude-local", prompts, wt, timeout=1800,
-        confinement={"model": f"<alias-for-{cand}>",
+        confinement={"model": alias,
                      "permissions": PERMISSIONS,
                      "probe_model": a.probe_model,
                      "sibling_worktrees": siblings,
