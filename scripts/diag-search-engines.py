@@ -220,6 +220,12 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--base", default=DEFAULT_BASE)
     ap.add_argument("--engine", help="probe only this engine name")
+    ap.add_argument("--include-disabled", action="store_true",
+                    help="also probe engines that are disabled by default "
+                         "(bang-only). These are disabled BECAUSE they CAPTCHA "
+                         "or rate-limit; probing them produces real CAPTCHA "
+                         "tracebacks in the SearXNG log. Off by default so a "
+                         "routine health check cannot manufacture log noise.")
     ap.add_argument("--extended", action="store_true",
                     help="probe every query class, not just coding "
                          "(MORE UPSTREAM REQUESTS -- may consume rate limit)")
@@ -247,6 +253,17 @@ def main() -> int:
             print(f"ENGINE_NOT_LOADED: {args.engine!r} is not in {args.base}/config",
                   file=sys.stderr)
             return 2
+    elif not args.include_disabled:
+        # Bang-only engines are disabled BECAUSE they CAPTCHA or rate-limit.
+        # Probing them was the sole source of the DuckDuckGo CAPTCHA tracebacks
+        # in the SearXNG log -- a health check must not manufacture the noise it
+        # then reports. Naming one with --engine still probes it deliberately.
+        skipped = [e.get("name") for e in engines if e.get("enabled") is False]
+        engines = [e for e in engines if e.get("enabled") is not False]
+        if skipped and not args.json:
+            print(f"Skipping {len(skipped)} bang-only engine(s): "
+                  f"{', '.join(sorted(filter(None, skipped)))}\n"
+                  f"  (--include-disabled to probe them; expect CAPTCHA lines)\n")
 
     if args.extended and not args.json:
         print("NOTE: --extended issues more upstream requests. Crossref allows "
