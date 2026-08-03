@@ -117,6 +117,9 @@ completion:
 embeddings:
   role: Embeddings
   active: nomic-embed-text
+  # ollama, NOT ollama_chat: LiteLLM has no embeddings route for the
+  # chat provider — /v1/embeddings against it returns 'Unmapped LLM provider'.
+  provider: ollama
   preferred: [nomic-embed-text]
   # 2048 is the model's REAL limit. Do not inherit a chat context here.
   context_input: 2048

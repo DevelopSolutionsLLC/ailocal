@@ -256,6 +256,9 @@ completion:
 embeddings:
   role: Semantic retrieval
   active: nomic-embed-text
+  # ollama, NOT ollama_chat: LiteLLM has no embeddings route for the
+  # chat provider — /v1/embeddings against it returns 'Unmapped LLM provider'.
+  provider: ollama
   preferred: [nomic-embed-text, mxbai-embed-large]
   # 2048 is nomic-embed-text's REAL maximum. Measured: it silently CLIPS above this
   # and still returns a valid 768-dim vector, so 8192 advertised 4x the true capacity

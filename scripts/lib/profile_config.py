@@ -61,7 +61,8 @@ LEGACY_CONTEXT_FIELD = "context"
 #:   keep_alive     -> None; omitted, Ollama default applies
 #:   persona        -> None; treated as no persona injection
 #:   preferred/purpose/strengths/weaknesses -> [] (documentation only)
-OPTIONAL_ROLE_FIELDS = ("max_output", "reasoning", "temperature", "top_p", "top_k",
+OPTIONAL_ROLE_FIELDS = ("provider", "max_output", "reasoning", "temperature",
+                        "top_p", "top_k",
                         "repeat_penalty", "keep_alive",
                         "persona", "preferred", "purpose", "strengths",
                         "weaknesses")
