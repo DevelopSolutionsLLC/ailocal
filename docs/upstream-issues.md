@@ -149,9 +149,50 @@ versions:
 still open — [#31209][31209] (the exact missing block types), [#31672][31672],
 [#32196][32196], [#31182][31182] — and [#31687][31687] was closed unmerged.
 
-Production therefore stays on 1.93.0. Re-test when #31209 lands; do not upgrade
-for this reason alone, and validate Codex-local streaming on any upgrade (1.94.1
-was reverted here for breaking it).
+Production therefore stays on 1.93.0: no tested upgrade fixes this, so there is
+no version to move to.
+
+### Search is NOT broken — scope of this defect
+
+State this precisely, because "0 searches" reads like a search failure and is
+not one:
+
+- **Not** SearXNG returning zero results — it returns 75+ for these queries.
+- **Not** Brave, which is authenticated and returning relevant results.
+- **Not** a retrieval, ranking, or engine problem of any kind.
+- **Not** primarily a usage-counter defect (the original, wrong diagnosis).
+- **It is** one missing serialized `server_tool_use` content block.
+
+**Real search content reaches Claude-local normally**: 50 URLs / ~22 KB in the
+traced example, and answers cite live sources. The defect is confined to a
+number Claude Code renders. Do not describe search as broken, and do not
+investigate SearXNG when this symptom appears.
+
+### Upstream watch — re-test condition
+
+**This is closed as an upstream watch. Do not run further LiteLLM upgrade or
+serialization experiments until one of these occurs:**
+
+1. [#31209][31209] — or an equivalent Anthropic response-union fix — **merges**.
+2. A release note explicitly states that native `server_tool_use` and
+   `web_search_tool_result` blocks survive web-search interception.
+3. LiteLLM closes the relevant issue against a **released** version.
+
+When one does, the acceptance test is:
+
+| # | Assertion |
+|---|---|
+| 1 | native request detected (`is_anthropic_native_web_search_tool` → True) |
+| 2 | response contains `server_tool_use` |
+| 3 | response contains `web_search_tool_result` |
+| 4 | Claude Code displays a **nonzero** search count |
+| 5 | Brave result content intact |
+| 6 | Claude-local streaming and resume pass |
+| 7 | **Codex-local streaming and resume pass** — required before any production upgrade |
+
+Item 7 is not optional: 1.94.1 was reverted here for breaking Codex streaming.
+Reproduce the experiment with an isolated container on a spare port, never
+against production.
 
 [31182]: https://github.com/BerriAI/litellm/pull/31182
 [31209]: https://github.com/BerriAI/litellm/pull/31209
