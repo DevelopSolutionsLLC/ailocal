@@ -52,6 +52,89 @@ def load_helpers():
     return ns
 
 
+def load_completion_helpers():
+    """Same trick as load_helpers, for the completion-evidence renderer.
+
+    _completion_fields lives above the E1 marker but references the availability
+    constants defined below it, so both ranges are exec'd into one namespace,
+    constants first. Source-range extraction keeps these tests runnable without
+    litellm installed, which is what lets them run in the gate.
+    """
+    src = TRACE.read_text()
+    e1 = src[src.index("# \u2500\u2500 E1: schema version, process generation, token components"):
+             src.index("def emit(record):")]
+    fns = src[src.index("def _completion_fields(acc, saw_any_event):"):
+              src.index("def _load_registry():")]
+    ns: dict = {}
+    exec("import json, os, time\n" + e1 + "\n" + fns, ns)
+    return ns
+
+
+def completion_evidence_checks() -> None:
+    """What makes a completion record usable as evidence.
+
+    Each check encodes a way the previous schema misled an investigation: nulls
+    that meant four different things, and a partially observed response that
+    looked complete. The EXTRACTION of these values is LiteLLM's job (it hands
+    us an assembled ModelResponse); what is ours, and therefore what is tested,
+    is how presence and absence are reported.
+    """
+    print("\ncompletion evidence")
+    fields = load_completion_helpers()["_completion_fields"]
+
+    # Ollama via ollama_chat hitting its ceiling -- the case the whole
+    # output-limit investigation turns on.
+    out = fields({"completion_tokens": 128, "prompt_tokens": 41,
+                  "finish_reason": "length"}, True)
+    check(out["completion_tokens"] == 128, "completion_tokens retained (128)")
+    check(out["prompt_tokens"] == 41, "prompt_tokens retained (41)")
+    check(out["finish_reason"] == "length", "finish_reason retained ('length')")
+    check(out["completion_evidence"] == "EVIDENCE_COMPLETE",
+          "count + reason \u21d2 EVIDENCE_COMPLETE")
+    check(out["completion_tokens_availability"] is None,
+          "a present value carries no availability reason")
+
+    out = fields({"completion_tokens": 8192, "stop_reason": "max_tokens"}, True)
+    check(out["stop_reason"] == "max_tokens", "anthropic stop_reason retained")
+    check(out["completion_evidence"] == "EVIDENCE_COMPLETE",
+          "stop_reason counts as a termination reason")
+
+    # Absence is explained, never inferred.
+    out = fields({}, True)
+    check(out["completion_tokens"] is None
+          and out["completion_tokens_availability"] == "not_sent_by_provider",
+          "provider sent nothing \u21d2 not_sent_by_provider")
+    check(out["completion_evidence"] == "EVIDENCE_NONE",
+          "no telemetry at all \u21d2 EVIDENCE_NONE")
+    check(fields({}, False)["completion_tokens_availability"] == "no_backend_response",
+          "no response \u21d2 no_backend_response, distinct from an empty reply")
+
+    # Partial telemetry must NEVER read as complete.
+    check(fields({"completion_tokens": 500}, True)["completion_evidence"]
+          == "EVIDENCE_PARTIAL",
+          "count without a termination reason \u21d2 EVIDENCE_PARTIAL")
+    check(fields({"finish_reason": "stop"}, True)["completion_evidence"]
+          == "EVIDENCE_PARTIAL",
+          "reason without a count \u21d2 EVIDENCE_PARTIAL")
+
+    # Extraction failure is its own state, not silent absence.
+    out = fields({"extraction_error": "boom"}, True)
+    check(out["completion_tokens_availability"] == "extraction_failed",
+          "parse failure reported as extraction_failed, not as absence")
+    check(out["completion_extraction_error"] == "boom",
+          "the extraction error is preserved for diagnosis")
+
+    # Provider evidence is never manufactured from a mapped value.
+    check(fields({"finish_reason": "length"}, True)["provider_done_reason"] is None,
+          "provider_done_reason is NOT defaulted from finish_reason")
+
+    # Still bounded scalars, so the record stays safe to serialize.
+    check(all(isinstance(v, (int, float, str, bool, type(None)))
+              for v in fields({"completion_tokens": 5,
+                               "finish_reason": "stop"}, True).values()),
+          "completion fields are bounded scalars")
+
+
 SECRETS = [
     "ghp_REALLOOKINGTOKENVALUE0000000000",
     "github_pat_11ABCDEFG0000000000000",
@@ -158,6 +241,8 @@ def main() -> int:
           "every emitted field is a bounded scalar")
     check(all(not isinstance(v, str) or len(v) <= 130 for v in record.values()),
           "no field carries an unbounded string")
+
+    completion_evidence_checks()
 
     print()
     if failures:
