@@ -166,3 +166,33 @@ Shell: `set -euo pipefail`; reuse the `info/warn/step/backup` helpers. Python:
 stdlib only. Files and directories are kebab-case. Never commit `.env` or
 secrets; ports bind `127.0.0.1` only. No Claude commit attribution. Never push
 without approval.
+
+## Configuration ownership
+
+`config/profiles/{16,32,64,128}gb.yaml` are the **authoritative** deployment
+configuration. Nothing else defines role-to-model assignment or generation
+parameters.
+
+`config/active-profile` selects a tier and has **no implicit default**. A
+missing, empty or unknown marker is an error. It used to fall through to a
+hardcoded `64gb` in eight places across four shell scripts, which silently
+installs the 64 GB model set on a smaller machine — the same failure shape the
+planner benchmark was built around.
+
+`scripts/lib/profile_config.py` is the **only** profile parser and resolver.
+Do not add a second one. It hand-parses the profile subset because PyYAML is not
+available to the host interpreter and the shell entry points must work before
+any venv exists.
+
+Shell scripts **do not parse YAML**. They query `scripts/profile-config`
+(`active-tier`, `role <r> [--field f]`, `profile-summary`, `validate`), which
+prints bare scalars and exits non-zero on any invalid state.
+
+Generated files — `config/litellm/config.yaml`, `config/clients/configure.zsh`,
+`config/capabilities.generated.json`, `config/integration-contract.json` — are
+**outputs, not sources**. Edit the profile and re-run `sync-models`.
+
+Benchmark consumers use the same resolver; `benchmark.parse_profile()` is a thin
+compatibility wrapper. Model capability metadata and profile schema expansion
+(provider, seed, min_p, tool/thinking support, quirks) are separate follow-up
+work and are deliberately not in the schema yet.

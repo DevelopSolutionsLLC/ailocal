@@ -262,26 +262,21 @@ def _scalar(v):
 
 
 def parse_profile(tier: str) -> dict:
-    """{capability: {active, context, ...}} from the tier's own YAML."""
-    text = (REPO / "config" / "profiles" / f"{tier}.yaml").read_text()
-    caps = {}
-    for m in re.finditer(r'^([a-z_]+):\n((?:[ \t]+.*\n)+)', text, re.M):
-        name, body = m.group(1), m.group(2)
-        if name not in ("architecture", "implementation", "review", "fast",
-                        "completion", "embeddings"):
-            continue
-        f = {k: v.strip() for k, v in
-             re.findall(r'^\s+([a-z_]+):[ \t]*(.*?)[ \t]*(?:#.*)?$', body, re.M)}
-        active = f.get("active", "")
-        caps[name] = {
-            "active": active,
-            "context": int(f["context"]) if f.get("context", "").isdigit() else 0,
-            # No backend, or an explicit disable, means the capability does not
-            # ship — it must not be benchmarked as though it did.
-            "enabled": bool(active) and active.lower() not in
-                       ("none", "false", "disabled"),
-        }
-    return caps
+    """{capability: {active, context, enabled}} — COMPATIBILITY WRAPPER.
+
+    The parsing itself moved to profile_config, which is now the only profile
+    parser in the repository. This shape is preserved because existing callers
+    read exactly these three keys; it is not a second implementation."""
+    import profile_config as _pc
+    out = {}
+    for role in _pc.ROLES:
+        try:
+            c = _pc.resolve_role(tier, role)
+        except _pc.ProfileError:
+            continue          # a tier legitimately need not define every role
+        out[role] = {"active": c["active"], "context": c["context"],
+                     "enabled": c["enabled"]}
+    return out
 
 
 def select(profile: str = None, explicit=None) -> dict:

@@ -31,7 +31,11 @@ while [ $# -gt 0 ]; do
     *) shift ;;
   esac
 done
-ACTIVE="$(cat "$ROOT_DIR/config/active-profile" 2>/dev/null || echo 64gb)"
+# Fail closed: no implicit tier. A suppressed read falling through to a
+# hardcoded 64gb is what silently installs the wrong model set on a
+# smaller machine. Resolve once, here, and reuse.
+ACTIVE="$("$ROOT_DIR/scripts/profile-config" active-tier)" || {
+  echo "  ✗ cannot resolve the active profile (see error above)" >&2; exit 1; }
 CHECK_GENERATED=1
 [ -n "$TIER" ] && [ "$TIER" != "$ACTIVE" ] && CHECK_GENERATED=0   # generated files reflect the ACTIVE tier
 
