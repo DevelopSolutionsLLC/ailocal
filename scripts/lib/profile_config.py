@@ -194,14 +194,32 @@ def parse_profile_text(text: str) -> dict:
         m = _SECTION.match(line)
         if m:
             current = m.group(1)
-            out.setdefault(current, {})
+            # A REPEATED SECTION SILENTLY REPLACED THE FIRST. Two `architecture:`
+            # blocks left only the last one, so a merge artefact or a careless
+            # paste changed the deployed model with nothing to see in review.
+            if current in out:
+                raise ProfileError(PROFILE_YAML_INVALID,
+                                   f"duplicate section {current!r} (line {n})")
+            out[current] = {}
             continue
         m = _FIELD.match(line)
         if m:
             if current is None:
                 raise ProfileError(PROFILE_YAML_INVALID,
                                    f"indented key before any section (line {n})")
-            out[current][m.group(1)] = _coerce(m.group(2))
+            key = m.group(1)
+            # Same reasoning one level down: last-wins on a duplicated key is
+            # exactly how a profile ends up not meaning what it reads like.
+            if key in out[current]:
+                raise ProfileError(PROFILE_YAML_INVALID,
+                                   f"duplicate key {key!r} in {current!r} (line {n})")
+            val = m.group(2)
+            # An unclosed flow list was coerced to the bare string "[a, b", so a
+            # truncated list became a plausible-looking scalar.
+            if val.lstrip().startswith("[") and not val.rstrip().endswith("]"):
+                raise ProfileError(PROFILE_YAML_INVALID,
+                                   f"unclosed flow list for {key!r} (line {n})")
+            out[current][key] = _coerce(val)
             continue
         if not line.startswith(" "):
             # Top-level scalars such as `disk_gb: 64` are legitimate.
@@ -248,6 +266,14 @@ def load_profile(tier: str, repo_root=None) -> dict:
     return data
 
 
+def _known_role_fields() -> frozenset:
+    """Every field a role may declare. Anything else is a typo or a stale key."""
+    return frozenset(REQUIRED_ROLE_FIELDS) | frozenset(OPTIONAL_ROLE_FIELDS) | {
+        # Structural, not tuning: consumed by generation rather than by geometry.
+        "enabled", "role", "active",
+    }
+
+
 def _validate_role(role: str, cfg) -> None:
     if not isinstance(cfg, dict):
         raise ProfileError(ROLE_CONFIG_INVALID, role)
@@ -255,6 +281,15 @@ def _validate_role(role: str, cfg) -> None:
         raise ProfileError(PROFILE_SCHEMA_INVALID,
                            f"{role} still uses legacy `context`; migrate to "
                            "context_input + max_output")
+    # UNKNOWN FIELDS ARE ERRORS, NOT NOISE. Only recognised keys were ever
+    # copied out, so `temprature: 0.1` parsed cleanly, was silently discarded,
+    # and the role ran at the default temperature -- a tuning value that reads
+    # as set in review and is not. Same for `topk`, `keepalive`, and any field
+    # a schema migration retires (`num_predict`).
+    unknown = sorted(set(cfg) - _known_role_fields())
+    if unknown:
+        raise ProfileError(PROFILE_SCHEMA_INVALID,
+                           f"{role} declares unknown field(s): {', '.join(unknown)}")
     missing = [f for f in REQUIRED_ROLE_FIELDS if cfg.get(f) in (None, "")]
     if missing:
         raise ProfileError(PROFILE_SCHEMA_INVALID,

@@ -124,7 +124,6 @@ embeddings:
   # 2048 is the model's REAL limit. Do not inherit a chat context here.
   context_input: 2048
   temperature: 0.0
-  num_predict: 0
   keep_alive: -1
   persona: false
   purpose: [semantic search, retrieval]
