@@ -199,7 +199,7 @@ def build_alias(model: str, mode: str, context: int, ceiling: int,
             # Admission is g["max_input_tokens"], which IS context_input by
             # construction. It was `context * PRECALL_MARGIN`, which admitted
             # 45,875 tokens into a 40,960-token window. MEASURED consequence
-            # (scripts/repro-context-admission.py, qwen3.5:2b): 43,645 tokens
+            # (repro-context-admission.py, since deleted; qwen3.5:2b): 43,645 tokens
             # ADMITTED, then Ollama silently truncated to 20,482 — HTTP 200,
             # finish_reason=stop, system prompt gone. Failing closed costs a
             # loud rejection; failing open costs a corrupted run that looks fine.
