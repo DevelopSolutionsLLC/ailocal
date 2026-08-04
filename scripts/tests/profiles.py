@@ -600,10 +600,13 @@ def resolver_checks() -> None:
     _pref = _models["completion"]["preferred"]
     check(isinstance(_pref, list),
           f"lists stay typed through generation (preferred is {type(_pref).__name__})")
-    check(_sm.flow_list(_pref) is _pref,
-          "flow_list is idempotent — no list→string→list round-trip")
-    check(_sm.flow_list("[a, b]") == ["a", "b"],
-          "flow_list still parses raw strings for config/clients.yaml")
+    # policy.py returns typed lists for both profiles and client policy, so the
+    # generator has no scalar parser of its own left to test -- only that an
+    # absent optional field reads as empty rather than None.
+    check(_sm.flow_list(_pref) is _pref, "a typed list passes through unchanged")
+    check(_sm.flow_list(None) == [], "an absent optional list reads as empty")
+    check(not hasattr(_sm, "flow_dict") and not hasattr(_sm, "truthy"),
+          "the generator carries no second scalar parser")
     # The point was never jq: it was that doctor must not extract profile fields
     # with a bespoke parser. It now reads them through policy itself,
     # which is the same guarantee one layer stronger.
