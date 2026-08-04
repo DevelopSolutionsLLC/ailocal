@@ -14,7 +14,7 @@ import re
 import pathlib
 import sys
 
-from . import BLOCKED, FAIL, PASS, CheckResult
+from . import BLOCKED, FAIL, PASS, WARN, CheckResult
 
 REPO = pathlib.Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(REPO / "scripts" / "lib"))
@@ -312,6 +312,21 @@ def check_compose_config() -> list[CheckResult]:
     return out
 
 
+def check_client_slots() -> list[CheckResult]:
+    """Client slot assignments, from the rule policy owns."""
+    try:
+        problems = P.slot_problems()
+    except P.ProfileError as exc:
+        return [CheckResult("client-slots", FAIL, "cannot check client slots",
+                            f"{exc.code}: {exc}")]
+    if not problems:
+        return [CheckResult("client-slots", PASS,
+                            "claude slots respect profile geometry")]
+    return [CheckResult("client-slots", FAIL if sev == "error" else WARN, msg,
+                        remediation="edit config/clients.yaml")
+            for sev, msg in problems]
+
+
 def check_generated_in_sync() -> CheckResult:
     """Regeneration is a fixed point; drift means a hand edit. Active tier only."""
     import subprocess
@@ -345,6 +360,7 @@ def deterministic_checks(tier: str | None = None) -> list[CheckResult]:
     results += check_compose_layout()
     results += check_compose_config()
     results += check_generated_present()
+    results += check_client_slots()
     results += [check_effective_profile(), check_alias_uniqueness(),
                 check_no_raw_backend_tags(), check_codex_no_mcp(),
                 check_mount_drift()]

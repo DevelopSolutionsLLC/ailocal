@@ -910,7 +910,10 @@ def policy_checks() -> None:
     prod = [q for q in (REPO / "scripts").rglob("*.py")
             if "/tests/" not in str(q) and q.name != "policy.py"]
     prod += [q for q in (REPO / "scripts").rglob("*.sh") if "/tests/" not in str(q)]
-    build = re.compile(r'(=\s*["\']?[^"\'\n]*config/(active-profile|clients\.yaml)'
+    # Path CONSTRUCTION only: a quoted path that is the whole value, or a
+    # pathlib join. Remediation sentences and prompts name the file in prose and
+    # are not a second owner.
+    build = re.compile(r'(=\s*["\']config/(active-profile|clients\.yaml)["\']'
                        r'|/\s*["\']config["\']\s*/\s*["\'](active-profile|clients\.yaml))')
     offenders = []
     for q in prod:

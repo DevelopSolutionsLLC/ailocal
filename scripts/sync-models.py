@@ -615,27 +615,6 @@ SLOT_ENV = {
 }
 
 
-def check_conversational_slots(models, clients):
-    """`completion` is FIM-only at num_ctx 4096; any real agent turn routed there
-    hard-400s. Every built-in Claude slot carries full conversation context, so
-    none of them may point at it. Fail loudly at generation time rather than
-    letting the breakage surface as a runtime 400."""
-    slots = (clients.get("claude") or {}).get("slots", {})
-    bad = [s for s, cap in slots.items() if cap == "completion"]
-    if bad:
-        sys.exit(f"error: claude.slots {bad} -> 'completion' (FIM tier, num_ctx "
-                 f"{ctx_of(models.get('completion', {}))}). Conversational slots "
-                 f"must not use it; see AGENTS.md. Fix config/clients.yaml.")
-
-    # Two slots on one capability is legal but shows up as a DUPLICATE entry in
-    # Claude Code's /model picker (gateway discovery lists the capability once
-    # per slot pointing at it), and it wastes a tier. Warn rather than fail:
-    # it is a papercut, not a breakage, and a deliberate collapse may be wanted.
-    dupes = [c for c, n in collections.Counter(slots.values()).items() if n > 1]
-    for cap in dupes:
-        owners = sorted(s for s, v in slots.items() if v == cap)
-        warn(f"claude.slots {owners} all map to '{cap}' — /model will list "
-             f"{mn(cap)} {len(owners)}x. Give each slot its own capability.")
 
 
 def gen_slot_block(clients):
@@ -1069,7 +1048,11 @@ def main():
     for role, info in models.items():
         print(f"  {role}: {backend_of(info)}  (ctx {ctx_of(info)}, keep_alive {norm_keep_alive(info.get('keep_alive'))})")
 
-    check_conversational_slots(models, clients)
+    # The rule is owned by policy; the generator's job is to fail closed on it.
+    for severity, message in _pc.slot_problems():
+        if severity == "error":
+            sys.exit(f"error: {message}")
+        warn(message)
 
     step("Regenerating config/litellm/config.yaml (model_list + aliases)")
     ok("litellm config regenerated" if regen_litellm(models, clients) else "litellm config unchanged/skipped")

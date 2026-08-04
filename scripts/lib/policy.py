@@ -356,6 +356,42 @@ def client_mapping(client: str, repo_root=None) -> dict:
     return policy[client]
 
 
+def slot_problems(tier=None, repo_root=None) -> list:
+    """Client slot assignments that violate profile geometry.
+
+    Returns (severity, message) pairs; "error" must fail generation, "warning"
+    is a papercut. The rule lives here because it compares client policy against
+    profile geometry, and both are owned here -- the generator enforces it and
+    validation reports it, from one implementation.
+    """
+    import collections
+
+    tier = tier or resolve_active_tier(repo_root)
+    profile = load_profile(tier, repo_root)
+    slots = (load_client_policy(repo_root).get("claude") or {}).get("slots", {})
+    out = []
+
+    # `completion` is FIM-only at a small window; a real agent turn routed there
+    # hard-400s. Every built-in Claude slot carries full conversation context.
+    bad = sorted(s for s, cap in slots.items() if cap == "completion")
+    if bad:
+        ctx = resolve_role(tier, "completion", repo_root)["total_context"] \
+            if "completion" in profile else "?"
+        out.append(("error",
+                    f"claude.slots {bad} -> 'completion' (FIM tier, num_ctx {ctx}). "
+                    f"Conversational slots must not use it. Fix clients.yaml."))
+
+    # Two slots on one capability is legal, but Claude Code's /model picker
+    # lists that capability once per slot pointing at it.
+    for cap, n in collections.Counter(slots.values()).items():
+        if n > 1:
+            owners = sorted(s for s, v in slots.items() if v == cap)
+            out.append(("warning",
+                        f"claude.slots {owners} all map to '{cap}' — /model will "
+                        f"list it {n}x. Give each slot its own capability."))
+    return out
+
+
 def required_models(tier=None, repo_root=None) -> list:
     """Distinct backends an installation must pull for a tier."""
     tier = tier or resolve_active_tier(repo_root)
