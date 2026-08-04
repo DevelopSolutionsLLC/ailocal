@@ -20,17 +20,18 @@ import sys
 import tempfile
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from harness import REPO, Suite, load_module
 sys.path.insert(0, str(REPO / "scripts" / "lib"))
 import profile_config as P  # noqa: E402
 
-failures: list[str] = []
+_suite = Suite()
+check = _suite.check
 
 
-def check(cond: object, label: str) -> None:
-    print(f"  {'✓' if cond else '✗'} {label}")
-    if not cond:
-        failures.append(label)
+def load_sync():
+    """Fresh sync-models module: each sandbox needs unshared state."""
+    return load_module("sync_models", REPO / "scripts" / "sync-models.py")
 
 
 def sandbox(marker=None, profile_text=None) -> Path:
@@ -258,9 +259,7 @@ def main() -> int:
     # even when the model is not called "nomic". A prose mention of the old
     # conditional is not the defect — this is the third test in this suite to
     # trip on its own explanatory comment.
-    import importlib.util as _il4
-    _s4 = _il4.spec_from_file_location("_sm4", REPO / "scripts" / "sync-models.py")
-    _sm4 = _il4.module_from_spec(_s4); _s4.loader.exec_module(_sm4)
+    _sm4 = load_sync()
     blk = _sm4.gen_role_block("embeddings", {
         "active": "some-other-embedder:1b", "provider": "ollama",
         "context_input": 2048, "role": "E"})
@@ -352,9 +351,7 @@ def main() -> int:
         check(np_ == mo, f"{name}: advertised max_output_tokens == enforced num_predict")
 
     print("\nPRODUCTION ADMISSION RESPECTS PHYSICAL GEOMETRY")
-    import importlib.util as _il2
-    _sp2 = _il2.spec_from_file_location("_sm2", REPO / "scripts" / "sync-models.py")
-    _sm2 = _il2.module_from_spec(_sp2); _sp2.loader.exec_module(_sm2)
+    _sm2 = load_sync()
 
     # num_ctx holds prompt AND generation. Advertising the whole window as
     # admissible input is KNOWN_ISSUES #19: accepted by pre-call, then trimmed
@@ -537,10 +534,7 @@ def main() -> int:
           "install.sh generates BEFORE printing a plan derived from generation")
     # Behavioural, not textual: typed values must survive generation without a
     # string round-trip. A prose mention of "reserialize" is not the defect.
-    import importlib.util as _il
-    _sp = _il.spec_from_file_location("_sm", REPO / "scripts" / "sync-models.py")
-    _sm = _il.module_from_spec(_sp)
-    _sp.loader.exec_module(_sm)
+    _sm = load_sync()
     _models = _sm.load_models_yaml(REPO / "config" / "profiles" /
                                    f"{P.active_tier()}.yaml")
     # `completion`, not `architecture`: preferred is documentation-only and
@@ -580,13 +574,7 @@ def main() -> int:
           "the generated capability file reflects the resolved profile model")
 
     print()
-    if failures:
-        print(f"PROFILE CONFIG: {len(failures)} FAILED")
-        for f in failures:
-            print(f"  - {f}")
-        return 1
-    print("PROFILE CONFIG: all checks passed")
-    return 0
+    return _suite.report()
 
 
 if __name__ == "__main__":

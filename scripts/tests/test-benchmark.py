@@ -11,17 +11,13 @@ import sys
 from pathlib import Path
 import pathlib
 
-REPO = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from harness import REPO, Suite
 sys.path.insert(0, str(REPO / "config" / "benchmark-tasks"))
 sys.path.insert(0, str(REPO / "scripts" / "lib"))
 
-failures = []
-
-
-def check(ok, label, detail=""):
-    print(f"  {'PASS' if ok else 'FAIL'}  {label}")
-    if not ok:
-        failures.append(f"{label}: {detail}")
+_suite = Suite()
+check = _suite.check
 
 
 import utils  # noqa: E402
@@ -687,9 +683,4 @@ check(not re.search(r'"if model ==|model\.startswith\("(qwen|gemma|gpt)', src),
       "no model-name conditionals in the alias builder")
 
 print()
-if failures:
-    print(f"FAILED ({len(failures)})")
-    for f in failures:
-        print(f"  - {f}")
-    sys.exit(1)
-print("all benchmark checks passed")
+sys.exit(_suite.report())
