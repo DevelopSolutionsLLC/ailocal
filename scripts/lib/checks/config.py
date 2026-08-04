@@ -1,14 +1,9 @@
 """Deterministic checks: source, generated and deployed configuration.
 
-Every check here answers from files on disk. None of them needs a running
-LiteLLM, Ollama or model, which is the point: `ailocal validate` has to be
-usable on a stopped stack, and it previously was not -- a static run failed with
-"could not read `ollama list`" because a daemon was down.
-
-Docker is consulted for one thing only: comparing the config the container
-mounted against the repository copy. That is still deterministic consistency
-rather than runtime inference, so when Docker is absent the check reports
-BLOCKED and the rest of validation continues.
+Every check answers from files on disk, so `ailocal validate` runs with the
+stack stopped. Docker is consulted only to compare the mounted config against
+the repository copy; when it is absent that check reports BLOCKED and the rest
+of validation continues.
 """
 
 from __future__ import annotations
@@ -205,11 +200,7 @@ def check_codex_no_mcp() -> CheckResult:
 # ── deployed container state ────────────────────────────────────────────────
 
 def check_mount_drift() -> CheckResult:
-    """The container must be running this repository's config.yaml.
-
-    A stale mount leaves every source check passing while the proxy serves
-    something else. Docker is required, so its absence is BLOCKED, not a failure.
-    """
+    """Container must run this repo's config.yaml; Docker absent is BLOCKED."""
     from . import services as S
     if not S.docker_available():
         return CheckResult("mount-drift", BLOCKED,
@@ -295,10 +286,9 @@ def _compose_json() -> dict | None:
 
 
 def check_compose_config() -> list[CheckResult]:
-    """Merged compose validity, one project, a shared network, and agreement
-    between LiteLLM's search api_base and SearXNG's service name.
+    """Compose validity, one project, shared network, and api_base agreement.
 
-    Service discovery breaks silently if the two land on different networks.
+    Service discovery breaks silently if the services land on different networks.
     """
     doc = _compose_json()
     if doc is None:
@@ -333,10 +323,7 @@ def check_compose_config() -> list[CheckResult]:
 
 
 def check_generated_in_sync() -> CheckResult:
-    """Regenerating must be a fixed point: drift means someone hand-edited.
-
-    Only meaningful for the ACTIVE tier -- generated files reflect that one.
-    """
+    """Regeneration is a fixed point; drift means a hand edit. Active tier only."""
     import subprocess
     try:
         r = subprocess.run([str(REPO / "scripts" / "sync-models.sh"), "--check"],
