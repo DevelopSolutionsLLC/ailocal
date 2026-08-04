@@ -3,7 +3,10 @@
 # Overlays the base config.toml (provider/base_url stay ailocal/LiteLLM).
 
 model = "ailocal-architecture"
-# `architecture` (gemma4:26b-mlx) is NOT a chain-of-thought reasoner — no installed model emits
+# Reasoning is PROFILE-OWNED: architecture/implementation/review declare
+# reasoning: true and gemma4:26b-mlx does emit thinking blocks. The earlier
+# claim that no installed model emits reasoning predates that. What follows
+# concerns Codex's own plan-mode handling, not the model's capability:
 # <think>. So reasoning effort is kept at "medium", not "high": a high setting here would imply a
 # reasoning tier that does not exist. Raise this only if a true reasoning backend is added.
 model_reasoning_effort = "medium"
