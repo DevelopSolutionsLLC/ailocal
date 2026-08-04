@@ -1,4 +1,4 @@
-model_auto_compact_token_limit = 18432
+model_auto_compact_token_limit = 12288
 model_context_window = 24576
 # ── ailocal provider — injected by scripts/install-clients.sh ───────────────
 #
