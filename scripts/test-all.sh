@@ -156,6 +156,8 @@ run "codex MCP is withheld (no grepai/lsp/github, no re-sync)" \
 run "commit-msg hook (blocks attribution, allows product names)" \
     bash scripts/tests/commit-msg-hook.sh
 
+run "consolidated suites stay section-isolated" \
+    python3 scripts/tests/suite-structure.py
 run "generation rolls back on partial failure (never mixed on disk)" \
     python3 scripts/tests/generation-rollback.py
 # Claude Code sends auxiliary Anthropic-shaped probes derived from

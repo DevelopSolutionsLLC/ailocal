@@ -12,19 +12,13 @@
 # OpenAI-compatible routes in commit messages; it must never publish a
 # Co-Authored-By naming an assistant, or a session URL.
 set -uo pipefail
-ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/harness.sh"
 HOOK="$ROOT_DIR/.githooks/commit-msg"
-fails=0
-
-check() {
-  if [ "$1" = 0 ]; then printf '  \033[32mPASS\033[0m  %s\n' "$2"
-  else printf '  \033[31mFAIL\033[0m  %s\n' "$2"; fails=$((fails + 1)); fi
-}
 
 echo "COMMIT-MSG HOOK"
 check $([ -f "$HOOK" ] && echo 0 || echo 1) "the versioned hook exists (.githooks/commit-msg)"
 check $([ -x "$HOOK" ] && echo 0 || echo 1) "the hook is executable"
-[ -f "$HOOK" ] || { echo; echo "FAILED ($fails)"; exit 1; }
+[ -f "$HOOK" ] || { report || true; exit 1; }
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -78,6 +72,4 @@ check $([ "$real" = ".githooks" ] || [ -z "$real" ] && echo 0 || echo 1) \
 check $([ -z "$(git -C "$ROOT_DIR" config --global --get core.hooksPath || true)" ] && echo 0 || echo 1) \
   "no GLOBAL core.hooksPath was set"
 
-echo
-if [ "$fails" -gt 0 ]; then echo "FAILED ($fails)"; exit 1; fi
-echo "all commit-msg hook checks passed"
+report || exit 1
