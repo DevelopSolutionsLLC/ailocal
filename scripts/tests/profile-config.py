@@ -95,6 +95,56 @@ def main() -> int:
           "a value containing a colon survives parsing")
     shutil.rmtree(root, ignore_errors=True)
 
+    print("\nFAIL CLOSED ON TYPOS, DUPLICATES AND MALFORMED LISTS")
+    # Every one of these was ACCEPTED before 2026-08-04. Only recognised keys
+    # were copied out, so a misspelled tuning field parsed cleanly, was silently
+    # discarded, and the role ran at the default -- a value that reads as set in
+    # review and is not. Duplicates were last-wins, so a merge artefact could
+    # change the deployed model with nothing to see. An unclosed flow list
+    # became the bare string "[a, b".
+    BAD = [
+        ("temprature: 0.1",     P.PROFILE_SCHEMA_INVALID),
+        ("topk: 20",            P.PROFILE_SCHEMA_INVALID),
+        ("keepalive: 6h",       P.PROFILE_SCHEMA_INVALID),
+        ("num_predict: 512",    P.PROFILE_SCHEMA_INVALID),   # retired by migration
+        ("context: 4096",       P.PROFILE_SCHEMA_INVALID),   # retired by migration
+        ("repeat-penalty: 1.0", P.PROFILE_YAML_INVALID),     # hyphen is not a key
+        ("preferred: [a, b",    P.PROFILE_YAML_INVALID),     # unclosed flow list
+    ]
+    for frag, expect in BAD:
+        root = sandbox(marker="64gb", profile_text=GOOD + f"  {frag}\n")
+        try:
+            P.load_profile("64gb", root)
+            got = "ACCEPTED"
+        except P.ProfileError as e:
+            got = e.code
+        check(got == expect, f"`{frag}` \u21d2 {expect} (got {got})")
+        shutil.rmtree(root, ignore_errors=True)
+
+    dup_key = ("architecture:\n  role: L\n  active: m:1\n"
+               "  context_input: 100\n  context_input: 999\n  max_output: 20\n")
+    dup_sec = GOOD + "architecture:\n  role: X\n  active: other\n  context_input: 55\n"
+    for label, text in (("duplicate key", dup_key), ("duplicate section", dup_sec)):
+        root = sandbox(marker="64gb", profile_text=text)
+        try:
+            P.load_profile("64gb", root)
+            got = "ACCEPTED"
+        except P.ProfileError as e:
+            got = e.code
+        check(got == P.PROFILE_YAML_INVALID,
+              f"{label} \u21d2 PROFILE_YAML_INVALID (got {got})")
+        shutil.rmtree(root, ignore_errors=True)
+
+    # And the real profiles must still load -- a stricter parser that rejects
+    # shipped configuration is not stricter, it is broken.
+    for t in P.TIERS:
+        try:
+            P.load_profile(t)
+            ok = True
+        except P.ProfileError:
+            ok = False
+        check(ok, f"{t} still parses under the stricter rules")
+
     print("\nERRORS CARRY A CODE, NOT FILE CONTENTS")
     root = sandbox(marker="64gb",
                    profile_text=GOOD + "  secret_token: abc123SECRET\n")
