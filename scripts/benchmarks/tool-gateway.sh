@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+# Implementation of `ailocal benchmark gateway`. Not executable on its own.
 # benchmarks/tool-gateway.sh — A/B the gateway on the real client, real model.
 #
 # Runs the SAME task through claude-local twice: once with the gateway in
