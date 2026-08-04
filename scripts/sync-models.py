@@ -32,6 +32,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -546,7 +547,15 @@ def write_integration_contract(models):
                 # real documentSymbol request through claude-local and requires
                 # actual symbols back. If that stops working the gate fails
                 # before this file can claim otherwise.
-                "execution": "verified",
+                # "working", not an invented word. Cadence's consumer maps
+                # execution onto a FIXED vocabulary in _state_from()
+                # (compose_instructions.py): working | failing | blocked |
+                # blocked_namespace_dispatch. Anything else falls through to
+                # `configured` -- "configured but not verified working" --
+                # which UNDERSTATES a capability the gate proves works.
+                # Measured against the real consumer: "verified" produced
+                # state='configured'; "working" produces state='working'.
+                "execution": "working",
                 "verified_by": "scripts/tests/lsp-baseline.py",
                 "scope": "python",
             },
@@ -1018,37 +1027,35 @@ def stage(path, text):
 
 
 def flush_stage():
-    """Write every staged output, then swap them in, commit marker LAST.
+    """Write every staged output, then swap them in with rollback on failure.
 
-    THE GUARANTEE, STATED HONESTLY. os.replace() is atomic PER FILE, so no
-    reader ever sees a half-written file. The SET is not atomic: this loop
-    replaces destinations one at a time, and a crash between two replaces leaves
-    a mixed generation on disk. The previous docstring claimed the stronger
-    property, which is why the weaker one was never designed around.
+    THE GUARANTEE: per-file atomic, with rollback on partial failure. Not a
+    transaction -- os.replace() is atomic PER FILE and the set is replaced one
+    file at a time -- but a failure part-way through restores every destination
+    already replaced, so the tree ends up entirely old or entirely new.
 
-    What makes that recoverable rather than silent: effective-profile.json
-    carries the SHA-256 of every source it was generated from, and
-    profile_config.load_effective() refuses a profile whose recorded hashes no
-    longer match. So the ordering below is the actual mechanism --
+    WHY ROLLBACK AND NOT JUST AN ORDERED COMMIT MARKER. Writing
+    effective-profile.json last does make marker-aware readers fail closed, but
+    it does not protect the deployed system: LiteLLM reads
+    config/litellm/config.yaml directly and the clients read their own generated
+    files directly -- none of them consult the marker. MEASURED by fault
+    injection (scripts/tests/generation-rollback.py): failing after three
+    replaces left config/capabilities.generated.json new while the marker and
+    the client configs were still old. Mixed state, on disk, servable.
 
-      1. write ALL temp files first, and validate them, before replacing
-         anything: a serialization error must abort while the tree is still
-         entirely the old generation;
-      2. replace every dependent artifact;
-      3. replace effective-profile.json LAST, as the commit marker.
-
-    A crash before step 3 leaves the OLD effective-profile whose hashes no
-    longer match the new sources, so every reader fails closed and the install
-    stops -- rather than a client quietly running against half-new config."""
-    tmp = {}
+    Order still matters and is kept: temp files are written and validated
+    first, dependent artifacts are replaced next, and effective-profile.json
+    goes LAST -- so even in the window before rollback completes, the marker
+    never claims a generation that is not fully applied."""
+    tmp, backups, replaced = {}, {}, []
     try:
         for path, text in _STAGE.items():
             path.parent.mkdir(parents=True, exist_ok=True)
             t = path.with_suffix(path.suffix + ".tmp-sync")
             t.write_text(text)
             tmp[path] = t
-        # Validate BEFORE any destination is touched. A JSON artifact that
-        # cannot be parsed back must not replace a good one.
+        # Validate BEFORE any destination is touched: an artifact that cannot be
+        # parsed back must not replace a good one.
         for path, t in tmp.items():
             if path.suffix == ".json":
                 try:
@@ -1057,17 +1064,38 @@ def flush_stage():
                     raise SystemExit(
                         f"generation aborted: {path.name} is not valid JSON "
                         f"({exc}); nothing was replaced")
-        # Deterministic order, commit marker last.
         marker = next((p for p in tmp if p.name == "effective-profile.json"), None)
         ordered = sorted((p for p in tmp if p is not marker), key=lambda p: str(p))
         if marker is not None:
             ordered.append(marker)
         for path in ordered:
+            if path.exists():
+                b = path.with_suffix(path.suffix + ".bak-sync")
+                shutil.copy2(path, b)
+                backups[path] = b
             os.replace(tmp[path], path)
+            replaced.append(path)
+    except BaseException:
+        # Restore every destination already replaced, newest first.
+        for path in reversed(replaced):
+            b = backups.get(path)
+            try:
+                if b is not None and Path(b).exists():
+                    os.replace(b, path)
+                else:
+                    Path(path).unlink(missing_ok=True)   # it did not exist before
+            except Exception:  # noqa: BLE001
+                print(f"  ROLLBACK FAILED for {path}", file=sys.stderr)
+        raise
     finally:
         for t in tmp.values():
             try:
                 Path(t).unlink(missing_ok=True)
+            except Exception:  # noqa: BLE001
+                pass
+        for b in backups.values():
+            try:
+                Path(b).unlink(missing_ok=True)
             except Exception:  # noqa: BLE001
                 pass
     n = len(_STAGE)

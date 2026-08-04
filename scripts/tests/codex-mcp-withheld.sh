@@ -119,6 +119,60 @@ else
   printf '  \033[33mSKIP\033[0m  contract or jq unavailable\n'
 fi
 
+
+# ── The REAL Cadence consumer, read-only ───────────────────────────────────
+# Static shape validation inside ailocal does not establish consumer
+# compatibility: this contract exists solely for Cadence, so it is checked
+# against Cadence's actual loader.
+#
+# MEASURED 2026-08-04: compose_instructions.py maps `execution` onto a FIXED
+# vocabulary in _state_from() -- working | failing | blocked |
+# blocked_namespace_dispatch -- and anything else falls through to `configured`.
+# An invented value of "verified" therefore produced state='configured'
+# ("configured but not verified working"), UNDERSTATING a capability the gate
+# proves works. "working" is the word the consumer understands.
+#
+# Read-only: the contract is copied into a temporary XDG_CONFIG_HOME. Cadence is
+# never modified, never installed, and never run against the real config root.
+echo
+echo "CADENCE CONSUMER (read-only)"
+CADENCE_RT="$HOME/.local/share/cadence/runtime/scripts/compose_instructions.py"
+if [ -f "$CADENCE_RT" ] && command -v python3 >/dev/null 2>&1; then
+  out=$(python3 - "$CADENCE_RT" "$ROOT_DIR/config/integration-contract.json" <<'PY' 2>&1
+import importlib.util, os, pathlib, sys, tempfile
+loader, contract = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location("ci", loader)
+ci = importlib.util.module_from_spec(spec); spec.loader.exec_module(ci)
+tmp = pathlib.Path(tempfile.mkdtemp()); (tmp / "ailocal").mkdir()
+(tmp / "ailocal" / "integration-contract.json").write_text(contract.read_text())
+os.environ["XDG_CONFIG_HOME"] = str(tmp)
+c, st = ci.read_contract()
+if c is None:
+    print(f"STATUS={st}"); raise SystemExit
+print(f"STATUS={st}")
+print(f"SCHEMA={c['schema_version']}")
+for k in ("claude_native_lsp", "codex_mcp_lsp"):
+    e = c["compatibility"][k]
+    print(f"{k.upper()}={ci._state_from(e)}|configured={e['configured']}")
+PY
+)
+  echo "$out" | sed 's/^/        /'
+  echo "$out" | grep -q "STATUS=ok"        && check 0 "Cadence accepts the contract"        || check 1 "Cadence accepts the contract"
+  echo "$out" | grep -q "SCHEMA=1"          && check 0 "schema_version 1 is accepted unchanged" || check 1 "schema_version 1 is accepted unchanged"
+  echo "$out" | grep -q "CLAUDE_NATIVE_LSP=working" \
+    && check 0 "Cadence reads claude native LSP as working" \
+    || check 1 "Cadence reads claude native LSP as working"
+  echo "$out" | grep -q "CODEX_MCP_LSP=.*configured=False" \
+    && check 0 "Cadence reads codex MCP as configured=False" \
+    || check 1 "Cadence reads codex MCP as configured=False"
+  # It must NOT resolve to a state that implies a usable, registrable tool.
+  echo "$out" | grep -qE "CODEX_MCP_LSP=(working|visible)" \
+    && check 1 "codex MCP does not resolve to a usable state" \
+    || check 0 "codex MCP does not resolve to a usable state"
+else
+  printf '  \033[33mSKIP\033[0m  Cadence runtime not installed — consumer unverified\n'
+fi
+
 echo
 if [ "$fails" -gt 0 ]; then echo "FAILED ($fails)"; exit 1; fi
 echo "all contract consistency checks passed"
