@@ -192,6 +192,25 @@ for tier in PROFILES:
     # ABOVE the model maximum would never fire before the model itself refused.
     check(win <= arch, f"{tier} compaction window ({win}) does not exceed the model max ({arch})")
 
+    # THE ADMISSION INVARIANT. The checks above compare against
+    # context_input + max_output, which is what let a real defect through:
+    # codex's trigger was 18,432 on a role admitting 16,384, so a long session
+    # took an HTTP 400 ContextWindowExceeded 2,048 tokens BEFORE it could
+    # compact. Output space is not input space -- a compaction point above
+    # context_input can never be reached.
+    #
+    # Mirrors the derivation in sync-models.py exactly; if that changes, this
+    # must fail rather than drift.
+    codex_role = "implementation"          # the capability codex-local defaults to
+    if codex_role in caps:
+        cx_in = int(caps[codex_role]["context_input"])
+        codex_trig = min(win * pct // 100, int(cx_in * pct / 100))
+        check(codex_trig <= cx_in,
+              f"{tier} codex compaction trigger ({codex_trig}) is within the "
+              f"admissible input for {codex_role} ({cx_in})",
+              f"trigger {codex_trig} EXCEEDS context_input {cx_in} -- the backend "
+              f"would 400 before compaction fires")
+
 # The generated client config must match the ACTIVE profile, or the client
 # compacts on a threshold this repository never chose.
 active = (REPO / "config" / "active-profile")
@@ -219,14 +238,18 @@ cx_cap = m.group(1) if m else "implementation"
 if codex.exists() and cc and cx_cap in PARSED[tier][0]:
     txt = codex.read_text()
     _cx = PARSED[tier][0][cx_cap]
-    cx_ctx = int(_cx["context_input"]) + int(_cx.get("max_output") or 0)
-    want = min(int(cc["window"]) * int(cc["pct"]) // 100, cx_ctx * int(cc["pct"]) // 100)
+    cx_in = int(_cx["context_input"])
+    cx_ctx = cx_in + int(_cx.get("max_output") or 0)
+    # The advertised WINDOW is total context; the compaction TRIGGER is capped
+    # by admissible INPUT. Deriving the trigger from cx_ctx put it 2,048 tokens
+    # above what the backend admits -- see the admission invariant above.
+    want = min(int(cc["window"]) * int(cc["pct"]) // 100, int(cx_in * int(cc["pct"]) / 100))
     check(f"model_context_window = {cx_ctx}" in txt,
           f"codex window is its OWN default capability '{cx_cap}' ({cx_ctx}), not architecture")
     check(f"model_auto_compact_token_limit = {want}" in txt,
           f"codex compaction limit is {want}")
-    check(want < cx_ctx,
-          f"codex compaction limit ({want}) is reachable within its model context ({cx_ctx})")
+    check(want <= cx_in,
+          f"codex compaction limit ({want}) is within admissible input ({cx_in})")
 
 # ── README cannot drift from the profiles ───────────────────────────────────
 print("\nDOCUMENTATION")
