@@ -434,7 +434,8 @@ if [ -n "${PROFILE_OVERRIDE:-}" ]; then
 fi
 
 PROFILE_SRC="$ROOT_DIR/config/profiles/${RAM_TIER}.yaml"
-ACTIVE_PROFILE="$ROOT_DIR/config/active-profile"
+# The policy owner spells this path, so moving it needs no installer change.
+ACTIVE_PROFILE="$("$ROOT_DIR/scripts/profile-config" active-profile-path)"
 
 info "Detected ${RAM_GB} GB RAM → profile: ${RAM_TIER}"
 
@@ -465,7 +466,7 @@ PROFILE_STATUS=""
 #
 # This block used to be a Python regex heredoc parsing the profile YAML
 # directly: a SECOND parser, in a shell entry point, which is exactly what
-# profile_config.py exists to prevent. It read `context` and `num_predict`,
+# policy.py exists to prevent. It read `context` and `num_predict`,
 # fields the geometry migration removed, so on the current schema it printed:
 #
 #     configured context:  None

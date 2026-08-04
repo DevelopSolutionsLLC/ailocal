@@ -43,7 +43,7 @@ PROFILES_DIR   = ROOT / "config/profiles"
 COMPACTION = {}
 
 sys.path.insert(0, str(ROOT / "scripts" / "lib"))
-import profile_config as _pc  # noqa: E402
+import policy as _pc  # noqa: E402
 
 ACTIVE_PROFILE = ROOT / "config/active-profile"   # one line, e.g. "64gb" (machine-specific)
 CLIENTS_YAML   = ROOT / "config/clients.yaml"
@@ -142,7 +142,7 @@ def flow_dict(v):
 def resolve_tier(explicit=None):
     """Which RAM profile is active: an explicit --profile wins, else the marker.
 
-    Delegates to profile_config, which FAILS CLOSED. The previous version fell
+    Delegates to policy, which FAILS CLOSED. The previous version fell
     through to a hardcoded tier, so a missing or empty marker silently
     regenerated every client and the proxy for the wrong hardware."""
     if explicit:
@@ -177,31 +177,8 @@ def load_models_yaml(path):
 
 
 def load_clients_yaml():
-    """Two-level: section -> {key: scalar | list | dict}."""
-    data, section = {}, None
-    if not CLIENTS_YAML.exists():
-        return data
-    for line in CLIENTS_YAML.read_text().splitlines():
-        s = line.rstrip()
-        if not s or s.lstrip().startswith("#"):
-            continue
-        if not s.startswith(" ") and s.endswith(":"):
-            section = s[:-1].strip()
-            data[section] = {}
-        elif section is not None and ":" in s and s.startswith(" "):
-            k, _, v = s.strip().partition(":")
-            # Strip an inline "# comment" from scalar values (flow [..]/{..} never contain one),
-            # so a documentation comment can't leak into a generated alias value.
-            v = v.strip()
-            if not v.startswith(("[", "{")):
-                v = v.split("#", 1)[0].strip()
-            if v.startswith("["):
-                data[section][k.strip()] = flow_list(v)
-            elif v.startswith("{"):
-                data[section][k.strip()] = flow_dict(v)
-            else:
-                data[section][k.strip()] = v
-    return data
+    """Client policy, from the one policy owner."""
+    return _pc.load_client_policy()
 
 
 def backend_of(info):
@@ -235,7 +212,7 @@ def _geom(info):
 
     sync-models must not re-derive num_ctx / num_predict / admission. It reads
     context_input + max_output straight from the profile and hands them to
-    profile_config.geometry(), which is the same function every other consumer
+    policy.geometry(), which is the same function every other consumer
     calls. There is deliberately no default: a role missing context_input is a
     migration error, not a 32768 guess -- the old fallback silently rewrote
     every alias to 32768 when the schema changed.

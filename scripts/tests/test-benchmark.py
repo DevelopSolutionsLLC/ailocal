@@ -649,7 +649,7 @@ shutil.rmtree(_sib, ignore_errors=True)
 # it enforced the admission invariant production did not, and how the two paths
 # could disagree about what the same profile field meant.
 print("\nshared geometry")
-import profile_config as _pc
+import policy as _pc
 for ci, mo in ((32768, 8192), (65536, 4096), (81920, 16384), (3968, 128)):
     al = B.build_alias("m", "off", ci, mo, {})
     g = _pc.geometry(ci, mo)

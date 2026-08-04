@@ -22,13 +22,14 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
-import profile_config as P  # noqa: E402
+import policy as P  # noqa: E402
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(prog="profile-config", description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("active-tier")
+    sub.add_parser("active-profile-path")
     r = sub.add_parser("role")
     r.add_argument("role")
     r.add_argument("--field")
@@ -44,6 +45,8 @@ def main() -> int:
         # Normal operation reads the GENERATED artifact. There is deliberately
         # no YAML fallback: falling back would hide a stale or failed generation
         # behind a value that looks fine.
+        if a.cmd == "active-profile-path":
+            print(P.active_profile_path()); return 0
         if a.cmd == "active-tier":
             print(P.active_tier())
             return 0

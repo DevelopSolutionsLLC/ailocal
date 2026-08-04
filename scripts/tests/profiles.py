@@ -29,7 +29,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 from harness import REPO, Suite, load_module  # noqa: E402
-import profile_config as P  # noqa: E402
+import policy as P  # noqa: E402
 
 PROFILES = ("16gb", "32gb", "64gb", "128gb")
 CAPABILITIES = ("architecture", "implementation", "review",
@@ -206,10 +206,10 @@ def resolver_checks() -> None:
           "doctor.sh no longer parses profile YAML with sed")
 
     sync = (REPO / "scripts" / "sync-models.py").read_text()
-    check("import profile_config" in sync, "sync-models uses the shared resolver")
+    check("import policy as _pc" in sync, "sync-models uses the shared resolver")
     check('return "64gb"' not in sync, "sync-models no longer defaults to 64gb")
     bench = (REPO / "scripts" / "lib" / "benchmark.py").read_text()
-    check("import profile_config" in bench, "benchmark uses the shared resolver")
+    check("import policy as _pc" in bench, "benchmark uses the shared resolver")
     check("re.finditer" not in bench.split("def parse_profile")[1].split("def ")[0],
           "benchmark's parse_profile no longer parses YAML itself")
     check("effective_tiers" in bench,
@@ -573,7 +573,7 @@ def resolver_checks() -> None:
     _models = _sm.load_models_yaml(REPO / "config" / "profiles" /
                                    f"{P.active_tier()}.yaml")
     # `completion`, not `architecture`: preferred is documentation-only and
-    # optional (profile_config defaults it to []), and architecture's list was
+    # optional (policy defaults it to []), and architecture's list was
     # removed on 2026-08-03 when qwen3-coder:30b stopped being a supported
     # candidate. This assertion only needs SOME typed list to prove values
     # survive generation without a string round-trip; it must not pin a role
@@ -586,7 +586,7 @@ def resolver_checks() -> None:
     check(_sm.flow_list("[a, b]") == ["a", "b"],
           "flow_list still parses raw strings for config/clients.yaml")
     # The point was never jq: it was that doctor must not extract profile fields
-    # with a bespoke parser. It now reads them through profile_config itself,
+    # with a bespoke parser. It now reads them through policy itself,
     # which is the same guarantee one layer stronger.
     _doc = (REPO / "scripts" / "doctor.sh").read_text()
     check(not re.search(r"(sed|awk|grep)[^|\n]*profiles/", _doc),
@@ -842,7 +842,81 @@ def hardware_checks() -> None:
           "README no longer claims a single active profile")
 
 
-SECTIONS = {"resolver": resolver_checks, "hardware": hardware_checks}
+def policy_checks() -> None:
+    """One owner for profile and client policy."""
+    import subprocess
+
+    _suite.section("CLIENT POLICY FAILS CLOSED")
+    import tempfile, shutil
+    cases = {
+        "unknown client":    "bogus:\n  default: fast\n",
+        "duplicate section": "claude:\n  a: fast\nclaude:\n  b: fast\n",
+        "duplicate key":     "claude:\n  default: fast\n  default: review\n",
+        "unclosed list":     "continue:\n  chat: [a, b\n",
+        "unclosed mapping":  "claude:\n  slots: {opus: fast\n",
+        "orphan mapping":    "  default: fast\n",
+    }
+    for name, text in cases.items():
+        d = Path(tempfile.mkdtemp()); (d / "config").mkdir()
+        (d / "config" / "clients.yaml").write_text(text)
+        try:
+            P.load_client_policy(repo_root=d)
+            check(False, f"{name} is rejected", "ACCEPTED")
+        except P.ProfileError as exc:
+            check(exc.code == P.CLIENT_POLICY_INVALID, f"{name} is rejected",
+                  f"got {exc.code}")
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+    d = Path(tempfile.mkdtemp())
+    try:
+        P.load_client_policy(repo_root=d)
+        check(False, "a missing clients.yaml is rejected", "ACCEPTED")
+    except P.ProfileError as exc:
+        check(exc.code == P.CLIENT_POLICY_MISSING, "a missing clients.yaml is rejected")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+    _suite.section("ONE OWNER")
+    policy_src = (REPO / "scripts" / "lib" / "policy.py").read_text()
+    for fn in ("load_client_policy", "resolve_active_tier", "active_profile_path",
+               "profile_path", "geometry", "required_models"):
+        check(f"def {fn}(" in policy_src, f"policy.py owns {fn}()")
+
+    # No production consumer may CONSTRUCT a policy path. Prose, prompts and
+    # remediation text may name the file; only code that builds the path is a
+    # second owner.
+    prod = [q for q in (REPO / "scripts").rglob("*.py")
+            if "/tests/" not in str(q) and q.name != "policy.py"]
+    prod += [q for q in (REPO / "scripts").rglob("*.sh") if "/tests/" not in str(q)]
+    build = re.compile(r'(=\s*["\']?[^"\'\n]*config/(active-profile|clients\.yaml)'
+                       r'|/\s*["\']config["\']\s*/\s*["\'](active-profile|clients\.yaml))')
+    offenders = []
+    for q in prod:
+        for line in q.read_text().splitlines():
+            t = line.strip()
+            if t.startswith("#") or t.startswith('"""'):
+                continue
+            if build.search(line):
+                offenders.append(q.name); break
+    check(not offenders, "no production file constructs a policy path",
+          ", ".join(sorted(set(offenders))))
+
+    # The validator must not execute the generator to read policy.
+    cfg = (REPO / "scripts" / "lib" / "checks" / "config.py").read_text()
+    check("sync-models.py" not in cfg or "spec_from_file_location" not in cfg,
+          "validation does not load the generator to read policy")
+
+    _suite.section("GENERATOR CONSUMES POLICY")
+    gen = (REPO / "scripts" / "sync-models.py").read_text()
+    check("_pc.load_client_policy()" in gen,
+          "sync-models reads client policy through the owner")
+    check(gen.count("def load_clients_yaml") == 1
+          and "for line in" not in gen.split("def load_clients_yaml")[1][:400],
+          "sync-models no longer parses clients.yaml itself")
+
+
+SECTIONS = {"resolver": resolver_checks, "hardware": hardware_checks,
+            "policy": policy_checks}
 
 if __name__ == "__main__":
     which = sys.argv[1] if len(sys.argv) > 1 else None
