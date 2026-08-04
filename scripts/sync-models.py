@@ -4,7 +4,7 @@
 Single source of truth (both TRACKED — no gitignored intermediate):
   config/profiles/<tier>.yaml  WHAT each capability is (backend `active`, context, sampling,
                         keep_alive, persona, decision metadata), per RAM tier. Edit the profile
-                        directly. The active tier is config/active-profile (machine-specific,
+                        directly. The active tier lives in .runtime (machine-specific,
                         written by install.sh from detected RAM) or `--profile <tier>`. There is NO
                         default tier: an unresolvable marker is an error.
   config/clients.yaml   WHICH capability each client surface uses (launch defaults, Codex
@@ -45,7 +45,7 @@ COMPACTION = {}
 sys.path.insert(0, str(ROOT / "scripts" / "lib"))
 import policy as _pc  # noqa: E402
 
-ACTIVE_PROFILE = ROOT / "config/active-profile"   # one line, e.g. "64gb" (machine-specific)
+ACTIVE_PROFILE = _pc.active_profile_path(ROOT)   # machine-selected tier
 CLIENTS_YAML   = ROOT / "config/clients.yaml"
 LITELLM_TEMPLATE = ROOT / "config/litellm/config.template.yaml"
 LITELLM_CONFIG   = ROOT / "config/litellm/config.yaml"

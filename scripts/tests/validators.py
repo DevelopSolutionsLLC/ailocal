@@ -28,6 +28,7 @@ from harness import REPO, Suite  # noqa: E402
 
 from checks import BLOCKED, FAIL, PASS, WARN, CheckResult, exit_code  # noqa: E402
 from checks import config as C  # noqa: E402
+import policy as P  # noqa: E402
 from checks import services as S  # noqa: E402
 
 _suite = Suite("VALIDATOR CHECKS")
@@ -133,7 +134,7 @@ def exits_checks() -> None:
     check(run("doctor.sh", {"AILOCAL_PROXY": "http://127.0.0.1:1"}) == 2,
           "doctor exits 2 when checks fail (degraded)")
 
-    marker = REPO / "config" / "active-profile"
+    marker = P.active_profile_path()
     original = marker.read_text()
     try:
         marker.write_text("999gb\n")
