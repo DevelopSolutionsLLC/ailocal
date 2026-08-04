@@ -77,6 +77,8 @@ location from `~/.config/ailocal/repo`.
 
 ```
 ailocal doctor | status | validate | smoke      inspect
+  doctor: 0 healthy · 1 profile unresolved (refuses) · 2 degraded
+  validate: deterministic, runs with the stack stopped · smoke: bounded runtime
 ailocal sync | clients | vscode                 regenerate and deploy
 ailocal start | stop | update                   lifecycle
 ./scripts/test-all.sh                           the gate (23 checks)
