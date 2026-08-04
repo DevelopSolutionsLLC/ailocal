@@ -78,8 +78,8 @@ TOKENS_TO_GENERATE = {"niah": 128, "variable_tracking": 30,
 
 
 def ruler_dir() -> Path:
-    root = os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")
-    return Path(root) / "ailocal" / "benchmark" / "ruler"
+    from benchmark_evidence import tooling_dir
+    return tooling_dir() / "ruler"
 
 
 def installed() -> bool:

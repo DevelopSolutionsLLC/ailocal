@@ -14,13 +14,12 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from benchmark_evidence import REPO, state_dir
+from benchmark_evidence import REPO, state_dir, tooling_dir
 from benchmark_runtime import LITELLM, api_key, telemetry, unload
 
 
 def venv_bin(name: str) -> Path:
-    base = os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")
-    return Path(base) / "ailocal" / "benchmark" / "venv" / "bin" / name
+    return tooling_dir() / "venv" / "bin" / name
 
 
 # ── external engine ─────────────────────────────────────────────────────────
