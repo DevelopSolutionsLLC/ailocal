@@ -124,9 +124,9 @@ run "planner comparison driver (safe defaults, locking, blinding)" \
 run "benchmark library (aliases, geometry, evidence, confinement)" \
     python3 scripts/tests/test-benchmark.py
 run "profile resolver (single parser, fail-closed, no 64gb default)" \
-    python3 scripts/tests/profile-config.py
+    python3 scripts/tests/profiles.py resolver
 run "hardware profiles (schema, tiers, dedup)" \
-    python3 scripts/tests/profiles.py
+    python3 scripts/tests/profiles.py hardware
 run "Python LSP baseline for claude-local (real documentSymbol)" \
     python3 scripts/tests/lsp-baseline.py
 
