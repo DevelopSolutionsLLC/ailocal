@@ -153,10 +153,44 @@ def exits_checks() -> None:
           "smoke exits 1 when the proxy is unreachable")
 
 
+def e2e_checks() -> None:
+    """The E2E validators must be bounded and must not leak processes."""
+    import subprocess
+    lib = REPO / "scripts" / "lib" / "e2e.sh"
+    check(lib.is_file(), "shared E2E process lifecycle exists")
+
+    for name in ("validate-claude-e2e.sh", "validate-codex-e2e.sh"):
+        src = (REPO / "scripts" / name).read_text()
+        check("lib/e2e.sh" in src, f"{name} uses the shared lifecycle")
+        check("e2e_run" in src, f"{name} runs the client under a budget")
+        check("e2e_sweep" in src, f"{name} sweeps its process tree")
+
+    # Codex must stay honestly blocked: arriving content is not success.
+    codex = (REPO / "scripts" / "validate-codex-e2e.sh").read_text()
+    check("BLOCKED_UPSTREAM_LITELLM_27442" in codex,
+          "codex keeps its upstream-blocked classification")
+
+    # A hung child is terminated and leaves nothing behind.
+    probe = (
+        f'. "{lib}"\n'
+        'e2e_run 4 /dev/null bash -c "sleep 297 & sleep 297"\n'
+        'echo "rc=$?"\n'
+        'sleep 1\n'
+        'echo "strays=$(pgrep -f \'sleep 297\' | wc -l | tr -d \' \')"\n'
+        'pkill -f "sleep 297" 2>/dev/null || true\n')
+    r = subprocess.run(["bash", "-c", probe], capture_output=True, text=True,
+                       timeout=120)
+    check("rc=124" in r.stdout, "a hung client is terminated at its budget",
+          r.stdout.strip())
+    check("strays=0" in r.stdout, "no descendant survives the budget",
+          r.stdout.strip())
+
+
 SECTIONS = {"deterministic": deterministic_checks,
             "classification": classification_checks,
             "bounded": bounded_checks,
-            "exits": exits_checks}
+            "exits": exits_checks,
+            "e2e": e2e_checks}
 
 if __name__ == "__main__":
     which = sys.argv[1] if len(sys.argv) > 1 else None
