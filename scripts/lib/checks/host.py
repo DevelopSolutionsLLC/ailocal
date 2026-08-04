@@ -1,11 +1,8 @@
 """Host-machine checks that only doctor renders.
 
-Neither repository configuration nor running-service state: these describe the
-developer's machine and always carry remediation. validate and smoke do not
-consult them, which is why they are separate from config.py and services.py.
-
-Most results here are WARN. A misplaced model store or a cold model is
-expensive, not broken, and must not fail a runtime check.
+The developer's machine rather than the repository or the running stack, always
+with remediation. Mostly WARN: a misplaced store or a cold model is expensive,
+not broken, and must not fail a runtime check.
 """
 
 from __future__ import annotations
@@ -57,10 +54,9 @@ def check_cli_tools() -> list[CheckResult]:
 def _models_dir() -> str:
     """Where the running daemon actually stores models.
 
-    Two valid configurations exist: the autostart LaunchAgent bakes
-    OLLAMA_MODELS into its own environment and never calls `launchctl setenv`,
-    while the env-only path does. Asking the running process is correct under
-    both; setenv is only a fallback when no daemon is up.
+    The autostart LaunchAgent bakes OLLAMA_MODELS into its own environment and
+    never calls `launchctl setenv`; the env-only path does. Asking the running
+    process is correct under both, with setenv as the no-daemon fallback.
     """
     pid = _run(["lsof", "-ti", ":11434"]).split("\n")[0]
     if pid:
@@ -72,7 +68,7 @@ def _models_dir() -> str:
 
 def check_model_store() -> list[CheckResult]:
     """An unset OLLAMA_MODELS silently uses ~/.ollama, so a second account
-    re-downloads tens of gigabytes while the shared store still looks populated.
+    re-downloads everything while the shared store still looks populated.
     """
     out = []
     target = _models_dir()
