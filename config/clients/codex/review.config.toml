@@ -1,4 +1,4 @@
-# ailocal Codex profile: diff review on the review capability (deepseek-coder-v2 critique).
+# ailocal Codex profile: diff review on the review capability (gemma4:26b-mlx critique).
 # Deployed to $CODEX_HOME/review.config.toml — select with: codex-local --profile review
 # Overlays the base config.toml. Review only — verdict + findings, no edits.
 

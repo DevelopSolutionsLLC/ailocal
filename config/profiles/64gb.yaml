@@ -42,7 +42,8 @@
 # Ollama's native `think`, which is monotonic where reasoning_effort was not.
 #
 # NOT MEASURED: output QUALITY. This is a latency and footprint optimisation.
-# qwen3-coder:30b remains installed and is one `active:` edit away.
+# qwen3-coder:30b is no longer a supported candidate (removed from `preferred`
+# 2026-08-03). It may remain installed locally from benchmark work.
 # profile: 64gb
 # Declarative capability registry for 64 GB unified memory (Apple Silicon / M3 Max).
 #
@@ -81,8 +82,12 @@ disk_gb: 40
 architecture:
   role: Lead architect
   active: gemma4:26b-mlx
-  # Rollback: qwen3-coder:30b-a3b-q4_K_M stays installed and listed here, so
-  # reverting is a one-line `active:` change plus ./scripts/sync-models.sh.
+  # Rollback: qwen3-coder:30b-a3b-q4_K_M was REMOVED from `preferred` on
+  # 2026-08-03 -- it is not a supported candidate and must not be presented as
+  # one. It may still be installed locally from earlier benchmark work; if it is,
+  # reverting is a one-line `active:` change plus ./scripts/sync-models.sh, but
+  # `ollama pull` may be needed first. The benchmark tables above are retained
+  # as historical evidence, not as a current recommendation.
   # PROMPT EVAL, corrected [REAL]: 971 tok/s on a cold 4,013-token prompt, vs
   # 353 for the dense 14b — ~2.75x faster, which is what matters because prompt
   # eval is the mechanism behind the Claude first-byte timeout.
@@ -97,7 +102,6 @@ architecture:
   # That is why it beats the dense qwen3.6:27b at 197 vs 90 chunks/s despite
   # being nominally larger. Daily coding velocity is the priority; the dense
   # model's thinking/vision did not pay for ~2x slower generation.
-  preferred: [qwen3-coder:30b-a3b-q4_K_M]
   reasoning: true          # gpt-oss:20b HAS thinking; qwen3-coder did not
   context_input: 81920
   max_output: 16384
@@ -128,15 +132,17 @@ architecture:
 implementation:
   role: Daily coding
   active: gemma4:26b-mlx
-  # A genuinely separate tier from architecture: dedicated everyday coding at a
-  # smaller footprint, so the 64K MoE is not tied up on routine edits.
+  # Same physical model as architecture, deliberately: this is a role boundary
+  # (persona, sampling, output ceiling), not a model boundary. The former
+  # "smaller footprint" rationale described qwen2.5-coder:14b, which this role
+  # has not used since gemma4 became active -- and it is what left context_input
+  # at 16,384 on a model architecture already drives at 81,920.
   # VERIFIED capabilities: tools YES, insert YES, thinking NO.
-  preferred: [qwen2.5-coder:14b-instruct-q4_K_M, qwen3-coder:30b-a3b-q4_K_M]
   reasoning: true
   context_input: 65536
   max_output: 8192
   temperature: 0.1
-  keep_alive: -1           # same physical model as architecture; one resident copy
+  keep_alive: -1           # same physical model as architecture
   persona: true
   purpose: [implementation, features, refactoring, tests, shell, python, typescript]
   strengths: [fast, low memory, excellent everyday code generation]
@@ -153,12 +159,11 @@ implementation:
 review:
   role: Code review
   active: gemma4:26b-mlx
-  preferred: [gpt-oss:20b, deepseek-coder-v2:16b-lite-instruct-q4_K_M]
   reasoning: true          # VERIFIED: thinking AND tools (deepseek had NO tools)
   context_input: 65536
   max_output: 4096
   temperature: 0.2
-  keep_alive: -1           # same physical model as architecture; one resident copy
+  keep_alive: -1           # same physical model as architecture
   persona: true
   purpose: [code review, bug detection, security review, alternative solutions]
   strengths: [careful analysis, security awareness, concrete findings]
@@ -259,7 +264,6 @@ embeddings:
   # ollama, NOT ollama_chat: LiteLLM has no embeddings route for the
   # chat provider — /v1/embeddings against it returns 'Unmapped LLM provider'.
   provider: ollama
-  preferred: [nomic-embed-text, mxbai-embed-large]
   # 2048 is nomic-embed-text's REAL maximum. Measured: it silently CLIPS above this
   # and still returns a valid 768-dim vector, so 8192 advertised 4x the true capacity
   # and produced successful-looking embeddings of truncated text. Two inputs sharing
