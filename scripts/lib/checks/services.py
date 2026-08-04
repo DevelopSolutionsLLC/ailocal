@@ -276,8 +276,7 @@ def check_searxng() -> CheckResult:
 def check_search_tool_registered() -> CheckResult:
     """LiteLLM must have registered searxng-search at boot.
 
-    Unique to validate-deployment.sh before consolidation: a misplaced
-    search_tools block leaves the proxy healthy but search silently absent.
+    A misplaced search_tools block leaves the proxy healthy but search absent.
     """
     r = _run(["docker", "logs", CONTAINER], timeout=INSPECT_TIMEOUT)
     if r.returncode != 0:
@@ -288,3 +287,29 @@ def check_search_tool_registered() -> CheckResult:
     return CheckResult("search-tool", WARN,
                        "LiteLLM did NOT register searxng-search",
                        remediation="check search_tools placement in config.yaml, then: ailocal start")
+
+
+def check_context_window(token: str, alias: str = "ailocal-completion") -> CheckResult:
+    """An oversized prompt must be rejected, not silently truncated.
+
+    Costly enough to be opt-in (`ailocal smoke --deep`): without enforcement the
+    same request returns 200 with a garbage answer, which no status-code check
+    would catch.
+    """
+    filler = "the quick brown fox jumps over the lazy dog. " * 6000
+    try:
+        doc = http_json(f"{PROXY}/v1/chat/completions", token=token, payload={
+            "model": alias, "max_tokens": 16,
+            "messages": [{"role": "user", "content": filler}],
+        }, timeout=GENERATE_TIMEOUT)
+    except Unreachable as exc:
+        return CheckResult("context-window", FAIL,
+                           "context-window probe did not complete", str(exc))
+    if "ContextWindowExceededError" in json.dumps(doc):
+        return CheckResult("context-window", PASS,
+                           "context-window validation ENFORCED (oversized prompt rejected)")
+    return CheckResult("context-window", FAIL,
+                       "context-window validation NOT enforced — oversized prompt accepted",
+                       "model_registrar likely failed; local models are being "
+                       "silently truncated",
+                       "ailocal sync && ailocal start")

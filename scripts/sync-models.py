@@ -418,7 +418,7 @@ def gen_role_block(role, info):
     # The cost zeros are emitted ONCE, above. They used to be repeated here,
     # producing duplicate YAML keys in every model_info block: harmless in
     # effect (both values were 0, and the later key wins) but a strict YAML
-    # parser rejects the file outright, and it made validate-deployment.sh fail
+    # parser rejects the file outright, and it made ailocal validate fail
     # on a defect that had nothing to do with the deployment.
     mi += [
         f"      max_input_tokens: {_admit}",
