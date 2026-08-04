@@ -26,7 +26,7 @@ ROOT="$ROOT_DIR"
 cd "$ROOT"
 . scripts/lib/compose.sh
 
-PROXY="${AILOCAL_PROXY_URL:-http://127.0.0.1:4000}"
+PROXY="${AILOCAL_PROXY:-http://127.0.0.1:4000}"
 KEY="$(grep -E '^LITELLM_MASTER_KEY=' .env 2>/dev/null | cut -d= -f2-)"
 [ -n "$KEY" ] || { echo "No LITELLM_MASTER_KEY in .env"; exit 1; }
 

@@ -37,7 +37,7 @@ if [ "$MODE" = "dashboard" ]; then
   warn() { printf '  %s⚠%s %s\n' "$C_WARN" "$C_0" "$*"; }
   dim()  { printf '  %s—%s %s\n' "$C_DIM" "$C_0" "$*"; }
   hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
-  PROXY="${AILOCAL_PROXY_URL:-http://127.0.0.1:4000}"
+  PROXY="${AILOCAL_PROXY:-http://127.0.0.1:4000}"
   TRACES="$AILOCAL_STATE/captures/traces"
 
   echo "══════════════════════════════════════════════════════════════════════"

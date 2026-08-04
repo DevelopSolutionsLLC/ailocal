@@ -71,12 +71,7 @@ dc restart litellm searxng
 
 step "Validating health post-update"
 # Wait for LiteLLM to accept requests, then run doctor (the single health script).
-attempts=0
-until curl -sSf --max-time 3 http://localhost:4000/health/liveliness >/dev/null 2>&1; do
-  attempts=$((attempts + 1))
-  [ "$attempts" -ge 20 ] && break
-  sleep 3
-done
+ailocal_wait_ready 20 || true
 if bash "$ROOT_DIR/scripts/doctor.sh"; then
   step "Update complete — LiteLLM healthy."
 else
