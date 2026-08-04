@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""profile_config.py — the ONE profile parser and resolver.
+"""policy.py — the ONE profile parser and resolver.
 
 config/profiles/<tier>.yaml is authoritative deployment configuration.
 config/active-profile selects a tier and HAS NO IMPLICIT DEFAULT.
@@ -97,6 +97,8 @@ OPTIONAL_ROLE_FIELDS = ("provider", "max_output", "reasoning", "temperature",
                         "persona", "preferred", "purpose", "strengths",
                         "weaknesses")
 
+CLIENT_POLICY_MISSING = "CLIENT_POLICY_MISSING"
+CLIENT_POLICY_INVALID = "CLIENT_POLICY_INVALID"
 ACTIVE_PROFILE_MISSING = "ACTIVE_PROFILE_MISSING"
 ACTIVE_PROFILE_EMPTY = "ACTIVE_PROFILE_EMPTY"
 ACTIVE_PROFILE_INVALID = "ACTIVE_PROFILE_INVALID"
@@ -233,12 +235,119 @@ def parse_profile_text(text: str) -> dict:
 
 
 # ── public interface ────────────────────────────────────────────────────────
+CLIENTS = ("claude", "codex", "continue", "compat")
+
+
+def profiles_dir(repo_root=None) -> Path:
+    return _root(repo_root) / "config" / "profiles"
+
+
+def profile_path(tier: str, repo_root=None) -> Path:
+    return profiles_dir(repo_root) / f"{tier}.yaml"
+
+
+def active_profile_path(repo_root=None) -> Path:
+    """Where the selected tier is recorded. The only place this is spelled."""
+    return _root(repo_root) / "config" / "active-profile"
+
+
+def client_policy_path(repo_root=None) -> Path:
+    return _root(repo_root) / "config" / "clients.yaml"
+
+
+def load_client_policy(repo_root=None) -> dict:
+    """Which capability each client surface uses. Fails closed like profiles.
+
+    Rejects unknown sections, duplicate sections and duplicate keys: a silently
+    ignored mapping sends a client to the wrong capability.
+    """
+    path = client_policy_path(repo_root)
+    if not path.exists():
+        raise ProfileError(CLIENT_POLICY_MISSING, str(path))
+    data: dict = {}
+    section = None
+    for n, raw in enumerate(path.read_text().splitlines(), 1):
+        line = raw.rstrip()
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if not line.startswith(" "):
+            if not line.endswith(":"):
+                raise ProfileError(CLIENT_POLICY_INVALID,
+                                   f"line {n}: expected a section, got {line!r}")
+            section = line[:-1].strip()
+            if section in data:
+                raise ProfileError(CLIENT_POLICY_INVALID,
+                                   f"line {n}: duplicate section {section!r}")
+            if section not in CLIENTS:
+                raise ProfileError(CLIENT_POLICY_INVALID,
+                                   f"line {n}: unknown client {section!r}; "
+                                   f"expected one of {', '.join(CLIENTS)}")
+            data[section] = {}
+            continue
+        if section is None:
+            raise ProfileError(CLIENT_POLICY_INVALID,
+                               f"line {n}: mapping outside any client section")
+        if ":" not in line:
+            raise ProfileError(CLIENT_POLICY_INVALID, f"line {n}: expected key: value")
+        key, _, value = line.strip().partition(":")
+        key = key.strip()
+        if key in data[section]:
+            raise ProfileError(CLIENT_POLICY_INVALID,
+                               f"line {n}: duplicate key {key!r} in {section!r}")
+        data[section][key] = _client_value(value.strip(), n)
+    return data
+
+
+def _client_value(v: str, line: int):
+    """Scalar, flow list or flow mapping. Anything else is rejected."""
+    if v.startswith("["):
+        if not v.endswith("]"):
+            raise ProfileError(CLIENT_POLICY_INVALID, f"line {line}: unclosed list")
+        inner = v[1:-1].strip()
+        return [x.strip() for x in inner.split(",") if x.strip()] if inner else []
+    if v.startswith("{"):
+        if not v.endswith("}"):
+            raise ProfileError(CLIENT_POLICY_INVALID, f"line {line}: unclosed mapping")
+        out = {}
+        inner = v[1:-1].strip()
+        for pair in (p for p in inner.split(",") if p.strip()):
+            if ":" not in pair:
+                raise ProfileError(CLIENT_POLICY_INVALID,
+                                   f"line {line}: expected key: value in mapping")
+            k, _, val = pair.partition(":")
+            out[k.strip()] = val.strip()
+        return out
+    return _strip_comment(v)
+
+
+def client_mapping(client: str, repo_root=None) -> dict:
+    """One client's mappings."""
+    policy = load_client_policy(repo_root)
+    if client not in policy:
+        raise ProfileError(CLIENT_POLICY_INVALID, f"no policy for client {client!r}")
+    return policy[client]
+
+
+def required_models(tier=None, repo_root=None) -> list:
+    """Distinct backends an installation must pull for a tier."""
+    tier = tier or resolve_active_tier(repo_root)
+    profile = load_profile(tier, repo_root)
+    out = []
+    for role in ROLES:
+        if role not in profile:
+            continue
+        cfg = resolve_role(tier, role, repo_root)
+        if cfg.get("enabled", True) and cfg.get("active"):
+            out.append(cfg["active"])
+    return sorted(set(out))
+
+
 def resolve_active_tier(repo_root=None) -> str:
     """The active tier. NEVER defaults -- a missing marker is an error.
 
     An installation that silently picks a tier is an installation that can pull
     models the machine cannot hold."""
-    marker = _root(repo_root) / "config" / "active-profile"
+    marker = active_profile_path(repo_root)
     if not marker.exists():
         raise ProfileError(ACTIVE_PROFILE_MISSING, str(marker))
     tier = marker.read_text().strip()
@@ -254,7 +363,7 @@ def load_profile(tier: str, repo_root=None) -> dict:
     """Whole profile, validated. Read once; callers should not re-read."""
     if tier not in TIERS:
         raise ProfileError(ACTIVE_PROFILE_INVALID, f"{tier!r}")
-    path = _root(repo_root) / "config" / "profiles" / f"{tier}.yaml"
+    path = profile_path(tier, repo_root)
     if not path.exists():
         raise ProfileError(PROFILE_FILE_MISSING, str(path))
     data = parse_profile_text(path.read_text())

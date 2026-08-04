@@ -168,7 +168,7 @@ def build_alias(model: str, mode: str, context: int, ceiling: int,
                 preset: dict, keep_alive: str = None) -> dict:
     """A temporary benchmark deployment: production geometry + explicit overlay.
 
-    GEOMETRY IS NOT COMPUTED HERE. It comes from profile_config.geometry(), the
+    GEOMETRY IS NOT COMPUTED HERE. It comes from policy.geometry(), the
     same function sync-models calls, so a benchmark alias and a production alias
     cannot disagree about what num_ctx, num_predict or admission mean. This
     function previously did `num_ctx = context + ceiling` itself, which is how
@@ -184,7 +184,7 @@ def build_alias(model: str, mode: str, context: int, ceiling: int,
     keep_alive defaults to the caller's choice rather than a hardcoded literal;
     benchmarks that want production behaviour pass the profile's value.
     """
-    import profile_config as _pc
+    import policy as _pc
     g = _pc.geometry(context, ceiling)
     think = THINK_MODES.get(mode)
     params = {"model": f"ollama_chat/{model}",

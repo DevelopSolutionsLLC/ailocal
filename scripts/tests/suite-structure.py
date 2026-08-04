@@ -21,7 +21,7 @@ check = _suite.check
 
 # Consolidated suites and the sections each must expose.
 DISPATCHED = {
-    "profiles.py": ("resolver", "hardware"),
+    "profiles.py": ("resolver", "hardware", "policy"),
     "gateway.py": ("persona", "repair", "trace"),
 }
 

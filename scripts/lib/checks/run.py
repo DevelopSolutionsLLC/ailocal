@@ -52,7 +52,7 @@ def _master_key() -> str:
 def _expected() -> tuple[list[str], dict[str, int], list[str]]:
     """Aliases, advertised geometry and required backends for the active tier."""
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-    import profile_config as P
+    import policy as P
 
     tier = P.resolve_active_tier()
     profile = P.load_profile(tier)
@@ -100,7 +100,7 @@ def _doctor(argv: list[str]) -> int:
     tier would report on a configuration the machine is not running.
     """
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-    import profile_config as P
+    import policy as P
 
     try:
         tier = P.resolve_active_tier()
