@@ -311,3 +311,96 @@ prematurely; a session loses state after compaction; a Claude Code version
 changes compaction semantics; a profile context change requires regenerating the
 threshold; or a reproducible workload reaches the trigger naturally. Do not
 manufacture a long session to force it.
+
+---
+
+# Known limitations
+
+Bounded, documented, and outside the supported working surface. **None is an
+ailocal defect.** This is the single place these are recorded.
+
+## Codex: streamed turns never complete — [LiteLLM #27442][27442]
+
+`/v1/responses` sends content in bare `data:` frames with no `event:` line, so
+Codex renders the text but never receives a named terminal event and waits
+forever. Measured: 83 `event:` lines on `/v1/messages`, **0** on
+`/v1/responses`. Production stays pinned to LiteLLM 1.93.0.
+
+`scripts/validate-codex-e2e.sh` bounds this and reports
+`BLOCKED_UPSTREAM_LITELLM_27442` instead of hanging. Configuration, routing,
+geometry and tool-call transport are validated; **interactive turns are not**.
+
+Re-test after any upgrade:
+
+```
+curl -sN .../v1/responses -d '{"stream":true,...}' | grep -c '^event:'
+```
+
+Non-zero means it landed. **Do not build a local SSE workaround.**
+
+## Claude Code displays "0 searches" — [LiteLLM #31209][31209]
+
+Cosmetic. Search works; the counter does not.
+
+Claude Code counts `server_tool_use` **content blocks**. LiteLLM builds them
+correctly, then `AnthropicResponse`'s content union drops them —
+`grep -c server_tool_use litellm/types/llms/anthropic.py` returns 0. So the
+model receives the results and the counter stays at zero.
+
+Traced: SearXNG returned 75 results, Claude Code received **50 URLs / ~22 KB**,
+and the only zero anywhere was the counter. **Authoritative evidence of success
+is the `WebSearch` tool call plus a non-empty `tool_result`, never the counter.**
+
+Verified still broken in v1.95.0 by isolated container test. Re-test only when
+#31209 (or an equivalent response-union fix) merges — then confirm both
+`server_tool_use` and `web_search_tool_result` survive, and that Codex streaming
+and resume still pass before moving the pin.
+
+## Search is coding-first by configuration
+
+General-knowledge queries return weaker results than coding queries. That is a
+measured trade-off, not a fault:
+
+- `google cse` and `duckduckgo` are `disabled: true` (bang-only). Both are
+  scraped and volume-suspended; measured 0% under sustained use, healthy at low
+  volume. Bang-only *is* the demand-reduction mechanism.
+- Brave (API-backed) supplies general web search; arXiv and Crossref supply
+  research; the rest are API-backed coding engines.
+- Wikipedia answers in `infoboxes[]`, which LiteLLM's SearXNG transform does not
+  read, so it contributes nothing model-visible.
+- `websearch_interception` binds **one** `search_tool_name` at init, so search
+  *profiles* are not expressible; extra `search_tools` entries are dead config,
+  and a typo silently falls back to the first entry.
+
+**Engine health drifts** — the comments in `deploy/searxng/settings.yml` are
+dated observations, not standing truth. Re-measure with
+`scripts/diagnostics/search-engines.py` (diagnostic only; it consumes real rate
+limit and is deliberately not in the gate).
+
+**Deliberately not done:** no CAPTCHA/Cloudflare bypass, no residential proxies,
+no browser automation, no LiteLLM fork, no custom search routing.
+
+## Hardware validation still pending
+
+- **128 GB** — `PENDING_HARDWARE_VALIDATION`. Mirrors the measured 64 GB values;
+  it is not a 128 GB design. The 131,072 candidate loads but has never been
+  *filled*, and a 64 GB machine cannot measure it representatively.
+- **16 GB / 32 GB** — structurally validated only, never measured on that
+  hardware.
+- **Lifecycle sandbox** (clean install / repair / update / uninstall) — not
+  executed against a production workstation; **unmeasured rather than failed**.
+
+## One cosmetic startup line
+
+```
+ERROR searx.botdetection: X-Forwarded-For nor X-Real-IP header is set!
+```
+
+`ProxyFix` is installed unconditionally at import (`searx/webapp.py`), its check
+reads only the two headers, and `log_error_only_once()` fires once per process.
+Execution continues to a working `REMOTE_ADDR` fallback. Neither
+`server.limiter: false` nor `trusted_proxies` suppresses it — both were tested.
+One line per container start; not actionable.
+
+[27442]: https://github.com/BerriAI/litellm/issues/27442
+[31209]: https://github.com/BerriAI/litellm/pull/31209

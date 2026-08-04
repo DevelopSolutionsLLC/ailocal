@@ -116,7 +116,7 @@ use_default_settings:
       # returns correct JSON and would work, but reaching it needs an engine
       # change, which is upstream's to make. Dropped from keep_only rather than
       # `disabled: true` so it is never loaded and therefore cannot fail --
-      # same reasoning as wikidata/ahmia/torch above. See docs/upstream-issues.md.
+      # same reasoning as wikidata/ahmia/torch above. See docs/troubleshooting.md.
 
 engines:
   # ── Scraped general-web: OPT-IN ONLY (`disabled: true`), 2026-07-28 ───────

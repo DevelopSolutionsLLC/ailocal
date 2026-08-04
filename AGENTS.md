@@ -173,14 +173,14 @@ on it), and Cadence appends a marker block into ailocal's deployed agents that
 | Repoint a capability | edit `config/profiles/<tier>.yaml`, `ailocal sync`, `ailocal start` |
 | Change a client's model | edit `config/clients.yaml`, sync, `ailocal clients` |
 | Edit a persona | edit `config/instructions/`, then **restart the proxy** |
-| Add a decision | `docs/adr/NNN-name.md`, update `docs/adr/README.md` |
+| Add a decision | `docs/adr/NNN-name.md`, update `docs/architecture.md` |
 
 ## Depth
 
 - `docs/architecture.md` — **start here for cross-system questions**
 - `docs/architecture.md` — the five non-obvious mechanisms; read before changing them
 - `docs/architecture.md` · `docs/architecture.md` — the tool gateway
-- `docs/adr/README.md` — decisions
+- `docs/architecture.md` — decisions
 - `cadence/docs/standards/developsolutions-repository-standard.md` — shared conventions
 
 ## Conventions
