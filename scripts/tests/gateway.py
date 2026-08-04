@@ -10,6 +10,10 @@ behaviours:
             refusing to fire on tutorial examples.
   trace     E1 request-trace schema, redaction, and token reconciliation.
 
+Each section owns its statements; module level holds only imports, the litellm
+import shims, loaded modules and fixtures. Sections are independent, emit no
+checks at import, and may run in any order.
+
 Usage: gateway.py [persona|repair|trace]   (default: all)
 """
 from __future__ import annotations
@@ -47,8 +51,6 @@ inj.alias = {"claude-sonnet-4-6": "ailocal-implementation"}
 P = "IMPL_XYZ"
 def hook(data, call_type):
     return asyncio.run(inj.async_pre_call_hook(None, None, data, call_type))
-d = hook({"model": "ailocal-implementation", "messages": [{"role": "user", "content": "hi"}]}, "acompletion")
-sys0 = d["messages"][0]
 
 # ── repair ──────────────────────────────────────────────────────────────
 import os
@@ -77,10 +79,6 @@ TOOLS = [
                       "properties": {"command": {"type": "string"}},
                       "required": ["command"]}},
 ]
-print("\nMUST REPAIR — the reply IS the call")
-calls, left = tr.recover(
-    '```json\n{"name": "Read", "arguments": {"file_path": "/tmp/a.py"}}\n```',
-    TOOLS)
 
 # ── trace ───────────────────────────────────────────────────────────────
 import json
@@ -397,7 +395,8 @@ def _trace_body() -> None:
 
 
 def persona_checks() -> None:
-    global blocks, c, d, data
+    d = hook({"model": "ailocal-implementation", "messages": [{"role": "user", "content": "hi"}]}, "acompletion")
+    sys0 = d["messages"][0]
     check(sys0["role"] == "system" and sys0["content"].startswith(P),
           "openai: persona inserted as system when none present")
     d = hook({"model": "ailocal-implementation",
@@ -439,7 +438,10 @@ def persona_checks() -> None:
 
 
 def repair_checks() -> None:
-    global _, calls, left, prose, two
+    print("\nMUST REPAIR — the reply IS the call")
+    calls, left = tr.recover(
+        '```json\n{"name": "Read", "arguments": {"file_path": "/tmp/a.py"}}\n```',
+        TOOLS)
     check(calls is not None and len(calls) == 1, "sole fenced JSON becomes a tool call")
     if calls:
         check(calls[0]["function"]["name"] == "Read", "correct tool name")
