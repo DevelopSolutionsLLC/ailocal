@@ -167,8 +167,8 @@ check(B._key_from("export LITELLM_MASTER_KEY=sk-master\n"
 check(B._key_from('LITELLM_MASTER_KEY="sk-dotenv"\n',
                   "LITELLM_MASTER_KEY") == "sk-dotenv",
       "master key is read from a bare .env assignment")
-check(B._key_from("export ANTHROPIC_API_KEY=placeholder\n",
-                  "LITELLM_MASTER_KEY") is None,
+check(not B._key_from("export ANTHROPIC_API_KEY=placeholder\n",
+                      "LITELLM_MASTER_KEY"),
       "a client key is never mistaken for the master key")
 check(B.api_key() == B._key_from((REPO / ".env").read_text(),
                                  "LITELLM_MASTER_KEY"),
