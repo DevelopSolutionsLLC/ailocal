@@ -78,5 +78,3 @@ config/clients/continue/config.json by install-clients.sh.
 # Was hand-maintained and drifted (stale capability table, pointed at a deleted file).
 .github/copilot-instructions.md
 
-# Generated and machine-selected state. Never tracked.
-.runtime/
