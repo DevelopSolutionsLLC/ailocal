@@ -97,7 +97,12 @@ claude-local() {
     [[ -n "${_ailocal_ovr[$_name]}" ]] || continue
     # One catalogue fetch, only when an override is actually supplied.
     if [[ -z "$_ailocal_models" ]]; then
-      _ailocal_models=$(curl -fsS -H "Authorization: Bearer $key" \
+      # Bounded retry: the catalogue is served by the same proxy that may be
+      # mid-request for someone else, so a single attempt turns transient load
+      # into a hard launch failure. Four attempts, ~5s each, then fail closed.
+      _ailocal_models=$(curl -fsS --max-time 5 \
+        --retry 3 --retry-delay 1 --retry-connrefused --retry-all-errors \
+        -H "Authorization: Bearer $key" \
         "$base/v1/models" 2>/dev/null) || {
         echo "claude-local: cannot reach $base/v1/models to validate an alias override" >&2
         return 1
