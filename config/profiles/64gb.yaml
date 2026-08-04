@@ -133,7 +133,7 @@ implementation:
   # VERIFIED capabilities: tools YES, insert YES, thinking NO.
   preferred: [qwen2.5-coder:14b-instruct-q4_K_M, qwen3-coder:30b-a3b-q4_K_M]
   reasoning: true
-  context_input: 16384
+  context_input: 65536
   max_output: 8192
   temperature: 0.1
   keep_alive: -1           # same physical model as architecture; one resident copy
@@ -155,7 +155,7 @@ review:
   active: gemma4:26b-mlx
   preferred: [gpt-oss:20b, deepseek-coder-v2:16b-lite-instruct-q4_K_M]
   reasoning: true          # VERIFIED: thinking AND tools (deepseek had NO tools)
-  context_input: 20480
+  context_input: 65536
   max_output: 4096
   temperature: 0.2
   keep_alive: -1           # same physical model as architecture; one resident copy

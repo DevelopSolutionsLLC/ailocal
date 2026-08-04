@@ -1,5 +1,5 @@
-model_auto_compact_token_limit = 12288
-model_context_window = 24576
+model_auto_compact_token_limit = 49152
+model_context_window = 73728
 # ── ailocal provider — injected by scripts/install-clients.sh ───────────────
 #
 # Route ALL Codex requests through the local LiteLLM proxy.
