@@ -175,7 +175,7 @@ Client state (model routing, base URL, keys) lives in `~/.config/ailocal/`; your
 ailocal start                # start
 ailocal stop                 # stop
 ailocal update               # pull latest image + restart
-ailocal doctor               # health summary (exit 0 healthy / 2 degraded)
+ailocal doctor               # health summary (0 healthy / 1 profile unresolved / 2 degraded)
 ailocal teardown --clients   # full removal + client uninstall
 ```
 

@@ -15,6 +15,7 @@ Usage: validators.py [deterministic|classification|bounded]   (default: all)
 """
 from __future__ import annotations
 
+import os
 import re
 import socket
 import sys
@@ -118,9 +119,44 @@ def bounded_checks() -> None:
         check(isinstance(v, int) and 0 < v <= 600, f"services.{attr} is bounded ({v})")
 
 
+def exits_checks() -> None:
+    """doctor's three states, and the two-state contract of validate/smoke."""
+    import subprocess
+    root = REPO / "scripts"
+
+    def run(script: str, env: dict | None = None, args: list[str] | None = None) -> int:
+        e = {**os.environ, **(env or {})}
+        return subprocess.run(["bash", str(root / script), *(args or [])],
+                              capture_output=True, text=True, timeout=600, env=e).returncode
+
+    check(run("doctor.sh") == 0, "doctor exits 0 on a healthy stack")
+    check(run("doctor.sh", {"AILOCAL_PROXY": "http://127.0.0.1:1"}) == 2,
+          "doctor exits 2 when checks fail (degraded)")
+
+    marker = REPO / "config" / "active-profile"
+    original = marker.read_text()
+    try:
+        marker.write_text("999gb\n")
+        rc = run("doctor.sh")
+        check(rc == 1, f"doctor exits 1 when the tier is unresolvable (got {rc})")
+        check(run("validate.sh") == 1, "validate fails on an unresolvable tier")
+    finally:
+        marker.write_text(original)
+
+    check(run("validate.sh") == 0, "validate exits 0 once restored")
+    # The defining property: deterministic validation needs no running stack.
+    check(run("validate.sh", {"AILOCAL_PROXY": "http://127.0.0.1:1",
+                              "OLLAMA_HOST": "http://127.0.0.1:1",
+                              "AILOCAL_LITELLM_CONTAINER": "ailocal-absent"}) == 0,
+          "validate exits 0 with the whole stack unreachable")
+    check(run("smoke-test.sh", {"AILOCAL_PROXY": "http://127.0.0.1:1"}) == 1,
+          "smoke exits 1 when the proxy is unreachable")
+
+
 SECTIONS = {"deterministic": deterministic_checks,
             "classification": classification_checks,
-            "bounded": bounded_checks}
+            "bounded": bounded_checks,
+            "exits": exits_checks}
 
 if __name__ == "__main__":
     which = sys.argv[1] if len(sys.argv) > 1 else None
