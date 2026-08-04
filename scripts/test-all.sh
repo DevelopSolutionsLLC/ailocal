@@ -150,6 +150,9 @@ run "client role alias overrides (defaults intact, fails closed)" \
 
 run "codex MCP is withheld (no grepai/lsp/github, no re-sync)" \
     bash scripts/tests/codex-mcp-withheld.sh
+
+run "generation rolls back on partial failure (never mixed on disk)" \
+    python3 scripts/tests/generation-rollback.py
 # Claude Code sends auxiliary Anthropic-shaped probes derived from
 # ANTHROPIC_BASE_URL; LiteLLM implements none of them, so HEAD /api/hello 404'd.
 # Asserts the probe answers 200 AND that nothing else moved to make that true —
