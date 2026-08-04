@@ -105,9 +105,20 @@ else
 fi
 
 # Derive required models from the model manifest — single source of truth.
-_TIER="$(cat "$ROOT_DIR/config/active-profile" 2>/dev/null || echo 64gb)"
-  _PROFILE="$ROOT_DIR/config/profiles/${_TIER}.yaml"
-  required_models=($(grep -E '^\s*active:' "$_PROFILE" | sed 's/.*active:[[:space:]]*//'))
+# Resolved ONCE for the whole script, fail closed. doctor previously re-read the
+# marker five times and parsed the profile YAML with sed, which breaks on any
+# comment or reordering -- and profiles are heavily commented.
+_TIER="$("$ROOT_DIR/scripts/profile-config" active-tier)" || {
+  echo "  ✗ cannot resolve the active profile — refusing to report on an assumed tier" >&2
+  exit 1; }
+_PROFILE_JSON="$("$ROOT_DIR/scripts/profile-config" profile-summary --tier "$_TIER")" || {
+  echo "  ✗ active profile is invalid — refusing to report on an assumed tier" >&2
+  exit 1; }
+# jq is already a hard install dependency (install.sh preflight), so the
+# summary is queried with it rather than with a bespoke extractor.
+_pf() { printf '%s' "$_PROFILE_JSON" | jq -r "$1"; }
+  # From the generated artifact, already resolved once above. No YAML parsing.
+  required_models=($(printf '%s' "$_PROFILE_JSON" | jq -r '.roles[].model' | sort -u))
 if has ollama && ollama list >/dev/null 2>&1; then
   installed_models=$(ollama list 2>/dev/null | awk 'NR>1 {print $1}')
   missing_models=()
@@ -214,7 +225,7 @@ fi
 # it while it is happening.
 step "Architecture route"
 
-ARCH_MODEL="$(sed -n 's/^  active: *//p' config/profiles/"$(cat config/active-profile 2>/dev/null || echo 64gb)".yaml 2>/dev/null | head -1)"
+ARCH_MODEL="$(_pf ".roles.architecture.model")"
 if [ -n "$ARCH_MODEL" ]; then
   PS_JSON="$(curl -s --max-time 5 http://127.0.0.1:11434/api/ps 2>/dev/null || echo '{}')"
   if echo "$PS_JSON" | grep -q "$ARCH_MODEL"; then
@@ -254,7 +265,7 @@ fi
 # Parallelism and the KV consequence. num_ctx is allocated PER SLOT, so this is
 # the single setting that decides both memory and cache locality.
 NPAR="$(launchctl getenv OLLAMA_NUM_PARALLEL 2>/dev/null || echo '')"
-ARCH_CTX="$(sed -n '/^architecture:/,/^[a-z]/p' config/profiles/"$(cat config/active-profile 2>/dev/null || echo 64gb)".yaml 2>/dev/null | sed -n 's/^  context: *//p' | head -1)"
+ARCH_CTX="$(_pf ".roles.architecture.context")"
 [ -n "$NPAR" ] && [ -n "$ARCH_CTX" ] && \
   info "OLLAMA_NUM_PARALLEL=$NPAR, architecture context=$ARCH_CTX (KV is allocated per slot)"
 
@@ -277,8 +288,8 @@ CC_WIN="$(python3 -c "
 import json,os
 try: print(json.load(open(os.path.expanduser('~/.config/ailocal/claude/settings.json')))['env'].get('CLAUDE_CODE_AUTO_COMPACT_WINDOW',''))
 except Exception: print('')" 2>/dev/null)"
-PROF_WIN="$(sed -n '/^compaction:/,/^[a-z]/p' config/profiles/"$(cat config/active-profile 2>/dev/null || echo 64gb)".yaml 2>/dev/null | sed -n 's/^  window: *//p' | cut -d'#' -f1 | tr -d ' ' | head -1)"
-PROF_PCT="$(sed -n '/^compaction:/,/^[a-z]/p' config/profiles/"$(cat config/active-profile 2>/dev/null || echo 64gb)".yaml 2>/dev/null | sed -n 's/^  pct: *//p' | cut -d'#' -f1 | tr -d ' ' | head -1)"
+PROF_WIN="$(_pf ".compaction.window")"
+PROF_PCT="$(_pf ".compaction.pct")"
 if [ -z "$CC_WIN" ]; then
   warn "claude-local has NO auto-compaction window — long sessions will grow into the stall"
   echo "      fix:  ailocal clients"
@@ -292,6 +303,31 @@ echo "      Cold prompt eval is super-linear on this route [REAL, measured]:"
 echo "        ~28K -> 85 s    ~58K -> 341 s    ~88K -> 789 s (13 min)"
 echo "      A cache MISS at large context is what exceeds the client timeout."
 echo "      See docs/troubleshooting.md, 'architecture route stalls'."
+
+# ── VS Code (informational) ─────────────────────────────────────────────────
+# The connector's endpoint + API key live in VS Code SecretStorage (Keychain),
+# which no script can seed. install-vscode.sh says so once, at install time,
+# and then nothing ever mentions it again -- so a half-configured VS Code looked
+# identical to a working one. MEASURED 2026-08-03: the extension was installed
+# and its settings present, yet ZERO VS Code requests had ever reached LiteLLM
+# (24 captures on disk, none from Copilot or Continue). Never fatal: VS Code is
+# an optional surface and its absence must not fail an otherwise healthy stack.
+step "VS Code (optional)"
+if command -v code >/dev/null 2>&1; then
+  if code --list-extensions 2>/dev/null | grep -qi '^gethnet\.litellm-connector-copilot$'; then
+    info "LiteLLM Connector installed"
+    echo "      Endpoint + key must be added ONCE in VS Code (SecretStorage):"
+    echo "        Chat > Manage Models > Custom Endpoint  ->  ${AILOCAL_BASE_URL:-http://localhost:4000}/v1"
+    echo "      Until then the extension is installed but NOT operational."
+  else
+    info "LiteLLM Connector not installed — run: ./scripts/install-vscode.sh"
+  fi
+  code --list-extensions 2>/dev/null | grep -qi '^continue\.continue$' \
+    && info "Continue installed (local FIM autocomplete available)" \
+    || info "Continue not installed — ~/.continue/config.json is not generated"
+else
+  info "VS Code 'code' CLI not on PATH — skipping"
+fi
 
 if [ "$ok" = true ]; then
   echo

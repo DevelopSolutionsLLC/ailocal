@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # test-all.sh — the single regression gate. Run this before every commit.
 #
-# Six suites plus six invariants. Each reports independently and the script exits
+# Unit suites, integration checks and invariants (21 in total; the runner is the
+# source of truth for the count). Each reports independently and the script exits
 # non-zero if ANY of them fails or could not run.
 #
 # "Could not run" is treated as failure, not as a skip. Several suites need PyYAML
@@ -94,6 +95,12 @@ run "tool-call repair (repairs real calls, refuses examples)" \
 # disjoint and sum to the reported total.
 run "E1 trace schema, redaction and token reconciliation" \
     python3 scripts/tests/request-trace.py
+# The planner comparison is the one benchmark whose SETUP has repeatedly been the
+# defect: it once measured a single model three times, and candidates could read
+# the answer key. These prove safe defaults, manifest locking, confinement wiring
+# and identity-stripped scoring copies -- with no inference.
+run "planner comparison driver (safe defaults, locking, blinding)" \
+    python3 scripts/tests/planner-driver.py
 # E3. Declared num_ctx vs what the backend actually serves. nomic-embed-text silently
 # CLIPS at 2048 rather than erroring, so an over-declaration yields successful-looking
 # embeddings of truncated text — no error to notice, just quietly worse vectors. The
@@ -105,6 +112,17 @@ run "E1 trace schema, redaction and token reconciliation" \
 # Cadence, so an ailocal-only machine got the tool switched on with nothing behind
 # it. This drives pyright-langserver over stdio against a real repo file and
 # requires real symbols back — presence of a plugin is not capability.
+# config/profiles/*.yaml are the ONLY authoritative deployment config, and
+# config/active-profile has no implicit default. These prove there is one
+# parser and that every entry point fails closed rather than assuming 64gb.
+# The benchmark library owns alias construction, evidence capture, admission
+# geometry and restoration. It was NOT in the gate: a whole suite could fail
+# while the gate reported green, which is how a benchmark-only regression
+# reaches a planner run unnoticed.
+run "benchmark library (aliases, geometry, evidence, confinement)" \
+    python3 scripts/tests/test-benchmark.py
+run "profile resolver (single parser, fail-closed, no 64gb default)" \
+    python3 scripts/tests/profile-config.py
 run "hardware profiles (schema, tiers, dedup)" \
     python3 scripts/tests/profiles.py
 run "Python LSP baseline for claude-local (real documentSymbol)" \
@@ -126,6 +144,18 @@ if [ -n "$FULL" ]; then
   run "client compatibility (3 dialects x 3 modes)" \
       bash scripts/tests/client-compatibility.sh
 fi
+# Dry-run only (stub `claude` on PATH, no inference), so it stays on every run.
+run "client role alias overrides (defaults intact, fails closed)" \
+    bash scripts/tests/client-role-override.sh
+
+run "codex MCP is withheld (no grepai/lsp/github, no re-sync)" \
+    bash scripts/tests/codex-mcp-withheld.sh
+
+run "commit-msg hook (blocks attribution, allows product names)" \
+    bash scripts/tests/commit-msg-hook.sh
+
+run "generation rolls back on partial failure (never mixed on disk)" \
+    python3 scripts/tests/generation-rollback.py
 # Claude Code sends auxiliary Anthropic-shaped probes derived from
 # ANTHROPIC_BASE_URL; LiteLLM implements none of them, so HEAD /api/hello 404'd.
 # Asserts the probe answers 200 AND that nothing else moved to make that true —

@@ -193,6 +193,35 @@ info "git present ($(git --version 2>/dev/null | awk '{print $3}'))"
 # `docker ps` fails with nothing listening. The casks are named explicitly
 # (docker-desktop, ollama-app) rather than relying on alias resolution.
 #
+# ── Commit-message guard (repository-local) ────────────────────────────────
+# Points git at the VERSIONED hook in .githooks/, which rejects assistant
+# attribution trailers and session identifiers. This exists because 56 commits
+# on a branch and 7 on main were published carrying `Co-Authored-By: Claude ...`
+# and `Claude-Session: https://claude.ai/code/session_...`; removing them meant
+# rewriting 86 SHAs on a public repository and force-pushing the default branch.
+#
+# REPOSITORY-LOCAL ONLY -- `git config` without --global, so no other repository
+# and no other tool is affected. Idempotent: setting it twice is a no-op.
+# Nothing in the ailocal runtime depends on the hook; it only guards commits.
+if [ -d "$ROOT_DIR/.git" ] && [ -f "$ROOT_DIR/.githooks/commit-msg" ]; then
+  step "Commit-message guard"
+  _hp="$(git -C "$ROOT_DIR" config --local --get core.hooksPath 2>/dev/null || true)"
+  if [ -z "$_hp" ]; then
+    git -C "$ROOT_DIR" config --local core.hooksPath .githooks
+    chmod +x "$ROOT_DIR/.githooks/"* 2>/dev/null || true
+    info "core.hooksPath -> .githooks (repository-local)"
+  elif [ "$_hp" = ".githooks" ]; then
+    chmod +x "$ROOT_DIR/.githooks/"* 2>/dev/null || true
+    info "core.hooksPath already .githooks"
+  else
+    # NEVER clobber a deliberate choice. Report and leave it alone: someone who
+    # set their own hooks path has a reason, and silently replacing it would be
+    # the same class of surprise this hook exists to prevent.
+    warn "core.hooksPath is '$_hp' — left unchanged; the commit guard is NOT active"
+    warn "  enable it with: git -C \"$ROOT_DIR\" config --local core.hooksPath .githooks"
+  fi
+fi
+
 # Batched so Homebrew escalates once per command instead of once per package.
 # Homebrew prompts for its own sudo when a cask needs it; the preflight asked
 # earlier only so that prompt is not a surprise mid-run.
@@ -430,34 +459,68 @@ else
 fi
 # Report the whole plan before anything is pulled. A disk warning that just says
 # "80 GB required" is unauditable; every number below names where it came from.
-PROFILE_STATUS="$(grep -m1 '^status:' "$PROFILE_SRC" | awk '{print $2}' || echo unknown)"
+# From the resolver, not a grep of the YAML: this was the last profile-YAML
+# read left in a shell entry point.
+PROFILE_STATUS=""
+
+# GENERATE BEFORE REPORTING. The plan below is rendered from the generated
+# artifact, so generation has to have succeeded first -- and a generation
+# failure must stop the install before any model is pulled.
+#
+# This block used to be a Python regex heredoc parsing the profile YAML
+# directly: a SECOND parser, in a shell entry point, which is exactly what
+# profile_config.py exists to prevent. It read `context` and `num_predict`,
+# fields the geometry migration removed, so on the current schema it printed:
+#
+#     configured context:  None
+#     max output:          None
+#
+# and would have kept printing plausible-looking stale numbers had the field
+# names survived. Shell entry points ask the resolver; they do not parse YAML.
+if ! has python3; then
+  error "python3 is required to generate model configuration"
+  exit 1
+fi
+if [ ! -f "$ROOT_DIR/scripts/sync-models.py" ]; then
+  error "scripts/sync-models.py is missing — cannot generate model configuration"
+  exit 1
+fi
 echo
+step "Syncing model config"
+if ! python3 "$ROOT_DIR/scripts/sync-models.py"; then
+  error "model configuration generation FAILED — stopping before any model is pulled,"
+  error "and before the install plan. Existing generated files were left"
+  error "untouched for diagnosis, and are marked unusable: their recorded source"
+  error "hashes no longer match."
+  exit 1
+fi
+
+echo
+_PLAN="$("$ROOT_DIR/scripts/profile-config" profile-summary)"
 echo "  architecture:        $(uname -m)"
 echo "  physical memory:     ${RAM_GB} GB"
+PROFILE_STATUS="$(printf '%s' "$_PLAN" | jq -r '.status // "unknown"')"
 echo "  selected profile:    ${RAM_TIER}  (${PROFILE_STATUS})"
-python3 - "$PROFILE_SRC" <<'PYEOF'
-import re, sys
-text = open(sys.argv[1]).read()
-caps = {}
-for m in re.finditer(r'^([a-z_]+):\n((?:  .*\n)+)', text, re.M):
-    cap, body = m.group(1), m.group(2)
-    f = lambda k: (re.search(rf'^  {k}: *(.+?)\s*(?:#.*)?$', body, re.M) or [None, None])[1]
-    if (f("enabled") or "true").lower() == "false":
-        continue
-    if f("active"):
-        caps.setdefault(f("active"), []).append((cap, f("context"), f("num_predict")))
-shared = max(caps.items(), key=lambda kv: len(kv[1]))
-names  = [c for c, _, _ in shared[1]]
-print(f"  primary model:       {shared[0]}")
-print(f"  shared across:       {', '.join(names)}")
-for tag, users in caps.items():
-    if tag == shared[0]:
-        continue
-    print(f"  {users[0][0]+' model:':21}{tag}")
-print(f"  configured context:  {shared[1][0][1]} (a maximum, not a per-request reservation)")
-print(f"  max output:          {shared[1][0][2]}")
-print(f"  unique models:       {len(caps)}")
-PYEOF
+if ! "$ROOT_DIR/scripts/profile-config" profile-summary >/dev/null 2>&1; then
+  error "the generated profile is unreadable — refusing to print an assumed plan"
+  exit 1
+fi
+# jq, not an embedded parser: it is already a hard install dependency (checked
+# in the preflight above) and doctor.sh queries the same summary with it.
+_jq() { printf '%s' "$_PLAN" | jq -r "$1"; }
+_SHARED_MODEL="$(_jq '[.roles[].model] | group_by(.) | max_by(length) | .[0]')"
+_SHARED_ROLES="$(_jq --arg m "$_SHARED_MODEL" '[.roles|to_entries[]|select(.value.model==$m)|.key]|sort|join(", ")' 2>/dev/null \
+                 || printf '%s' "$_PLAN" | jq -r "[.roles|to_entries[]|select(.value.model==\"$_SHARED_MODEL\")|.key]|sort|join(\", \")")"
+_FIRST_ROLE="$(printf '%s' "$_SHARED_ROLES" | cut -d, -f1)"
+echo "  primary model:       $_SHARED_MODEL"
+echo "  shared across:       $_SHARED_ROLES"
+printf '%s' "$_PLAN" | jq -r --arg m "$_SHARED_MODEL" \
+  '.roles | to_entries | map(select(.value.model != $m))
+   | group_by(.value.model)[] | "  \(.[0].key + " model:" | .[0:20] | . + " " * (21 - length))\(.[0].value.model)"'
+echo "  context_input:       $(_jq ".roles.\"$_FIRST_ROLE\".context_input") (a maximum, not a per-request reservation)"
+echo "  max_output:          $(_jq ".roles.\"$_FIRST_ROLE\".max_output")"
+echo "  total_context:       $(_jq ".roles.\"$_FIRST_ROLE\" | .context_input + .max_output")"
+echo "  unique models:       $(_jq '[.roles[].model] | unique | length')"
 echo "  parallelism:         ${OLLAMA_NUM_PARALLEL:-2} (Ollama divides a runner's context across"
 echo "                       parallel sequences — two full-context requests are not guaranteed)"
 case "$RAM_TIER" in
@@ -483,11 +546,9 @@ step "Configuring environment (.env)"
 # Run the service stack, client install, and healthcheck automatically.
 run_next_steps() {
   # Sync models.yaml → litellm config so LiteLLM sees the latest model choices.
-  if has python3 && [ -f "$ROOT_DIR/scripts/sync-models.py" ]; then
-    echo
-    step "Syncing model config"
-    python3 "$ROOT_DIR/scripts/sync-models.py" || true
-  fi
+  # Configuration was already generated above, BEFORE the install plan was
+  # printed -- the plan is rendered from that generated artifact, so it cannot
+  # run against stale or unparsed state. Generation failure exits there.
 
   echo
   # Fetches the PINNED digests, not "latest" -- every image in deploy/ is

@@ -48,8 +48,17 @@ else
   info "Ollama daemon responding"
   missing_models=()
   _required=()
-  _tier="$(cat "$ROOT_DIR/config/active-profile" 2>/dev/null || echo 64gb)"
-  while IFS= read -r _m; do _required+=("$_m"); done < <(grep -E '^\s*active:' "$ROOT_DIR/config/profiles/${_tier}.yaml" | sed 's/.*active:[[:space:]]*//')
+  # Fail closed: no implicit tier. A suppressed read falling through to a
+  # hardcoded 64gb is what silently installs the wrong model set on a
+  # smaller machine. Resolve once, here, and reuse.
+  _tier="$("$ROOT_DIR/scripts/profile-config" active-tier)" || {
+    echo "  ✗ cannot resolve the active profile (see error above)" >&2; exit 1; }
+  # Model list from the GENERATED artifact, not by grepping YAML. jq is already
+  # a hard install dependency; a grep|sed over a heavily-commented profile is
+  # exactly the fragile parsing this architecture removes.
+  while IFS= read -r _m; do _required+=("$_m"); done < <(
+    "$ROOT_DIR/scripts/profile-config" profile-summary \
+      | jq -r '.roles[].model' | sort -u)
   for model in "${_required[@]}"; do
     if ! ollama list 2>/dev/null | awk 'NR>1 {print $1}' | grep -Eq "^${model}(:.+)?$"; then
       missing_models+=("$model")
