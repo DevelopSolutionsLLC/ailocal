@@ -146,6 +146,9 @@ fi
 # Dry-run only (stub `claude` on PATH, no inference), so it stays on every run.
 run "client role alias overrides (defaults intact, fails closed)" \
     bash scripts/tests/client-role-override.sh
+
+run "codex MCP is withheld (no grepai/lsp/github, no re-sync)" \
+    bash scripts/tests/codex-mcp-withheld.sh
 # Claude Code sends auxiliary Anthropic-shaped probes derived from
 # ANTHROPIC_BASE_URL; LiteLLM implements none of them, so HEAD /api/hello 404'd.
 # Asserts the probe answers 200 AND that nothing else moved to make that true —

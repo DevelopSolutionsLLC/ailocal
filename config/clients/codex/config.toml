@@ -5,9 +5,14 @@
 # Deployed to: ~/.config/ailocal/codex/config.toml  (CODEX_HOME)
 #
 # model, model_context_window and model_auto_compact_token_limit are rewritten
-# from the active profile on every sync. Cadence appends [mcp_servers.*] blocks
-# here and install-clients.sh re-invokes it so that ordering is enforced by code.
-# Hand edits to the generated keys are silently overwritten.
+# from the active profile on every sync. Hand edits to those keys are silently
+# overwritten.
+#
+# NO [mcp_servers.*] BLOCKS, BY POLICY. codex-local intentionally has no grepai
+# MCP, no LSP MCP and no GitHub MCP: Codex cannot dispatch namespaced tool
+# names, so an MCP server here advertises a surface it cannot drive. ailocal
+# used to re-run `cadence mcp sync` after this rewrite to put them back --
+# that behaviour was removed. An empty MCP section is the correct state.
 model_auto_compact_token_limit = 49152
 model_context_window = 73728
 # ── ailocal provider — injected by scripts/install-clients.sh ───────────────
