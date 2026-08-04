@@ -260,10 +260,15 @@ LiteLLM's own process and return healthy during a total backend outage. Only
 the host reaches Ollama directly while LiteLLM reaches it as
 `host.docker.internal`, and that path fails independently.
 
-**Claude Code's web search never reaches SearXNG.** `WebSearch` is a client-side
-tool. LiteLLM's interception accepts `litellm_web_search` and bare `web_search`,
-and deliberately refuses a `WebSearch` carrying an `input_schema` so it does not
-hijack the client's own handler.
+**Claude Code's web search reaches SearXNG.** Verified end to end: Claude Code
+emits the search, LiteLLM's `websearch_interception` executes it against SearXNG
+(Brave for general queries, the API-backed engines for coding), and the results
+return to the model. A traced query delivered 50 URLs / ~22 KB and produced a
+sourced answer.
+
+Claude Code may still display "0 searches": that counter tracks Anthropic-hosted
+server-side search, which never runs here. It is cosmetic — see
+`docs/troubleshooting.md`.
 
 ## Verification
 

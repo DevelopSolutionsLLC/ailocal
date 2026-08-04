@@ -35,7 +35,7 @@ If you do not use LiteLLM, you do not need this repo.
 |---|---|
 | **Supported clients?** | `claude-local`, `codex-local`, VS Code, plus hosted Claude/Codex untouched alongside. Per-client state: [compatibility matrix](docs/architecture.md) |
 | **Which model?** | `architecture` for anything agentic (default), `implementation` for edits, `review` for critique, `fast` for background work. `completion` is FIM autocomplete **only** — it hard-400s on a chat turn |
-| **Which tools do I get?** | Automatic. The gateway classifies each request: a plain question gets no tools, a refactor gets search + LSP + delegation. Nothing to switch on. (Known: the no-tools case holds for the first turn only — [ADR 004](docs/adr/004-tool-gateway.md)) |
+| **Which tools do I get?** | The gateway removes what a local model cannot drive: Claude Code declares 54 tools, 41 are kept, 13 orchestration tools are dropped (~14,500 tokens, 56% of tool schema). Filtering is per-model, not per-question — a trivial question receives the same 41. |
 | **LSP?** | Native Claude Code LSP. ailocal installs the **Python** baseline (`pyright-lsp`) into the isolated `claude-local` root; Cadence adds TypeScript/Go/C and repository intelligence. Shell has no native plugin — use `bash -n`, `zsh -n`, `shellcheck` |
 | **grepai or LSP?** | grepai for *concepts* ("where is retry handled"), LSP for *exact* ("where is this defined, what calls it"). Prefer LSP's document-scoped tools |
 | **Something's wrong** | `ailocal doctor` → `./scripts/validate-deployment.sh` → `./scripts/test-all.sh`. Run them **idle**; contention causes phantom failures |
