@@ -279,3 +279,13 @@ silently reducing it.
 To inspect a real client tool payload, set `AILOCAL_TOOL_GATEWAY_CAPTURE` in
 `.env`, restart, exercise the client, then read `data/tool-captures/`. Captures
 record request text — disable it and delete them when the investigation ends.
+
+## Decisions
+
+Durable, non-obvious decisions and their rejected alternatives:
+
+- [ADR 002 — Capability names, never model tags](adr/002-capability-names.md)
+- [ADR 004 — Tool gateway and task classification](adr/004-tool-gateway.md)
+- [ADR 008 — Local and hosted models side by side](adr/008-local-vs-hosted.md)
+
+Implementation detail stays in this document; ADRs record *why*.

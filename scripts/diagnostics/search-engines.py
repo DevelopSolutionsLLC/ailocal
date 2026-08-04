@@ -162,7 +162,7 @@ def probe_engine(base: str, engine: dict, classes: list[str], repeat: int,
                         errors.append(redact(str(entry)))
                 # Wikipedia-class engines answer in infoboxes[], which LiteLLM
                 # discards -- recorded, never counted as a result.
-                # See docs/upstream-issues.md.
+                # See docs/troubleshooting.md.
                 if not counts[-1] and payload.get("infoboxes"):
                     errors.append("infoboxes-only (not model-visible)")
             except urllib.error.URLError as exc:
