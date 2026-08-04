@@ -793,14 +793,32 @@ def regen_codex(models, clients):
         # failed and this file was never regenerated -- it simply kept its
         # pre-migration contents, which looked correct only because the value
         # had not changed yet. Fail loudly instead of skipping.
-        cx_ctx = _geom(models.get(default) or {})["total_context"]
-        if not (win and pct and cx_ctx):
+        _cx = _geom(models.get(default) or {})
+        cx_ctx = _cx["total_context"]        # the window Codex advertises
+        cx_in = _cx["context_input"]         # what the backend will ADMIT
+        if not (win and pct and cx_ctx and cx_in):
             raise SystemExit(
                 "codex compaction cannot be derived: "
-                f"window={win!r} pct={pct!r} total_context={cx_ctx!r}")
+                f"window={win!r} pct={pct!r} total_context={cx_ctx!r} "
+                f"context_input={cx_in!r}")
         if True:
             # Never advertise a compaction point the model cannot reach.
-            trigger = min(int(win) * int(pct) // 100, int(int(cx_ctx) * int(pct) / 100))
+            #
+            # The cap is context_input, NOT total_context. total_context is
+            # input+output, and the output half is space the INPUT can never
+            # occupy -- so a fraction of it can still land above the admission
+            # limit. MEASURED 2026-08-03 on implementation (16384 + 8192):
+            # 75% of total_context gave a trigger of 18,432 while LiteLLM
+            # admits 16,384 (max_input_tokens, confirmed via /model/info), so a
+            # long session would have taken an HTTP 400 ContextWindowExceeded
+            # 2,048 tokens BEFORE Codex could compact. That is precisely the
+            # failure the line above claims to prevent; only the denominator
+            # was wrong.
+            trigger = min(int(win) * int(pct) // 100, int(int(cx_in) * int(pct) / 100))
+            if trigger > int(cx_in):
+                raise SystemExit(
+                    "codex compaction trigger exceeds admissible input: "
+                    f"trigger={trigger} context_input={cx_in}")
             arch_ctx = cx_ctx
             text = CODEX_CONFIG.read_text()
             for key, val in (("model_context_window", arch_ctx),

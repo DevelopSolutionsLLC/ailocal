@@ -184,14 +184,20 @@ def main() -> int:
     impl = P.effective_role("implementation")
     check(cw == impl["total_context"],
           f"Codex context window == implementation total_context ({cw})")
+    # Same percentage policy, but capped by ADMISSIBLE INPUT, not total
+    # context. Deriving from total_context produced a trigger 2,048 tokens
+    # above what the backend admits, so the session 400s before compacting.
     check(cl == min(comp["window"] * comp["pct"] // 100,
-                    int(impl["total_context"] * comp["pct"] / 100)),
+                    int(impl["context_input"] * comp["pct"] / 100)),
           f"Codex trigger derives from the SAME percentage policy ({cl})")
+    check(cl <= impl["context_input"],
+          f"Codex trigger ({cl}) is within admissible input "
+          f"({impl['context_input']})")
     # The regression this guards: the codex block read a key the geometry
     # migration deleted, so it silently never regenerated and kept stale values.
     sync = (REPO / "scripts" / "sync-models.py").read_text()
-    check('cx_ctx = _geom(' in sync,
-          "Codex compaction reads shared geometry, not a removed key")
+    check('_cx = _geom(' in sync and 'cx_in = _cx["context_input"]' in sync,
+          "Codex compaction reads shared geometry and caps on context_input")
     check("codex compaction cannot be derived" in sync,
           "Codex compaction fails closed instead of silently skipping")
 
