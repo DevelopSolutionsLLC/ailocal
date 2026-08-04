@@ -78,31 +78,9 @@ groups:
     - update_goal
     - get_goal
 
-  # Subagent delegation, split OUT of `orchestration` on 2026-07-27.
-  #
-  # `Task` was grouped with Workflow/DesignSync/Cron and therefore denied to every
-  # local model. With AILOCAL_TOOL_GATEWAY=filter (which .env sets), that stripped
-  # Task from the payload before the model ever saw it — so claude-local could not
-  # delegate to the five subagents this repo ships and documents. The behaviour was
-  # measured and initially mis-attributed to the model "not reaching for
-  # delegation"; it had no such tool to reach for.
-  #
-  # The token argument for denying orchestration does not apply here: Workflow
-  # alone is 21,525 B, while the delegation tool is ~1 KB. Keeping them in one
-  # group traded the entire delegation workflow for savings that came almost
-  # entirely from Workflow.
-  #
-  # THE TOOL IS `Agent`, NOT `Task`. Claude Code renamed it in v2.1.63; `Task`
-  # survives only as an alias in settings and agent definitions, and the live
-  # `Task*` names are something else entirely — TaskCreate/TaskGet/TaskList/
-  # TaskUpdate/TaskStop/TaskOutput are BACKGROUND-TASK MANAGEMENT.
-  #
-  # This cost a full investigation: a capture of the real payload showed no
-  # `Task` tool and the conclusion drawn was "headless mode does not offer
-  # subagents". It does. `Agent` was in the payload and this gateway was
-  # dropping it, because `Agent` sat in `orchestration` while only `Task*` had
-  # been moved here. Verify against the tool the client actually sends, not the
-  # name the documentation used two versions ago.
+  # Subagent delegation is its own group: a model that cannot drive orchestration
+  # may still delegate, and collapsing the two removed delegation from tiers that
+  # could use it.
   delegation:
     - Agent               # the subagent spawn tool (was `Task` before v2.1.63)
     - "Task*"             # alias + background-task tools; harmless to keep together
@@ -180,59 +158,11 @@ routes:
     drops_tool_types: [computer_use, image_generation, namespace, shell]
     result_status: heuristic       # inspect function_call_output text
 
-# ── Namespace expansion (usability phase) ───────────────────────────────────
-# Codex declares its MCP servers to the model as `namespace` bundles:
-#   {"type":"namespace","name":"mcp__lsp","tools":[{...20 function tools...}]}
-# LiteLLM discards every namespace-typed entry when translating /v1/responses
-# down to Chat Completions, so the MODEL never learns those tools exist — even
-# though Codex is running the servers perfectly well. Measured: 27,168 B of
-# Codex's 38,388 B payload, including all of mcp__lsp and mcp__grepai.
+# ── Namespace expansion ─────────────────────────────────────────────────────
 #
-# The bundles' sub-tools are ALREADY fully-formed function tools
-# ({type, name, description, strict, parameters}), i.e. exactly the shape Chat
-# Completions wants. The gateway's pre-call hook runs BEFORE LiteLLM's drop, so
-# flattening them here makes them survive. No LiteLLM patch is needed.
-#
-# MEASURED VERDICT [REAL], codex-cli 0.145.0, 2026-07-27: DO NOT ENABLE.
-#
-# The experiment ran (scripts/validate-codex-e2e.sh). Expansion worked exactly as
-# designed at the gateway: 3 bundles flattened (multi_agent_v1 5, mcp__grepai 11,
-# mcp__lsp 20), 48 tools / 35,731 B delivered, and the model DID emit a flattened
-# call — mcp__lsp__workspace_symbol_search. Codex then refused it:
-#
-#   ERROR codex_core::tools::router: error=unsupported call:
-#         mcp__lsp__workspace_symbol_search
-#
-# The model fell back to ripgrep and answered correctly, so the session was not
-# broken — but the LSP tool was strictly wasted context. This reproduces
-# openai/codex#20652: flattened MCP names fail resolution in Codex's dispatcher
-# when an OpenAI-compatible proxy delivers them. CLIProxyAPI#3298 is the same bug
-# from another proxy.
-#
-# There is NO config fix in this version. `--strict-config` rejects
-# experimental_use_flat_mcp_tool_names (and six other candidate names), and the
-# official config reference documents no field controlling namespace vs flat
-# presentation. Upstream PR #17556 ("Support flattened deferred MCP tool calls")
-# is the real fix and is not in 0.145.0.
-#
-# RE-VERIFIED 2026-07-29 on codex-cli 0.146.0 (latest STABLE; 0.147.0-alpha.1 is
-# schema-identical, so upgrading fixes nothing). Verdict UNCHANGED. Namespace
-# wrapping is UNCONDITIONAL — not Code Mode. Additionally measured inert, so do
-# not retry them: [features.code_mode] direct_only_tool_namespaces (all four name
-# forms), [features] code_mode = false, and model-catalog tool_mode = "direct"
-# (the enum is direct|code_mode|code_mode_only — "direct_only" is NOT a tool_mode
-# value). Expansion again reached the model and again failed at dispatch, for
-# BOTH grepai_list_projects and mcp__grepai__grepai_list_projects, with
-# [features.non_prefixed_mcp_tool_names] enabled: the blocker is Codex's router,
-# not the name shape.
-#
-# Re-run the experiment after a Codex upgrade. Until its verdict changes, enabling
-# this only spends context on tools the client will reject.
-#
-# COST
-# Expansion makes ~17 KB of previously-dropped schema REACHABLE, so it buys
-# capability by spending context. That is why `only_groups` exists: combined with
-# task negotiation, a task that needs lsp gets lsp and a simple edit does not.
+# MCP tools arrive namespaced (mcp__server__tool). A model that cannot dispatch
+# a namespaced name sees the expansion instead, so the surface it is offered
+# matches what it can actually call.
 namespace_expansion:
   enabled: false
   # The tool `type` that denotes a bundle. Declared here rather than hard-coded
@@ -628,20 +558,8 @@ clients:
       user_agent_contains: ["claude-cli"]
       headers: {x-app: cli}
     routes: [/v1/messages]
-    # REAL, re-measured 2026-07-29 on a live headless `/v1/messages` turn:
-    #   39 tools / 93,266 B / 21,438 est. tokens arriving, and after this profile's
-    #   filtering 26 tools / 31,472 B / 6,955 est. tokens reach the backend.
-    #
-    # SUPERSEDES a stale 61 tools / 104,202 B / 24,448 tokens recorded here. That
-    # figure was real when taken and is no longer true of any shipping Claude Code
-    # build, and it was actively misleading: it was cited as the reason context
-    # overflow "must" be schema-driven, when the measured schema cost after
-    # filtering is 6,955 tokens against a 98,304-token window. Attributing an
-    # overflow to 7K of schemas points every fix at the wrong layer.
-    #
-    # Re-measure with: run one headless claude-local turn, then read
-    # `tool_gateway_metric` from the proxy log — do NOT copy these numbers forward
-    # across a client upgrade.
+    # Token figures are approximate and measured against a live client session;
+    # they size the gateway's budget, not a contract.
     observed_payload: {tools: 39, bytes: 93266, real_tokens: 21438}
     observed_payload_filtered: {tools: 26, bytes: 31472, real_tokens: 6955}
     observed_payload_measured_on: "2026-07-29"
