@@ -268,8 +268,8 @@ accumulates almost no volume and recovers.
 Re-measure with:
 
 ```
-scripts/diag-search-engines.py            # all engines
-scripts/diag-search-engines.py --repeat 3 # sample CAPTCHA/rate-limit behaviour
+scripts/diagnostics/search-engines.py            # all engines
+scripts/diagnostics/search-engines.py --repeat 3 # sample CAPTCHA/rate-limit behaviour
 ```
 
 That tool is **diagnostic only** — it never enables or disables anything. It also

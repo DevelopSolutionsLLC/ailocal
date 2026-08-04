@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""run-planner-comparison.py — the authoritative planner comparison driver.
+"""benchmarks/planner-comparison.py — the authoritative planner comparison driver.
 
 THIS IS ORCHESTRATION ONLY. Every mechanism it uses already exists and is
 already tested: worktrees, alias lifecycle, routing, permissions, confinement,
@@ -33,7 +33,7 @@ import time
 import uuid
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
+REPO = Path(__file__).resolve().parent.parent.parent   # scripts/benchmarks/ -> repo root
 sys.path.insert(0, str(REPO / "scripts" / "lib"))
 import benchmark as B  # noqa: E402
 

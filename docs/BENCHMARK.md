@@ -56,12 +56,12 @@ A model that cannot hold input + 32,768 output is classified
 ## Usage
 
 ```sh
-scripts/benchmark-models plan   --profile 64gb --suites coding2
-scripts/benchmark-models run    --models qwen3.5:4b --suites coding2 --limit 40
-scripts/benchmark-models probe  --models gemma4:26b-mlx
-scripts/benchmark-models client --scenario smoke
-scripts/benchmark-models doctor
-scripts/benchmark-models report
+scripts/benchmarks/models plan   --profile 64gb --suites coding2
+scripts/benchmarks/models run    --models qwen3.5:4b --suites coding2 --limit 40
+scripts/benchmarks/models probe  --models gemma4:26b-mlx
+scripts/benchmarks/models client --scenario smoke
+scripts/benchmarks/models doctor
+scripts/benchmarks/models report
 ```
 
 `plan` prints the full model × mode × suite × context matrix and its runtime

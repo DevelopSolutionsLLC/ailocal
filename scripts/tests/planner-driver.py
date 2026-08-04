@@ -35,7 +35,7 @@ def check(cond: object, label: str) -> None:
 
 def load_driver():
     spec = importlib.util.spec_from_file_location(
-        "planner_driver", REPO / "scripts" / "run-planner-comparison.py")
+        "planner_driver", REPO / "scripts" / "benchmarks/planner-comparison.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -46,19 +46,19 @@ D = load_driver()
 
 def main() -> int:
     print("SAFE DEFAULTS")
-    r = subprocess.run([sys.executable, str(REPO / "scripts" / "run-planner-comparison.py")],
+    r = subprocess.run([sys.executable, str(REPO / "scripts" / "benchmarks/planner-comparison.py")],
                        capture_output=True, text=True, timeout=120)
     check(r.returncode == 2, "no arguments ⇒ refuses to act (rc=2)")
     check("never implicit" in r.stderr, "refusal explains that inference is never implicit")
 
-    src = (REPO / "scripts" / "run-planner-comparison.py").read_text()
+    src = (REPO / "scripts" / "benchmarks/planner-comparison.py").read_text()
     check("--continue" not in src and '"--last"' not in src,
           "--continue and --last are never used (implicit resume is forbidden)")
     check("--force-rerun" in src, "re-running a completed candidate needs an explicit flag")
 
     print("\nDRY RUN DOES NOT TOUCH THE MAPPING OR A MODEL")
     out = Path(tempfile.mkdtemp(prefix="drv-"))
-    r = subprocess.run([sys.executable, str(REPO / "scripts" / "run-planner-comparison.py"),
+    r = subprocess.run([sys.executable, str(REPO / "scripts" / "benchmarks/planner-comparison.py"),
                         "--dry-run", "--all", "--output-dir", str(out),
                         "--run-id", "unit-dry"],
                        capture_output=True, text=True, timeout=300)
@@ -265,7 +265,7 @@ def main() -> int:
           "a missing file fails PROMPTS_MISSING")
 
     # There must be no placeholder path back into the driver.
-    drv_src = (REPO / "scripts" / "run-planner-comparison.py").read_text()
+    drv_src = (REPO / "scripts" / "benchmarks/planner-comparison.py").read_text()
     check("[planner turn" not in drv_src,
           "no placeholder prompt text survives anywhere in the driver")
     raised = False
@@ -429,7 +429,7 @@ def main() -> int:
     check(raised, "assert_no_placeholder rejects a placeholder")
     D.assert_no_placeholder("bench-real-alias", None)
     check(True, "a real alias passes the assertion")
-    drv = (REPO / "scripts" / "run-planner-comparison.py").read_text()
+    drv = (REPO / "scripts" / "benchmarks/planner-comparison.py").read_text()
     check('f"<alias-for-{cand}>"' not in drv,
           "the driver no longer constructs placeholder aliases")
     check("assert_no_placeholder(alias)" in drv,
