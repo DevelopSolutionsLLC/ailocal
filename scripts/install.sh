@@ -193,6 +193,35 @@ info "git present ($(git --version 2>/dev/null | awk '{print $3}'))"
 # `docker ps` fails with nothing listening. The casks are named explicitly
 # (docker-desktop, ollama-app) rather than relying on alias resolution.
 #
+# ── Commit-message guard (repository-local) ────────────────────────────────
+# Points git at the VERSIONED hook in .githooks/, which rejects assistant
+# attribution trailers and session identifiers. This exists because 56 commits
+# on a branch and 7 on main were published carrying `Co-Authored-By: Claude ...`
+# and `Claude-Session: https://claude.ai/code/session_...`; removing them meant
+# rewriting 86 SHAs on a public repository and force-pushing the default branch.
+#
+# REPOSITORY-LOCAL ONLY -- `git config` without --global, so no other repository
+# and no other tool is affected. Idempotent: setting it twice is a no-op.
+# Nothing in the ailocal runtime depends on the hook; it only guards commits.
+if [ -d "$ROOT_DIR/.git" ] && [ -f "$ROOT_DIR/.githooks/commit-msg" ]; then
+  step "Commit-message guard"
+  _hp="$(git -C "$ROOT_DIR" config --local --get core.hooksPath 2>/dev/null || true)"
+  if [ -z "$_hp" ]; then
+    git -C "$ROOT_DIR" config --local core.hooksPath .githooks
+    chmod +x "$ROOT_DIR/.githooks/"* 2>/dev/null || true
+    info "core.hooksPath -> .githooks (repository-local)"
+  elif [ "$_hp" = ".githooks" ]; then
+    chmod +x "$ROOT_DIR/.githooks/"* 2>/dev/null || true
+    info "core.hooksPath already .githooks"
+  else
+    # NEVER clobber a deliberate choice. Report and leave it alone: someone who
+    # set their own hooks path has a reason, and silently replacing it would be
+    # the same class of surprise this hook exists to prevent.
+    warn "core.hooksPath is '$_hp' — left unchanged; the commit guard is NOT active"
+    warn "  enable it with: git -C \"$ROOT_DIR\" config --local core.hooksPath .githooks"
+  fi
+fi
+
 # Batched so Homebrew escalates once per command instead of once per package.
 # Homebrew prompts for its own sudo when a cask needs it; the preflight asked
 # earlier only so that prompt is not a surprise mid-run.
