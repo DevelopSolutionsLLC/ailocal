@@ -12,12 +12,8 @@ AILOCAL_ROOT="$ROOT_DIR"
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
-has() { command -v "$1" >/dev/null 2>&1; }
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/output.sh"
 
-info()  { echo "  ✓ $*"; }
-warn()  { echo "  ⚠ $*" >&2; }
-error() { echo "  ✗ $*" >&2; }
-step()  { echo; echo "▶ $*"; }
 
 # Prompt for a value; shows default in brackets; returns default if user hits Enter.
 # Usage: prompt_value "Prompt text" "default_value"  → sets $REPLY

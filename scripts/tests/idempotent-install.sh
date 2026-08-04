@@ -30,7 +30,7 @@ cd "$ROOT"
 INCLUDE_VSCODE=""
 [ "${1:-}" = "--include-vscode" ] && INCLUDE_VSCODE=1
 
-info(){ printf '\033[1;34m==>\033[0m %s\n' "$*"; }
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/output.sh"
 
 fingerprint() { # $1=label -> writes /tmp/ailocal-fp-$1.txt
   local out="/tmp/ailocal-fp-$1.txt"
@@ -147,11 +147,11 @@ echo "════════════════════════�
 echo " INSTALLER IDEMPOTENCY"
 echo "══════════════════════════════════════════════════════════════════════"
 
-info "fingerprint: baseline"
+banner "fingerprint: baseline"
 fingerprint baseline >/dev/null
 
 # ── sync-models.sh ─────────────────────────────────────────────────────────
-info "sync-models.sh x2"
+banner "sync-models.sh x2"
 bash scripts/sync-models.sh >/dev/null 2>&1 || bad "sync-models.sh #1 failed"
 fingerprint sync1 >/dev/null
 bash scripts/sync-models.sh >/dev/null 2>&1 || bad "sync-models.sh #2 failed"
@@ -161,7 +161,7 @@ compare sync1 sync2 "sync-models.sh"
 # ── install-clients.sh ─────────────────────────────────────────────────────
 # claude + codex only by default: the vscode target touches the user's editor
 # config, which is opt-in here.
-info "install-clients.sh claude codex x2"
+banner "install-clients.sh claude codex x2"
 if bash scripts/install-clients.sh claude codex >/dev/null 2>&1; then
   fingerprint clients1 >/dev/null
   bash scripts/install-clients.sh claude codex >/dev/null 2>&1
@@ -173,7 +173,7 @@ fi
 
 # ── install-vscode.sh (opt-in) ─────────────────────────────────────────────
 if [ -n "$INCLUDE_VSCODE" ]; then
-  info "install-vscode.sh x2"
+  banner "install-vscode.sh x2"
   if bash scripts/install-vscode.sh >/dev/null 2>&1; then
     fingerprint vsc1 >/dev/null
     bash scripts/install-vscode.sh >/dev/null 2>&1
@@ -187,7 +187,7 @@ else
 fi
 
 # ── the specific counts that must not grow ─────────────────────────────────
-info "duplication-sensitive counts"
+banner "duplication-sensitive counts"
 python3 - <<'PY'
 import sys
 def load(p):

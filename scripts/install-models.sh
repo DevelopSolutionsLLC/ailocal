@@ -23,11 +23,7 @@ EFFECTIVE_JSON="$ROOT_DIR/config/effective-profile.json"
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
-has()   { command -v "$1" >/dev/null 2>&1; }
-info()  { echo "  ✓ $*"; }
-warn()  { echo "  ⚠ $*" >&2; }
-error() { echo "  ✗ $*" >&2; }
-step()  { echo; echo "▶ $*"; }
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/output.sh"
 
 # ── Pre-flight ─────────────────────────────────────────────────────────────
 

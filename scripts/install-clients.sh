@@ -32,11 +32,8 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ENV_FILE="$ROOT_DIR/.env"
 AILOCAL_CFG="${XDG_CONFIG_HOME:-$HOME/.config}/ailocal"
 
-has()  { command -v "$1" >/dev/null 2>&1; }
-info() { echo "  ✓ $*"; }
-warn() { echo "  ⚠ $*" >&2; }
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/output.sh"
 skip() { echo "  — $*"; }
-step() { echo; echo "▶ $*"; }
 
 # Backup a file if it exists.
 # Keep this many timestamped backups per file. Every run of this script backed up

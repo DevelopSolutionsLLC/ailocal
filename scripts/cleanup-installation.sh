@@ -46,14 +46,14 @@ BACKUP="${AILOCAL_STATE:-$HOME/.local/state/ailocal}/backups/cleanup-$STAMP"
 C_OK=$'\033[32m'; C_WARN=$'\033[33m'; C_DIM=$'\033[2m'; C_0=$'\033[0m'
 did=0; skipped=0
 
-info() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/output.sh"
 act()  { printf '  %s%s%s %s\n' "$C_OK" "$([ "$MODE" = apply ] && echo "DONE   " || echo "WOULD  ")" "$C_0" "$*"; }
 hold() { printf '  %s HOLD  %s %s\n' "$C_WARN" "$C_0" "$*"; }
 
 # The audit is the single source of findings. Regenerating them here would mean
 # two implementations that can disagree about what is stale.
 if [ ! -s "$FINDINGS" ]; then
-  info "no findings file — running the audit first"
+  banner "no findings file — running the audit first"
   bash scripts/audit-installation.sh >/dev/null 2>&1 || true
 fi
 if [ ! -s "$FINDINGS" ]; then
@@ -81,7 +81,7 @@ is_note() { # untracked ad-hoc files a human may want to keep
   esac
 }
 
-info "processing findings"
+banner "processing findings"
 while IFS=$'\t' read -r class item location action; do
   [ -n "${class:-}" ] || continue
   case "$class" in
@@ -130,7 +130,7 @@ while IFS=$'\t' read -r class item location action; do
 done < "$FINDINGS"
 
 # ── docker resources scoped to ailocal only ─────────────────────────────────
-info "docker (ailocal-scoped only)"
+banner "docker (ailocal-scoped only)"
 DEAD=$(docker ps -a --filter "name=ailocal-" --filter "status=exited" \
         --format '{{.Names}}' 2>/dev/null || true)
 if [ -n "$DEAD" ]; then

@@ -37,7 +37,7 @@ mkdir -p "$RESULTS"
 pass=0; fail=0; declare -a FAILED=()
 ok()  { printf '  \033[32mPASS\033[0m  %s\n' "$1"; pass=$((pass+1)); }
 bad() { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; fail=$((fail+1)); FAILED+=("$1"); }
-info(){ printf '\033[1;34m==>\033[0m %s\n' "$*"; }
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/output.sh"
 
 # ── preflight ───────────────────────────────────────────────────────────────
 command -v docker >/dev/null || { echo "docker missing"; exit 1; }
@@ -55,7 +55,7 @@ if pgrep -f "test-client-compatibility|test-all.sh|benchmark-tool-gateway" >/dev
 fi
 GW_MODE="$(docker exec ailocal-litellm printenv AILOCAL_TOOL_GATEWAY 2>/dev/null || echo off)"
 LEDGER_ON="$(docker exec ailocal-litellm printenv AILOCAL_SESSION_LEDGER 2>/dev/null || echo '')"
-info "gateway mode: $GW_MODE   session ledger: ${LEDGER_ON:-<off>}"
+banner "gateway mode: $GW_MODE   session ledger: ${LEDGER_ON:-<off>}"
 if [ -z "$LEDGER_ON" ]; then
   echo "  The session ledger is off, so tool calls cannot be verified from the"
   echo "  proxy side. Set AILOCAL_SESSION_LEDGER=/app/captures/sessions in .env"
@@ -134,7 +134,7 @@ chmod +x "$WORK/run_tests.sh"
 ( cd "$WORK" && git init -q && git add -A \
   && git -c user.email=e2e@test -c user.name=e2e commit -qm "initial" )
 
-info "fixture at $WORK (total_units multiplies; the test expects 5, gets 6)"
+banner "fixture at $WORK (total_units multiplies; the test expects 5, gets 6)"
 # rc!=0 is NOT good enough here: a broken runner also exits non-zero, and that
 # is how the first version of this harness "passed" its own precondition while
 # running zero tests. Require the assertion to actually fire.
@@ -205,7 +205,7 @@ echo "════════════════════════�
 
 # ── 1. explain the repo (read + search) ─────────────────────────────────────
 echo
-info "task 1/5: explain the repo"
+banner "task 1/5: explain the repo"
 run_task explain "Describe what this repository does. Read the files first." 16
 echo "        ${LAST_SECS}s | tools: ${LAST_TOOLS:-<none recorded>}"
 if [ -n "$LAST_TOOLS" ]; then ok "1. proxy recorded tool calls for the session"
@@ -218,7 +218,7 @@ else bad "1. answer does not reference repo contents — answered blind"; fi
 
 # ── 2. find a symbol (LSP or grepai) ───────────────────────────────────────
 echo
-info "task 2/5: find a symbol across files"
+banner "task 2/5: find a symbol across files"
 run_task symbol "Which file defines the function stock_report, and what does it call? Use your search or LSP tools." 16
 echo "        ${LAST_SECS}s | tools: ${LAST_TOOLS:-<none recorded>}"
 if grep -q 'reporting.py' "$LAST_LOG"; then
@@ -240,7 +240,7 @@ fi
 
 # ── 3. modify a file (the observable one) ──────────────────────────────────
 echo
-info "task 3/5: fix the bug (file contents are read back)"
+banner "task 3/5: fix the bug (file contents are read back)"
 run_task edit "The total_units method in src/inventory.py multiplies counts instead of summing them. Fix it so it returns the sum. Use the Edit tool." 8
 echo "        ${LAST_SECS}s | tools: ${LAST_TOOLS:-<none recorded>}"
 if used Edit || used Write || used MultiEdit; then
@@ -257,7 +257,7 @@ else bad "3. git reports no change"; fi
 
 # ── 4. run the tests (bash) ───────────────────────────────────────────────
 echo
-info "task 4/5: run the test suite"
+banner "task 4/5: run the test suite"
 run_task tests "Run ./run_tests.sh and tell me whether the tests pass." 12
 echo "        ${LAST_SECS}s | tools: ${LAST_TOOLS:-<none recorded>}"
 if used Bash; then ok "4. Bash executed"
@@ -270,7 +270,7 @@ esac
 
 # ── 5. summarize changes (git) ────────────────────────────────────────────
 echo
-info "task 5/5: summarize the changes via git"
+banner "task 5/5: summarize the changes via git"
 run_task summarize "Run git diff and summarize what changed in this repository." 12
 echo "        ${LAST_SECS}s | tools: ${LAST_TOOLS:-<none recorded>}"
 if used Bash; then ok "5. git operations run through Bash"
@@ -281,7 +281,7 @@ else bad "5. summary does not reference the real diff"; fi
 
 # ── gateway behaviour during these real sessions ───────────────────────────
 echo
-info "gateway decisions observed during the run"
+banner "gateway decisions observed during the run"
 docker logs --since 30m ailocal-litellm 2>&1 \
   | grep tool_gateway_metric > /tmp/e2e-metrics.log || true
 python3 - <<'PY'
