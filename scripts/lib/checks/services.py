@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import pathlib
 import socket
 import subprocess
 import urllib.error
@@ -51,6 +52,61 @@ def http_json(url: str, *, token: str | None = None, payload: dict | None = None
             raise Unreachable(f"HTTP {exc.code}: {body[:200]}") from exc
     except (urllib.error.URLError, OSError, ValueError, TimeoutError) as exc:
         raise Unreachable(str(exc)) from exc
+
+
+def _key_from(text: str, var: str) -> str:
+    """Read VAR=value from a .env or shell-export file. Never logs the value."""
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("export "):
+            line = line[len("export "):].strip()
+        if line.startswith(f"{var}="):
+            return line.split("=", 1)[1].strip().strip("\"'")
+    return ""
+
+
+def master_key() -> str:
+    """The LiteLLM master key.
+
+    Resolution order matters. config/clients/env.sh carries ANTHROPIC_API_KEY
+    and OPENAI_API_KEY for the CLIENTS, and those are not necessarily the master
+    key -- measured, they were 12-character placeholders while the running proxy
+    held a 51-character key. An unrecognised key sends LiteLLM to a key database
+    that does not exist here, so a credential fault surfaces as "No connected
+    db." The master key is resolved from its own sources first.
+
+    Callers must not construct this themselves; nothing outside this module
+    should know where credentials live.
+    """
+    if os.environ.get("LITELLM_MASTER_KEY"):
+        return os.environ["LITELLM_MASTER_KEY"]
+    repo = pathlib.Path(__file__).resolve().parent.parent.parent.parent
+    for path in (repo / ".env", repo / "config" / "clients" / "env.sh"):
+        if path.is_file():
+            for line in path.read_text().splitlines():
+                line = line.strip().lstrip("export ").strip()
+                if line.startswith("LITELLM_MASTER_KEY="):
+                    return line.split("=", 1)[1].strip().strip("\"'")
+    for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+        if os.environ.get(var):
+            return os.environ[var]
+    env = repo / "config" / "clients" / "env.sh"
+    if env.is_file():
+        for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+            for line in env.read_text().splitlines():
+                line = line.strip().lstrip("export ").strip()
+                if line.startswith(f"{var}="):
+                    return line.split("=", 1)[1].strip().strip("\"'")
+    raise RuntimeError("no LiteLLM API key found — is the stack installed?")
+
+
+def proxy_healthy(timeout: int = CONNECT_TIMEOUT) -> bool:
+    """Bare reachability, for callers that want a boolean rather than a report."""
+    try:
+        http_json(f"{PROXY}/health/liveliness", timeout=timeout)
+        return True
+    except Unreachable:
+        return False
 
 
 def port_open(host: str, port: int, timeout: int = CONNECT_TIMEOUT) -> bool:
@@ -165,11 +221,9 @@ def check_proxy_port() -> CheckResult:
 
 
 def check_proxy_health() -> CheckResult:
-    try:
-        http_json(f"{PROXY}/health/liveliness")
-    except Unreachable as exc:
+    if not proxy_healthy():
         return CheckResult("proxy-health", FAIL, "LiteLLM /health/liveliness failed",
-                           str(exc), "docker logs ailocal-litellm --tail=50")
+                           remediation="docker logs ailocal-litellm --tail=50")
     return CheckResult("proxy-health", PASS, "LiteLLM healthy")
 
 

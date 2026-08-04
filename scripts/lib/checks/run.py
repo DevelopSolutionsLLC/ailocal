@@ -41,14 +41,6 @@ def _validate(argv: list[str]) -> int:
     return code
 
 
-def _master_key() -> str:
-    env = pathlib.Path(__file__).resolve().parent.parent.parent.parent / ".env"
-    for line in env.read_text().splitlines() if env.is_file() else []:
-        if line.startswith("LITELLM_MASTER_KEY="):
-            return line.split("=", 1)[1].strip()
-    return ""
-
-
 def _expected() -> tuple[list[str], dict[str, int], list[str]]:
     """Aliases, advertised geometry and required backends for the active tier."""
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
@@ -73,7 +65,7 @@ def _expected() -> tuple[list[str], dict[str, int], list[str]]:
 
 def _smoke(argv: list[str]) -> int:
     alias = next((a for a in argv if not a.startswith("-")), "ailocal-fast")
-    token = _master_key()
+    token = S.master_key()
     aliases, geometry, backends = _expected()
 
     print(f"{BOLD}Runtime smoke{RESET}")
@@ -111,7 +103,7 @@ def _doctor(argv: list[str]) -> int:
         print(f"      {getattr(exc, 'code', type(exc).__name__)}: {exc}", file=sys.stderr)
         return 1
 
-    token = _master_key()
+    token = S.master_key()
     aliases, geometry, backends = _expected()
 
     print(f"{BOLD}Configuration{RESET}")
