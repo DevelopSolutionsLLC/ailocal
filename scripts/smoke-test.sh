@@ -36,7 +36,7 @@ payload=$(cat <<EOF
 EOF
 )
 
-response=$(curl -sS -X POST http://localhost:4000/v1/chat/completions \
+response=$(curl -sS -m 120 -X POST http://localhost:4000/v1/chat/completions \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   --data "$payload")
