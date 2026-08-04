@@ -282,10 +282,8 @@ def _compose(args: list, extra=None):
              "-f", str(REPO / "deploy/searxng/docker-compose.yml")]
     for f in (extra or []):
         files += ["-f", str(f)]
-    env = {**os.environ,
-           "AILOCAL_STATE": os.environ.get(
-               "AILOCAL_STATE",
-               str(Path(state_dir()).parent))}
+    import policy
+    env = {**os.environ, "AILOCAL_STATE": str(policy.runtime_root())}
     return subprocess.run(["docker", "compose", "--project-directory", str(REPO),
                            *files, *args], capture_output=True, text=True,
                           timeout=300, env=env)

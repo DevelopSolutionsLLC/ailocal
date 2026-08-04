@@ -534,8 +534,8 @@ step "Creating directory structure"
 # Runtime state lives outside the checkout (see scripts/lib/compose.sh). Only the
 # backup directory needs pre-creating, because it holds .env snapshots from
 # update.sh and must be locked down before anything writes one.
-mkdir -p "${AILOCAL_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/ailocal}/backups"
-chmod 700 "${AILOCAL_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/ailocal}/backups"
+mkdir -p "$AILOCAL_STATE/backups"
+chmod 700 "$AILOCAL_STATE/backups"
 info "Directories ready"
 
 # ── .env generation ────────────────────────────────────────────────────────

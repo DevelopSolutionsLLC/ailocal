@@ -12,7 +12,9 @@
 # reported "no compaction" for a session that compacted. Payload now arrives on a
 # pipe and the script is passed with -c.
 set -euo pipefail
-STATE="${XDG_STATE_HOME:-$HOME/.local/state}/ailocal"
+# Deployed outside the checkout, so it cannot call scripts/profile-config.
+# It honours AILOCAL_STATE and otherwise mirrors policy.runtime_root().
+STATE="${AILOCAL_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/ailocal}"
 mkdir -p "$STATE"
 python3 -c '
 import json,sys,datetime

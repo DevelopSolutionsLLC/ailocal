@@ -27,7 +27,9 @@
 # payloads and the config fingerprint all used to accumulate in ./data and
 # ./backups, where they were invisible to `git status` and travelled with the
 # repository. Exported so the compose files can mount it by absolute path.
-export AILOCAL_STATE="${AILOCAL_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/ailocal}"
+# policy.py is the one implementation of this path; shell asks rather than
+# repeating the default expression.
+export AILOCAL_STATE="${AILOCAL_STATE:-$("$AILOCAL_ROOT/scripts/profile-config" state-root)}"
 mkdir -p "$AILOCAL_STATE"
 
 AILOCAL_COMPOSE_FILES=(

@@ -19,6 +19,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+AILOCAL_STATE="${AILOCAL_STATE:-$("$ROOT_DIR/scripts/profile-config" state-root)}"
 CAPS="$ROOT_DIR/config/capabilities.generated.json"
 OLLAMA_URL="${OLLAMA_HOST:-http://127.0.0.1:11434}"
 MODE="dashboard"
@@ -37,7 +38,7 @@ if [ "$MODE" = "dashboard" ]; then
   dim()  { printf '  %s—%s %s\n' "$C_DIM" "$C_0" "$*"; }
   hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
   PROXY="${AILOCAL_PROXY_URL:-http://127.0.0.1:4000}"
-  TRACES="${AILOCAL_STATE:-$HOME/.local/state/ailocal}/captures/traces"
+  TRACES="$AILOCAL_STATE/captures/traces"
 
   echo "══════════════════════════════════════════════════════════════════════"
   echo " AILOCAL STATUS   $(date '+%Y-%m-%d %H:%M:%S')"
