@@ -81,11 +81,11 @@ run "capability negotiator (byte accounting, modes, passthrough)" \
     bash scripts/tests/in-container.sh scripts/tests/tool-gateway-impl.py \
       AILOCAL_GATEWAY_MODULE=/app/config/tool_gateway.py
 run "persona injection" \
-    python3 scripts/tests/persona-injection.py
+    python3 scripts/tests/gateway.py persona
 # Both directions matter: a repair layer that fires on a tutorial fence would
 # execute commands the model never intended.
 run "tool-call repair (repairs real calls, refuses examples)" \
-    python3 scripts/tests/tool-repair.py
+    python3 scripts/tests/gateway.py repair
 # E5. The message this replaces ("No fallback model group found ... Fallbacks=[...]")
 # was true and misleading: implementation is the TERMINAL tier, so having no chain is
 # intentional, and the real fault was upstream connectivity. Pure functions, so all
@@ -96,7 +96,7 @@ run "tool-call repair (repairs real calls, refuses examples)" \
 # real helpers and prove they never serialize, and that the token components are
 # disjoint and sum to the reported total.
 run "E1 trace schema, redaction and token reconciliation" \
-    python3 scripts/tests/request-trace.py
+    python3 scripts/tests/gateway.py trace
 # The planner comparison is the one benchmark whose SETUP has repeatedly been the
 # defect: it once measured a single model three times, and candidates could read
 # the answer key. These prove safe defaults, manifest locking, confinement wiring
