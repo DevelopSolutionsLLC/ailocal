@@ -93,49 +93,15 @@ def ok(m):   print(f"  ✓ {m}")
 def warn(m): print(f"  ⚠ {m}", file=sys.stderr)
 
 
-def truthy(v):
-    return str(v).strip().lower() in ("true", "1", "yes", "on")
 
 
 def flow_list(v):
-    """Accept an already-typed list unchanged.
-
-    The profile parser returns real lists; config/clients.yaml is still read by
-    the legacy line reader below and yields raw "[a, b]" strings. Making this
-    idempotent removes the need to reserialize typed values back into strings
-    just to reparse them -- which is what the previous shim did, and what
-    double-quoted every element in capabilities.generated.json.
-    Remaining raw-string callers: load_clients_yaml() (config/clients.yaml).
-    """
-    if isinstance(v, list):
-        return v
-    if v is None:
-        return []
-    return _flow_list_from_str(v)
+    """Optional list field. policy.py returns typed lists; absent means empty."""
+    return v or []
 
 
-def _flow_list_from_str(v):
-    """Parse a flow-style list "[a, b, c]" -> ["a","b","c"]; tolerate a bare scalar."""
-    if v is None:
-        return []
-    v = str(v).strip()
-    if v.startswith("[") and v.endswith("]"):
-        inner = v[1:-1].strip()
-        return [x.strip() for x in inner.split(",") if x.strip()] if inner else []
-    return [v] if v else []
 
 
-def flow_dict(v):
-    """Parse a flow-style map "{a: b, c: d}" -> {"a":"b","c":"d"}."""
-    v = str(v).strip()
-    out = {}
-    if v.startswith("{") and v.endswith("}"):
-        inner = v[1:-1].strip()
-        for pair in inner.split(","):
-            if ":" in pair:
-                k, _, val = pair.partition(":")
-                out[k.strip()] = val.strip()
-    return out
 
 
 # ── profile resolution ─────────────────────────────────────────────────────────
@@ -168,7 +134,7 @@ def load_models_yaml(path):
         if not isinstance(fields, dict):
             continue          # top-level scalars such as disk_gb
         # Typed values pass through as-is. flow_list() is idempotent and the
-        # scalar consumers coerce with truthy()/int() at the point of use, so
+        # Scalar consumers coerce with int() at the point of use, so
         # no string round-trip is needed.
         models[section] = dict(fields)
     models.pop("disk_gb", None)
@@ -316,9 +282,9 @@ def gen_role_block(role, info):
         ]
         return "\n".join(lines) + "\n"
 
-    reasoning = truthy(info.get("reasoning", "false"))
-    merge     = truthy(info.get("merge", "false"))
-    vision    = truthy(info.get("vision", "false"))
+    reasoning = bool(info.get("reasoning"))
+    merge     = bool(info.get("merge"))
+    vision    = bool(info.get("vision"))
     parallel  = not reasoning
     # Was min(16384, max(1024, num_ctx // 4)) -- a derivation with no owner that
     # disagreed with num_predict. max_output is now declared in the profile.
@@ -596,7 +562,7 @@ def regen_catalog(models):
             continue
         backend = backend_of(info)
         num_ctx = ctx_of(info)
-        vision = truthy(info.get("vision", "false"))
+        vision = bool(info.get("vision"))
         role = info.get("role", name)
         instr = "\n\n".join([CATALOG_PREAMBLE,
                              CATALOG_ROLE_SENTENCE.get(name, f"You are the {role} capability."),
@@ -614,7 +580,7 @@ def regen_catalog(models):
             "max_context_window": num_ctx,
             "effective_context_window_percent": 90,
             "input_modalities": ["text", "image"] if vision else ["text"],
-            "supports_parallel_tool_calls": not truthy(info.get("reasoning", "false")),
+            "supports_parallel_tool_calls": not bool(info.get("reasoning")),
             "supports_search_tool": False,
             "supports_image_detail_original": False,
             "supports_reasoning_summaries": False,
