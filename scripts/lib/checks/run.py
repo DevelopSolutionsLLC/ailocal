@@ -84,6 +84,8 @@ def _smoke(argv: list[str]) -> int:
     results += S.check_geometry(token, geometry)
     results += [S.check_generation(token, alias), S.check_searxng(),
                 S.check_search_tool_registered()]
+    if "--deep" in argv:
+        results.append(S.check_context_window(token))
     render(results)
     code = exit_code(results)
     print()
