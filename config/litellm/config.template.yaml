@@ -156,7 +156,7 @@ litellm_settings:
     # asked for and which tools it actually called, to a ledger on disk. Purely
     # observational: it never mutates the request and never touches client
     # conversation state. Off unless AILOCAL_SESSION_LEDGER points somewhere
-    # writable. Paired with scripts/verify-session.py, which supplies the
+    # writable. Paired with scripts/diagnostics/verify-session.py, which supplies the
     # filesystem/git half that this container cannot see.
     - session_observer.proxy_handler_instance
     # Per-request timeline: request id, ttfb, total, finish/stop reason, and the

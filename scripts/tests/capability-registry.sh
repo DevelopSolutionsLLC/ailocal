@@ -7,7 +7,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CONTAINER="${AILOCAL_LITELLM_CONTAINER:-ailocal-litellm}"
 docker ps --format '{{.Names}}' | grep -qx "$CONTAINER" || {
   echo "$CONTAINER is not running — start the stack first."; exit 1; }
-docker cp "$ROOT/scripts/test-capability-registry.py" "$CONTAINER:/tmp/tcr.py" >/dev/null
+docker cp "$ROOT/scripts/tests/capability-registry-impl.py" "$CONTAINER:/tmp/tcr.py" >/dev/null
 exec docker exec \
   -e AILOCAL_REGISTRY_MODULE=/app/config/capability_registry.py \
   -e AILOCAL_REGISTRY=/app/config/registry.yaml \

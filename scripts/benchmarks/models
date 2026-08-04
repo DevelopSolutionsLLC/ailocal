@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""benchmark-models — optional developer utility.
+"""benchmarks/models — optional developer utility.
 
 Not part of install, update or the regression gate. Never modifies a profile.
 See docs/BENCHMARK.md.
@@ -10,7 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
+REPO = Path(__file__).resolve().parent.parent.parent   # scripts/benchmarks/ -> repo root
 sys.path.insert(0, str(REPO / "scripts" / "lib"))
 import benchmark as B  # noqa: E402
 
@@ -350,7 +350,7 @@ def cmd_report(args):
 
 
 def main():
-    p = argparse.ArgumentParser(prog="benchmark-models")
+    p = argparse.ArgumentParser(prog="benchmarks/models")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     def common(sp):

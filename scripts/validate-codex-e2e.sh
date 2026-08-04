@@ -136,7 +136,7 @@ run_codex() { # $1=slug $2=prompt
   # Declared separately: bash expands EVERY argument to `local` before assigning
   # any of them, so `local a="$1" b="...$a"` leaves $a unbound under `set -u`.
   # This is the SECOND time this pattern bit in this repo — it was fixed in
-  # benchmark-tool-gateway.sh and then reintroduced here from muscle memory.
+  # benchmarks/tool-gateway.sh and then reintroduced here from muscle memory.
   local slug="$1"
   local prompt="$2"
   local log="$RESULTS/$STAMP-codex-$slug.log"

@@ -1,4 +1,4 @@
-"""diag-runner-context.py — characterize Ollama runner-context behaviour.
+"""diagnostics/runner-context.py — characterize Ollama runner-context behaviour.
 
 RESULT (gemma4:26b-mlx, Ollama 0.32.5, 19 observations): FIRST_LOAD_WINS.
 The resident runner keeps whatever num_ctx it was FIRST loaded with, and later

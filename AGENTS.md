@@ -241,7 +241,7 @@ A previous session hit "PyYAML is not importable from `python3`" and wrote a
   JSON with `jq`. A bespoke JSON extractor was written anyway and then deleted.
 - **`/usr/bin/ruby` ships with macOS and has YAML.** A dependency-free
   YAML→JSON conversion existed the whole time.
-- **A venv pattern already exists** (`scripts/benchmark-models setup`).
+- **A venv pattern already exists** (`scripts/benchmarks/models setup`).
 - **The real question was never asked**: *which callers need YAML at all?* The
   answer was one — `sync-models.py`, at generation time.
 

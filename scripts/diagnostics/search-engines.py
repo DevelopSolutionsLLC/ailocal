@@ -24,10 +24,10 @@ ONE request per second (measured from x-rate-limit-limit; the widely quoted
 Engine list comes from SearXNG's /config endpoint, not from parsing
 settings.yml, so this cannot drift from what is actually loaded.
 
-  scripts/diag-search-engines.py                 # safe default sweep
-  scripts/diag-search-engines.py --extended      # adds the research query class
-  scripts/diag-search-engines.py --engine arxiv  # one engine
-  scripts/diag-search-engines.py --json          # machine-readable
+  scripts/diagnostics/search-engines.py                 # safe default sweep
+  scripts/diagnostics/search-engines.py --extended      # adds the research query class
+  scripts/diagnostics/search-engines.py --engine arxiv  # one engine
+  scripts/diagnostics/search-engines.py --json          # machine-readable
 
 Exit 0 whenever the probe ran; a dead engine is a finding, not a script
 failure -- which is also why this is NOT in the regression gate: a green gate

@@ -37,7 +37,7 @@ except ImportError:
     sys.modules["litellm.integrations"] = types.ModuleType("litellm.integrations")
     sys.modules["litellm.integrations.custom_logger"] = _clog
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 GATEWAY = os.environ.get("AILOCAL_GATEWAY_MODULE",
                          os.path.join(ROOT, "config/litellm/tool_gateway.py"))
 REG_PY = os.environ.get("AILOCAL_REGISTRY_MODULE",

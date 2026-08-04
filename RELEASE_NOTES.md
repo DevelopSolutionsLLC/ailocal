@@ -23,7 +23,7 @@ configuration defects that could have produced hard failures in long sessions.
   exists.
 - **Bounded Codex validation harness** — reports
   `BLOCKED_UPSTREAM_LITELLM_27442` within a timeout instead of hanging.
-- **Search engine health diagnostic** (`scripts/diag-search-engines.py`),
+- **Search engine health diagnostic** (`scripts/diagnostics/search-engines.py`),
   deliberately not in the regression gate: a green gate must not depend on a
   third party's CAPTCHA.
 - **Research search tier** — arXiv and Crossref, API-backed and keyless.
