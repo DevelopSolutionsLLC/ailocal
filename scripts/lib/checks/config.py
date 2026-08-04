@@ -248,13 +248,10 @@ def _compose_env() -> dict:
     """Compose interpolates AILOCAL_SEARXNG_SETTINGS, which compose.sh exports
     after rendering. Point at the same rendered file so `config` can resolve.
     """
-    state = os.environ.get("AILOCAL_STATE") or os.path.join(
-        os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state")),
-        "ailocal")
     return {**os.environ, "DOCKER_CLI_HINTS": "false",
             "AILOCAL_SEARXNG_SETTINGS": os.environ.get(
                 "AILOCAL_SEARXNG_SETTINGS",
-                os.path.join(state, "searxng", "settings.yml"))}
+                str(P.runtime_root() / "searxng" / "settings.yml"))}
 
 
 def _compose_json() -> dict | None:

@@ -26,6 +26,7 @@
 # --include-notes is also given.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+AILOCAL_STATE="${AILOCAL_STATE:-$("$ROOT/scripts/profile-config" state-root)}"
 cd "$ROOT"
 
 MODE=dry
@@ -41,7 +42,7 @@ done
 
 FINDINGS="${AUDIT_FINDINGS:-/tmp/ailocal-audit-findings.txt}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
-BACKUP="${AILOCAL_STATE:-$HOME/.local/state/ailocal}/backups/cleanup-$STAMP"
+BACKUP="$AILOCAL_STATE/backups/cleanup-$STAMP"
 
 C_OK=$'\033[32m'; C_WARN=$'\033[33m'; C_DIM=$'\033[2m'; C_0=$'\033[0m'
 did=0; skipped=0
