@@ -28,17 +28,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from harness import REPO, Suite
 ROOT = Path.home() / ".config" / "ailocal" / "claude"
 PROBE = REPO / "config" / "litellm" / "persona_injector.py"
 
-failures: list[str] = []
-
-
-def check(ok: bool, label: str) -> None:
-    print(f"  {'OK  ' if ok else 'FAIL'}  {label}")
-    if not ok:
-        failures.append(label)
+_suite = Suite()
+check = _suite.check
 
 
 def rpc(proc, msg: dict) -> None:
@@ -143,13 +139,10 @@ def main() -> int:
             pass
 
     print()
-    if failures:
-        print(f"FAIL — {len(failures)} broken:")
-        for f in failures:
-            print(f"  - {f}")
+    rc = _suite.report()
+    if rc:
         print("\nRepair: ailocal clients claude")
-        return 1
-    print("LSP BASELINE: claude-local has working Python native LSP.")
+    return rc
     return 0
 
 
