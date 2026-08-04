@@ -14,7 +14,7 @@ non-OpenAI backend, so the value is not the gateway's to guarantee. The tests
 assert only that a token figure is an int or None, never a fabricated zero.
 
 Needs PyYAML and the registry, so it runs inside the proxy image via
-scripts/test-tool-gateway.sh.
+scripts/tests/in-container.sh.
 """
 
 import asyncio
@@ -52,7 +52,7 @@ CONF = os.environ.get("AILOCAL_CONFIG_PATH",
 try:
     import yaml  # noqa: F401
 except ImportError:
-    print("SKIPPED: PyYAML absent. Run via scripts/test-tool-gateway.sh so the "
+    print("SKIPPED: PyYAML absent. Run via scripts/tests/in-container.sh so the "
           "registry-backed checks actually execute; exiting non-zero rather "
           "than reporting green over a reduced set.")
     sys.exit(1)
@@ -69,12 +69,11 @@ _spec = importlib.util.spec_from_file_location("tool_gateway", GATEWAY)
 tg = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(tg)
 
-fails = 0
-def check(cond, name):
-    global fails
-    print(f"  {'PASS' if cond else 'FAIL'}  {name}")
-    if not cond:
-        fails += 1
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from harness import Suite
+
+_suite = Suite()
+check = _suite.check
 
 reg = cr.Registry(path=REG_YAML, caps_json=CAPS, config_path=CONF)
 gw = tg.ToolGateway(registry=reg)
@@ -573,8 +572,4 @@ for prompt, label, want in (
 
 os.environ.pop(tg.TASK_ENV, None)
 
-print()
-if fails:
-    print(f"TOOL GATEWAY TESTS: {fails} FAILED")
-    sys.exit(1)
-print("TOOL GATEWAY TESTS: OK")
+sys.exit(_suite.report())
