@@ -20,8 +20,9 @@
 #             recorded as though it were.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+AILOCAL_STATE="${AILOCAL_STATE:-$("$ROOT/scripts/profile-config" state-root)}"
 cd "$ROOT"
-DIR="${AILOCAL_TRACE_HOST_DIR:-${AILOCAL_STATE:-$HOME/.local/state/ailocal}/captures/traces}"
+DIR="${AILOCAL_TRACE_HOST_DIR:-$AILOCAL_STATE/captures/traces}"
 
 MODE=recent; ARG=""
 while [ $# -gt 0 ]; do

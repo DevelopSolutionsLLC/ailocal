@@ -26,8 +26,11 @@ REPO = Path(__file__).resolve().parent.parent.parent
 
 
 def state_dir() -> Path:
-    base = os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state")
-    p = Path(base) / "ailocal" / "benchmark"
+    """Benchmark state, under the one runtime root."""
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import policy
+    p = policy.runtime_root() / "benchmark"
     p.mkdir(parents=True, exist_ok=True)
     return p
 

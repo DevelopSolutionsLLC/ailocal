@@ -24,13 +24,14 @@
 set -uo pipefail
 . "$(cd "$(dirname "$0")" && pwd)/lib/e2e.sh"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+AILOCAL_STATE="${AILOCAL_STATE:-$("$ROOT/scripts/profile-config" state-root)}"
 cd "$ROOT"
 
 KEEP=""
 [ "${1:-}" = "--keep" ] && KEEP=1
 WORK="${CLAUDE_E2E_WORKDIR:-/tmp/ailocal-e2e}"
-LEDGERS="${AILOCAL_STATE:-$HOME/.local/state/ailocal}/captures/sessions"
-RESULTS="${AILOCAL_STATE:-$HOME/.local/state/ailocal}/e2e"
+LEDGERS="$AILOCAL_STATE/captures/sessions"
+RESULTS="$AILOCAL_STATE/e2e"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$RESULTS"
 

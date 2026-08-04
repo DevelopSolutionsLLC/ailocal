@@ -43,7 +43,7 @@ fail=0; degraded=0; update_available=0
 # at install time -- a PATH assumption is why agents like this usually fail silently.
 LABEL="com.ailocal.update-check"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-STATE="${XDG_STATE_HOME:-$HOME/.local/state}/ailocal"
+STATE="${AILOCAL_STATE:-$("$REPO/scripts/profile-config" state-root)}"
 
 if [[ -n "$SCHEDULE" ]]; then
   if [[ "$SCHEDULE" == uninstall ]]; then

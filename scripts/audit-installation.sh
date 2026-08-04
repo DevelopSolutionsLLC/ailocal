@@ -21,6 +21,7 @@
 # Exit: 0 nothing actionable, 3 actionable findings, 1 the audit itself failed.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+AILOCAL_STATE="${AILOCAL_STATE:-$("$ROOT/scripts/profile-config" state-root)}"
 cd "$ROOT"
 
 FINDINGS_FILE="${AUDIT_FINDINGS:-/tmp/ailocal-audit-findings.txt}"
@@ -245,7 +246,7 @@ for f in config/litellm/config.yaml.backup audit-session.json next-session.md; d
     fi
   fi
 done
-BKDIR="${AILOCAL_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/ailocal}/backups"
+BKDIR="$AILOCAL_STATE/backups"
 BK=$(ls -1 "$BKDIR" 2>/dev/null | wc -l | tr -d ' ')
 if [ "${BK:-0}" -gt 20 ]; then
   flag STALE "$BK files in $BKDIR" "$BKDIR" "prune the oldest"
