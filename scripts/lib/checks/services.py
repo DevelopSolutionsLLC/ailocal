@@ -1,12 +1,7 @@
 """Live runtime checks: containers, proxy, Ollama, search.
 
-One implementation per primitive. Before this module, `/v1/models` was fetched
-from two scripts, Docker inspected from four, and Ollama inventoried from three,
-each with its own parsing and its own idea of a timeout -- two of them with no
-timeout at all, so a hung backend hung the validator.
-
-Every call here is bounded. Nothing in this module is deterministic; anything
-that can be decided without a running stack belongs in config.py.
+One implementation per primitive, and every call is bounded. Nothing here is
+deterministic; what can be decided without a running stack belongs in config.py.
 """
 
 from __future__ import annotations
@@ -196,9 +191,8 @@ def check_aliases(token: str, expected: list[str]) -> list[CheckResult]:
 def check_geometry(token: str, expected: dict[str, int]) -> list[CheckResult]:
     """Advertised max_input_tokens must match the profile.
 
-    A proxy running stale config advertises the wrong window, and clients trust
-    the advertisement rather than the model's real limit -- the failure that
-    broke VS Code chat.
+    Clients trust the advertisement over the model's real limit, so a proxy on
+    stale config silently gives them the wrong window.
     """
     try:
         info = model_info(token)
@@ -292,9 +286,8 @@ def check_search_tool_registered() -> CheckResult:
 def check_context_window(token: str, alias: str = "ailocal-completion") -> CheckResult:
     """An oversized prompt must be rejected, not silently truncated.
 
-    Costly enough to be opt-in (`ailocal smoke --deep`): without enforcement the
-    same request returns 200 with a garbage answer, which no status-code check
-    would catch.
+    Opt-in (`ailocal smoke --deep`): costly, and without enforcement the request
+    returns 200 with a garbage answer.
     """
     filler = "the quick brown fox jumps over the lazy dog. " * 6000
     try:

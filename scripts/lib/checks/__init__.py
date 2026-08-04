@@ -1,11 +1,7 @@
 """Structured results shared by validate, smoke and doctor.
 
-Seven validators each carried their own output style and exit convention. A
-check is written once, returns a CheckResult, and the public commands decide how
-to render it and what to do with the outcome.
-
-Deliberately small: no registration, no discovery, no plugin machinery. A check
-is a function that returns CheckResult.
+A check returns a CheckResult; the public commands decide how to render it and
+what the outcome means. No registration or discovery: a check is a function.
 """
 
 from __future__ import annotations
@@ -14,7 +10,8 @@ import sys
 from dataclasses import dataclass
 from enum import Enum
 
-__all__ = ["CheckStatus", "CheckResult", "render", "exit_code",
+__all__ = ["CheckStatus", "CheckResult", "render", "exit_code", "verdict",
+           "passed", "failed", "warning", "blocked",
            "PASS", "FAIL", "WARN", "BLOCKED", "SKIP"]
 
 
@@ -37,6 +34,31 @@ class CheckResult:
     summary: str
     detail: str | None = None
     remediation: str | None = None
+
+
+def passed(name: str, summary: str) -> CheckResult:
+    return CheckResult(name, PASS, summary)
+
+
+def failed(name: str, summary: str, remediation: str | None = None,
+           detail: str | None = None) -> CheckResult:
+    return CheckResult(name, FAIL, summary, detail, remediation)
+
+
+def warning(name: str, summary: str, remediation: str | None = None,
+            detail: str | None = None) -> CheckResult:
+    return CheckResult(name, WARN, summary, detail, remediation)
+
+
+def blocked(name: str, summary: str, detail: str | None = None) -> CheckResult:
+    return CheckResult(name, BLOCKED, summary, detail)
+
+
+def verdict(name: str, ok: bool, good: str, bad: str,
+            remediation: str | None = None, detail: str | None = None) -> CheckResult:
+    """A check whose two outcomes differ only in wording."""
+    return (CheckResult(name, PASS, good) if ok
+            else CheckResult(name, FAIL, bad, detail, remediation))
 
 
 _MARK = {PASS: ("\033[32m✓\033[0m", 1), FAIL: ("\033[31m✗\033[0m", 2),
