@@ -125,6 +125,8 @@ run "benchmark library (aliases, geometry, evidence, confinement)" \
     python3 scripts/tests/test-benchmark.py
 run "profile resolver (single parser, fail-closed, no 64gb default)" \
     python3 scripts/tests/profiles.py resolver
+run "policy ownership (one reader, client policy fails closed)" \
+    python3 scripts/tests/profiles.py policy
 run "hardware profiles (schema, tiers, dedup)" \
     python3 scripts/tests/profiles.py hardware
 run "Python LSP baseline for claude-local (real documentSymbol)" \

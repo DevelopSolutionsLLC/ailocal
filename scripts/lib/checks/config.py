@@ -19,18 +19,7 @@ from . import BLOCKED, FAIL, PASS, CheckResult
 REPO = pathlib.Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(REPO / "scripts" / "lib"))
 
-import profile_config as P  # noqa: E402
-
-
-def _sync():
-    """sync-models.py, loaded by path: it is a script, not an importable module."""
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(
-        "sync_models", REPO / "scripts" / "sync-models.py")
-    assert spec and spec.loader
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+import policy as P  # noqa: E402
 
 
 # ── source configuration ────────────────────────────────────────────────────
@@ -63,11 +52,13 @@ def check_profiles_parse() -> list[CheckResult]:
 
 
 def check_capabilities_declare_backends(tier: str | None = None) -> list[CheckResult]:
-    sm = _sync()
-    models = sm.load_models_yaml(sm.profile_path(explicit=tier))
+    tier = tier or P.resolve_active_tier()
+    profile = P.load_profile(tier)
     out = []
-    for name, cfg in sorted(models.items()):
-        backend = (cfg or {}).get("active")
+    for name in P.ROLES:
+        if name not in profile:
+            continue
+        backend = P.resolve_role(tier, name).get("active")
         out.append(CheckResult(f"capability:{name}", PASS if backend else FAIL,
                                f"{name} → {backend or '(no backend!)'}"))
     return out
@@ -75,15 +66,17 @@ def check_capabilities_declare_backends(tier: str | None = None) -> list[CheckRe
 
 def check_client_mappings() -> list[CheckResult]:
     """Every clients.yaml mapping must target a capability this tier defines."""
-    sm = _sync()
-    models = sm.load_models_yaml(sm.profile_path())
-    clients = sm.load_clients_yaml()
+    tier = P.resolve_active_tier()
+    known = set(P.load_profile(tier))
+    try:
+        policy = P.load_client_policy()
+    except P.ProfileError as exc:
+        return [CheckResult("client-policy", FAIL, "clients.yaml is invalid",
+                            f"{exc.code}: {exc}")]
     out = []
-    for client, mapping in sorted(clients.items()):
-        if not isinstance(mapping, dict):
-            continue
+    for client, mapping in sorted(policy.items()):
         unknown = sorted({v for v in mapping.values()
-                          if isinstance(v, str) and v not in models})
+                          if isinstance(v, str) and v not in known})
         out.append(CheckResult(
             f"client:{client}", FAIL if unknown else PASS,
             f"{client} mappings resolve" if not unknown
