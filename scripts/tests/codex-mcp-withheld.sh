@@ -21,13 +21,7 @@
 # Static + fixture based: it must not depend on Cadence actually being installed,
 # and it must never mutate the real deployed config.
 set -uo pipefail
-ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-fails=0
-
-check() {
-  if [ "$1" = 0 ]; then printf '  \033[32mPASS\033[0m  %s\n' "$2"
-  else printf '  \033[31mFAIL\033[0m  %s\n' "$2"; fails=$((fails + 1)); fi
-}
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/harness.sh"
 
 echo "CODEX MCP IS WITHHELD"
 
@@ -173,6 +167,4 @@ else
   printf '  \033[33mSKIP\033[0m  Cadence runtime not installed — consumer unverified\n'
 fi
 
-echo
-if [ "$fails" -gt 0 ]; then echo "FAILED ($fails)"; exit 1; fi
-echo "all contract consistency checks passed"
+report || exit 1

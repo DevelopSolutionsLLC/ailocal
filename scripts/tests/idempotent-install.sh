@@ -23,15 +23,13 @@
 #
 # Usage: ./scripts/tests/idempotent-install.sh [--include-vscode]
 set -uo pipefail
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/harness.sh"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 INCLUDE_VSCODE=""
 [ "${1:-}" = "--include-vscode" ] && INCLUDE_VSCODE=1
 
-fails=0
-ok()  { printf '  \033[32mPASS\033[0m  %s\n' "$1"; }
-bad() { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; fails=$((fails+1)); }
 info(){ printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 
 fingerprint() { # $1=label -> writes /tmp/ailocal-fp-$1.txt
@@ -221,9 +219,5 @@ PY
 
 echo
 echo "══════════════════════════════════════════════════════════════════════"
-if [ "$fails" -ne 0 ]; then
-  echo " IDEMPOTENCY: $fails FAILED"
-  exit 1
-fi
-echo " IDEMPOTENCY: all checks passed"
+report " IDEMPOTENCY" || exit 1
 echo " Installers can be re-run safely; a second run changes nothing."

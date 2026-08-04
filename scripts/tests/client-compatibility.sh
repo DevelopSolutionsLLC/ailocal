@@ -21,6 +21,7 @@
 #
 # Usage: ./scripts/tests/client-compatibility.sh
 set -uo pipefail
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/harness.sh"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 . scripts/lib/compose.sh
@@ -29,7 +30,6 @@ PROXY="${AILOCAL_PROXY_URL:-http://127.0.0.1:4000}"
 KEY="$(grep -E '^LITELLM_MASTER_KEY=' .env 2>/dev/null | cut -d= -f2-)"
 [ -n "$KEY" ] || { echo "No LITELLM_MASTER_KEY in .env"; exit 1; }
 
-fails=0
 ORIGINAL_MODE="$(docker exec ailocal-litellm printenv AILOCAL_TOOL_GATEWAY 2>/dev/null || echo off)"
 
 restore() {
@@ -58,8 +58,6 @@ set_mode() {
   [ "$got" = "$1" ] || { echo "mode did not take effect: wanted $1 got $got"; exit 1; }
 }
 
-ok() { echo "  PASS  $1"; }
-bad() { echo "  FAIL  $1"; fails=$((fails+1)); }
 
 # ── the three dialects, as their real clients send them ─────────────────────
 claude_code() {  # /v1/messages, Anthropic tool envelope
@@ -171,12 +169,7 @@ if seen != 3:
 PY
 docker logs --since "$SINCE" ailocal-litellm 2>&1 | python3 /tmp/ailocal-decisions.py
 
-echo
-if [ "$fails" -ne 0 ]; then
-  echo "CLIENT COMPATIBILITY: $fails FAILED"
-  exit 1
-fi
-echo "CLIENT COMPATIBILITY: OK (9 probes across 3 dialects x 3 modes)"
+report "CLIENT COMPATIBILITY" || exit 1
 echo
 echo "SCOPE: the VS Code payload is SYNTHESISED. Its route and headers are"
 echo "proven; its client profile is not validated against a real session and"

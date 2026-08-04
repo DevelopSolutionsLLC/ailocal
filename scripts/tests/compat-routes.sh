@@ -19,6 +19,7 @@
 #
 # Usage: ./scripts/tests/compat-routes.sh
 set -uo pipefail
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/harness.sh"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
@@ -26,9 +27,6 @@ PROXY="${AILOCAL_PROXY_URL:-http://127.0.0.1:4000}"
 KEY="$(grep -E '^LITELLM_MASTER_KEY=' .env 2>/dev/null | cut -d= -f2-)"
 [ -n "$KEY" ] || { echo "No LITELLM_MASTER_KEY in .env"; exit 1; }
 
-fails=0
-ok()  { echo "  PASS  $1"; }
-bad() { echo "  FAIL  $1"; fails=$((fails+1)); }
 
 status() { # method path [auth]
   local method="$1" path="$2" auth="${3:-}"
@@ -142,10 +140,4 @@ code="$(status GET /api/definitely-not-a-route)"
 [ "$code" = "404" ] && ok "unknown path still 404s (no catch-all)" \
                     || bad "GET /api/definitely-not-a-route -> $code (want 404)"
 
-echo
-if [ "$fails" -eq 0 ]; then
-  echo "compat routes: all checks passed"
-  exit 0
-fi
-echo "compat routes: $fails check(s) failed"
-exit 1
+report "compat routes" || exit 1
