@@ -62,14 +62,26 @@ def load_sync():
 
 
 def sandbox(marker=None, profile_text=None) -> Path:
-    """A throwaway repo root. The REAL config/active-profile is never touched."""
+    """A throwaway repo root. The real runtime state is never touched.
+
+    Paths come from the policy owner, so relocating them needs no fixture edit.
+    """
     root = Path(tempfile.mkdtemp(prefix="pcfg-"))
     (root / "config" / "profiles").mkdir(parents=True)
     if marker is not None:
-        (root / "config" / "active-profile").write_text(marker)
+        target = P.active_profile_path(root)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(marker)
     if profile_text is not None:
         (root / "config" / "profiles" / "64gb.yaml").write_text(profile_text)
     return root
+
+
+def _write_marker(root: Path, text: str) -> None:
+    """Write the active-tier marker into a sandbox, wherever policy puts it."""
+    target = P.active_profile_path(root)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text)
 
 
 GOOD = "architecture:\n  role: Lead\n  active: m:1\n  context_input: 100\n  max_output: 20\n"
@@ -337,7 +349,7 @@ def resolver_checks() -> None:
     # is how both survived side by side.
     box = Path(tempfile.mkdtemp(prefix="legacy-"))
     (box / "config" / "profiles").mkdir(parents=True)
-    (box / "config" / "active-profile").write_text("64gb")
+    _write_marker(box, "64gb")
     (box / "config" / "profiles" / "64gb.yaml").write_text(
         "architecture:\n  role: L\n  active: m\n  context: 4096\n")
     try:
@@ -479,7 +491,7 @@ def resolver_checks() -> None:
     box = Path(tempfile.mkdtemp(prefix="eff-"))
     (box / "config" / "profiles").mkdir(parents=True)
     _sh.copy(REPO / "config" / "effective-profile.json", box / "config")
-    _sh.copy(REPO / "config" / "active-profile", box / "config")
+    _write_marker(box, P.active_profile_path().read_text())
     # ALL tiers: the artifact now normalizes every tier and validates every
     # source hash, so a fixture carrying only the active profile is incomplete.
     for _t in P.TIERS:
@@ -489,6 +501,8 @@ def resolver_checks() -> None:
     def expect(code, mutate, label):
         b = Path(tempfile.mkdtemp(prefix="eff-"))
         _sh.copytree(box / "config", b / "config")
+        # Runtime state lives outside config/, so a sandbox must copy both.
+        _sh.copytree(P.runtime_root(box), P.runtime_root(b))
         mutate(b)
         try:
             P.load_effective(b)
@@ -502,7 +516,7 @@ def resolver_checks() -> None:
            lambda b: (b / "config" / "effective-profile.json").unlink(),
            "artifact deleted")
     expect(P.EFFECTIVE_PROFILE_STALE_TIER,
-           lambda b: (b / "config" / "active-profile").write_text("32gb\n"),
+           lambda b: _write_marker(b, "32gb\n"),
            "active-profile changed")
     expect(P.EFFECTIVE_PROFILE_STALE_SOURCE,
            lambda b: (b / "config" / "profiles" / f"{eff['tier']}.yaml")
@@ -778,7 +792,7 @@ def hardware_checks() -> None:
 
     # The generated client config must match the ACTIVE profile, or the client
     # compacts on a threshold this repository never chose.
-    active = (REPO / "config" / "active-profile")
+    active = P.active_profile_path()
     tier = active.read_text().strip() if active.exists() else "64gb"
     cc = PARSED[tier][0].get("compaction", {})
     settings = REPO / "config/clients/claude/settings.json"
