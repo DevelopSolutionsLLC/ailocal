@@ -363,7 +363,7 @@ for gb in ("128", "64", "32", "16"):
           f"install.sh still uses the {gb} GB threshold this ladder mirrors")
 
 # ── context admission must never exceed the physical window ─────────────────
-# MEASURED (scripts/repro-context-admission.py, qwen3.5:2b, num_ctx 40,960):
+# MEASURED (repro-context-admission.py, since deleted; qwen3.5:2b, num_ctx 40,960):
 # a 43,645-token prompt was ADMITTED by the old margin-based threshold, then
 # Ollama silently truncated it to 20,482 -- HTTP 200, finish_reason=stop, no
 # error, system prompt gone, final instruction not followed. Admission above
