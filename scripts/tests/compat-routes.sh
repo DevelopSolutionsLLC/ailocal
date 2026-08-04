@@ -20,7 +20,7 @@
 # Usage: ./scripts/tests/compat-routes.sh
 set -uo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/harness.sh"
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT="$ROOT_DIR"
 cd "$ROOT"
 
 PROXY="${AILOCAL_PROXY_URL:-http://127.0.0.1:4000}"
