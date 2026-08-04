@@ -1,76 +1,11 @@
-# ── MEASURED 2026-07-31 (this machine, cold ~8K prompt, 2 reps, median) ─────
-#   model                  prompt_eval  decode   ttft   vram
-#   qwen3.5:2b                3108/s    106/s    4.9s   2.4G
-#   gpt-oss:20b                989/s     53/s   10.3s  11.9G
-#   qwen3.5:9b                 668/s     49/s   23.1s   5.5G
-#   qwen3-coder:30b-a3b        526/s     47/s   25.1s  18.9G
-#   qwen2.5-coder:14b          273/s     27/s   34.3s  11.4G
-#   gemma3:27b                 121/s     10/s   79.7s  16.3G
+# 64 GB profile — validated on this hardware class.
 #
-# LARGE-CONTEXT COLD PREFILL (the metric behind the 13-minute stall):
-#   gpt-oss:20b     10,270 tok -> 11.3s (907/s)   26,570 tok ->  39.0s (681/s)
-#   qwen3-coder     15,991 tok -> 34.9s (458/s)   41,291 tok -> 203.8s (203/s)
-#   gpt-oss degrades -25% over that range; qwen3-coder -56%, and the gap WIDENS.
+# One resident model serves architecture, implementation and review; they differ
+# only in context, output ceiling and reasoning. Ollama keeps a single copy in
+# memory, so the three roles cost one model's VRAM rather than three.
 #
-# CONCLUSION: gpt-oss:20b beats qwen3-coder:30b on prompt eval, decode, TTFT and
-# footprint (11.9G vs 18.9G), at every context size measured, and its ceiling is
-# 131,072 vs the 98,304 we configured. qwen2.5-coder:14b was the SLOWEST model in
-# the set and was the everyday-coding tier. Both are removed from the resident set.
-#
-# CORRECTION: an earlier revision of this file claimed "Gemma 4 does not exist on
-# Ollama". That was WRONG. `gemma4:26b-a4b` 404s and the tags/list endpoint is not
-# public -- neither fact means the library is absent. `gemma4:26b-mlx` EXISTS and
-# is now the architecture/implementation/review backend.
-#
-#   gemma4:26b-mlx   pe 1004/s  dec 62.5/s  vram 17.5G  ctx 262144  (nvfp4, MLX)
-#   gemma3:27b       pe  121/s  dec 10.4/s  vram 16.3G              (dense GGUF)
-#
-# Gemma 4 MLX is ~8x the prompt eval and ~6x the decode of Gemma 3. Judging Gemma
-# on the 3-series was measuring the wrong generation.
-#
-# WHY IT BEATS gpt-oss:20b HERE, despite losing on a small prompt (1004 vs 1277
-# pe/s): it degrades far better, which is the property that actually stalls a
-# grown session.
-#   gemma4-mlx   17,799 tok -> 16.3s (1095/s)   45,799 tok -> 54.0s (849/s)  -22%
-#   gpt-oss:20b  10,270 tok ->  9.7s (1057/s)   26,570 tok -> 42.6s (624/s)  -41%
-# gemma4 still holds 849/s at 45.8K where gpt-oss is already at 624/s at 26.6K,
-# and its ceiling is 262,144 vs 131,072. qwen3.5:9b remains slower than both.
-#
-# ONE RESIDENT MODEL, THREE ROLES. architecture/implementation/review all point at
-# gpt-oss:20b and differ only in reasoning level and context -- Ollama keeps ONE
-# copy. reasoning_router.py makes that real by translating reasoning_effort into
-# Ollama's native `think`, which is monotonic where reasoning_effort was not.
-#
-# NOT MEASURED: output QUALITY. This is a latency and footprint optimisation.
-# qwen3-coder:30b is no longer a supported candidate (removed from `preferred`
-# 2026-08-03). It may remain installed locally from benchmark work.
-# profile: 64gb
-# Declarative capability registry for 64 GB unified memory (Apple Silicon / M3 Max).
-#
-# Each entry is a CAPABILITY (intent), not a model name — but the real Ollama backend
-# is always right here (`active`), never hidden. Agents request the capability; the
-# router (LiteLLM) resolves it to `active`.
-#
-# Fields:
-#   role         human label shown in `ailocal status`
-#   active       the Ollama backend in use (what the generator emits, what runs)
-#   preferred    evaluated alternatives, best first — a decision record. The generator
-#                uses `active`; switching model is a one-line `active:` change. Keep the
-#                others so six months from now you compare, not remember.
-#   context      num_ctx
-#   temperature / num_predict   sampling (forwarded to LiteLLM)
-#   keep_alive   idle TTL AND the residency signal. `-1`/`forever`/`persistent` pin the model
-#                (resident); a duration (e.g. 20m) lets it self-unload when idle (rotating).
-#                Per-request keep_alive beats the global default.
-#                This is the ONLY residency lever Ollama consumes; there is no separate priority
-#                field (Ollama evicts LRU under OLLAMA_MAX_LOADED_MODELS pressure).
-#   persona      persona_injector merges config/instructions/<capability>.md at request time.
-#   purpose/strengths/weaknesses   why this model was chosen — read before swapping it.
-#
-# NOTE: capabilities are TOP-LEVEL keys (not nested under a `capabilities:` map) so the
-# stdlib parser and the shell resolvers stay simple. Lists are flow-style [a, b, c].
-# Run ./scripts/sync-models.sh after any change.
-
+# Model selection evidence lives in docs/BENCHMARK.md. Engine behaviour
+# (context enforcement, truncation) is owned by config/litellm/registry.yaml.
 disk_gb: 40
 
 # ── architecture — shared large-context coding/reasoning tier ─────────────────
@@ -82,26 +17,6 @@ disk_gb: 40
 architecture:
   role: Lead architect
   active: gemma4:26b-mlx
-  # Rollback: qwen3-coder:30b-a3b-q4_K_M was REMOVED from `preferred` on
-  # 2026-08-03 -- it is not a supported candidate and must not be presented as
-  # one. It may still be installed locally from earlier benchmark work; if it is,
-  # reverting is a one-line `active:` change plus ./scripts/sync-models.sh, but
-  # `ollama pull` may be needed first. The benchmark tables above are retained
-  # as historical evidence, not as a current recommendation.
-  # PROMPT EVAL, corrected [REAL]: 971 tok/s on a cold 4,013-token prompt, vs
-  # 353 for the dense 14b — ~2.75x faster, which is what matters because prompt
-  # eval is the mechanism behind the Claude first-byte timeout.
-  #
-  # An earlier figure of 1705 tok/s was WRONG: it came from a best-of-2 loop that
-  # selected the cached run. Re-sending an identical prompt reports the same
-  # prompt_eval_count with the duration collapsing 4134 ms -> 16.8 ms, i.e.
-  # 239,525 tok/s, because the KV cache is reused and nothing is evaluated.
-  # Any prompt-eval measurement must use a COLD, large prompt.
-  #
-  # MEASURED: this is MoE — 128 experts, 8 used, ~3B ACTIVE params per token.
-  # That is why it beats the dense qwen3.6:27b at 197 vs 90 chunks/s despite
-  # being nominally larger. Daily coding velocity is the priority; the dense
-  # model's thinking/vision did not pay for ~2x slower generation.
   reasoning: true          # gpt-oss:20b HAS thinking; qwen3-coder did not
   context_input: 81920
   max_output: 16384
@@ -114,20 +29,7 @@ architecture:
   top_p: 0.9
   top_k: 20
   repeat_penalty: 1.0
-  # SAMPLING RATIONALE
-  #   temperature 0.1 / top_p 0.9 / top_k 20 — this is the PRIMARY CODING and
-  #   agent model, not a separate design tier, so it wants determinism. An
-  #   earlier revision used 0.3/0.95/40 on the assumption that architecture work
-  #   wants exploration; that was the wrong reading of the role.
-  #   repeat_penalty 1.0 = NO penalty, set explicitly rather than left to a
-  #   backend default. Penalties hurt code, which legitimately repeats (imports,
-  #   boilerplate, closing braces, similar error handlers).
-  # THINKING
-  #   MEASURED: qwen3-coder:30b-a3b has NO `thinking` capability
-  #   (Ollama /api/show). Thinking cannot be enabled here at any setting. If
-  #   reasoning is wanted on architecture work, that needs a different model —
-  #   gpt-oss:20b reasons but its prompt eval is 261 vs 1705 tok/s, a 6.5x
-  #   regression on the metric behind the Claude timeout failure.
+  # Low temperature: answers must be reproducible across runs.
 # ── implementation — everyday working coder ──────────────────────────────────
 implementation:
   role: Daily coding
@@ -150,11 +52,7 @@ implementation:
   top_p: 0.9
   top_k: 20
   repeat_penalty: 1.0
-  # SAMPLING RATIONALE
-  #   temperature 0.1 — daily coding wants determinism, not creativity.
-  #   ASSUMED starting point. No penalties, for the same reason as above.
-  # THINKING
-  #   MEASURED: qwen2.5-coder:14b has NO `thinking` capability. N/A here.
+  # Low temperature: answers must be reproducible across runs.
 # ── review — code review / bug & security detection ──────────────────────────
 review:
   role: Code review
@@ -171,53 +69,27 @@ review:
   top_p: 0.9
   top_k: 20
   repeat_penalty: 1.0
-  # SAMPLING RATIONALE
-  #   temperature 0.2 — review should be reproducible; two runs over the same
-  #   diff should not disagree. ASSUMED starting point.
-  # THINKING: ON by default, and this is the ONLY tier where it is.
-  #   MEASURED: gpt-oss:20b reports `thinking`, and reasoning_content is
-  #   produced through the proxy. Reasoning is the point of a review tier and
-  #   latency is not critical there (307 ms ttft, 71.7 tok/s).
-  #
-  #   OVERRIDE CAVEAT [REAL]: reasoning_effort DOES reach the backend, but the
-  #   mapping is unreliable — `none` produced 120 reasoning chars while `high`
-  #   produced 54, i.e. inverted. This is BerriAI/litellm#15059 ("think
-  #   parameter for Ollama models are not mapped correctly"). Treat per-request
-  #   effort levels as UNRELIABLE until that lands; the per-role default below
-  #   is the control that actually works.
+  # Reasoning is on here and nowhere else: review is the one tier where thinking
+  # earns its latency. Per-request reasoning_effort is UNRELIABLE (BerriAI/litellm
+  # #15059 maps it incorrectly for Ollama); the per-role default below works.
 # ── fast — lightweight tool-enabled agent (NOT autocomplete) ────────────────
-# Deliberately NOT the completion tier. qwen3.5:4b has no FIM/insert capability
-# (verified against Ollama metadata: no fim_prefix/fim_suffix/fim_middle markers,
-# capabilities are completion/vision/tools/thinking with NO `insert`), so it
-# cannot serve inline autocomplete. Putting it there would break Continue/VS Code
-# infill *quietly* — the model would still answer, just never as a correct infill.
-#
-# What it IS good for: 262K context, native tool calling, and thinking, at 3.4 GB.
-# That makes it the right home for cheap agentic work that currently runs on a
-# far larger model — task classification, doc summarisation, quick single-file
-# edits — freeing implementation/architecture for real coding.
+# Deliberately not the completion tier: this model exposes no FIM/insert
+# capability, so inline autocomplete would fail QUIETLY.
 fast:
   role: Fast agent
   active: qwen3.5:2b
   preferred: [qwen3.5:2b]
-  # MEASURED 114 tok/s gen / 1056 tok/s prompt vs the 4b's 78 / 549 — fewer
-  # params beat lighter quantization, so Q8_0 won on SPEED, not just quality.
-  #
-  # reasoning DELIBERATELY false despite the model supporting it: with thinking
-  # on it emitted 19,056 reasoning characters and returned EMPTY content at both
-  # max_tokens 8 and 64 (finish_reason=length). This tier answers one word; it
-  # must not think itself out of its budget.
+  # reasoning is off although the model supports it: with thinking enabled it
+  # emitted ~19k reasoning characters and returned EMPTY content within its
+  # budget. This tier answers in a word or two and must not think itself out.
   reasoning: false
   context_input: 45056
   max_output: 4096
   temperature: 0.0
   keep_alive: 20m
-  # persona: true, but there is deliberately NO config/instructions/fast.md — this
-  # tier receives _core.md ONLY. Verified 2026-07-28: the instructions directory
-  # holds _core/architecture/implementation/review. A per-capability enhancer is
-  # absent on purpose; this tier answers in a word or two and every extra token of
-  # system prompt is a larger share of its budget than for any other tier. Add
-  # fast.md if that changes — the injector picks it up with no code change.
+  # No config/instructions/fast.md on purpose: this tier gets _core.md only, so
+  # every extra system-prompt token is a larger share of its small budget. Adding
+  # the file is enough to change that -- the injector needs no code change.
   persona: true
   purpose: [task classification, doc summarisation, quick edits, tool-driven lookups]
   strengths: [tiny footprint, native tool calling, very long context, low latency]
@@ -225,13 +97,7 @@ fast:
   top_p: 0.9
   top_k: 20
   repeat_penalty: 1.0
-  # SAMPLING RATIONALE
-  #   temperature 0.0 — this tier emits one word. Any sampling variance is pure
-  #   downside for a classifier.
-  # THINKING: OFF, permanently, despite the model supporting it.
-  #   MEASURED: with thinking enabled qwen3.5:2b emitted 19,056 reasoning
-  #   characters and returned EMPTY content at BOTH max_tokens 8 and 64
-  #   (finish_reason=length). It thinks past its budget and never answers.
+  # Low temperature: answers must be reproducible across runs.
 # ── completion — inline autocomplete (FIM) ───────────────────────────────────
 # STANDBY — not in active use. Zero recorded requests across every trace, and the
 # only consumer (Continue) is not installed. Kept mapped so inline autocomplete
@@ -253,10 +119,7 @@ completion:
   top_p: 0.9
   top_k: 20
   repeat_penalty: 1.0
-  # SAMPLING RATIONALE
-  #   temperature 0.1 — infill must match surrounding style, not invent.
-  # THINKING: N/A (no capability). num_predict stays small: this tier is
-  #   latency-bound, and a long completion is worse than a short correct one.
+  # Low temperature: answers must be reproducible across runs.
 # ── embeddings — semantic retrieval (INFRASTRUCTURE) ─────────────────────────
 embeddings:
   role: Semantic retrieval
