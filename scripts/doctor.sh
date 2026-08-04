@@ -304,6 +304,31 @@ echo "        ~28K -> 85 s    ~58K -> 341 s    ~88K -> 789 s (13 min)"
 echo "      A cache MISS at large context is what exceeds the client timeout."
 echo "      See docs/troubleshooting.md, 'architecture route stalls'."
 
+# ── VS Code (informational) ─────────────────────────────────────────────────
+# The connector's endpoint + API key live in VS Code SecretStorage (Keychain),
+# which no script can seed. install-vscode.sh says so once, at install time,
+# and then nothing ever mentions it again -- so a half-configured VS Code looked
+# identical to a working one. MEASURED 2026-08-03: the extension was installed
+# and its settings present, yet ZERO VS Code requests had ever reached LiteLLM
+# (24 captures on disk, none from Copilot or Continue). Never fatal: VS Code is
+# an optional surface and its absence must not fail an otherwise healthy stack.
+step "VS Code (optional)"
+if command -v code >/dev/null 2>&1; then
+  if code --list-extensions 2>/dev/null | grep -qi '^gethnet\.litellm-connector-copilot$'; then
+    info "LiteLLM Connector installed"
+    echo "      Endpoint + key must be added ONCE in VS Code (SecretStorage):"
+    echo "        Chat > Manage Models > Custom Endpoint  ->  ${AILOCAL_BASE_URL:-http://localhost:4000}/v1"
+    echo "      Until then the extension is installed but NOT operational."
+  else
+    info "LiteLLM Connector not installed — run: ./scripts/install-vscode.sh"
+  fi
+  code --list-extensions 2>/dev/null | grep -qi '^continue\.continue$' \
+    && info "Continue installed (local FIM autocomplete available)" \
+    || info "Continue not installed — ~/.continue/config.json is not generated"
+else
+  info "VS Code 'code' CLI not on PATH — skipping"
+fi
+
 if [ "$ok" = true ]; then
   echo
   echo "▶ DOCTOR: OK — ailocal looks healthy"

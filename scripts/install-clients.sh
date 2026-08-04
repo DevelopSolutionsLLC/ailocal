@@ -399,12 +399,42 @@ PYEOF
   # a managed ~/.continue/config.json: chat/edit through the proxy, autocomplete
   # DIRECT to Ollama (FIM through the proxy is unreliable — continuedev/continue#2907).
   # The user's existing file is backed up first.
+  # CONDITIONAL ON THE EXTENSION BEING INSTALLED (2026-08-03). This block used
+  # to run unconditionally: it created ~/.continue/, wrote a config carrying the
+  # LiteLLM key, and took a timestamped backup on EVERY install/repair. On this
+  # machine that produced four backups of a file no extension ever read --
+  # Continue is not installed, no VS Code request has ever reached LiteLLM (24
+  # captures on disk, zero from Continue or Copilot), and no README or support
+  # matrix claims Continue support. Writing a keyed config for absent software
+  # is both dead output and a needless place for a secret to sit.
+  #
+  # Continue stays SUPPORTED-IF-PRESENT rather than deleted: the generator and
+  # template are small, the FIM route it provides is real (Copilot cannot do
+  # local autocomplete), and `AILOCAL_CONTINUE=1` lets a user opt in before
+  # installing the extension. Never installs Continue on the user's behalf.
   CONTINUE_CFG="$HOME/.continue/config.json"
-  mkdir -p "$HOME/.continue"
-  backup "$CONTINUE_CFG" || true
-  sed "s|__LITELLM_KEY__|${LITELLM_KEY}|g" \
-      "$ROOT_DIR/config/clients/continue/config.json" > "$CONTINUE_CFG"
-  info "Continue config deployed to ~/.continue/config.json (autocomplete: qwen2.5-coder:3b direct to Ollama)"
+  _continue_present=0
+  if [ -n "${AILOCAL_CONTINUE:-}" ]; then
+    _continue_present=1
+  elif command -v code >/dev/null 2>&1 && \
+       code --list-extensions 2>/dev/null | grep -qi '^continue\.continue$'; then
+    _continue_present=1
+  elif [ -f "$CONTINUE_CFG" ]; then
+    # Already managed here previously — keep it current rather than stranding a
+    # stale key in a file we wrote.
+    _continue_present=1
+  fi
+
+  if [ "$_continue_present" = "1" ]; then
+    mkdir -p "$HOME/.continue"
+    backup "$CONTINUE_CFG" || true
+    sed "s|__LITELLM_KEY__|${LITELLM_KEY}|g" \
+        "$ROOT_DIR/config/clients/continue/config.json" > "$CONTINUE_CFG"
+    info "Continue config deployed to ~/.continue/config.json (autocomplete: qwen2.5-coder:3b direct to Ollama)"
+  else
+    info "Continue extension not installed — skipping ~/.continue/config.json"
+    info "  install 'continue.continue' then re-run, or set AILOCAL_CONTINUE=1 to force"
+  fi
 
   # Put the key on the clipboard so it's a one-paste into the Manage Models dialog.
   if command -v pbcopy >/dev/null 2>&1; then
