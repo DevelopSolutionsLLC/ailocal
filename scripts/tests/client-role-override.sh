@@ -6,14 +6,8 @@
 # The stub must be a real executable, not a shell function — claude-local calls
 # `env "${slots[@]}" ... claude`, and env execs a binary.
 set -uo pipefail
-ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/harness.sh"
 CONFIGURE="$ROOT_DIR/config/clients/configure.zsh"
-fails=0
-
-check() {
-  if [ "$1" = 0 ]; then printf '  \033[32mPASS\033[0m  %s\n' "$2"
-  else printf '  \033[31mFAIL\033[0m  %s\n' "$2"; [ -n "${3:-}" ] && echo "        $3"; fails=$((fails + 1)); fi
-}
 
 STUB="$(mktemp -d)"; trap 'rm -rf "$STUB"' EXIT
 cat > "$STUB/claude" <<'EOF'
@@ -104,6 +98,4 @@ check $([ -n "$ovr" ] && [ "$ovr" -gt "$gen_end" ] && echo 0 || echo 1) \
 check $([ "$(grep -c 'AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE' "$CONFIGURE")" -ge 1 ] && echo 0 || echo 1) \
   "override logic survives sync-models.py regeneration"
 
-echo
-if [ "$fails" -gt 0 ]; then echo "FAILED ($fails)"; exit 1; fi
-echo "all client role override checks passed"
+report || exit 1
