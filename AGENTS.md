@@ -43,8 +43,10 @@ Two source files drive everything:
 ## Golden rule
 
 **Use capability names only** in client configs and scripts — never backend tags
-(`qwen3-coder:30b-a3b-q4_K_M`). The router owns context, sampling, and per-role
-lifecycle. Agents request a capability; they never name a model.
+(`gemma4:26b-mlx`). The router owns context, sampling, and per-role lifecycle.
+Agents request a capability; they never name a model. The example here is
+deliberately the CURRENT active model: an illustration written with a retired
+tag reads like a stale claim about what is deployed.
 
 **`completion` is FIM/autocomplete only** — a small dedicated model (tier-
 specific: check `config/profiles/<tier>.yaml`) at `num_ctx` 4096. Never map a
