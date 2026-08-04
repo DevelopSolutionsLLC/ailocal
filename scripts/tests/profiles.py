@@ -21,18 +21,15 @@ import re
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from harness import REPO, Suite
+
 PROFILES = ("16gb", "32gb", "64gb", "128gb")
 CAPABILITIES = ("architecture", "implementation", "review",
                 "fast", "completion", "embeddings")
 
-failures = []
-
-
-def check(ok, label, detail=""):
-    print(f"  {'PASS' if ok else 'FAIL'}  {label}")
-    if not ok:
-        failures.append(f"{label}: {detail}")
+_suite = Suite()
+check = _suite.check
 
 
 def parse(tier):
@@ -276,10 +273,4 @@ check("85 GB" not in readme,
 check("only the **64 gb** profile is active" not in readme.lower(),
       "README no longer claims a single active profile")
 
-print()
-if failures:
-    print(f"PROFILES: {len(failures)} FAILED")
-    for f in failures:
-        print(f"  - {f}")
-    sys.exit(1)
-print("PROFILES: all checks passed")
+sys.exit(_suite.report())

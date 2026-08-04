@@ -20,25 +20,18 @@ import sys
 import tempfile
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from harness import REPO, Suite, load_module
 sys.path.insert(0, str(REPO / "scripts" / "lib"))
 import benchmark as B  # noqa: E402
 
-failures: list[str] = []
-
-
-def check(cond: object, label: str) -> None:
-    print(f"  {'✓' if cond else '✗'} {label}")
-    if not cond:
-        failures.append(label)
+_suite = Suite()
+check = _suite.check
 
 
 def load_driver():
-    spec = importlib.util.spec_from_file_location(
-        "planner_driver", REPO / "scripts" / "benchmarks/planner-comparison.py")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    return load_module("planner_driver",
+                       REPO / "scripts" / "benchmarks/planner-comparison.py")
 
 
 D = load_driver()
@@ -493,13 +486,7 @@ def main() -> int:
     check(bad == 0, f"all historical trace records still parse ({len(hist)} files)")
 
     print()
-    if failures:
-        print(f"PLANNER DRIVER: {len(failures)} FAILED")
-        for f in failures:
-            print(f"  - {f}")
-        return 1
-    print("PLANNER DRIVER: all checks passed")
-    return 0
+    return _suite.report()
 
 
 if __name__ == "__main__":

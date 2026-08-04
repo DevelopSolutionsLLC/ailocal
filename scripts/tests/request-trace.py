@@ -24,16 +24,12 @@ import re
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from harness import REPO, Suite
 TRACE = REPO / "config" / "litellm" / "request_trace.py"
 
-failures: list[str] = []
-
-
-def check(cond: object, label: str) -> None:
-    print(f"  {'✓' if cond else '✗'} {label}")
-    if not cond:
-        failures.append(label)
+_suite = Suite()
+check = _suite.check
 
 
 def load_helpers():
@@ -356,14 +352,7 @@ def main() -> int:
     context_metadata_checks()
     historical_compatibility_checks()
 
-    print()
-    if failures:
-        print(f"REQUEST TRACE: {len(failures)} FAILED")
-        for f in failures:
-            print(f"  - {f}")
-        return 1
-    print("REQUEST TRACE: all checks passed")
-    return 0
+    return _suite.report()
 
 
 if __name__ == "__main__":

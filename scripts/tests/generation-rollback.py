@@ -34,23 +34,20 @@ import os
 import pathlib
 import sys
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from harness import REPO, Suite, load_module
+
+ROOT = REPO
 FAIL_AFTER = 3
 
-failures: list[str] = []
-
-
-def check(ok: object, label: str) -> None:
-    print(f"  {'PASS' if ok else 'FAIL'}  {label}")
-    if not ok:
-        failures.append(label)
+_suite = Suite()
+check = _suite.check
 
 
 def load_sync():
-    spec = importlib.util.spec_from_file_location("sm", ROOT / "scripts" / "sync-models.py")
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)          # type: ignore[union-attr]
-    return m
+    return load_module("sync_models", ROOT / "scripts" / "sync-models.py")
 
 
 def digest(p: pathlib.Path) -> str:
@@ -142,13 +139,7 @@ def main() -> int:
             pass
 
     print()
-    if failures:
-        print(f"GENERATION ROLLBACK: {len(failures)} FAILED")
-        for f in failures:
-            print(f"  - {f}")
-        return 1
-    print("GENERATION ROLLBACK: all checks passed")
-    return 0
+    return _suite.report()
 
 
 if __name__ == "__main__":

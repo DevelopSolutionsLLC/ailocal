@@ -30,12 +30,15 @@ sys.modules["litellm"] = types.ModuleType("litellm")
 sys.modules["litellm.integrations"] = types.ModuleType("litellm.integrations")
 sys.modules["litellm.integrations.custom_logger"] = _clog
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from harness import REPO, Suite, load_module
+
+ROOT = str(REPO)
 os.environ.setdefault("AILOCAL_INSTRUCTIONS_DIR", "/nonexistent")   # _load_personas → {} (we override)
-_spec = importlib.util.spec_from_file_location(
-    "persona_injector", os.path.join(ROOT, "config/litellm/persona_injector.py"))
-pi = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(pi)
+pi = load_module("persona_injector",
+                 os.path.join(ROOT, "config/litellm/persona_injector.py"))
 
 # Deterministic state: known personas + one compat alias (claude-* → ailocal-*).
 inj = pi.PersonaInjector()
@@ -43,12 +46,8 @@ inj.personas = {"implementation": "IMPL_XYZ", "architecture": "ARCH_XYZ", "revie
 inj.alias = {"claude-sonnet-4-6": "ailocal-implementation"}
 
 P = "IMPL_XYZ"
-fails = 0
-def check(cond, name):
-    global fails
-    print(f"  {'✓' if cond else '✗'} {name}")
-    if not cond:
-        fails += 1
+_suite = Suite()
+check = _suite.check
 
 def hook(data, call_type):
     return asyncio.run(inj.async_pre_call_hook(None, None, data, call_type))
@@ -105,7 +104,4 @@ hook(data, "anthropic_messages"); hook(data, "anthropic_messages")
 check(data["system"].count(P) == 1, "anthropic: injection is idempotent (no doubling)")
 
 print()
-if fails:
-    print(f"PERSONA INJECTION TESTS: {fails} FAILED")
-    sys.exit(1)
-print("PERSONA INJECTION TESTS: OK")
+sys.exit(_suite.report())

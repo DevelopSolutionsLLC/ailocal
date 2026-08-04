@@ -12,10 +12,13 @@ intended, which is strictly worse than the bug it fixes.
 
 Run: python3 scripts/tests/tool-repair.py   (stdlib only; exit 1 on failure)
 """
-import importlib.util
 import os
 import sys
 import types
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from harness import REPO, Suite, load_module
 
 try:
     from litellm.integrations.custom_logger import CustomLogger  # noqa: F401
@@ -28,19 +31,11 @@ except ImportError:
     sys.modules["litellm.integrations"] = types.ModuleType("litellm.integrations")
     sys.modules["litellm.integrations.custom_logger"] = _c
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-spec = importlib.util.spec_from_file_location(
-    "tool_repair", os.environ.get("AILOCAL_TOOL_REPAIR",
-                                  os.path.join(ROOT, "config/litellm/tool_repair.py")))
-tr = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(tr)
+tr = load_module("tool_repair", os.environ.get(
+    "AILOCAL_TOOL_REPAIR", REPO / "config/litellm/tool_repair.py"))
 
-fails = 0
-def check(cond, name):
-    global fails
-    print(f"  {'PASS' if cond else 'FAIL'}  {name}")
-    if not cond:
-        fails += 1
+_suite = Suite()
+check = _suite.check
 
 TOOLS = [
     {"name": "Read", "description": "Read a file",
@@ -111,8 +106,4 @@ check(calls is None, "no declared tools -> never repairs")
 calls, _ = tr.recover("", TOOLS)
 check(calls is None, "empty content -> no crash")
 
-print()
-if fails:
-    print(f"TOOL REPAIR TESTS: {fails} FAILED")
-    sys.exit(1)
-print("TOOL REPAIR TESTS: OK")
+sys.exit(_suite.report())
