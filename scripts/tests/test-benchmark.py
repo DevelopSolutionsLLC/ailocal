@@ -417,7 +417,9 @@ check(f"Read(/{_wt}/**)" not in fs["deny"], "the worktree itself is not denied")
 # WITHOUT being enumerated: naming them would only block the escapes we already
 # know about.
 gt = _pl.Path.home() / ".local/state/ailocal/benchmark/planner/HANDOFF.md"
-cad = _pl.Path("/Users/vtchevalier/Documents/DevelopSolutions/cadence")
+# A sibling checkout, resolved from this repo rather than a hardcoded home:
+# the fixture only needs a path OUTSIDE the worktree to test confinement.
+cad = _pl.Path(REPO).resolve().parent.parent / "DevelopSolutions" / "cadence"
 _roots = [d[len("Read(/"):-len("/**)")] for d in fs["deny"]]
 for label, target in (("ground truth", gt), ("cadence repo", cad)):
     covered = any(str(target).startswith(r.rstrip("/") + "/") for r in _roots)
