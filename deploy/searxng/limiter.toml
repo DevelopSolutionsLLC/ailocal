@@ -1,72 +1,13 @@
-# limiter.toml — quiets SearXNG's bot-detection startup noise. It does NOT turn
-# the limiter on: `server.limiter: false` in settings.yml governs that, and this
-# file is only the config botdetection loads when it initialises.
+# limiter.toml — bot-detection policy for a single-user local proxy.
 #
-# Two messages prompted this, both investigated on 2026-07-27 and both harmless:
-#
-#   WARNING searx.botdetection.config: missing config file .../limiter.toml
-#   ERROR   searx.botdetection: X-Forwarded-For nor X-Real-IP header is set!
-#
-# They are emitted once at startup and never recur (measured: repeated searches,
-# direct and over the LiteLLM docker network, produced zero further botdetection
-# lines and full results). The problem was not function, it was that an
-# ERROR-level line nobody can act on gets re-investigated every time someone
-# audits the logs — and worse, trains the reader to skim past real errors.
-#
-# Upstream documents trusted_proxies as the control for the IP-resolution
-# message (docs.searxng.org/admin/searx.limiter.html): when a request arrives
-# from a trusted proxy, the client IP is taken from X-Forwarded-For/X-Real-IP;
-# otherwise SearXNG falls back to REMOTE_ADDR, which is what already happens
-# here. Declaring the docker bridge and loopback as trusted makes that fallback
-# explicit instead of exceptional.
-#
-# Nothing here rate-limits anything. If the limiter is ever genuinely wanted
-# (i.e. this instance stops being private), turn on server.limiter and revisit
-# every value below — they are chosen for a single trusted local consumer.
+# SearXNG assumes public exposure. This instance is reachable only from
+# LiteLLM on the internal compose network, so the public-facing heuristics
+# produce noise rather than protection.
 
 [botdetection]
-# Who may set X-Forwarded-For/X-Real-IP on our behalf. LiteLLM talks to SearXNG
-# directly over the compose network, so the only callers are loopback and the
-# docker bridge.
-#
-# THIS VALUE DOES NOT CONTROL THE STARTUP ERROR, and neither does
-# `server.limiter: false`. Both were tested; the cause was then read out of the
-# installed 2026.7.31 source:
-#
-#   ERROR searx.botdetection: X-Forwarded-For nor X-Real-IP header is set!
-#
-#   searx/webapp.py:1395          app.wsgi_app = ProxyFix(app.wsgi_app)
-#   searx/botdetection/trusted_proxies.py:141
-#                                 if not x_forwarded_for and not x_real_ip:
-#                                     log_error_only_once(...)
-#
-# 1. ProxyFix is installed as WSGI middleware UNCONDITIONALLY at import time.
-#    It does not consult server.limiter, so disabling the limiter cannot stop
-#    it -- the limiter is already false here and the line still appears.
-# 2. The condition tests ONLY the two headers. `trusted_proxies` is not part of
-#    it, which is why `trusted_proxies = []` produced exactly one occurrence,
-#    identical to this populated list. That earlier hypothesis was wrong and is
-#    recorded here so it is not retried.
-# 3. log_error_only_once() dedupes on the message string, so it fires once per
-#    process -- on whichever header-less request arrives first (here the compose
-#    healthcheck's /healthz, ~5 s after worker start).
-# 4. Execution then continues to `elif orig_remote_addr:
-#    environ["REMOTE_ADDR"] = orig_remote_addr`. The REMOTE_ADDR fallback WORKS.
-#    The IP is resolved correctly; the message is cosmetic.
-#
-# MEASURED after the fix work: two direct SearXNG queries, two Claude-local
-# WebSearch turns and a full engine-health sweep produced ZERO further
-# botdetection lines -- one line per container start, total.
-#
-# No supported configuration removes it: it is unconditional upstream code
-# firing on a normal direct-client request. The alternatives are a global log
-# level (which would also hide real engine failures) or filtering by string,
-# and injecting a header purely to silence it would be faking proxy semantics
-# this deployment does not have. Left visible and documented.
-#
-# This replaced the older `[real_ip] x_for` key; on SearXNG 2026.7.24 that key
-# still loads but emits its own deprecation ERROR, which would have traded one
-# piece of noise for two.
+# Trusted proxies: LiteLLM is the only client, and it reaches SearXNG over the
+# internal network. Nothing outside the compose network can set these headers,
+# so accepting them here does not widen the trust boundary.
 trusted_proxies = [
   "127.0.0.0/8",
   "::1/128",
