@@ -6,6 +6,7 @@
 #   ailocal validate   end-to-end sanity: capabilities, backends, client mappings, aliases, sync
 #   ailocal validate --runtime   also probe the live proxy: /v1/models, advertised contexts, embeddings
 #   ailocal doctor     health check (scripts/doctor.sh)
+#   ailocal benchmark  developer benchmark suites (models|planner|gateway)
 #   ailocal security   container pins, digest drift, reachability (--scan for CVEs)
 #   ailocal sync       regenerate derived configs (scripts/sync-models.sh)
 #   ailocal start|stop|update|smoke    lifecycle
@@ -42,6 +43,27 @@ case "$cmd" in
   teardown) exec bash "$SCRIPTS/teardown.sh" "$@" ;;
   trace)    exec bash "$SCRIPTS/request-trace.sh" "$@" ;;
   metrics)  exec python3 "$SCRIPTS/gateway-metrics.py" "$@" ;;
+  # benchmark <suite> [...] — the one entry point to the benchmark subsystem.
+  benchmark)
+    suite="${1:-help}"; shift || true
+    case "$suite" in
+      models)  exec python3 "$SCRIPTS/benchmarks/models" "$@" ;;
+      planner) exec python3 "$SCRIPTS/benchmarks/planner-comparison.py" "$@" ;;
+      gateway) exec bash   "$SCRIPTS/benchmarks/tool-gateway.sh" "$@" ;;
+      *)
+        cat >&2 <<'BENCH'
+usage: ailocal benchmark <suite> [options]
+
+  models    evaluate candidate models (plan | run | probe | client |
+            setup | doctor | report)
+  planner   blinded A/B of planner candidates on a fixed scenario
+  gateway   A/B the tool gateway on a real client, report vs filter
+
+Benchmarks are a developer utility: they never modify a profile, and they are
+not part of install, update or the regression gate.
+BENCH
+        [ "$suite" = help ] && exit 0 || exit 2 ;;
+    esac ;;
   e2e)      # e2e <claude|codex|vscode>
             case "${1:-}" in
               claude) shift; exec bash "$SCRIPTS/validate-claude-e2e.sh" "$@" ;;
