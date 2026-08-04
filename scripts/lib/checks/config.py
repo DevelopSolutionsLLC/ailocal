@@ -260,6 +260,33 @@ def check_compose_layout() -> list[CheckResult]:
     return out
 
 
+def check_generated_in_sync() -> CheckResult:
+    """Regenerating must be a fixed point: drift means someone hand-edited.
+
+    Only meaningful for the ACTIVE tier -- generated files reflect that one.
+    """
+    import subprocess
+    try:
+        r = subprocess.run([str(REPO / "scripts" / "sync-models.sh"), "--check"],
+                           capture_output=True, text=True, timeout=180)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return CheckResult("generated-sync", BLOCKED,
+                           "cannot check generated drift", str(exc))
+    if r.returncode in (126, 127):
+        # The generator itself could not run (a missing tool, not drift).
+        # Reporting FAIL here would blame the configuration for a broken host.
+        return CheckResult("generated-sync", BLOCKED,
+                           "cannot check generated drift: the generator did not run",
+                           (r.stdout + r.stderr).strip()[-200:] or f"exit {r.returncode}")
+    if r.returncode == 0:
+        return CheckResult("generated-sync", PASS,
+                           (r.stdout.strip().splitlines() or ["generated files in sync"])[-1])
+    return CheckResult("generated-sync", FAIL,
+                       "generated files have drifted from their source",
+                       (r.stdout + r.stderr).strip()[-400:],
+                       "ailocal sync && commit the result")
+
+
 def deterministic_checks(tier: str | None = None) -> list[CheckResult]:
     """Everything `ailocal validate` runs. No live service calls."""
     results: list[CheckResult] = [check_active_tier()]
@@ -271,4 +298,7 @@ def deterministic_checks(tier: str | None = None) -> list[CheckResult]:
     results += [check_effective_profile(), check_alias_uniqueness(),
                 check_no_raw_backend_tags(), check_codex_no_mcp(),
                 check_mount_drift()]
+    # Generated-file drift only makes sense against the active tier.
+    if tier is None:
+        results.append(check_generated_in_sync())
     return results
