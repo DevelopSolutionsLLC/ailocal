@@ -17,6 +17,7 @@
 #
 # Usage: ./scripts/validate-codex-e2e.sh
 set -uo pipefail
+. "$(cd "$(dirname "$0")" && pwd)/lib/e2e.sh"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 . scripts/lib/compose.sh
@@ -159,24 +160,10 @@ run_codex() { # $1=slug $2=prompt
   # does NOT rewrite SSE framing -- that stays upstream's to fix.
   local budget="${AILOCAL_CODEX_TIMEOUT:-180}"
   LAST_BLOCKED=0
-  if command -v timeout >/dev/null 2>&1; then
-    timeout -k 5 "$budget" \
-      zsh -ic "cd '$WORK' && codex-local exec --dangerously-bypass-approvals-and-sandbox '$prompt'" \
-      > "$log" 2>&1
-    local rc=$?
-  else
-    zsh -ic "cd '$WORK' && codex-local exec --dangerously-bypass-approvals-and-sandbox '$prompt'" \
-      > "$log" 2>&1 &
-    local pid=$! rc=0 waited=0
-    while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt "$budget" ]; do
-      sleep 2; waited=$((waited + 2))
-    done
-    if kill -0 "$pid" 2>/dev/null; then kill -TERM -"$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null; rc=124; fi
-    wait "$pid" 2>/dev/null || true
-  fi
-  # Nothing of ours may outlive the budget.
-  pkill -f "codex-local exec" 2>/dev/null || true
-  pkill -f "codex exec"       2>/dev/null || true
+  e2e_run "$budget" "$log" \
+    zsh -ic "cd '$WORK' && codex-local exec --dangerously-bypass-approvals-and-sandbox '$prompt'"
+  local rc=$?
+  e2e_sweep "codex-local exec" "codex exec"
   if [ "${rc:-0}" -eq 124 ]; then
     if [ -s "$log" ]; then
       warn "BLOCKED_UPSTREAM_LITELLM_27442: content arrived, no terminal event within ${budget}s"
