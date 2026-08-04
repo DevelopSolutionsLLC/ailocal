@@ -31,7 +31,7 @@ def check_active_tier() -> CheckResult:
     except Exception as exc:
         return CheckResult("active-tier", FAIL, "cannot resolve the active profile",
                            f"{getattr(exc, 'code', type(exc).__name__)}: {exc}",
-                           "echo <tier> > config/active-profile")
+                           "ailocal install, or write the tier to .runtime/active-profile")
     return CheckResult("active-tier", PASS, f"active tier resolves ({tier})")
 
 

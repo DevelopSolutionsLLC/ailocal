@@ -451,8 +451,9 @@ if [ "$CURRENT" = "$RAM_TIER" ]; then
   info "active profile already $RAM_TIER"
 else
   [ "$CURRENT" != "none" ] && warn "active profile was '$CURRENT' — switching to $RAM_TIER"
+  mkdir -p "$(dirname "$ACTIVE_PROFILE")"
   echo "$RAM_TIER" > "$ACTIVE_PROFILE"
-  info "active profile set to $RAM_TIER (config/active-profile)"
+  info "active profile set to $RAM_TIER ($ACTIVE_PROFILE)"
 fi
 # Report the whole plan before anything is pulled. A disk warning that just says
 # "80 GB required" is unauditable; every number below names where it came from.

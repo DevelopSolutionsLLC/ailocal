@@ -2,7 +2,7 @@
 """policy.py — the ONE profile parser and resolver.
 
 config/profiles/<tier>.yaml is authoritative deployment configuration.
-config/active-profile selects a tier and HAS NO IMPLICIT DEFAULT.
+.runtime/active-profile selects a tier and HAS NO IMPLICIT DEFAULT.
 
 WHY NOT PyYAML — decided 2026-08-03, measured, do not re-litigate casually.
 PyYAML is genuinely absent from every interpreter ailocal can reach:
@@ -39,7 +39,7 @@ sync-models.py's load_models_yaml(), benchmark.py's parse_profile(), doctor.sh's
 sed extraction, and a `cat active-profile` in every shell entry point -- and they
 did not agree. Worse, the shell readers all shared one shape:
 
-    _TIER="$(cat config/active-profile 2>/dev/null || echo 64gb)"
+    _TIER="$(cat .runtime/active-profile 2>/dev/null || echo 64gb)"
 
 Eight occurrences across four scripts. Each one silently installs or runs the
 64 GB tier when the marker is missing, unreadable or empty. That is exactly the
@@ -61,6 +61,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import os
 from pathlib import Path
 
 REPO_DEFAULT = Path(__file__).resolve().parent.parent.parent
@@ -238,6 +239,22 @@ def parse_profile_text(text: str) -> dict:
 CLIENTS = ("claude", "codex", "continue", "compat")
 
 
+def runtime_root(repo_root=None) -> Path:
+    """Machine-specific generated and selected state.
+
+    Inside the checkout so that each checkout owns state matching its own
+    source, and so Compose can mount it with a relative path. Never tracked.
+    AILOCAL_RUNTIME overrides it for tests.
+    """
+    override = os.environ.get("AILOCAL_RUNTIME")
+    return Path(override) if override else _root(repo_root) / ".runtime"
+
+
+def generated_path(name: str, repo_root=None) -> Path:
+    """A generated artifact under the runtime root."""
+    return runtime_root(repo_root) / name
+
+
 def profiles_dir(repo_root=None) -> Path:
     return _root(repo_root) / "config" / "profiles"
 
@@ -248,7 +265,7 @@ def profile_path(tier: str, repo_root=None) -> Path:
 
 def active_profile_path(repo_root=None) -> Path:
     """Where the selected tier is recorded. The only place this is spelled."""
-    return _root(repo_root) / "config" / "active-profile"
+    return runtime_root(repo_root) / "active-profile"
 
 
 def client_policy_path(repo_root=None) -> Path:
@@ -542,7 +559,7 @@ def load_effective(repo_root=None) -> dict:
             != data["config_sha256"]:
         raise ProfileError(EFFECTIVE_PROFILE_HASH_INVALID, "config_sha256")
 
-    marker = root / "config" / "active-profile"
+    marker = active_profile_path(root)
     if not marker.exists():
         raise ProfileError(ACTIVE_PROFILE_MISSING, str(marker))
     if marker.read_text().strip() != data["tier"]:
