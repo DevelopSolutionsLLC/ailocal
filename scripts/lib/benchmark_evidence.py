@@ -35,6 +35,16 @@ def state_dir() -> Path:
     return p
 
 
+def tooling_dir() -> Path:
+    """Third-party benchmark tooling: the lm-eval venv and the RULER checkout.
+
+    XDG_DATA_HOME rather than the state root: these are installed artifacts, not
+    machine state, and re-downloading them costs hundreds of megabytes.
+    """
+    base = os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")
+    return Path(base) / "ailocal" / "benchmark"
+
+
 def runtime_dir() -> Path:
     p = state_dir() / "runtime"
     p.mkdir(parents=True, exist_ok=True)
