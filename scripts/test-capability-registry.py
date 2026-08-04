@@ -116,8 +116,15 @@ _ctx = {c: reg.max_context(f"ailocal-{c}")
         for c in ("architecture", "fast", "implementation", "review", "completion")}
 check(all(isinstance(v, int) and v > 0 for v in _ctx.values()),
       f"every local capability has a positive generated window ({_ctx})")
-check(_ctx["architecture"] > _ctx["fast"] > _ctx["implementation"],
-      f"windows descend architecture > fast > implementation ({_ctx})")
+# `fast > implementation` was NOT a durable invariant. It only held while
+# implementation was sized for a smaller model it no longer runs (16,384 input
+# on a 26B that architecture already drives at 81,920). Correcting that to
+# 65,536 on 2026-08-03 put implementation above fast, which is intended, so the
+# assertion was testing the stale policy rather than a property of the pipeline.
+# What is actually invariant: architecture is the largest window, because it is
+# the role defined as carrying whole-repository context.
+check(_ctx["architecture"] == max(_ctx.values()),
+      f"architecture has the largest generated window ({_ctx})")
 check(_ctx["completion"] == min(_ctx.values()),
       f"completion is the smallest window ({_ctx['completion']})")
 check(reg.max_context("claude-3-5-sonnet-2024-10-22") == 200000,

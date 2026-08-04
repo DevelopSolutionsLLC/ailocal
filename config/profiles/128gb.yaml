@@ -1,3 +1,22 @@
+# ── TIER STATUS: PENDING_HARDWARE_VALIDATION (2026-08-03) ───────────────────
+# This tier is IDENTICAL to 64gb and is NOT a validated 128 GB deployment.
+#
+# implementation/review context_input was raised 16,384/20,480 -> 65,536 to
+# mirror the 64gb correction. That is not a 128 GB sizing decision: leaving the
+# old values would have made the LARGEST tier carry LESS context than 64gb,
+# which is worse than a duplicate. It mirrors values measured on 64 GB hardware.
+#
+# The real 128 GB candidate (context_input 131,072 / max_output 16,384 /
+# total 147,456) was previously shown to LOAD but was never FILLED. Load memory
+# proves nothing here because MLX allocates KV lazily -- measured on this
+# machine: resident rose 19.26 -> 21.45 GB only as real tokens arrived.
+#
+# Do NOT mark this tier complete, and do NOT raise these values, until a filled
+# ~128K measurement is taken ON 128 GB HARDWARE. A 64 GB machine cannot produce
+# a representative result: a single filled 87K request already left 2.24 GB
+# free here, so a 128K arm would measure memory pressure, not the tier.
+status: pending-hardware-validation
+
 # ── MEASURED 2026-07-31 (this machine, cold ~8K prompt, 2 reps, median) ─────
 #   model                  prompt_eval  decode   ttft   vram
 #   qwen3.5:2b                3108/s    106/s    4.9s   2.4G
@@ -153,7 +172,7 @@ implementation:
   # VERIFIED capabilities: tools YES, insert YES, thinking NO.
   preferred: [qwen2.5-coder:14b-instruct-q4_K_M, qwen3-coder:30b-a3b-q4_K_M]
   reasoning: true
-  context_input: 16384
+  context_input: 65536
   max_output: 8192
   temperature: 0.1
   keep_alive: -1           # same physical model as architecture; one resident copy
@@ -175,7 +194,7 @@ review:
   active: gemma4:26b-mlx
   preferred: [gpt-oss:20b, deepseek-coder-v2:16b-lite-instruct-q4_K_M]
   reasoning: true          # VERIFIED: thinking AND tools (deepseek had NO tools)
-  context_input: 20480
+  context_input: 65536
   max_output: 4096
   temperature: 0.2
   keep_alive: -1           # same physical model as architecture; one resident copy
