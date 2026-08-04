@@ -29,6 +29,7 @@
 # repository. Exported so the compose files can mount it by absolute path.
 # policy.py is the one implementation of this path; shell asks rather than
 # repeating the default expression.
+export AILOCAL_PROXY="${AILOCAL_PROXY:-http://127.0.0.1:4000}"
 export AILOCAL_STATE="${AILOCAL_STATE:-$("$AILOCAL_ROOT/scripts/profile-config" state-root)}"
 mkdir -p "$AILOCAL_STATE"
 
@@ -110,6 +111,24 @@ ailocal_render_searxng_settings() {
   chmod 600 "$tmp" && mv -f "$tmp" "$out" || {
     rm -f "$tmp"
     echo "BRAVE_SETTINGS_GENERATION_FAILED: atomic replace failed" >&2; return 1; }
+  return 0
+}
+
+# Wait until the proxy accepts requests. /health/liveliness returns 200 as soon
+# as LiteLLM is listening; the full /health endpoint blocks on every model and
+# fails when Ollama is down, so it is the wrong signal here.
+#
+#   ailocal_wait_ready [max_attempts] [progress]
+# Returns non-zero if it never became ready; callers decide how loud to be.
+ailocal_wait_ready() {
+  local max="${1:-30}" progress="${2:-}" attempts=0
+  until curl -sSf --max-time 3 "$AILOCAL_PROXY/health/liveliness" >/dev/null 2>&1; do
+    attempts=$((attempts + 1))
+    [ "$attempts" -ge "$max" ] && return 1
+    [ -n "$progress" ] && printf "  Waiting... (%ds)\r" $((attempts * 3))
+    sleep 3
+  done
+  [ -n "$progress" ] && printf "                    \r"
   return 0
 }
 

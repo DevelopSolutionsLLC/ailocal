@@ -564,16 +564,9 @@ run_next_steps() {
   echo
   step "Reloading LiteLLM"
   dc restart litellm searxng
-  attempts=0
-  until curl -sSf --max-time 3 http://localhost:4000/health/liveliness >/dev/null 2>&1; do
-    attempts=$((attempts + 1))
-    if [ $attempts -ge 30 ]; then
-      warn "LiteLLM did not become ready — check: docker logs ailocal-litellm"
-      break
-    fi
-    printf "  Waiting... (%ds)\r" $((attempts * 3))
-    sleep 3
-  done
+  if ! ailocal_wait_ready 30 progress; then
+    warn "LiteLLM did not become ready — check: docker logs ailocal-litellm"
+  fi
   echo ""
   info "LiteLLM ready"
 
