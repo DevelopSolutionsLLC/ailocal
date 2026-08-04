@@ -4,6 +4,36 @@
 config/profiles/<tier>.yaml is authoritative deployment configuration.
 config/active-profile selects a tier and HAS NO IMPLICIT DEFAULT.
 
+WHY NOT PyYAML — decided 2026-08-03, measured, do not re-litigate casually.
+PyYAML is genuinely absent from every interpreter ailocal can reach:
+/usr/bin/python3 (3.9.6), python3 (3.14.6) and Homebrew's — all three import
+`yaml` and fail. Using it therefore means provisioning and owning a virtual
+environment, not adding an import.
+
+  Constrained parser (this file + sync-models):
+    144 LOC total  -- _strip_comment 17, _coerce 19, parse_profile_text 32,
+    flow_list 15, _flow_list_from_str 9, flow_dict 11, load_models_yaml 15,
+    load_clients_yaml 26. Six test assertions. ZERO parsing defects across the
+    whole 64gb geometry migration, the Brave work and the tier corrections.
+
+  Core venv + PyYAML:
+    deletes those 144 LOC, then adds a pinned requirements file plus venv
+    provisioning in install.sh, validation in doctor.sh, refresh in update.sh
+    and removal in teardown.sh -- FOUR lifecycle touchpoints, one runtime
+    dependency, one new failure class ("venv missing or broken"), and network
+    on first install. Net production LOC roughly -84.
+
+Ownership, not line count, is the criterion: 144 lines parsing a schema this
+repository itself writes are cheaper to own than a dependency lifecycle spread
+across four scripts. The parser handles exactly the subset config/profiles and
+config/clients.yaml use, and generation is validated end-to-end by the gate, so
+a parsing error cannot reach a client silently.
+
+REVISIT only if: a profile needs YAML this subset cannot express (anchors,
+multi-line scalars, nested sequences of mappings), a parsing defect reaches
+generated output, or ailocal acquires a core venv for some OTHER reason -- at
+which point PyYAML rides along for free and this decision flips.
+
 WHY THIS EXISTS. Profile parsing had grown four independent implementations --
 sync-models.py's load_models_yaml(), benchmark.py's parse_profile(), doctor.sh's
 sed extraction, and a `cat active-profile` in every shell entry point -- and they

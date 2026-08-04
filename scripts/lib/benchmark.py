@@ -30,7 +30,9 @@ from pathlib import Path
 # The split below is BEHAVIOUR-PRESERVING. Every name these modules own is
 # re-exported here, so `import benchmark as B; B.run_client_turn(...)` keeps
 # working for scripts/benchmark-models, scripts/lib/ruler.py,
-# scripts/repro-output-limit.py and scripts/tests/test-benchmark.py.
+# scripts/tests/test-benchmark.py. (The A/B/C repro script that first
+# established this was deleted 2026-08-03: the hypothesis was FALSIFIED and
+# the contract is now enforced by that test, so the script only duplicated it.)
 from benchmark_evidence import (  # noqa: E402,F401
     EVIDENCE_COMPLETE,
     EVIDENCE_MISSING,
