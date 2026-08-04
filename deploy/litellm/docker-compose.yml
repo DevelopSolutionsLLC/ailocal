@@ -26,27 +26,10 @@ services:
 
   litellm:
     # Docs: https://docs.litellm.ai/docs/proxy/docker_quick_start
-    # PINNED BY DIGEST. LiteLLM 1.93.0 -- REVERTED from 1.94.1 on 2026-07-31.
     #
-    # 1.94.1 BREAKS codex-local: every turn through the custom-provider path ends
-    # in "stream disconnected before completion: stream closed before
-    # response.completed" after 10 reconnect attempts. Claude Code's Anthropic
-    # route is unaffected, which is why the upgrade passed a 17/17 gate -- the
-    # gate does not drive a real Codex session.
-    #
-    # SECURITY COST, accepted deliberately and tracked: 1.93.0 carries 5 fixable
-    # HIGH findings (pyasn1 0.6.3 x3, pypdf 6.13.3 x2) that 1.94.1 fixes. All are
-    # loopback-only. Re-upgrade once the Codex streaming fix lands.
-    #
-    # `main-stable` is a FLOATING tag: it moved under us, so the runtime was
-    # 1.93.0 while AGENTS.md still claimed 1.92.0 -- and the persona-injection
-    # behaviour recorded as "verified on 1.92.0" had been verified against a
-    # version we were no longer running. Documentation, validation environment
-    # and runtime must name the same release.
-    #
-    # To upgrade: pull the new digest, re-run scripts/test-all.sh and
-    # scripts/test-all.sh, then update this digest, AILOCAL_LITELLM_VERSION
-    # below, and the version in AGENTS.md together.
+    # Pinned by digest, not tag: a moving tag would change proxy behaviour without
+    # a commit. scripts/check-litellm-version.sh gates the running build against
+    # the validated version.
     image: ghcr.io/berriai/litellm@sha256:a1745e629abfb17d434426ff48b115f54f4f4c4a0f5af241de569e93c63c411e
     container_name: ailocal-litellm
     restart: unless-stopped
@@ -135,16 +118,6 @@ services:
       retries: 5
       start_period: 60s
 
-# ── Architecture Notes ──────────────────────────────────────────────────────
-#
-# The stack is intentionally minimal: LiteLLM + SearXNG in front of a
-# host-native Ollama. LiteLLM runs with NO database and NO cache.
-#
-# Removed services (unnecessary for local single-user agent use):
-#   caddy       — reverse proxy; clients hit :4000 directly, so it did nothing
-#   postgres    — only needed for spend logs / virtual keys / admin UI
-#   redis       — response cache; near-zero hit rate for coding agents
-#   open-webui  — browser chat UI; out of scope
-#   qdrant, mcp-server, prometheus, grafana — never used by this stack
-#
-# Security hardening (OWASP A05:2021): no-new-privileges + cap_drop ALL.
+# Ports bind 127.0.0.1 only: this proxy holds the master key and must not be
+# reachable off-host. SearXNG is reached over the internal network, not a
+# published port.
