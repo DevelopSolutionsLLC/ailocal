@@ -241,34 +241,66 @@ So, before adding code:
 Generated artifacts are outputs. Parse once, at generation time, and let
 everything downstream read JSON.
 
-## Locked requirements for the next schema migration
+## Schema and geometry: current measured state
 
-Carried forward, not yet implemented. Do not add these fields speculatively —
-add them with the consumers that read them.
+This replaced a "Locked requirements for the next schema migration" section
+whose ten items were carried forward as future work. All of them are now
+either implemented or decided against, and leaving them as requirements made
+future agents plan migrations that had already happened.
 
-1. Main roles target at least 64K usable input where hardware permits.
-2. Architecture may target 128K usable input only after memory, latency,
-   long-session and compaction validation.
-3. Architecture and implementation support a true 32K max output where validated.
-4. Fast and completion keep role-appropriate output ceilings.
-5. The schema must distinguish `context_input`, `max_output`, `total_context`
-   (derived as their sum) and `max_input_tokens`. Today `context` means the
-   TOTAL window in production and the INPUT budget in the benchmark — that
-   ambiguity is the root of the admission defect fixed in 23d2c19.
-6. Percentage-based auto-compaction stays profile-driven.
-7. Claude and Codex may implement compaction differently, but both derive
-   thresholds from the same profile policy. Today they do not: Claude uses
-   `window x pct` (65536 x 75), Codex an absolute
-   `model_auto_compact_token_limit`.
-8. Temperature, top_p, top_k, repeat_penalty, reasoning, thinking compatibility,
-   provider translation and model quirks remain explicit profile data.
-9. No model-specific compatibility behaviour scattered through benchmark,
-   LiteLLM, Claude or Codex generation code.
-10. Benchmarks consume production effective configuration plus explicit overlays.
+**Implemented.** The schema distinguishes `context_input`, `max_output`,
+`total_context` (derived as their sum) and `max_input_tokens`. `context` is
+retired and rejected: it meant the TOTAL window in production and the INPUT
+budget in the benchmark, and that ambiguity was the root of the admission
+defect. Every consumer calls `profile_config.geometry()`; nothing recomputes it.
 
-UNRESOLVED, blocking requirement 3 and any same-model geometry unification:
-Ollama runner reuse is not yet characterised. qwen3.5:2b RELOADS at the
-last-requested num_ctx (verified both up and down, 6 sequences). One gemma4
-observation contradicted this — a 24,576 request left the runner at 98,304.
-Repeat the sequence test on gemma4 before assuming three roles on one model can
-share a runner.
+**64 GB output policy is 16K / 8K / 4K by role** — architecture, implementation,
+review — with fast at 4K and completion at 128. Role-specific by design; do not
+unify them.
+
+**32K output is a supported setting, not a recommendation.** It is accepted by
+the backend but has never been validated as *sustained* output; the largest
+measured sustained generation is 8,399 tokens on architecture. Requirement 3
+("support a true 32K max output") was therefore decided against rather than
+implemented. Do not set a role to 32,768 output on the strength of acceptance.
+
+**Runner context enforcement is characterised** — this was the open question
+blocking same-model geometry unification, and it is closed:
+
+- **MLX: `dynamic_per_request`.** One resident runner serves different declared
+  `num_ctx` values; a 40K request succeeded while `/api/ps` still reported
+  24,576, with no truncation and provider token counts confirming the full
+  prompt. The earlier "one gemma4 observation contradicted this" note described
+  this behaviour before it was understood.
+- **llama.cpp: `fixed_runner_window`, front-truncating** (`keep=4`).
+
+Both are recorded in `config/litellm/registry.yaml` under `runtime_engines`
+with `revalidate_on_runtime_upgrade: true`. **Do not re-derive this** unless the
+Ollama or MLX runtime version changes. The related "duplicate runner keyed by
+(model, num_ctx)" theory was measured and **retracted**; different role
+geometries on one model do not imply duplicate resident copies.
+
+**Compaction is profile-driven and shares one owner.** Requirement 7 said Claude
+and Codex "today do not" derive from the same policy. They now do: both read the
+profile's `compaction` block. Claude receives `window x pct`; Codex receives an
+absolute limit derived from the same policy and **capped by `context_input`** --
+not `total_context`, which produced a trigger above what the backend admits and
+would have 400'd before compaction could fire.
+
+**Still true, keep enforcing:** tuned parameters (temperature, top_p, top_k,
+repeat_penalty, reasoning, provider, keep-alive, persona, quirks) stay explicit
+profile data; no model-specific behaviour is scattered through benchmark,
+LiteLLM, Claude or Codex generation code; benchmarks consume production
+effective configuration plus explicit overlays.
+
+**Genuinely open:**
+
+- **128 GB is `PENDING_HARDWARE_VALIDATION`.** It mirrors the measured 64 GB
+  values and is not a 128 GB design. The 131,072 / 16,384 candidate loads but
+  has never been *filled*; a 64 GB machine cannot measure it representatively.
+- **16 GB and 32 GB are structurally validated only** — never measured on that
+  hardware.
+- **Compaction's runtime trigger is unproven at the threshold.** The settings
+  are in place and a live session has been observed compacting and preserving
+  state, but no session in this repository has been driven to the configured
+  trigger to confirm the exact rule.

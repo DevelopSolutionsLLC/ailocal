@@ -134,9 +134,17 @@ Non-zero means the upstream fix has landed.
 
 ### What this does NOT affect
 
-Codex's non-streaming path and its ability to edit files are unaffected —
-`validate-codex-e2e.sh` shows it fixing a real bug across 10 `exec_command`
-calls with the test suite passing afterwards.
+Configuration, routing, geometry and tool-call transport are validated:
+`validate-codex-e2e.sh` records the proxy accepting the request and logging tool
+calls before the turn is abandoned, and an earlier run showed Codex fixing a real
+bug across 10 `exec_command` calls.
+
+**Do not read that as "non-streaming works".** `codex-local` is configured with
+`wire_api = "responses"`, so every interactive turn takes the streaming path and
+never terminates. No user-facing non-streaming `codex-local` workflow has been
+exercised against the current configuration, so the accurate statement is that
+interactive turns remain blocked by #27442 -- not that a non-streaming mode is
+supported.
 
 ## Architecture route stalls after 10-15 minutes
 
