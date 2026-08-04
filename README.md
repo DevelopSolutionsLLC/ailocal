@@ -213,4 +213,6 @@ delete it yourself if you want it gone.
 
 ## License
 
-[Apache License 2.0](LICENSE) — Copyright 2026 DevelopSolutions LLC.
+[Apache License 2.0](LICENSE) — Copyright © 2026 DevelopSolutions, LLC.
+
+Developed and maintained by Victor T. Chevalier for DevelopSolutions, LLC.
