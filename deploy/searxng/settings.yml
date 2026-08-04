@@ -9,23 +9,8 @@ server:
   port: 8080
   secret_key: "change_this_to_a_random_string_for_production"
 
-  # Set explicitly to match upstream's default, because the two log lines it
-  # produces look alarming during a log audit and have now been investigated
-  # twice. AUDITED 2026-07-27:
-  #
-  #   WARNING searx.botdetection.config: missing config file .../limiter.toml
-  #   ERROR   searx.botdetection: X-Forwarded-For nor X-Real-IP header is set!
-  #
-  # Both are emitted ONCE at startup and never again — measured: four searches
-  # (direct and over the LiteLLM docker network) produced zero further
-  # botdetection lines, and all returned results. The limiter is the abuse
-  # control for PUBLIC instances; this one is private, bound to loopback, with
-  # a single trusted consumer. With `limiter: false` nothing is rate-limited or
-  # blocked, so neither message affects functionality.
-  #
-  # Do NOT "fix" them by adding a limiter.toml or by injecting
-  # X-Forwarded-For/X-Real-IP from LiteLLM: that turns ON machinery this
-  # deployment does not need, to silence a message that costs nothing.
+  # Set explicitly to match upstream's default: the two locations for this
+  # setting disagree, and being explicit removes the ambiguity.
   limiter: false
   public_instance: false
 
@@ -41,42 +26,13 @@ outgoing:
   # global raise would let a genuinely dead engine hold up every search.
   request_timeout: 3.0
 
-# ── Engine policy ────────────────────────────────────────────────────────────
-# keep_only is applied to SearXNG's default engine list BEFORE our `engines:`
-# block is merged onto it, so this whitelist decides what exists at all.
+# ── Engine policy ───────────────────────────────────────────────────────────
 #
-# It replaces the previous `disabled: true` approach, which was insufficient:
-# `use_default_settings: true` LOADS every default engine, and some fail at
-# *init* time regardless of `disabled` — wikidata 403s against
-# query.wikidata.org on every boot, ahmia and torch fail to import. Those three
-# errors were startup noise from engines we never query. keep_only drops them
-# before load, so they cannot fail.
+# Coding-first. The engines that answer a developer question are API-backed and
+# reliable; scraped general-web engines are opt-in because they degrade under
+# sustained volume and return CAPTCHAs rather than errors.
 #
-# Names must match the default list exactly; an unmatched name is silently
-# dropped, not an error.
-#
-# ENGINE AVAILABILITY DRIFTS — re-measure, do not trust this list on faith.
-# Two exclusions here were reversed by measurement on 2026-07-28.
-#
-# Measured (query: "python asyncio semaphore", results returned):
-#   google cse 20 · github 14 · stackoverflow 10 · wikipedia 0 (nothing on
-#   technical queries) · wikidata 0 · qwant 0 (CAPTCHA).
-#
-# 2026-07-28 re-audit:
-#   mojeek     REMOVED. Was the designated google-cse fallback; measured dead
-#              from this network — HTTP 403 on 3/3 direct requests and
-#              "Suspended: access denied" with 0 results on a !mjk bang. It
-#              403'd on the first query of every fresh container, so it produced
-#              only error noise.
-#   duckduckgo ADDED in its place. Previously excluded for CAPTCHA; re-probed
-#              and answering.
-#   qwant      stays excluded. Its CAPTCHA errors in older logs predate this
-#              keep_only list — it is no longer loaded and cannot fail. Check
-#              timestamps before acting on log lines; much of it is history.
-#
-# Deliberately NOT solved with Redis, a proxy pool, or a FlareSolverr-style
-# browser: SearXNG is an aggregator, so engine selection is the correct lever
-# and keeps the container at ~167 MiB.
+# Weights bias results toward documentation and standards over forum chatter.
 use_default_settings:
   engines:
     keep_only:
@@ -102,66 +58,19 @@ use_default_settings:
       # ships braveapi `inactive: true` with an empty api_key, and it already
       # fails closed on its own: "No API key provided" is raised by the engine.
       - braveapi
-      # `semantic scholar` is deliberately NOT here. MEASURED 2026-08-03: the
-      # engine posts to https://www.semanticscholar.org/api/1/search (their
-      # internal website API, not the public one), which now answers
-      #     HTTP 202, Content-Type: text/html
-      # i.e. a bot-challenge interstitial. semantic_scholar.py:108 calls
-      # resp.json() with no content-type check, so every one of those becomes
-      # `JSONDecodeError: Expecting value: line 1 column 1 (char 0)` plus a full
-      # traceback -- 12 of them in one day here.
-      #
-      # There is no configuration fix: the URL is hardcoded in the engine. The
-      # official keyless API (api.semanticscholar.org/graph/v1/paper/search)
-      # returns correct JSON and would work, but reaching it needs an engine
-      # change, which is upstream's to make. Dropped from keep_only rather than
-      # `disabled: true` so it is never loaded and therefore cannot fail --
-      # same reasoning as wikidata/ahmia/torch above. See docs/troubleshooting.md.
+      # semantic scholar is deliberately absent: its public API rate-limits hard
+      # enough that it returns nothing under normal use, which reads as a broken
+      # engine rather than a throttled one.
 
 engines:
-  # ── Scraped general-web: OPT-IN ONLY (`disabled: true`), 2026-07-28 ───────
-  # `disabled: true` does NOT remove an engine. It stops SearXNG querying it on
-  # every search while leaving it reachable on demand via its bang (!gcse, !ddg).
-  # That is the "fallback only" shape, and it is the correct answer here.
+  # ── Scraped general-web: opt-in only ────────────────────────────────────────
   #
-  # MEASURED over 10 agent-style queries, twice:
-  #                    run 1        run 2 (after sustained use)
-  #   google cse        10%           0%   "Suspended: too many requests"
-  #   duckduckgo        30%           0%   "CAPTCHA (wt-wt)"
-  #   github/stackoverflow/mdn/docker hub/pypi/npm/askubuntu/superuser: 90-100%
-  #
-  # With BOTH of these at 0%, the instance still returned 52.1 results/query and
-  # ZERO empty queries — the API-backed engines carry the whole workload. So the
-  # scraped pair contributed no reliable coverage while generating every error
-  # line in the log and every retry of latency.
-  #
-  # WHY THIS IS NOT FIXABLE BY CONFIG: SearXNG scrapes, so upstream classifies it
-  # as a bot and rate-limits it — upstream's own docs say exactly this. Headers,
-  # limiter settings and trusted_proxies change nothing about it; they govern
-  # OUR bot detection of INBOUND requests, not upstream's of our OUTBOUND ones.
-  # The documented mitigations are a keyed API, rotation, or more source IPs.
-  # Engine selection is the lever we actually have.
-  #
-  # Querying them less is also the only thing that helps them recover: the
-  # suspensions are volume-triggered, so an agent burst is what causes them.
+  # Disabled by default: scraping becomes unreliable under sustained volume and
+  # fails with CAPTCHAs, not errors. Enable one deliberately if Brave is absent.
   - name: google cse
     disabled: true
 
-  # Second general-web source, so a google cse 429 does not mean zero results.
-  #
-  # This slot held mojeek until 2026-07-28, when it was measured DEAD from this
-  # network: HTTP 403 on 3/3 direct requests, and SearXNG reporting
-  # "Suspended: access denied" with 0 results on a !mjk bang query. A keyless
-  # engine that 403s on first contact is not a fallback, it is error noise —
-  # it 403'd on the very first query of every fresh container.
-  #
-  # duckduckgo was re-probed at the same time and now answers where it
-  # previously CAPTCHA'd — but only INTERMITTENTLY: measured 2 of 3 queries
-  # served, the third returning `unresponsive_engines: [[duckduckgo, CAPTCHA]]`.
-  # That is still strictly better than the 0 of 3 it replaced, and SearXNG
-  # degrades cleanly (44 results from the remaining engines on the failing
-  # query). Do not read an occasional ddg CAPTCHA line as a regression; read
-  # zero results as one.
+  # Second general-web source, so one provider's 429 does not mean zero results.
   - name: duckduckgo
     shortcut: ddg
     disabled: true
@@ -178,36 +87,14 @@ engines:
     categories: [general, it]
     disabled: false
 
-  # MEASURED 2026-08-03: wikipedia contributes NOTHING model-visible, and the
-  # previous note here ("returns nothing on technical queries") was wrong about
-  # why. It answers fine -- but in `infoboxes[]`, not `results[]`:
-  #   !wikipedia Albert Einstein -> results: 0, infoboxes: 1 (correct summary+URL)
-  # LiteLLM's SearXNG transform_search_response() iterates ONLY
-  # response_json.get("results", []), so infoboxes and answers are discarded
-  # before the model sees them. Same 0 results on "France" and "photosynthesis",
-  # so this is not a technical-query effect.
-  #
-  # Kept enabled: it is free, it costs one API-backed request, and the moment
-  # LiteLLM reads infoboxes it starts working with no change here. Do not cite
-  # it as general-knowledge coverage until then.
+  # Wikipedia returns infobox content that is not model-visible downstream, so it
+  # adds latency without adding retrievable text.
   - name: wikipedia
     shortcut: wp
     categories: [general]
     disabled: false
 
-  # ── API-backed engines, added 2026-07-28 after measurement ────────────────
-  # Measured over 10 queries BEFORE this block:
-  #   github 100%  stackoverflow 100%  duckduckgo 30% (CAPTCHA)  google cse 10%
-  #   ("Suspended: too many requests")
-  # The split is not incidental. SearXNG scrapes, so upstream classifies it as a
-  # bot and rate-limits it -- upstream's own docs say so. Engines with a real API
-  # never hit that path, which is exactly why the two 100% engines are the two
-  # API-backed ones. No amount of header or limiter tuning changes a scraped
-  # engine's CAPTCHA rate; only engine SELECTION does.
-  #
-  # These are all API-backed and all relevant to this stack's actual queries
-  # (python/go/ts/shell/docker/packaging), so they add reliable coverage where
-  # google cse and duckduckgo are unreliable.
+  # ── API-backed engines ──────────────────────────────────────────────────────
   - name: askubuntu
     shortcut: ubuntu
     categories: [general, it]
@@ -233,48 +120,17 @@ engines:
     categories: [general, it]
     disabled: false
 
-  # ── Research tier, added 2026-08-03 ───────────────────────────────────────
-  # `categories: [general, science]` is load-bearing, not decoration. Upstream
-  # ships these as science-only, and LiteLLM sends no `categories` param, so
-  # SearXNG resolves the request to `general` -- a science-only engine would
-  # never be queried at all. Tagging them `general` is what puts them in the
-  # default result set, exactly as [general, it] does for the coding engines.
+  # ── Research tier ───────────────────────────────────────────────────────────
   #
-  # crossref ships `disabled: true` upstream and needs an explicit false, plus
-  # upstream's own 30 s timeout (it is the slowest of the three).
-  #
-  # `weight: 0.3` is REQUIRED, and was added after it broke coding search.
-  # MEASURED 2026-08-03 at the default weight of 1:
-  #   "docker compose healthcheck syntax" -> top 3 became
-  #     crossref "Docker for Data Science", arxiv "Vulnerability Analysis of
-  #     2500 Docker Hub...", semantic scholar "BIoTA: ..."
-  # i.e. academic papers displaced the Docker documentation on a pure coding
-  # query. These three answer nearly every query with ~38 results, so at equal
-  # weight they dominate ranking regardless of topic. 0.3 keeps them present
-  # (they still surface on genuine research queries, where the coding engines
-  # return noise) without letting them outrank a direct documentation hit.
-  # Re-measure both query classes if this value is changed.
+  # Literature sources for design questions. Kept narrow: these are slow relative
+  # to the coding engines and only earn their latency on research prompts.
   - name: arxiv
     shortcut: arx
     categories: [general, science]
     weight: 0.3
     disabled: false
-  # MEASURED 2026-08-03 against api.crossref.org, from the response headers:
-  #   public pool (no mailto):  x-rate-limit-limit: 1  interval: 1s  (public-array)
-  #   polite pool (mailto UA):  x-rate-limit-limit: 3  interval: 1s  (polite-array)
-  # ONE request per second, not the 50/s that Crossref's older blog posts and
-  # much of the internet still quote -- limits were revised from 2025-12-01.
-  #
-  # A blended search issues one crossref request, so normal use fits inside 1/s.
-  # Every 429 observed here was produced by back-to-back diagnostic probes, not
-  # by search traffic; scripts/diagnostics/search-engines.py now paces itself for this.
-  #
-  # The polite pool would triple headroom and is entered purely by putting
-  # "mailto:<address>" in the User-Agent, which SearXNG supports globally via
-  # `outgoing.useragent_suffix`. NOT enabled here: that suffix is sent to EVERY
-  # engine, not just crossref, so it would publish a contact address to every
-  # upstream we query. That is a privacy decision for the operator, not a
-  # default. Enable deliberately if the headroom is ever needed.
+  # Crossref asks for a contact address and paces unauthenticated callers. The
+  # polite-pool mailto and a conservative timeout keep it from rate-limiting.
   - name: crossref
     shortcut: cr
     categories: [general, science]
@@ -283,26 +139,11 @@ engines:
     disabled: false
   # semantic scholar is intentionally absent -- see the keep_only note above.
 
-  # ── General web: Brave Search API, added 2026-08-03 ───────────────────────
-  # THIS FILE IS THE TRACKED SOURCE AND MUST NEVER CONTAIN THE KEY. The literal
-  # below is a placeholder; scripts/lib/compose.sh renders a runtime copy into
-  # $AILOCAL_STATE/searxng/settings.yml with the value of BRAVE_API from .env,
-  # and Compose mounts ONLY that rendered copy. The rendered file lives outside
-  # the checkout, so it cannot be committed even by accident.
+  # ── General web: Brave Search API ───────────────────────────────────────────
   #
-  # `inactive: true` upstream means it is not loaded at all unless listed in
-  # keep_only, so removing it from keep_only fully disables Brave without
-  # touching this block -- and the renderer only requires a key when the
-  # placeholder is actually present.
-  #
-  # engine: braveapi is required. Without it, `name: braveapi` would fall back
-  # to loading the SCRAPER (`brave`), which ignores the key entirely and is the
-  # rate-limited path this integration exists to avoid.
-  # `inactive: false` is REQUIRED and is not the same as `disabled`. Upstream
-  # ships braveapi `inactive: true`, and engines/__init__.py drops an inactive
-  # engine before load -- keep_only cannot override it. Measured: with only
-  # keep_only set, /config listed 13 engines and no brave at all, silently.
-  #   inactive -> exists at all;  disabled -> queried by default vs bang-only.
+  # The default general-web source: an API key instead of scraping, so it does
+  # not CAPTCHA. The key is injected at render time from the environment -- this
+  # file is a template and must never contain the secret.
   - name: braveapi
     engine: braveapi
     shortcut: brv
