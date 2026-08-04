@@ -11,8 +11,15 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 OLLAMA="${OLLAMA_CLI:-ollama}"
-_TIER="$(cat "$ROOT_DIR/config/active-profile" 2>/dev/null || echo 64gb)"
-MODELS_YAML="$ROOT_DIR/config/profiles/${_TIER}.yaml"   # active profile (tracked SoT)
+# Fail closed: no implicit tier. A suppressed read falling through to a
+# hardcoded 64gb is what silently installs the wrong model set on a
+# smaller machine. Resolve once, here, and reuse.
+_TIER="$("$ROOT_DIR/scripts/profile-config" active-tier)" || {
+  echo "  ✗ cannot resolve the active profile (see error above)" >&2; exit 1; }
+# The GENERATED artifact, not the profile. install.sh runs sync-models before
+# this script, so generated state exists by now — and reading it removes the
+# fourth hand-rolled YAML parser in this repository.
+EFFECTIVE_JSON="$ROOT_DIR/config/effective-profile.json"
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -40,8 +47,9 @@ if ! "$OLLAMA" list >/dev/null 2>&1; then
 fi
 info "Ollama daemon responding"
 
-if [ ! -f "$MODELS_YAML" ]; then
-  error "Model manifest not found: $MODELS_YAML"
+if [ ! -f "$EFFECTIVE_JSON" ]; then
+  error "Generated model configuration not found: $EFFECTIVE_JSON"
+  error "Run 'ailocal sync' first — this script does not parse profiles."
   exit 1
 fi
 info "Model manifest found"
@@ -58,21 +66,15 @@ info "Model manifest found"
 # Now: enabled capabilities only, deduplicated by tag, sized from what Ollama
 # reports, and reduced by what is already installed. A machine that already holds
 # the models needs no additional space, and must not be rejected as if it did.
-MODEL_PLAN="$(python3 - "$MODELS_YAML" <<'PYEOF'
-import re, subprocess, sys
+MODEL_PLAN="$(python3 - "$EFFECTIVE_JSON" <<'PYEOF'
+import json, subprocess, sys
 
-text = open(sys.argv[1]).read()
+data = json.load(open(sys.argv[1]))
 caps = {}
-for m in re.finditer(r'^([a-z_]+):\n((?:  .*\n)+)', text, re.M):
-    cap, body = m.group(1), m.group(2)
-    def field(k):
-        g = re.search(rf'^  {k}: *(.+?)\s*(?:#.*)?$', body, re.M)
-        return g.group(1).strip() if g else None
-    if (field("enabled") or "true").lower() == "false":
+for cap, cfg in sorted(data["roles"].items()):
+    if not cfg.get("enabled"):
         continue                      # disabled: not exposed, not pulled, not sized
-    active = field("active")
-    if active:
-        caps.setdefault(active, []).append(cap)
+    caps.setdefault(cfg["model"], []).append(cap)
 
 # `ollama list` sizes what is already on disk; anything absent is a download.
 installed = {}

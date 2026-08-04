@@ -147,8 +147,46 @@ run_codex() { # $1=slug $2=prompt
   # --dangerously-bypass-approvals-and-sandbox is: a non-interactive codex exec
   # cannot obtain approval for writes otherwise, and every mutating call is
   # refused — the same trap that made Claude Code look broken.
-  zsh -ic "cd '$WORK' && codex-local exec --dangerously-bypass-approvals-and-sandbox '$prompt'" \
-    > "$log" 2>&1
+  # BOUNDED. LiteLLM #27442 means /v1/responses streams content in bare `data:`
+  # frames with no `event:` line, so Codex renders the text but never receives a
+  # named terminal event and waits forever. Unbounded, this call sat for 900 s
+  # and produced ZERO bytes before being killed by hand -- reported as a generic
+  # timeout, which reads like a product failure rather than the known upstream
+  # limitation it is.
+  #
+  # Timeout + process-group kill, then classify: bytes-but-no-terminal-event is
+  # BLOCKED_UPSTREAM, silence is a genuine failure. This is a harness fix. It
+  # does NOT rewrite SSE framing -- that stays upstream's to fix.
+  local budget="${AILOCAL_CODEX_TIMEOUT:-180}"
+  LAST_BLOCKED=0
+  if command -v timeout >/dev/null 2>&1; then
+    timeout -k 5 "$budget" \
+      zsh -ic "cd '$WORK' && codex-local exec --dangerously-bypass-approvals-and-sandbox '$prompt'" \
+      > "$log" 2>&1
+    local rc=$?
+  else
+    zsh -ic "cd '$WORK' && codex-local exec --dangerously-bypass-approvals-and-sandbox '$prompt'" \
+      > "$log" 2>&1 &
+    local pid=$! rc=0 waited=0
+    while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt "$budget" ]; do
+      sleep 2; waited=$((waited + 2))
+    done
+    if kill -0 "$pid" 2>/dev/null; then kill -TERM -"$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null; rc=124; fi
+    wait "$pid" 2>/dev/null || true
+  fi
+  # Nothing of ours may outlive the budget.
+  pkill -f "codex-local exec" 2>/dev/null || true
+  pkill -f "codex exec"       2>/dev/null || true
+  if [ "${rc:-0}" -eq 124 ]; then
+    if [ -s "$log" ]; then
+      warn "BLOCKED_UPSTREAM_LITELLM_27442: content arrived, no terminal event within ${budget}s"
+    else
+      warn "BLOCKED_UPSTREAM_LITELLM_27442: no output within ${budget}s (streamed turn never completes)"
+    fi
+    echo "      /v1/responses omits 'event:' lines; Codex never marks the turn done."
+    echo "      Re-test: curl -sN .../v1/responses -d '{\"stream\":true,...}' | grep -c '^event:'"
+    LAST_BLOCKED=1
+  fi
   end=$(python3 -c 'import time;print(time.time())')
   LAST_SECS=$(python3 -c "print(f'{$end-$start:.0f}')")
   LAST_LOG="$log"

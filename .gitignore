@@ -13,6 +13,9 @@ config/active-profile
 # would immediately contradict. install.sh regenerates it before clients install.
 config/integration-contract.json
 config/capabilities.generated.json
+# Generated per machine: records the active tier plus hashes of the profile and
+# marker it came from, so it is inherently machine-specific like both of those.
+config/effective-profile.json
 config/clients/model_catalog.json
 config/litellm/config.yaml
 config/clients/copilot/repo-instructions.md

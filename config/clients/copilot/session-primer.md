@@ -75,9 +75,9 @@ cat file.txt
 
 | Capability | Backend | For |
 |---|---|---|
-| `architecture` | qwen3-coder:30b-a3b-q4_K_M (64k) | design, complex refactor, multi-step debug |
-| `implementation` | qwen2.5-coder:14b (16k) | everyday coding, features, tests |
-| `review` | deepseek-coder-v2:16b-lite (16k) | code review, bug & security |
+| `architecture` | gemma4:26b-mlx (80k in) | design, complex refactor, multi-step debug |
+| `implementation` | gemma4:26b-mlx (64k in) | everyday coding, features, tests |
+| `review` | gemma4:26b-mlx (64k in) | code review, bug & security |
 | `completion` | qwen2.5-coder:3b (4k) | fast/small tasks, autocomplete |
 | `embeddings` | nomic-embed-text | semantic search only |
 

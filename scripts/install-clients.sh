@@ -399,12 +399,42 @@ PYEOF
   # a managed ~/.continue/config.json: chat/edit through the proxy, autocomplete
   # DIRECT to Ollama (FIM through the proxy is unreliable — continuedev/continue#2907).
   # The user's existing file is backed up first.
+  # CONDITIONAL ON THE EXTENSION BEING INSTALLED (2026-08-03). This block used
+  # to run unconditionally: it created ~/.continue/, wrote a config carrying the
+  # LiteLLM key, and took a timestamped backup on EVERY install/repair. On this
+  # machine that produced four backups of a file no extension ever read --
+  # Continue is not installed, no VS Code request has ever reached LiteLLM (24
+  # captures on disk, zero from Continue or Copilot), and no README or support
+  # matrix claims Continue support. Writing a keyed config for absent software
+  # is both dead output and a needless place for a secret to sit.
+  #
+  # Continue stays SUPPORTED-IF-PRESENT rather than deleted: the generator and
+  # template are small, the FIM route it provides is real (Copilot cannot do
+  # local autocomplete), and `AILOCAL_CONTINUE=1` lets a user opt in before
+  # installing the extension. Never installs Continue on the user's behalf.
   CONTINUE_CFG="$HOME/.continue/config.json"
-  mkdir -p "$HOME/.continue"
-  backup "$CONTINUE_CFG" || true
-  sed "s|__LITELLM_KEY__|${LITELLM_KEY}|g" \
-      "$ROOT_DIR/config/clients/continue/config.json" > "$CONTINUE_CFG"
-  info "Continue config deployed to ~/.continue/config.json (autocomplete: qwen2.5-coder:3b direct to Ollama)"
+  _continue_present=0
+  if [ -n "${AILOCAL_CONTINUE:-}" ]; then
+    _continue_present=1
+  elif command -v code >/dev/null 2>&1 && \
+       code --list-extensions 2>/dev/null | grep -qi '^continue\.continue$'; then
+    _continue_present=1
+  elif [ -f "$CONTINUE_CFG" ]; then
+    # Already managed here previously — keep it current rather than stranding a
+    # stale key in a file we wrote.
+    _continue_present=1
+  fi
+
+  if [ "$_continue_present" = "1" ]; then
+    mkdir -p "$HOME/.continue"
+    backup "$CONTINUE_CFG" || true
+    sed "s|__LITELLM_KEY__|${LITELLM_KEY}|g" \
+        "$ROOT_DIR/config/clients/continue/config.json" > "$CONTINUE_CFG"
+    info "Continue config deployed to ~/.continue/config.json (autocomplete: qwen2.5-coder:3b direct to Ollama)"
+  else
+    info "Continue extension not installed — skipping ~/.continue/config.json"
+    info "  install 'continue.continue' then re-run, or set AILOCAL_CONTINUE=1 to force"
+  fi
 
   # Put the key on the clipboard so it's a one-paste into the Manage Models dialog.
   if command -v pbcopy >/dev/null 2>&1; then
@@ -639,32 +669,33 @@ if has_target "claude"; then
   fi
 fi
 
-# ── Re-apply Cadence-owned MCP registrations ───────────────────────────────
-# Codex's config.toml is rewritten wholesale from our template above, which
-# DESTROYS the [mcp_servers.*] blocks Cadence appends (grepai, lsp). That made
-# every run of this script silently strip codex-local's MCP servers — the
-# failure was invisible because Codex simply starts with no tools rather than
-# erroring. The documented workaround was "remember to re-run cadence
-# afterwards", which is exactly the kind of manual step that gets forgotten.
+# ── Codex MCP: WITHHELD BY POLICY, not restored ────────────────────────────
+# This block used to run `cadence mcp sync` to put Cadence's [mcp_servers.*]
+# entries (grepai, lsp) BACK into codex-local's config.toml after the wholesale
+# rewrite above removed them, and to warn when Codex ended up with no MCP
+# servers. Both were wrong once the client policy was settled:
 #
-# MCP ownership stays with Cadence (single authoritative implementation); we
-# just re-invoke it so the ordering constraint is enforced by code, not memory.
-# Never fatal: ailocal must stay installable on a machine without Cadence.
+#   codex-local is intended to have NO grepai MCP, NO LSP MCP, NO GitHub MCP
+#   and no namespace tools. Codex cannot dispatch namespaced tool names, so an
+#   MCP server there advertises a surface it cannot drive.
+#
+# So an empty [mcp_servers.*] section in Codex is the CORRECT outcome, not a
+# failure to warn about — and ailocal must not run a GLOBAL Cadence MCP sync,
+# which would mutate other clients as a side effect of installing this one.
+#
+# Claude-local is unaffected and needs no restoration: its registrations live in
+# .claude.json, which this script preserves rather than rewriting. Cadence keeps
+# MCP ownership; ailocal simply stops undoing and redoing its work.
 if command -v cadence >/dev/null 2>&1; then
-  if cadence mcp sync >/tmp/ailocal-mcp-sync.log 2>&1; then
-    info "Cadence MCP registrations re-applied (grepai/lsp survive this install)"
-  else
-    warn "cadence mcp sync failed — codex-local/claude-local may have no MCP servers."
-    warn "  See /tmp/ailocal-mcp-sync.log; re-run 'cadence mcp sync' by hand."
-  fi
-else
-  skip "cadence not on PATH — skipping MCP re-sync (no MCP servers to restore)"
+  info "Codex MCP intentionally withheld (Codex cannot dispatch namespaced tools)"
+  info "  Cadence owns MCP policy; claude-local registrations in .claude.json are preserved."
 fi
 
 # ── Cadence agent overlay: DETECT what this script stripped ────────────────
-# Rewriting the deployed agents removes Cadence's marker block. `cadence mcp
-# sync` above restores the MCP slice but not the overlay, so the root is left
-# partially converged and nothing says so until someone runs Cadence's verifier.
+# Rewriting the deployed agents removes Cadence's marker block. Nothing here
+# restores it -- ailocal no longer re-invokes Cadence at all -- so the root is
+# left partially converged and nothing says so until someone runs Cadence's
+# verifier.
 #
 # We detect and name the exact command rather than re-invoking Cadence: ailocal
 # does not drive another product's installer. The marker is the only Cadence
