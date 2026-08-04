@@ -24,7 +24,7 @@ Report an improvement it cannot substantiate. Specifically:
 - Latency is NOT reported here. These records contain the hook's own overhead,
   not end-to-end request time; presenting hook microseconds next to a model's
   seconds would invite exactly the wrong conclusion. End-to-end latency is
-  scripts/benchmarks/tool-gateway.sh, which measures a real client.
+  `ailocal benchmark gateway`, which measures a real client.
 
 Usage:
     scripts/gateway-metrics.py                       # from docker logs
@@ -201,7 +201,7 @@ def human(s, events, malformed):
         print(f"HOOK OVERHEAD  median {o['median']} ms | p95 {o['p95']} ms | "
               f"max {o['max']} ms")
         print(f"  {o['note']} — end-to-end latency is "
-              f"scripts/benchmarks/tool-gateway.sh")
+              f"ailocal benchmark gateway")
 
     print()
     for label, key in (("clients", "clients"), ("model classes", "model_classes"),

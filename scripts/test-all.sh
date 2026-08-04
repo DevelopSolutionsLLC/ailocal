@@ -284,7 +284,7 @@ run "installation audit runs cleanly" audit_runs
 if [ -n "$FULL" ]; then
   echo
   echo "END TO END (slow: drives a real client against the local model)"
-  run "benchmark, 2 interleaved rounds" env RUNS=2 ./scripts/benchmarks/tool-gateway.sh
+  run "benchmark, 2 interleaved rounds" env RUNS=2 ./scripts/ailocal benchmark gateway
 fi
 
 echo
