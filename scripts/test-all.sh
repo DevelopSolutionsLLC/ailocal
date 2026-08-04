@@ -101,8 +101,8 @@ run "E1 trace schema, redaction and token reconciliation" \
 # defect: it once measured a single model three times, and candidates could read
 # the answer key. These prove safe defaults, manifest locking, confinement wiring
 # and identity-stripped scoring copies -- with no inference.
-run "planner comparison driver (safe defaults, locking, blinding)" \
-    python3 scripts/tests/planner-driver.py
+run "planner comparison (safe defaults, locking, blinding)" \
+    python3 scripts/tests/benchmark.py planner
 # E3. Declared num_ctx vs what the backend actually serves. nomic-embed-text silently
 # CLIPS at 2048 rather than erroring, so an over-declaration yields successful-looking
 # embeddings of truncated text — no error to notice, just quietly worse vectors. The
@@ -122,7 +122,9 @@ run "planner comparison driver (safe defaults, locking, blinding)" \
 # while the gate reported green, which is how a benchmark-only regression
 # reaches a planner run unnoticed.
 run "benchmark library (aliases, geometry, evidence, confinement)" \
-    python3 scripts/tests/test-benchmark.py
+    python3 scripts/tests/benchmark.py library
+run "benchmark command (models, planner, gateway dispatch)" \
+    python3 scripts/tests/benchmark.py command
 run "profile resolver (single parser, fail-closed, no 64gb default)" \
     python3 scripts/tests/profiles.py resolver
 run "policy ownership (one reader, client policy fails closed)" \

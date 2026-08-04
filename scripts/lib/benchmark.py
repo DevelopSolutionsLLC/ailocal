@@ -30,7 +30,7 @@ from pathlib import Path
 # The split below is BEHAVIOUR-PRESERVING. Every name these modules own is
 # re-exported here, so `import benchmark as B; B.run_client_turn(...)` keeps
 # working for scripts/benchmarks/models, scripts/lib/ruler.py,
-# scripts/tests/test-benchmark.py. (The A/B/C repro script that first
+# scripts/tests/benchmark.py. (The A/B/C repro script that first
 # established this was deleted 2026-08-03: the hypothesis was FALSIFIED and
 # the contract is now enforced by that test, so the script only duplicated it.)
 from benchmark_evidence import (  # noqa: E402,F401
@@ -132,7 +132,7 @@ from benchmark_engines import (  # noqa: E402,F401
 )
 
 #: The memory-tier ladder. install.sh owns the canonical thresholds;
-#: scripts/tests/test-benchmark.py parses install.sh and asserts these match, so
+#: scripts/tests/benchmark.py parses install.sh and asserts these match, so
 #: there is one source of truth enforced by a test rather than by convention.
 #:
 #: NEVER ROUND UP. Selecting at 75% of a tier's name gave a 24 GB machine the
