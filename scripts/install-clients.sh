@@ -669,32 +669,33 @@ if has_target "claude"; then
   fi
 fi
 
-# ── Re-apply Cadence-owned MCP registrations ───────────────────────────────
-# Codex's config.toml is rewritten wholesale from our template above, which
-# DESTROYS the [mcp_servers.*] blocks Cadence appends (grepai, lsp). That made
-# every run of this script silently strip codex-local's MCP servers — the
-# failure was invisible because Codex simply starts with no tools rather than
-# erroring. The documented workaround was "remember to re-run cadence
-# afterwards", which is exactly the kind of manual step that gets forgotten.
+# ── Codex MCP: WITHHELD BY POLICY, not restored ────────────────────────────
+# This block used to run `cadence mcp sync` to put Cadence's [mcp_servers.*]
+# entries (grepai, lsp) BACK into codex-local's config.toml after the wholesale
+# rewrite above removed them, and to warn when Codex ended up with no MCP
+# servers. Both were wrong once the client policy was settled:
 #
-# MCP ownership stays with Cadence (single authoritative implementation); we
-# just re-invoke it so the ordering constraint is enforced by code, not memory.
-# Never fatal: ailocal must stay installable on a machine without Cadence.
+#   codex-local is intended to have NO grepai MCP, NO LSP MCP, NO GitHub MCP
+#   and no namespace tools. Codex cannot dispatch namespaced tool names, so an
+#   MCP server there advertises a surface it cannot drive.
+#
+# So an empty [mcp_servers.*] section in Codex is the CORRECT outcome, not a
+# failure to warn about — and ailocal must not run a GLOBAL Cadence MCP sync,
+# which would mutate other clients as a side effect of installing this one.
+#
+# Claude-local is unaffected and needs no restoration: its registrations live in
+# .claude.json, which this script preserves rather than rewriting. Cadence keeps
+# MCP ownership; ailocal simply stops undoing and redoing its work.
 if command -v cadence >/dev/null 2>&1; then
-  if cadence mcp sync >/tmp/ailocal-mcp-sync.log 2>&1; then
-    info "Cadence MCP registrations re-applied (grepai/lsp survive this install)"
-  else
-    warn "cadence mcp sync failed — codex-local/claude-local may have no MCP servers."
-    warn "  See /tmp/ailocal-mcp-sync.log; re-run 'cadence mcp sync' by hand."
-  fi
-else
-  skip "cadence not on PATH — skipping MCP re-sync (no MCP servers to restore)"
+  info "Codex MCP intentionally withheld (Codex cannot dispatch namespaced tools)"
+  info "  Cadence owns MCP policy; claude-local registrations in .claude.json are preserved."
 fi
 
 # ── Cadence agent overlay: DETECT what this script stripped ────────────────
-# Rewriting the deployed agents removes Cadence's marker block. `cadence mcp
-# sync` above restores the MCP slice but not the overlay, so the root is left
-# partially converged and nothing says so until someone runs Cadence's verifier.
+# Rewriting the deployed agents removes Cadence's marker block. Nothing here
+# restores it -- ailocal no longer re-invokes Cadence at all -- so the root is
+# left partially converged and nothing says so until someone runs Cadence's
+# verifier.
 #
 # We detect and name the exact command rather than re-invoking Cadence: ailocal
 # does not drive another product's installer. The marker is the only Cadence

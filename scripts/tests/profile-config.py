@@ -443,6 +443,41 @@ def main() -> int:
           "scripts/profile-json is deleted (jq is already a dependency)")
     check("_legacy_load_models_yaml" not in sync,
           "the dead legacy parser is deleted")
+
+    # NO SECOND PARSER IN A SHELL ENTRY POINT. install.sh carried a Python
+    # regex heredoc that parsed config/profiles/<tier>.yaml directly and read
+    # `context` and `num_predict` -- fields the geometry migration removed --
+    # so the install plan printed:
+    #     configured context:  None
+    #     max output:          None
+    # Structural, because the field names are the part that rots: a parser
+    # reading CURRENT names would have printed plausible stale numbers instead
+    # of an obvious None, and nothing would have caught it.
+    # Referencing the path (an existence check) is fine; READING FIELDS out of
+    # it is not. These patterns are how a second parser actually reappears.
+    FIELD_READS = (
+        "re.finditer(r'^([a-z_]+):",          # the heredoc that was here
+        "grep -m1 '^status:",                 # the last single-field grep
+        "^  context_input:", "^  max_output:", "^  active:",
+    )
+    for entry in ("install.sh", "install-models.sh", "install-clients.sh",
+                  "doctor.sh", "update.sh"):
+        path = REPO / "scripts" / entry
+        if not path.exists():
+            continue
+        src = path.read_text()
+        hit = [p for p in FIELD_READS if p in src]
+        check(not hit,
+              f"{entry} does not read profile YAML fields itself (found {hit})")
+
+    # And the plan it prints must use the CURRENT schema, from the resolver.
+    inst = (REPO / "scripts" / "install.sh").read_text()
+    check("context_input" in inst and "max_output" in inst,
+          "install.sh reports context_input/max_output, not the removed fields")
+    check("profile-config" in inst and "profile-summary" in inst,
+          "install.sh renders its plan from the resolver, not from YAML")
+    check(inst.index("sync-models.py") < inst.index("profile-summary"),
+          "install.sh generates BEFORE printing a plan derived from generation")
     # Behavioural, not textual: typed values must survive generation without a
     # string round-trip. A prose mention of "reserialize" is not the defect.
     import importlib.util as _il
