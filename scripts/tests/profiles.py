@@ -192,8 +192,15 @@ def resolver_checks() -> None:
         check("echo 64gb" not in src, f"{name} has no hardcoded 64gb fallback")
         check(not re.search(r"cat .*active-profile", src),
               f"{name} does not read active-profile directly")
-        check(src.count('profile-config" active-tier') == 1,
-              f"{name} resolves the tier exactly once")
+        # A script either resolves the tier once through the CLI, or delegates
+        # entirely to the shared checks layer, which uses the same parser. What
+        # must never happen is resolving it twice, or resolving it locally.
+        n = src.count('profile-config" active-tier')
+        if n == 0:
+            check("checks/run.py" in src,
+                  f"{name} delegates tier resolution to the shared checks layer")
+        else:
+            check(n == 1, f"{name} resolves the tier exactly once")
     doctor = (REPO / "scripts" / "doctor.sh").read_text()
     check(not re.search(r"sed -n .*profiles/", doctor),
           "doctor.sh no longer parses profile YAML with sed")
