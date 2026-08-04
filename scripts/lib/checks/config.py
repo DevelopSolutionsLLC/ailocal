@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import pathlib
 import sys
 
@@ -206,9 +207,8 @@ def check_codex_no_mcp() -> CheckResult:
 def check_mount_drift() -> CheckResult:
     """The container must be running this repository's config.yaml.
 
-    Unique to validate-deployment.sh before consolidation. A stale mount leaves
-    every source check passing while the proxy serves something else entirely.
-    Docker is required, so its absence is BLOCKED rather than a failure.
+    A stale mount leaves every source check passing while the proxy serves
+    something else. Docker is required, so its absence is BLOCKED, not a failure.
     """
     from . import services as S
     if not S.docker_available():
@@ -260,6 +260,78 @@ def check_compose_layout() -> list[CheckResult]:
     return out
 
 
+def _compose_env() -> dict:
+    """Compose interpolates AILOCAL_SEARXNG_SETTINGS, which compose.sh exports
+    after rendering. Point at the same rendered file so `config` can resolve.
+    """
+    state = os.environ.get("AILOCAL_STATE") or os.path.join(
+        os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state")),
+        "ailocal")
+    return {**os.environ, "DOCKER_CLI_HINTS": "false",
+            "AILOCAL_SEARXNG_SETTINGS": os.environ.get(
+                "AILOCAL_SEARXNG_SETTINGS",
+                os.path.join(state, "searxng", "settings.yml"))}
+
+
+def _compose_json() -> dict | None:
+    """The merged compose configuration, or None when Docker cannot render it."""
+    import subprocess
+    try:
+        r = subprocess.run(
+            ["docker", "compose", "--project-directory", str(REPO),
+             "-f", str(REPO / "deploy" / "litellm" / "docker-compose.yml"),
+             "-f", str(REPO / "deploy" / "searxng" / "docker-compose.yml"),
+             "config", "--format", "json"],
+            capture_output=True, text=True, timeout=60, cwd=REPO,
+            env=_compose_env())
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0:
+        return None
+    try:
+        return json.loads(r.stdout)
+    except ValueError:
+        return None
+
+
+def check_compose_config() -> list[CheckResult]:
+    """Merged compose validity, one project, a shared network, and agreement
+    between LiteLLM's search api_base and SearXNG's service name.
+
+    Service discovery breaks silently if the two land on different networks.
+    """
+    doc = _compose_json()
+    if doc is None:
+        return [CheckResult("compose-config", BLOCKED,
+                            "cannot render the merged compose config "
+                            "(Docker unavailable or the config is invalid)",
+                            remediation="docker compose config")]
+    out = [CheckResult("compose-config", PASS, "merged compose config is valid")]
+
+    name = doc.get("name", "")
+    out.append(CheckResult("compose-project", PASS if name == "ailocal" else FAIL,
+                           f"single compose project: {name}" if name == "ailocal"
+                           else f"compose project is {name or '?'}, expected 'ailocal'"))
+
+    svcs = doc.get("services") or {}
+    nets = {n: sorted((svcs.get(n) or {}).get("networks") or {})
+            for n in ("litellm", "searxng")}
+    shared = len({tuple(v) for v in nets.values()}) == 1 and all(nets.values())
+    out.append(CheckResult(
+        "compose-network", PASS if shared else FAIL,
+        f"litellm and searxng share network: {','.join(nets['litellm'])}" if shared
+        else f"litellm and searxng are NOT on a shared network: {nets}"))
+
+    cfg = REPO / "config" / "litellm" / "config.yaml"
+    agrees = ("searxng" in svcs and cfg.is_file()
+              and re.search(r"api_base:\s*http://searxng:8080", cfg.read_text()))
+    out.append(CheckResult(
+        "search-api-base", PASS if agrees else FAIL,
+        "search api_base matches the searxng compose service name" if agrees
+        else "search api_base and the searxng service name do not agree"))
+    return out
+
+
 def check_generated_in_sync() -> CheckResult:
     """Regenerating must be a fixed point: drift means someone hand-edited.
 
@@ -294,6 +366,7 @@ def deterministic_checks(tier: str | None = None) -> list[CheckResult]:
     results += check_capabilities_declare_backends(tier)
     results += check_client_mappings()
     results += check_compose_layout()
+    results += check_compose_config()
     results += check_generated_present()
     results += [check_effective_profile(), check_alias_uniqueness(),
                 check_no_raw_backend_tags(), check_codex_no_mcp(),
