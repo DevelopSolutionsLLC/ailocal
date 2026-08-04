@@ -40,6 +40,27 @@ Two source files drive everything:
 
 `config/active-profile` names the live tier, written by `install.sh` from detected RAM.
 
+## Committing
+
+`git config core.hooksPath .githooks` is set repository-locally by
+`scripts/install.sh`, enabling `.githooks/commit-msg`. It **rejects** assistant
+attribution trailers (`Co-Authored-By:` naming Claude/ChatGPT/Copilot/an
+assistant), `Claude-Session:` lines, `claude.ai/code/session` URLs, and
+`noreply@anthropic.com`.
+
+It exists because commits carrying those were published to a public repository,
+and removing them required rewriting 86 SHAs and force-pushing the default
+branch. Session URLs are permanent public metadata and cannot be recalled.
+
+Product references are unaffected and must keep working: `claude-local`,
+`Claude Code`, `Anthropic API`, `OpenAI-compatible`. The hook matches trailer
+SHAPE and session identifiers, not the words themselves —
+`scripts/tests/commit-msg-hook.sh` asserts both directions in a temporary repo.
+
+Nothing in the ailocal runtime depends on the hook. If you have set your own
+`core.hooksPath`, install.sh reports it and leaves it alone rather than
+clobbering it — the guard is then inactive until you point it at `.githooks`.
+
 ## Golden rule
 
 **Use capability names only** in client configs and scripts — never backend tags

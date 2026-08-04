@@ -151,6 +151,9 @@ run "client role alias overrides (defaults intact, fails closed)" \
 run "codex MCP is withheld (no grepai/lsp/github, no re-sync)" \
     bash scripts/tests/codex-mcp-withheld.sh
 
+run "commit-msg hook (blocks attribution, allows product names)" \
+    bash scripts/tests/commit-msg-hook.sh
+
 run "generation rolls back on partial failure (never mixed on disk)" \
     python3 scripts/tests/generation-rollback.py
 # Claude Code sends auxiliary Anthropic-shaped probes derived from
