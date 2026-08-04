@@ -39,7 +39,7 @@ D = load_driver()
 
 def main() -> int:
     print("SAFE DEFAULTS")
-    r = subprocess.run([sys.executable, str(REPO / "scripts" / "benchmarks/planner-comparison.py")],
+    r = subprocess.run([str(REPO / "scripts" / "ailocal"), "benchmark", "planner"],
                        capture_output=True, text=True, timeout=120)
     check(r.returncode == 2, "no arguments ⇒ refuses to act (rc=2)")
     check("never implicit" in r.stderr, "refusal explains that inference is never implicit")
@@ -51,7 +51,7 @@ def main() -> int:
 
     print("\nDRY RUN DOES NOT TOUCH THE MAPPING OR A MODEL")
     out = Path(tempfile.mkdtemp(prefix="drv-"))
-    r = subprocess.run([sys.executable, str(REPO / "scripts" / "benchmarks/planner-comparison.py"),
+    r = subprocess.run([str(REPO / "scripts" / "ailocal"), "benchmark", "planner",
                         "--dry-run", "--all", "--output-dir", str(out),
                         "--run-id", "unit-dry"],
                        capture_output=True, text=True, timeout=300)

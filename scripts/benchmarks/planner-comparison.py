@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+# Implementation of `ailocal benchmark planner`. Not executable on its own.
 """benchmarks/planner-comparison.py — the authoritative planner comparison driver.
 
 THIS IS ORCHESTRATION ONLY. Every mechanism it uses already exists and is
