@@ -9,9 +9,9 @@ API calls are made. Models are exposed as capability names — never use backend
 
 | Capability | Backend | Purpose |
 |---|---|---|
-| `architecture` | qwen3-coder:30b-a3b-q4_K_M | Architecture, complex refactor, multi-step debug, design (32k) |
-| `implementation` | qwen2.5-coder:14b | Implementation, features, tests, everyday refactoring (16k) |
-| `review` | deepseek-coder-v2:16b-lite | Code review, bug & security detection (16k) |
+| `architecture` | gemma4:26b-mlx | Architecture, complex refactor, multi-step debug, design (80k in) |
+| `implementation` | gemma4:26b-mlx | Implementation, features, tests, everyday refactoring (64k in) |
+| `review` | gemma4:26b-mlx | Code review, bug & security detection (64k in) |
 | `completion` | qwen2.5-coder:3b | Fast small tasks; IDE autocomplete (FIM) (4k) |
 | `embeddings` | nomic-embed-text | Semantic search only — not for chat |
 

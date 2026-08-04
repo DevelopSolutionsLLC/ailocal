@@ -1,0 +1,68 @@
+#!/bin/sh
+# commit-msg — reject assistant attribution trailers and session identifiers.
+#
+# WHY THIS EXISTS. 56 commits on a feature branch and 7 on main were published
+# carrying `Co-Authored-By: Claude ... <noreply@anthropic.com>` and, worse,
+# `Claude-Session: https://claude.ai/code/session_...`. Removing them meant
+# rewriting 86 SHAs on a PUBLIC repository and force-pushing the default branch.
+# Session URLs are permanent public metadata and cannot be recalled: a
+# force-push removes them from the branch, but the objects can stay reachable by
+# SHA on the host for some time afterwards.
+#
+# A written rule can be overridden, forgotten, or contradicted by a tool
+# description. This hook is the mechanical guarantee: it runs on `git commit`
+# regardless of who or what invoked it.
+#
+# REJECTS rather than silently strips. Editing the message quietly would hide
+# that something tried to add attribution, and noticing is the point.
+#
+# Enabled by `git config core.hooksPath .githooks`, which scripts/install.sh
+# sets repository-locally. Nothing in the ailocal runtime depends on this hook.
+#
+# $1 is the path to the pending commit message.
+
+MSG="$1"
+[ -f "$MSG" ] || exit 0
+
+# MATCH METADATA, NOT PRODUCT WORDS. These must keep working, because the
+# repository legitimately discusses the systems it integrates with:
+#
+#   claude-local, Claude Code, claude_native_lsp, .claude.json
+#   Anthropic API, ANTHROPIC_BASE_URL, code.claude.com/docs
+#   OpenAI-compatible, wire_api = "responses"
+#
+# So the patterns below anchor on TRAILER SHAPE (`Co-Authored-By:` at the start
+# of a line, `Claude-Session:`) or on identifiers that have no legitimate use in
+# a commit message (a session URL, the noreply co-author address).
+
+# 1. Co-Authored-By naming an assistant/vendor rather than a person.
+ATTRIB='^[[:space:]]*Co-Authored-By:.*([Cc]laude|[Aa]nthropic|Chat[Gg]PT|Open[Aa]I|[Cc]o[Pp]ilot|Gemini|[Cc]ursor|[Aa]I[[:space:]]+[Aa]ssistant|[Aa]ssistant)'
+# 2. Session identifiers. No legitimate use in a commit message.
+SESSION='^[[:space:]]*Claude-Session:|claude\.ai/code/session|chatgpt\.com/(c|share)/|noreply@anthropic\.com'
+# 3. "Generated with/by <assistant>" attribution lines.
+GENBY='^[[:space:]]*(Generated|Created|Authored|Written)[[:space:]]+(with|by)[[:space:]]+.*([Cc]laude|Chat[Gg]PT|Open[Aa]I|[Cc]o[Pp]ilot|[Aa]nthropic|Gemini|[Aa]I\b)'
+
+BAD="$ATTRIB|$SESSION|$GENBY"
+
+if grep -qE "$BAD" "$MSG"; then
+  echo "" >&2
+  echo "COMMIT REJECTED: assistant attribution or session identifier in the message." >&2
+  echo "" >&2
+  echo "  Offending line(s):" >&2
+  grep -nE "$BAD" "$MSG" | sed 's/^/      /' >&2
+  echo "" >&2
+  echo "  Commits carry one identity: the human author configured for this repo." >&2
+  echo "  Session URLs are permanent public metadata and cannot be recalled once" >&2
+  echo "  pushed -- a force-push removes them from the branch, but the objects can" >&2
+  echo "  remain reachable by SHA." >&2
+  echo "" >&2
+  echo "  Product references are fine and are NOT what this matches:" >&2
+  echo "    claude-local | Claude Code | Anthropic API | OpenAI-compatible" >&2
+  echo "" >&2
+  echo "  Remove the line(s) and commit again." >&2
+  echo "  Emergency bypass (avoid; it defeats the purpose): git commit --no-verify" >&2
+  echo "" >&2
+  exit 1
+fi
+
+exit 0

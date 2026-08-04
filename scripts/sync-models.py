@@ -5,7 +5,8 @@ Single source of truth (both TRACKED — no gitignored intermediate):
   config/profiles/<tier>.yaml  WHAT each capability is (backend `active`, context, sampling,
                         keep_alive, persona, decision metadata), per RAM tier. Edit the profile
                         directly. The active tier is config/active-profile (machine-specific,
-                        written by install.sh from detected RAM) or `--profile <tier>`; default 64gb.
+                        written by install.sh from detected RAM) or `--profile <tier>`. There is NO
+                        default tier: an unresolvable marker is an error.
   config/clients.yaml   WHICH capability each client surface uses (launch defaults, Codex
                         profiles, Continue entries, compat aliases).
 
@@ -27,8 +28,11 @@ region — edit config/profiles/<tier>.yaml / config/clients.yaml and re-run.
 """
 
 import collections
+import hashlib
 import json
+import os
 import re
+import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,6 +41,9 @@ ROOT = Path(__file__).resolve().parent.parent
 PROFILES_DIR   = ROOT / "config/profiles"
 # Interactive-compaction thresholds, read from the profile's `compaction:` block.
 COMPACTION = {}
+
+sys.path.insert(0, str(ROOT / "scripts" / "lib"))
+import profile_config as _pc  # noqa: E402
 
 ACTIVE_PROFILE = ROOT / "config/active-profile"   # one line, e.g. "64gb" (machine-specific)
 CLIENTS_YAML   = ROOT / "config/clients.yaml"
@@ -91,6 +98,23 @@ def truthy(v):
 
 
 def flow_list(v):
+    """Accept an already-typed list unchanged.
+
+    The profile parser returns real lists; config/clients.yaml is still read by
+    the legacy line reader below and yields raw "[a, b]" strings. Making this
+    idempotent removes the need to reserialize typed values back into strings
+    just to reparse them -- which is what the previous shim did, and what
+    double-quoted every element in capabilities.generated.json.
+    Remaining raw-string callers: load_clients_yaml() (config/clients.yaml).
+    """
+    if isinstance(v, list):
+        return v
+    if v is None:
+        return []
+    return _flow_list_from_str(v)
+
+
+def _flow_list_from_str(v):
     """Parse a flow-style list "[a, b, c]" -> ["a","b","c"]; tolerate a bare scalar."""
     if v is None:
         return []
@@ -116,15 +140,14 @@ def flow_dict(v):
 
 # ── profile resolution ─────────────────────────────────────────────────────────
 def resolve_tier(explicit=None):
-    """Which RAM profile is active: an explicit --profile wins; else the tracked-intent
-    config/active-profile marker (written by install.sh from detected RAM); else 64gb."""
+    """Which RAM profile is active: an explicit --profile wins, else the marker.
+
+    Delegates to profile_config, which FAILS CLOSED. The previous version fell
+    through to a hardcoded tier, so a missing or empty marker silently
+    regenerated every client and the proxy for the wrong hardware."""
     if explicit:
         return explicit
-    if ACTIVE_PROFILE.exists():
-        t = ACTIVE_PROFILE.read_text().strip()
-        if t:
-            return t
-    return "64gb"
+    return _pc.resolve_active_tier(ROOT)
 
 
 def profile_path(tier=None, explicit=None):
@@ -137,25 +160,18 @@ def profile_path(tier=None, explicit=None):
 
 # ── config loading ────────────────────────────────────────────────────────────
 def load_models_yaml(path):
-    """Read a profile (config/profiles/<tier>.yaml) into an ordered dict:
-    capability -> {field: scalar-string}. List fields stay as their raw "[a, b, c]"
-    string; use flow_list() at the point of use. Top-level scalars (disk_gb, status,
-    profile) are ignored — only indented `key: value` under a capability is captured."""
-    models, current = {}, None
-    for line in Path(path).read_text().splitlines():
-        s = line.rstrip()
-        if not s or s.lstrip().startswith("#"):
-            continue
-        if not s.startswith(" ") and s.endswith(":"):
-            current = s[:-1].strip()
-            models[current] = {}
-        elif current and ":" in s and s.startswith(" "):
-            k, _, v = s.strip().partition(":")
-            models[current][k.strip()] = v.split("#", 1)[0].strip()
+    """Read a profile via the shared parser. Kept as a named function because the
+    generator calls it in several places; the parsing is no longer local."""
+    data = _pc.parse_profile_text(Path(path).read_text())
+    models = {}
+    for section, fields in data.items():
+        if not isinstance(fields, dict):
+            continue          # top-level scalars such as disk_gb
+        # Typed values pass through as-is. flow_list() is idempotent and the
+        # scalar consumers coerce with truthy()/int() at the point of use, so
+        # no string round-trip is needed.
+        models[section] = dict(fields)
     models.pop("disk_gb", None)
-    # `compaction` is a CLIENT tuning knob, not a capability. Leaving it in the
-    # map would publish an "ailocal-compaction" model to every client and add a
-    # phantom row to every generated capability table.
     COMPACTION.update(models.pop("compaction", {}))
     return models
 
@@ -207,17 +223,85 @@ def norm_keep_alive(v):
     return "-1" if s.lower() in ("forever", "persistent") else s
 
 
+def _int_or_none(v):
+    if isinstance(v, int):
+        return v
+    if isinstance(v, str) and v.strip().lstrip("-").isdigit():
+        return int(v.strip())
+    return None
+
+def _geom(info):
+    """Derived geometry for a role, from the ONE implementation.
+
+    sync-models must not re-derive num_ctx / num_predict / admission. It reads
+    context_input + max_output straight from the profile and hands them to
+    profile_config.geometry(), which is the same function every other consumer
+    calls. There is deliberately no default: a role missing context_input is a
+    migration error, not a 32768 guess -- the old fallback silently rewrote
+    every alias to 32768 when the schema changed.
+    """
+    return _pc.geometry(_int_or_none(info.get("context_input")),
+                        _int_or_none(info.get("max_output")))
+
+
 def ctx_of(info):
-    return int(info.get("context") or info.get("num_ctx") or info.get("context_window") or 32768)
+    """Total physical window (Ollama num_ctx). Derived, never configured."""
+    return _geom(info)["num_ctx"]
 
 
 # ── LiteLLM model_list ─────────────────────────────────────────────────────────
+
+OUTPUT_RESERVE_UNBOUNDED = "OUTPUT_RESERVE_UNBOUNDED_UNSAFE_FOR_STRICT_ADMISSION"
+
+
+def admission_for(role, num_ctx, num_predict):
+    """How much INPUT this alias may admit, and why.
+
+    num_ctx is the PHYSICAL window and it holds prompt AND generation. Advertising
+    the whole window as admissible input is the defect measured in
+    KNOWN_ISSUES #19: LiteLLM's pre-call check accepts a prompt that leaves no
+    room for the reply, Ollama then trims from the FRONT, and the caller gets
+    HTTP 200 with finish_reason=stop and a silently truncated prompt. Measured
+    on qwen3.5:2b at num_ctx 40960: 43,645 tokens admitted -> 20,482 evaluated,
+    system prompt gone, task instruction not followed.
+
+    Returns (max_input_tokens, note). Invalid finite geometry RAISES rather than
+    clamping: a clamp would hide exactly the misconfiguration this exists to
+    surface.
+    """
+    if not isinstance(num_ctx, int) or num_ctx <= 0:
+        raise SystemExit(f"invalid geometry: {role} num_ctx={num_ctx!r}")
+    # num_predict -1 is Ollama's INFINITE and -2 is fill-context. Neither reserves
+    # a knowable amount, so no arithmetic is possible and none is invented. The
+    # deployed value is preserved and the role is MARKED, not silently treated as
+    # though it reserved nothing. A real reserve arrives with the schema
+    # migration (context_input + max_output), not here.
+    if num_predict in (-1, -2):
+        return num_ctx, OUTPUT_RESERVE_UNBOUNDED
+    if num_predict in (None, "", 0):
+        return num_ctx, "no output reserve declared"
+    if not isinstance(num_predict, int) or num_predict < 0:
+        raise SystemExit(f"invalid geometry: {role} num_predict={num_predict!r}")
+    if num_predict >= num_ctx:
+        raise SystemExit(
+            f"invalid geometry: {role} reserves {num_predict} output tokens from "
+            f"a {num_ctx}-token window — nothing would be left for the prompt")
+    admit = num_ctx - num_predict
+    if admit <= 0:
+        raise SystemExit(f"invalid geometry: {role} admits {admit} input tokens")
+    return admit, ""
+
+
 def gen_role_block(role, info):
     num_ctx = ctx_of(info)
     backend = backend_of(info)
     ka = norm_keep_alive(info.get("keep_alive"))
 
-    if role == "embeddings" or truthy(info.get("embedding", "false")) or backend.startswith("nomic") or "embed" in role:
+    # Provider comes from the profile. This used to sniff the role name and the
+    # model tag (`backend.startswith("nomic")`) — a model-name conditional that
+    # broke the moment an embedding model was not called "nomic".
+    provider = (info.get("provider") or "").strip() or "ollama_chat"
+    if provider == "ollama":
         # `ollama`, NOT `ollama_chat`. LiteLLM has no embeddings route for the
         # ollama_chat provider: an /v1/embeddings call against it fails with
         # "Unmapped LLM provider for this endpoint. You passed
@@ -234,7 +318,7 @@ def gen_role_block(role, info):
         lines = [
             f"  - model_name: {mn(role)}",
             f"    litellm_params:",
-            f"      model: ollama/{backend}",
+            f"      model: {provider}/{backend}",
             f"      api_base: os.environ/OLLAMA_URL",
             f"      num_ctx: {num_ctx}",
         ]
@@ -259,13 +343,18 @@ def gen_role_block(role, info):
     merge     = truthy(info.get("merge", "false"))
     vision    = truthy(info.get("vision", "false"))
     parallel  = not reasoning
-    max_out   = min(16384, max(1024, num_ctx // 4))
+    # Was min(16384, max(1024, num_ctx // 4)) -- a derivation with no owner that
+    # disagreed with num_predict. max_output is now declared in the profile.
+    # One geometry derivation per call: this computed _geom(info) twice.
+    _g        = _geom(info)
+    max_out   = _g["max_output"] or min(16384, max(1024, num_ctx // 4))
+    _admit, _admit_note = admission_for(role, _g["num_ctx"], _g["num_predict"])
     desc      = info.get("role", "")
 
     params = [
         f"  - model_name: {mn(role)}",
         f"    litellm_params:",
-        f"      model: ollama_chat/{backend}",
+        f"      model: {provider}/{backend}",
         f"      api_base: os.environ/OLLAMA_URL",
         f"      num_ctx: {num_ctx}",
     ]
@@ -274,9 +363,14 @@ def gen_role_block(role, info):
     # decides which to set. A value of 1.0 means NO penalty and is set
     # explicitly rather than relying on a backend default.
     for key in ("temperature", "top_p", "top_k", "repetition_penalty",
-                "repeat_penalty", "num_predict"):
+                "repeat_penalty"):
         if info.get(key) not in (None, ""):
             params.append(f"      {key}: {info[key]}")
+    # num_predict is DERIVED from max_output. It is the only ceiling the backend
+    # honours: a per-request max_tokens of 512 against an alias declaring 32768
+    # returned 4,199 tokens (measured, LiteLLM 1.93.0 ollama_chat).
+    if _g["num_predict"] is not None:
+        params.append(f"      num_predict: {_g['num_predict']}")
     if ka is not None:
         params.append(f"      keep_alive: {ka}")
     if merge:
@@ -327,7 +421,7 @@ def gen_role_block(role, info):
     # parser rejects the file outright, and it made validate-deployment.sh fail
     # on a defect that had nothing to do with the deployment.
     mi += [
-        f"      max_input_tokens: {num_ctx}",
+        f"      max_input_tokens: {_admit}",
         f"      max_output_tokens: {max_out}",
     ]
     header = f"  # {mn(role)} — {desc} ({backend})\n" if desc else ""
@@ -366,7 +460,7 @@ def regen_litellm(models, clients):
     text = LITELLM_TEMPLATE.read_text()
     text, s1 = splice(text, ML_BEGIN, ML_END, gen_model_list(models), "model_list")
     text, s2 = splice(text, AL_BEGIN, AL_END, gen_alias_block(models, clients), "model_group_alias")
-    LITELLM_CONFIG.write_text(text)
+    stage(LITELLM_CONFIG, text)
     return s1 and s2
 
 
@@ -387,8 +481,14 @@ def write_caps_json(models):
             "strengths": flow_list(info.get("strengths")),
             "weaknesses": flow_list(info.get("weaknesses")),
         })
-    CAPS_JSON.write_text(json.dumps(
-        {"generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    # JSON cannot carry comments, so ownership travels in a "//" key -- every
+    # other generated artifact states its owner and how to regenerate it, and a
+    # timestamp alone does not tell a reader not to hand-edit this.
+    stage(CAPS_JSON, json.dumps(
+        {"//": ["GENERATED by scripts/sync-models.py — DO NOT EDIT.",
+                "Source of truth: config/profiles/<active tier>.yaml.",
+                "Regenerate: ./scripts/sync-models.sh"],
+         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
          "capabilities": caps}, indent=2) + "\n")
     return True
 
@@ -429,6 +529,13 @@ def write_integration_contract(models):
         # the facts that make Cadence describe a tool as usable or not; getting
         # them wrong makes it advertise a broken tool as a first choice.
         "compatibility": {
+            # THESE DESCRIBE DEPLOYED STATE, NOT HISTORICAL EXPERIMENTS.
+            # Both entries previously reported the outcome of an investigation
+            # rather than the configuration that ships, and Cadence reads this
+            # file to decide whether a tool is usable -- so a stale value here
+            # makes it apply the wrong policy. `execution: failing` was recorded
+            # while native LSP was being debugged; `codex_mcp_lsp.configured:
+            # true` described an experiment that was concluded and withdrawn.
             "claude_native_lsp": {
                 "configured": True,
                 # The gateway names native `LSP` explicitly (registry group
@@ -436,19 +543,43 @@ def write_integration_contract(models):
                 # fail-open, so the schema reaches the model on every task class
                 # that keeps a floor.
                 "schema_preserved": True,
-                "execution": "failing",
+                # Asserted by the gate: scripts/tests/lsp-baseline.py drives a
+                # real documentSymbol request through claude-local and requires
+                # actual symbols back. If that stops working the gate fails
+                # before this file can claim otherwise.
+                # "working", not an invented word. Cadence's consumer maps
+                # execution onto a FIXED vocabulary in _state_from()
+                # (compose_instructions.py): working | failing | blocked |
+                # blocked_namespace_dispatch. Anything else falls through to
+                # `configured` -- "configured but not verified working" --
+                # which UNDERSTATES a capability the gate proves works.
+                # Measured against the real consumer: "verified" produced
+                # state='configured'; "working" produces state='working'.
+                "execution": "working",
+                "verified_by": "scripts/tests/lsp-baseline.py",
+                "scope": "python",
             },
             "codex_mcp_lsp": {
-                "configured": True,
+                # WITHHELD, so `configured` is false. codex-local ships with no
+                # MCP servers at all -- no grepai, no LSP, no GitHub -- and
+                # scripts/tests/codex-mcp-withheld.sh asserts the generated and
+                # deployed configs contain zero [mcp_servers.*] blocks.
+                "configured": False,
                 "schema_preserved": False,
-                # Codex declares MCP servers as namespace BUNDLES, which LiteLLM
-                # discards before the backend; flattening them makes Codex's own
-                # dispatcher refuse the call (openai/codex#20652).
-                "execution": "blocked_namespace_dispatch",
+                "execution": "withheld_client_incompatible",
+                # WHY, so Cadence does not read this as a transient failure and
+                # retry: Codex declares MCP servers as namespace BUNDLES, which
+                # LiteLLM discards before the backend; flattening them makes
+                # Codex's own dispatcher refuse the call (openai/codex#20652).
+                # An MCP server here would advertise a surface Codex cannot
+                # drive, so none is registered.
+                "reason": "codex_cannot_dispatch_namespaced_tools",
+                "upstream": "openai/codex#20652",
+                "verified_by": "scripts/tests/codex-mcp-withheld.sh",
             },
         },
     }
-    CONTRACT_JSON.write_text(json.dumps(contract, indent=2, sort_keys=True) + "\n")
+    stage(CONTRACT_JSON, json.dumps(contract, indent=2, sort_keys=True) + "\n")
     return True
 
 
@@ -523,7 +654,7 @@ def regen_catalog(models):
             "truncation_policy": {"mode": "tokens", "limit": 10000},
         })
         prio += 5
-    CODEX_CATALOG.write_text(json.dumps({"models": entries}, indent=2) + "\n")
+    stage(CODEX_CATALOG, json.dumps({"models": entries}, indent=2) + "\n")
     return True
 
 
@@ -609,7 +740,7 @@ def regen_copilot_repo_md(models):
     text = COPILOT_REPO_TPL.read_text()
     text, spliced = splice(text, CP_BEGIN, CP_END, gen_copilot_capabilities(models),
                            "copilot capabilities")
-    COPILOT_REPO_MD.write_text(text)
+    stage(COPILOT_REPO_MD, text)
     return spliced
 
 
@@ -618,7 +749,7 @@ def regen_configure_zsh(clients):
         return False
     text = CONFIGURE_ZSH_TPL.read_text()
     text, spliced = splice(text, CS_BEGIN, CS_END, gen_slot_block(clients), "claude slots")
-    CONFIGURE_ZSH.write_text(text)
+    stage(CONFIGURE_ZSH, text)
     return spliced
 
 
@@ -657,7 +788,7 @@ def regen_claude_settings(models, clients):
         data["//"].append(
             f"Auto-compaction: window {win} x {pct}% = {int(win)*int(pct)//100} tokens "
             f"(profile-owned). NOT the model limit - architecture keeps its full context.")
-    CLAUDE_SETTINGS.write_text(json.dumps(data, indent=2) + "\n")
+    stage(CLAUDE_SETTINGS, json.dumps(data, indent=2) + "\n")
     return True
 
 
@@ -670,7 +801,7 @@ def _set_toml_model(path, model):
         text = re.sub(r'(?m)^model\s*=.*$', f'model = "{model}"', text, count=1)
     else:
         text = f'model = "{model}"\n' + text
-    path.write_text(text)
+    stage(path, text)
     return True
 
 
@@ -684,7 +815,7 @@ def regen_codex(models, clients):
         text = re.sub(r'(?m)^model\s*=.*$', f'model = "{mn(default)}"', text, count=1)
         text = re.sub(r'(?m)^# Valid models:.*$',
                       "# Valid models: " + " | ".join(mn(k) for k in models.keys()), text, count=1)
-        CODEX_CONFIG.write_text(text)
+        stage(CODEX_CONFIG, text)
         done = True
         # Codex's own compactor, same policy as claude-local. These keys must be
         # TOP-LEVEL: Codex does not reliably honour them inside a named profile,
@@ -696,10 +827,37 @@ def regen_codex(models, clients):
         # fire, because the model would 400 on context length first. The window
         # must describe the model Codex will really talk to.
         win, pct = COMPACTION.get("window"), COMPACTION.get("pct")
-        cx_ctx = (models.get(default) or {}).get("context")
-        if win and pct and cx_ctx:
+        # total_context from the SHARED geometry. This read `.get("context")`,
+        # a key the geometry migration removed, so the guard below silently
+        # failed and this file was never regenerated -- it simply kept its
+        # pre-migration contents, which looked correct only because the value
+        # had not changed yet. Fail loudly instead of skipping.
+        _cx = _geom(models.get(default) or {})
+        cx_ctx = _cx["total_context"]        # the window Codex advertises
+        cx_in = _cx["context_input"]         # what the backend will ADMIT
+        if not (win and pct and cx_ctx and cx_in):
+            raise SystemExit(
+                "codex compaction cannot be derived: "
+                f"window={win!r} pct={pct!r} total_context={cx_ctx!r} "
+                f"context_input={cx_in!r}")
+        if True:
             # Never advertise a compaction point the model cannot reach.
-            trigger = min(int(win) * int(pct) // 100, int(int(cx_ctx) * int(pct) / 100))
+            #
+            # The cap is context_input, NOT total_context. total_context is
+            # input+output, and the output half is space the INPUT can never
+            # occupy -- so a fraction of it can still land above the admission
+            # limit. MEASURED 2026-08-03 on implementation (16384 + 8192):
+            # 75% of total_context gave a trigger of 18,432 while LiteLLM
+            # admits 16,384 (max_input_tokens, confirmed via /model/info), so a
+            # long session would have taken an HTTP 400 ContextWindowExceeded
+            # 2,048 tokens BEFORE Codex could compact. That is precisely the
+            # failure the line above claims to prevent; only the denominator
+            # was wrong.
+            trigger = min(int(win) * int(pct) // 100, int(int(cx_in) * int(pct) / 100))
+            if trigger > int(cx_in):
+                raise SystemExit(
+                    "codex compaction trigger exceeds admissible input: "
+                    f"trigger={trigger} context_input={cx_in}")
             arch_ctx = cx_ctx
             text = CODEX_CONFIG.read_text()
             for key, val in (("model_context_window", arch_ctx),
@@ -708,7 +866,7 @@ def regen_codex(models, clients):
                     text = re.sub(rf'(?m)^{key}\s*=.*$', f'{key} = {val}', text, count=1)
                 else:
                     text = f'{key} = {val}\n' + text
-            CODEX_CONFIG.write_text(text)
+            stage(CODEX_CONFIG, text)
     if "plan" in profiles:
         _set_toml_model(CODEX_PLAN, mn(profiles["plan"]))
     if "review" in profiles:
@@ -746,7 +904,7 @@ def regen_continue(models, clients):
         "Chat/edit go through LiteLLM (4000); autocomplete hits Ollama (11434) directly for FIM.",
         "Models: " + " | ".join(mn(k) for k in models.keys()),
     ]
-    CONTINUE_CONFIG.write_text(json.dumps(data, indent=2) + "\n")
+    stage(CONTINUE_CONFIG, json.dumps(data, indent=2) + "\n")
     return True
 
 
@@ -783,6 +941,169 @@ def parse_profile_flag(argv):
     return tier, rest
 
 
+EFFECTIVE_SCHEMA_VERSION = 2
+EFFECTIVE_JSON = ROOT / "config/effective-profile.json"
+
+
+def build_effective_profile(active_tier, path):
+    """The canonical post-generation view of the deployed role configuration.
+
+    A DEDICATED artifact rather than an extension of capabilities.generated.json:
+    that file's documented purpose is the resolved-capability view for
+    `ailocal status`, it is consumed by ten call sites including the LiteLLM
+    container, and overloading it would couple the proxy's capability contract
+    to profile internals such as sampling parameters.
+
+    Hashes of BOTH inputs are recorded so a consumer can tell that generated
+    state no longer matches the profile it came from -- staleness is detectable
+    rather than assumed away."""
+    def tier_block(t):
+        prof_path = PROFILES_DIR / f"{t}.yaml"
+        roles = {}
+        for role in _pc.ROLES:
+            try:
+                c = _pc.resolve_role(t, role, ROOT)
+            except _pc.ProfileError:
+                continue
+            roles[role] = {k: c[k] for k in (
+                "model", "provider", "context_input", "max_output",
+                "total_context", "max_input_tokens", "context", "num_predict",
+                "reasoning", "temperature",
+                "top_p", "top_k", "repeat_penalty", "keep_alive", "persona",
+                "enabled", "name", "preferred")}
+        data = _pc.load_profile(t, ROOT)
+        return {"source_profile": str(prof_path.relative_to(ROOT)),
+                "source_profile_sha256": _sha_file(prof_path),
+                "compaction": data.get("compaction", {}),
+                "roles": roles}
+
+    # EVERY tier is normalized here, at generation time. Benchmark cross-tier
+    # planning previously parsed non-active profile YAML at runtime, which
+    # contradicted "sync-models is the sole YAML consumer" and left a second
+    # parser reachable from live code. One indexed artifact removes that without
+    # creating four unrelated files.
+    tiers = {t: tier_block(t) for t in _pc.TIERS
+             if (PROFILES_DIR / f"{t}.yaml").exists()}
+    body = {
+        "schema_version": EFFECTIVE_SCHEMA_VERSION,
+        "generator": "sync-models.py",
+        "active_tier": active_tier,
+        "active_profile_sha256": _sha_file(ACTIVE_PROFILE),
+        "tiers": tiers,
+        # Retained so the active tier is reachable without indexing, and so a
+        # v1 consumer's mental model still holds.
+        "tier": active_tier,
+        "source_profile": tiers[active_tier]["source_profile"],
+        "source_profile_sha256": tiers[active_tier]["source_profile_sha256"],
+        "compaction": tiers[active_tier]["compaction"],
+        "roles": tiers[active_tier]["roles"],
+    }
+    body["config_sha256"] = _sha_text(
+        json.dumps(body, sort_keys=True, separators=(",", ":")))
+    body["generated_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return body
+
+
+def _sha_file(path):
+    p = Path(path)
+    return hashlib.sha256(p.read_bytes()).hexdigest() if p.exists() else ""
+
+
+def _sha_text(text):
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+# ── atomic generation ───────────────────────────────────────────────────────
+# Outputs are STAGED and only replaced once every generator has succeeded. A
+# partial generation is worse than no generation: LiteLLM would serve one
+# profile's aliases while the clients pointed at another's, and nothing would
+# report a problem. Nothing here is replaced if any step raises.
+_STAGE: dict = {}
+
+
+def stage(path, text):
+    """Record an output. Written only by flush_stage()."""
+    _STAGE[Path(path)] = text
+
+
+def flush_stage():
+    """Write every staged output, then swap them in with rollback on failure.
+
+    THE GUARANTEE: per-file atomic, with rollback on partial failure. Not a
+    transaction -- os.replace() is atomic PER FILE and the set is replaced one
+    file at a time -- but a failure part-way through restores every destination
+    already replaced, so the tree ends up entirely old or entirely new.
+
+    WHY ROLLBACK AND NOT JUST AN ORDERED COMMIT MARKER. Writing
+    effective-profile.json last does make marker-aware readers fail closed, but
+    it does not protect the deployed system: LiteLLM reads
+    config/litellm/config.yaml directly and the clients read their own generated
+    files directly -- none of them consult the marker. MEASURED by fault
+    injection (scripts/tests/generation-rollback.py): failing after three
+    replaces left config/capabilities.generated.json new while the marker and
+    the client configs were still old. Mixed state, on disk, servable.
+
+    Order still matters and is kept: temp files are written and validated
+    first, dependent artifacts are replaced next, and effective-profile.json
+    goes LAST -- so even in the window before rollback completes, the marker
+    never claims a generation that is not fully applied."""
+    tmp, backups, replaced = {}, {}, []
+    try:
+        for path, text in _STAGE.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            t = path.with_suffix(path.suffix + ".tmp-sync")
+            t.write_text(text)
+            tmp[path] = t
+        # Validate BEFORE any destination is touched: an artifact that cannot be
+        # parsed back must not replace a good one.
+        for path, t in tmp.items():
+            if path.suffix == ".json":
+                try:
+                    json.loads(Path(t).read_text())
+                except Exception as exc:  # noqa: BLE001
+                    raise SystemExit(
+                        f"generation aborted: {path.name} is not valid JSON "
+                        f"({exc}); nothing was replaced")
+        marker = next((p for p in tmp if p.name == "effective-profile.json"), None)
+        ordered = sorted((p for p in tmp if p is not marker), key=lambda p: str(p))
+        if marker is not None:
+            ordered.append(marker)
+        for path in ordered:
+            if path.exists():
+                b = path.with_suffix(path.suffix + ".bak-sync")
+                shutil.copy2(path, b)
+                backups[path] = b
+            os.replace(tmp[path], path)
+            replaced.append(path)
+    except BaseException:
+        # Restore every destination already replaced, newest first.
+        for path in reversed(replaced):
+            b = backups.get(path)
+            try:
+                if b is not None and Path(b).exists():
+                    os.replace(b, path)
+                else:
+                    Path(path).unlink(missing_ok=True)   # it did not exist before
+            except Exception:  # noqa: BLE001
+                print(f"  ROLLBACK FAILED for {path}", file=sys.stderr)
+        raise
+    finally:
+        for t in tmp.values():
+            try:
+                Path(t).unlink(missing_ok=True)
+            except Exception:  # noqa: BLE001
+                pass
+        for b in backups.values():
+            try:
+                Path(b).unlink(missing_ok=True)
+            except Exception:  # noqa: BLE001
+                pass
+    n = len(_STAGE)
+    _STAGE.clear()
+    return n
+
+
+
 def main():
     tier, args = parse_profile_flag(sys.argv[1:])
 
@@ -797,7 +1118,8 @@ def main():
     if not LITELLM_TEMPLATE.exists():
         print(f"Error: {LITELLM_TEMPLATE} not found", file=sys.stderr); sys.exit(1)
 
-    path = profile_path(explicit=tier)
+    tier = resolve_tier(tier)          # fail-closed; never an implicit default
+    path = profile_path(tier=tier)
     step(f"Reading {path.relative_to(ROOT)} + config/clients.yaml")
     models = load_models_yaml(path)
     clients = load_clients_yaml()
@@ -810,6 +1132,10 @@ def main():
     ok("litellm config regenerated" if regen_litellm(models, clients) else "litellm config unchanged/skipped")
 
     step("Writing derived files")
+    stage(EFFECTIVE_JSON,
+          json.dumps(build_effective_profile(tier, path), indent=2,
+                     sort_keys=True) + "\n")
+    ok("effective-profile.json")
     ok("capabilities.generated.json") if write_caps_json(models) else warn("caps json skipped")
     ok("model_catalog.json") if regen_catalog(models) else warn("catalog skipped")
     ok("claude/settings.json") if regen_claude_settings(models, clients) else warn("claude settings skipped")
@@ -819,6 +1145,8 @@ def main():
     ok("codex config + profiles") if regen_codex(models, clients) else warn("codex skipped")
     ok("continue/config.json") if regen_continue(models, clients) else warn("continue skipped")
 
+    n = flush_stage()
+    ok(f"{n} generated files replaced atomically")
     step("Done — restart LiteLLM (`ailocal start`) and re-run `ailocal clients` "
          "to deploy the regenerated client configs.")
 

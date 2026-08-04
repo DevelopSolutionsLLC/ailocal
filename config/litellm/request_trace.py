@@ -52,6 +52,22 @@ def _classify_event(item) -> str | None:
     the question ("did the user see anything?") is the same in each.
     """
     try:
+        # /v1/messages delivers RAW SSE FRAMES (`bytes`), not objects -- measured
+        # 2026-08-03. Every branch below assumed a mapping, so on the Anthropic
+        # route this returned None for every event and first_visible_text_ms was
+        # silently null for the entire life of this file.
+        #
+        # This is deliberately MARKER DETECTION, not SSE parsing: the frame is
+        # tested for the two event signatures that answer "did the user see
+        # text", and nothing is decoded, framed, buffered or reassembled. A
+        # second SSE parser beside LiteLLM's own is exactly what must not be
+        # built here, and anything richer than this would be one.
+        if isinstance(item, (bytes, bytearray)):
+            if b'"type": "text_delta"' in item or b'"type":"text_delta"' in item:
+                return "text"
+            if b"tool_use" in item or b"input_json_delta" in item:
+                return "tool"
+            return None
         # Events arrive as PYDANTIC MODELS on most routes, not dicts. An earlier
         # version read __dict__, which does not expose pydantic fields, so every
         # event classified as None and first_visible_text_ms was always null --
@@ -94,6 +110,75 @@ def _classify_event(item) -> str | None:
     return None
 
 
+def _resolved_backend(st, data):
+    """The backend tag, ONLY when it is genuinely distinguishable.
+
+    By the time the success callback fires, LiteLLM has rewritten `model` from
+    the requested alias to the tag that served it. Before that it still holds
+    the alias. So `model` is the backend model exactly when it differs from the
+    alias we recorded at pre-call time; when they are equal we know nothing and
+    return None rather than repeating the alias under a second name.
+    """
+    d = data or {}
+    alias = (st or {}).get("requested_alias")
+    current = d.get("model")
+    return current if (alias and current and current != alias) else None
+
+
+def _completion_fields(acc, saw_any_event):
+    """Render the accumulator as trace fields, with an explicit reason for every
+    null. `provider_done_reason` is deliberately NOT defaulted from
+    finish_reason: on the ollama_chat streaming path finish_reason IS the raw
+    done_reason, but on other providers it is a mapped value, and silently
+    conflating the two would manufacture provider evidence we do not have."""
+    def field(name, unavailable_reason):
+        val = acc.get(name)
+        if val is not None:
+            return val, None
+        if acc.get("extraction_error"):
+            return None, EXTRACTION_FAILED
+        return None, unavailable_reason
+
+    no_reply = UNAVAILABLE_NO_BACKEND_REPLY if not saw_any_event else NOT_SENT_BY_PROVIDER
+
+    ct, ct_av = field("completion_tokens", no_reply)
+    pt, pt_av = field("prompt_tokens", no_reply)
+    fr, fr_av = field("finish_reason", no_reply)
+    sr, sr_av = field("stop_reason", no_reply)
+    pdr, pdr_av = field("provider_done_reason", no_reply)
+    pec, pec_av = field("provider_eval_count", no_reply)
+
+    # COMPLETE requires a count AND a termination reason. One without the other
+    # cannot answer "did this stop because it hit a ceiling", which is the only
+    # question this record exists to answer.
+    has_count = ct is not None or pec is not None
+    has_reason = fr is not None or sr is not None or pdr is not None
+    if has_count and has_reason:
+        completeness = EVIDENCE_COMPLETE
+    elif has_count or has_reason:
+        completeness = EVIDENCE_PARTIAL
+    else:
+        completeness = EVIDENCE_NONE
+
+    return {
+        "completion_tokens": ct,
+        "completion_tokens_availability": ct_av,
+        "prompt_tokens": pt,
+        "prompt_tokens_availability": pt_av,
+        "finish_reason": fr,
+        "finish_reason_availability": fr_av,
+        "stop_reason": sr,
+        "stop_reason_availability": sr_av,
+        "provider_done": acc.get("provider_done"),
+        "provider_done_reason": pdr,
+        "provider_done_reason_availability": pdr_av,
+        "provider_eval_count": pec,
+        "provider_eval_count_availability": pec_av,
+        "completion_extraction_error": acc.get("extraction_error"),
+        "completion_evidence": completeness,
+    }
+
+
 def _load_registry():
     """Reuse capability_registry rather than re-deriving capability/client/route.
     A second implementation would drift from the gateway's, and then a trace and
@@ -122,7 +207,22 @@ KEY = "_ailocal_trace"
 # ── E1: schema version, process generation, token components ─────────────────
 # Bumped whenever a FIELD'S MEANING changes, not when one is added. A consumer can
 # then trust older records instead of guessing which shape it is reading.
-EVENT_VERSION = 2
+#
+# 2 -> 3 (2026-08-03): on `stream_end` records, completion_tokens / finish_reason
+# / stop_reason previously did not exist at all, so a consumer could only read
+# their absence as "unknown". They now exist and carry an explicit availability
+# reason, which means a null on a v3 stream_end record is a MEASUREMENT ("the
+# provider sent none") rather than a gap. That is a change of meaning, so it
+# takes a bump. v2 records remain readable and must still be read as "unknown".
+# 3 -> 4 (2026-08-03): `model` was OVERLOADED and is no longer emitted. On
+# pre-call and stream_end records it held the requested ALIAS; on completion
+# records LiteLLM has already resolved it, so the same field held the BACKEND
+# tag. A reproduction run was wasted joining cases on it. New records emit
+# `requested_alias` and `resolved_backend_model` as separate fields.
+# READING HISTORY: v1-v3 records still carry `model`. Interpret it by phase --
+# alias on pre_call/stream_end, backend model on completion. Historical files
+# are never rewritten.
+EVENT_VERSION = 4
 
 # A stable identity for THIS proxy process. The startup connect-refused burst was
 # only diagnosable because every failing record shared one container lifetime; with
@@ -136,6 +236,20 @@ _PROCESS_GENERATION = f"pg-{int(time.time())}-{os.getpid()}"
 UNAVAILABLE_NO_HOOK = "not_exposed_by_litellm_hook"
 UNAVAILABLE_NOT_STREAMED = "non_streaming_request"
 UNAVAILABLE_NO_BACKEND_REPLY = "no_backend_response"
+
+# Completion-side availability. A null completion field has four distinct causes
+# and collapsing them is how the planner investigation lost three days: "the
+# provider reported nothing", "this dialect cannot carry it", "the hook never
+# looked" and "parsing threw" are different facts with different owners.
+NOT_SENT_BY_PROVIDER = "not_sent_by_provider"
+EXTRACTION_FAILED = "extraction_failed"
+
+# Evidence completeness for a streamed record, so a partially-observed stream can
+# never be mistaken for a fully-observed one. EVIDENCE_COMPLETE requires BOTH a
+# token count and a termination reason; anything less is PARTIAL by construction.
+EVIDENCE_COMPLETE = "EVIDENCE_COMPLETE"
+EVIDENCE_PARTIAL = "EVIDENCE_PARTIAL"
+EVIDENCE_NONE = "EVIDENCE_NONE"
 
 
 def _upstream_host(data) -> str | None:
@@ -280,24 +394,66 @@ def _context_budget(self_registry, data, components) -> dict:
             declared = self_registry.max_context(d.get("model"))
     except Exception:
         declared = None
+    # The fallback below looked under litellm_params.model_info, but model_info
+    # is a SIBLING of litellm_params in the deployment config, not nested inside
+    # it -- so this path never resolved and declared_context_tokens was
+    # permanently null for every bench-* alias (the registry does not know
+    # temporary aliases either). Both locations are now tried, in the order
+    # LiteLLM actually populates them.
     if declared is None:
-        try:
-            declared = ((d.get("litellm_params") or {}).get("model_info") or {}) \
-                .get("max_input_tokens")
-        except Exception:
-            declared = None
+        for src in (d.get("model_info"),
+                    (d.get("litellm_params") or {}).get("model_info")):
+            try:
+                if isinstance(src, dict) and src.get("max_input_tokens"):
+                    declared = src["max_input_tokens"]
+                    break
+            except Exception:  # noqa: BLE001
+                continue
 
     requested_out = d.get("max_tokens") or d.get("max_completion_tokens")
     total_in = components.get("input_tokens_estimated_total")
     headroom = None
     if isinstance(declared, int) and isinstance(total_in, int):
         headroom = declared - total_in - (requested_out if isinstance(requested_out, int) else 0)
+    # CONFIGURED geometry, read straight from the deployment. These do not
+    # depend on the production registry, which is why they are the only context
+    # numbers a temporary bench-* alias can report at all. They are CONFIGURED
+    # values and are named as such: none of them is a provider measurement, and
+    # the physical window is num_ctx, never the admission threshold.
+    lp = d.get("litellm_params") or {}
+    num_ctx = lp.get("num_ctx")
+    num_predict = lp.get("num_predict")
+    usable_in = None
+    if isinstance(num_ctx, int) and isinstance(num_predict, int) and num_predict > 0:
+        # num_predict -1 means INFINITE generation in Ollama and -2 fill-context;
+        # neither reserves a knowable amount, so usable input is not computable
+        # rather than silently equal to the whole window.
+        usable_in = num_ctx - num_predict
+    elif isinstance(num_ctx, int) and num_predict in (None, -1, -2):
+        usable_in = None
+
     return {
         "requested_output_tokens": requested_out if isinstance(requested_out, int) else None,
         "declared_context_tokens": declared if isinstance(declared, int) else None,
         "effective_backend_context_tokens": None,
         "effective_backend_context_availability": "not_measured_by_this_hook",
         "context_headroom_tokens": headroom,
+        "configured_num_ctx": num_ctx if isinstance(num_ctx, int) else None,
+        "configured_num_predict": num_predict if isinstance(num_predict, int) else None,
+        "usable_input_tokens": usable_in,
+        "usable_input_availability": (
+            None if usable_in is not None else "num_predict_unbounded_or_absent"),
+        # What the pre-call guard will ADMIT. Recorded next to usable_input so
+        # admission > physical capacity is visible in the record itself rather
+        # than needing to be recomputed by a reader.
+        "admission_limit_tokens": declared if isinstance(declared, int) else None,
+        "admission_exceeds_usable_input": (
+            bool(isinstance(declared, int) and usable_in is not None
+                 and declared > usable_in)),
+        # The model's own trained window. NOT visible from inside the proxy --
+        # it needs an Ollama /api/show call this hook must not make.
+        "model_native_context_tokens": None,
+        "model_native_context_availability": "not_exposed_by_litellm_hook",
     }
 
 
@@ -383,11 +539,18 @@ class RequestTrace(CustomLogger):
             "client": client,
             "route": route,
             "model_class": model_class,
-            "backend_model": backend,
             "request_id": st.get("request_id"),
             "ts": st.get("t_start"),
             "call_type": call_type,
-            "model": (data or {}).get("model"),
+            # The alias the CLIENT asked for, carried from the pre-call hook
+            # through the shared per-request state so it is identical on every
+            # record of one request -- including the completion record, where
+            # LiteLLM has already rewritten `model` to the backend tag.
+            "requested_alias": st.get("requested_alias") or (data or {}).get("model"),
+            # What actually served it. On pre-call this is litellm_params.model
+            # ("ollama_chat/<tag>"); on completion LiteLLM has resolved it into
+            # `model` itself. Never inferred from the alias.
+            "resolved_backend_model": backend or _resolved_backend(st, data),
             "stream": bool((data or {}).get("stream")),
             "user_agent": ua[:80],
             "tools_declared": len(tools),
@@ -427,6 +590,11 @@ class RequestTrace(CustomLogger):
             # what it observed is worse than one missing the field.
             if st is not None and call_type:
                 st["call_type"] = call_type
+            # Capture the REQUESTED alias here and nowhere else. This is the
+            # only hook that sees it before LiteLLM resolves it, and the state
+            # dict travels with the request into every later hook.
+            if st is not None and (data or {}).get("model"):
+                st.setdefault("requested_alias", data["model"])
         except Exception:
             pass
         return data
@@ -450,6 +618,19 @@ class RequestTrace(CustomLogger):
         first_text = None
         first_tool = None
         saw_text = False
+        # NOTE: completion evidence is deliberately NOT extracted here. On
+        # /v1/messages this hook receives RAW SSE `bytes` frames, not objects
+        # (measured 2026-08-03), so reading usage here would mean writing a
+        # second SSE parser alongside LiteLLM's own. LiteLLM already assembles
+        # the finished response and hands it to async_log_success_event, which
+        # is where the completion record is written. See that method.
+        # A stream that stopped early and one that ended normally are different
+        # facts with different owners, and "stream_end" alone cannot tell them
+        # apart. Anything that leaves the loop other than exhaustion -- client
+        # disconnect (GeneratorExit/CancelledError) or a backend fault -- is an
+        # interruption, and the completion evidence from it is partial BY CAUSE.
+        interrupted = False
+        interrupt_type = None
         try:
             async for item in response:
                 now = time.time()
@@ -466,6 +647,13 @@ class RequestTrace(CustomLogger):
                     first_tool = now
                 n += 1
                 yield item
+        except BaseException as exc:  # noqa: BLE001
+            # Record and re-raise. Swallowing here would convert a real failure
+            # into a silent truncation, which is the exact class of bug this
+            # whole record exists to catch.
+            interrupted = True
+            interrupt_type = type(exc).__name__
+            raise
         finally:
             rec = self._base(request_data)
             total_ms = (round((time.time() - st["t_start"]) * 1000, 1)
@@ -531,6 +719,14 @@ class RequestTrace(CustomLogger):
                 # A stream that produced zero chunks is NOT a success, whatever
                 # the HTTP status was.
                 "outcome": "streamed" if n else "empty_stream",
+                "stream_completed_normally": not interrupted,
+                "stream_interrupted": interrupted,
+                "stream_interrupt_type": interrupt_type,
+                # The CONFIGURED alias ceiling, read from litellm_params. It is
+                # NOT called effective_num_predict: this hook cannot see what
+                # Ollama actually applied, and naming a configured value
+                # "effective" is precisely the conflation that made an overflow
+                # look impossible in the context-budget fields.
             })
             self._write(rec)
             emit(rec)
@@ -551,20 +747,105 @@ class RequestTrace(CustomLogger):
             except Exception:
                 pass
             usage = getattr(response, "usage", None)
-            rec.update({
-                "phase": "success",
-                "total_ms": round((time.time() - st.get("t_start", time.time()))
-                                  * 1000, 1),
+            # Same accumulator shape as the streaming path, so ONE consumer can
+            # read both record kinds. Non-streaming semantics are unchanged:
+            # these are the identical values from the identical attributes, now
+            # carrying an explicit reason when they are absent.
+            acc = {
                 "finish_reason": finish,
                 "stop_reason": stop,
                 "prompt_tokens": getattr(usage, "prompt_tokens", None),
                 "completion_tokens": getattr(usage, "completion_tokens", None),
+            }
+            rec.update({
+                "phase": "success",
+                "total_ms": round((time.time() - st.get("t_start", time.time()))
+                                  * 1000, 1),
                 "outcome": "success",
+                "stream_completed_normally": True,
+                "stream_interrupted": False,
+                "stream_interrupt_type": None,
+                "configured_num_predict": (
+                    ((data or {}).get("litellm_params") or {}).get("num_predict")),
+                "effective_num_predict": None,
+                "effective_num_predict_availability": UNAVAILABLE_NO_HOOK,
+                **_completion_fields(acc, saw_any_event=True),
             })
             self._write(rec)
         except Exception as exc:
             emit({"event": "trace_success_failed", "error": str(exc)})
         return response
+
+    async def async_log_success_event(self, kwargs, response_obj, start_time,
+                                      end_time):
+        """The completion record — the one that says how generation ENDED.
+
+        WHY THIS HOOK AND NOT THE STREAM ITERATOR. The iterator hook sees raw
+        SSE `bytes` on /v1/messages, so extracting usage there would mean
+        maintaining a second SSE parser next to LiteLLM's own. LiteLLM already
+        assembles the finished response and passes it here — measured on the
+        installed 1.93.0, for STREAMED requests, on BOTH routes:
+
+            /v1/messages          call_type=anthropic_messages -> ModelResponse
+            /v1/chat/completions  call_type=acompletion        -> ModelResponse
+            usage.completion_tokens / usage.prompt_tokens populated in both
+
+        Correlation needs no new plumbing: our KEY survives into `kwargs`, so
+        the completion record carries the SAME request_id as the pre-call and
+        stream_end records (measured: has_trace_key=true on both routes).
+
+        `kwargs` also carries the resolved provider params (num_predict, num_ctx,
+        max_tokens), which the iterator hook could not see at all — that is the
+        field the output-limit question actually turns on.
+
+        Failure here must never affect the request: this runs after the response
+        has been delivered, and every exception is contained.
+        """
+        if not self.dir:
+            return
+        try:
+            kw = kwargs if isinstance(kwargs, dict) else {}
+            rec = self._base(kw, call_type=kw.get("call_type"))
+
+            usage = getattr(response_obj, "usage", None)
+            finish = None
+            try:
+                choices = getattr(response_obj, "choices", None) or []
+                if choices:
+                    finish = getattr(choices[0], "finish_reason", None)
+            except Exception:  # noqa: BLE001
+                pass
+
+            acc = {
+                "completion_tokens": getattr(usage, "completion_tokens", None),
+                "prompt_tokens": getattr(usage, "prompt_tokens", None),
+                "finish_reason": finish,
+                "stop_reason": getattr(response_obj, "stop_reason", None),
+            }
+
+            opt = kw.get("optional_params") or {}
+            # The value LiteLLM actually resolved for the provider, after mapping
+            # max_tokens -> num_predict and after any static alias value. This is
+            # the effective ceiling; `requested_output_tokens` is what the client
+            # asked for. Recording both is the entire point.
+            eff_np = opt.get("num_predict", kw.get("num_predict"))
+
+            rec.update({
+                "phase": "completion",
+                "outcome": "completed",
+                "stream": bool(kw.get("stream")),
+                "requested_output_tokens": kw.get("max_tokens"),
+                "effective_num_predict": eff_np,
+                "effective_num_predict_availability": (
+                    None if eff_np is not None else NOT_SENT_BY_PROVIDER),
+                "effective_num_ctx": opt.get("num_ctx", kw.get("num_ctx")),
+                "response_type": type(response_obj).__name__,
+                "llm_api_duration_ms": kw.get("llm_api_duration_ms"),
+                **_completion_fields(acc, saw_any_event=True),
+            })
+            self._write(rec)
+        except Exception as exc:  # noqa: BLE001
+            emit({"event": "trace_completion_failed", "error": str(exc)[:200]})
 
     async def async_post_call_failure_hook(self, request_data, original_exception,
                                            user_api_key_dict, traceback_str=None):
