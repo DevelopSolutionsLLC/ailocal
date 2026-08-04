@@ -22,6 +22,7 @@
 #
 # Usage: ./scripts/validate-claude-e2e.sh [--keep]
 set -uo pipefail
+. "$(cd "$(dirname "$0")" && pwd)/lib/e2e.sh"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
@@ -161,9 +162,20 @@ run_task() { # $1=slug  $2=prompt  $3=max-turns
   rm -f "$LEDGERS"/*.json 2>/dev/null
   local start end
   start=$(python3 -c 'import time;print(time.time())')
-  zsh -ic "cd '$WORK' && claude-local -p '$prompt' --max-turns $turns \
-    --permission-mode acceptEdits" > "$log" 2>&1
+  # Bounded: an unbounded real client session blocks the run indefinitely and
+  # leaves its process tree behind. A cold architecture prefill is slow, so the
+  # budget is generous rather than tight.
+  local budget="${AILOCAL_CLAUDE_TIMEOUT:-900}"
+  e2e_run "$budget" "$log" \
+    zsh -ic "cd '$WORK' && claude-local -p '$prompt' --max-turns $turns --permission-mode acceptEdits"
+  local rc=$?
+  e2e_sweep "claude-local -p" "claude -p"
   end=$(python3 -c 'import time;print(time.time())')
+  LAST_TIMEDOUT=""
+  if [ "$rc" -eq 124 ]; then
+    LAST_TIMEDOUT=1
+    echo "  TIMEOUT after ${budget}s — session terminated, tree swept" >&2
+  fi
   LAST_TRUNCATED=""
   LAST_SECS=$(python3 -c "print(f'{$end-$start:.0f}')")
   LAST_LOG="$log"
