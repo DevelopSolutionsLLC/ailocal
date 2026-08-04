@@ -21,8 +21,7 @@ OLLAMA_URL="${OLLAMA_HOST:-http://localhost:11434}"
 LABEL="com.ailocal.ollama-preload"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
-info() { echo "  ✓ $*"; }
-step() { echo; echo "▶ $*"; }
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/output.sh"
 
 # Resolve a role name (or backend tag) to the raw Ollama backend tag via
 # models.yaml. LiteLLM serves the base model directly (personas are injected by

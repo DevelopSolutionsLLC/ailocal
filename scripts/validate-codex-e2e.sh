@@ -32,7 +32,7 @@ pass=0; fail=0; declare -a FAILED=()
 ok()   { printf '  \033[32mPASS\033[0m  %s\n' "$1"; pass=$((pass+1)); }
 bad()  { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; fail=$((fail+1)); FAILED+=("$1"); }
 note() { printf '  \033[33mNOTE\033[0m  %s\n' "$1"; }
-info() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/output.sh"
 
 docker ps --format '{{.Names}}' | grep -qx ailocal-litellm || {
   echo "ailocal-litellm is not running."; exit 1; }
@@ -52,7 +52,7 @@ PY
 restore() {
   local rc=$?
   echo
-  info "restoring namespace_expansion.enabled=$ORIGINAL_EXPANSION"
+  banner "restoring namespace_expansion.enabled=$ORIGINAL_EXPANSION"
   set_expansion "$ORIGINAL_EXPANSION" >/dev/null 2>&1 || true
   exit $rc
 }
@@ -193,13 +193,13 @@ echo " Codex -> LiteLLM -> gateway -> MCP/LSP -> qwen3-coder"
 echo "══════════════════════════════════════════════════════════════════════"
 
 # ── control: does the basic path work at all? ──────────────────────────────
-info "expansion OFF (baseline)"
+banner "expansion OFF (baseline)"
 got="$(set_expansion false | tail -1)"
 [ "$got" = "False" ] && ok "registry reloaded with expansion disabled" \
                      || bad "expansion flag did not take effect (got '$got')"
 
 echo
-info "task A: fix the discount bug (edits must land on disk)"
+banner "task A: fix the discount bug (edits must land on disk)"
 run_codex edit "The apply_discount function in src/pricing.py adds the discount instead of subtracting it. Fix it, then stop."
 echo "        ${LAST_SECS}s | tools: ${LAST_TOOLS:-<none recorded>}"
 if [ -n "$LAST_TOOLS" ]; then ok "A. the proxy recorded tool calls"
@@ -226,7 +226,7 @@ echo
 
 LSP_PROMPT="Use your LSP tools to find the definition of apply_discount in this repository, then stop. Do not edit anything."
 
-info "expansion OFF — control"
+banner "expansion OFF — control"
 got="$(set_expansion false | tail -1)"
 run_codex lsp_off "$LSP_PROMPT"
 echo "        ${LAST_SECS}s | tools: ${LAST_TOOLS:-<none>}"
@@ -238,7 +238,7 @@ else
 fi
 
 echo
-info "expansion ON — the test"
+banner "expansion ON — the test"
 got="$(set_expansion true | tail -1)"
 [ "$got" = "True" ] && ok "registry reloaded with expansion ENABLED" \
                     || bad "expansion flag did not take effect (got '$got')"
@@ -247,7 +247,7 @@ echo "        ${LAST_SECS}s | tools: ${LAST_TOOLS:-<none>}"
 ON_TOOLS="$LAST_TOOLS"; ON_LOG="$LAST_LOG"
 
 echo
-info "what the gateway did with the bundles"
+banner "what the gateway did with the bundles"
 docker logs --since 10m ailocal-litellm 2>&1 | grep tool_gateway_metric \
   > /tmp/codex-metrics.log || true
 python3 - <<'PY'
@@ -269,7 +269,7 @@ else:
 PY
 
 echo
-info "verdict"
+banner "verdict"
 # POSITIVE EVIDENCE ONLY.
 #
 # The first version of this check asked "did the model emit a flattened call, and

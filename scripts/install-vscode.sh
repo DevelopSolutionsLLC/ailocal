@@ -47,14 +47,13 @@ MODELS_JSON="$USER_DIR/chatLanguageModels.json"
 SETTINGS_JSON="$USER_DIR/settings.json"
 BASE_URL="${AILOCAL_BASE_URL:-http://localhost:4000}"
 
-info() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
-warn() { echo "  ⚠ $*" >&2; }
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/output.sh"
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 
 command -v code >/dev/null || { echo "the 'code' CLI is not on PATH"; exit 1; }
 [ -d "$USER_DIR" ] || { echo "VS Code user dir not found: $USER_DIR"; exit 1; }
 
-info "VS Code $(code --version | head -1), user dir: $USER_DIR"
+banner "VS Code $(code --version | head -1), user dir: $USER_DIR"
 
 # ── 1. the connector extension ──────────────────────────────────────────────
 EXT_ID="Gethnet.litellm-connector-copilot"
@@ -64,7 +63,7 @@ else
   if [ -n "$DRY" ]; then
     echo "  would install $EXT_ID"
   else
-    info "installing $EXT_ID"
+    banner "installing $EXT_ID"
     code --install-extension "$EXT_ID" --force >/dev/null 2>&1 \
       && ok "installed" || warn "install failed — check the Marketplace manually"
   fi
@@ -91,14 +90,14 @@ for EXT in ms-python.python golang.go; do
   elif [ -n "$DRY" ]; then
     echo "  would install $EXT"
   else
-    info "installing $EXT"
+    banner "installing $EXT"
     code --install-extension "$EXT" --force >/dev/null 2>&1 \
       && ok "installed" || warn "$EXT install failed — language intelligence for it will be absent"
   fi
 done
 
 # ── 2. provider group (automatable; preserves the SecretStorage reference) ──
-info "provider group -> $(basename "$MODELS_JSON")"
+banner "provider group -> $(basename "$MODELS_JSON")"
 python3 - "$MODELS_JSON" "$BASE_URL" "${DRY:-}" <<'PY'
 import json, os, sys
 
@@ -160,7 +159,7 @@ else:
 PY
 
 # ── 3. remove settings VS Code no longer honours ────────────────────────────
-info "pruning deprecated settings from settings.json"
+banner "pruning deprecated settings from settings.json"
 python3 - "$SETTINGS_JSON" "${DRY:-}" <<'PY'
 import json, os, re, sys
 
@@ -224,7 +223,7 @@ PY
 
 # ── 4. report what is verifiable and what is not ───────────────────────────
 echo
-info "verification"
+banner "verification"
 KEY="$(grep -E '^LITELLM_MASTER_KEY=' .env 2>/dev/null | cut -d= -f2-)"
 if curl -sf -m 10 "$BASE_URL/model/info" -H "Authorization: Bearer $KEY" \
      -o /tmp/ailocal-modelinfo.json 2>/dev/null; then
