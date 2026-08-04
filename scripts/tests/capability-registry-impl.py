@@ -38,18 +38,17 @@ _spec = importlib.util.spec_from_file_location("capability_registry", REG_PY)
 cr = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(cr)
 
-fails = 0
-def check(cond, name):
-    global fails
-    print(f"  {'PASS' if cond else 'FAIL'}  {name}")
-    if not cond:
-        fails += 1
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from harness import Suite
+
+_suite = Suite()
+check = _suite.check
 
 try:
     import yaml  # noqa: F401
 except ImportError:
     print("\nSKIPPED: PyYAML absent on this interpreter. Run inside the proxy "
-          "image (scripts/test-capability-registry.sh). Exiting non-zero so an "
+          "image (scripts/tests/in-container.sh). Exiting non-zero so an "
           "incomplete run is never mistaken for a passing one.")
     sys.exit(1)
 
@@ -300,8 +299,4 @@ if os.path.exists(GATEWAY_PY):
 else:
     check(False, f"{GATEWAY_PY} missing")
 
-print()
-if fails:
-    print(f"CAPABILITY REGISTRY TESTS: {fails} FAILED")
-    sys.exit(1)
-print("CAPABILITY REGISTRY TESTS: OK")
+sys.exit(_suite.report())

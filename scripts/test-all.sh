@@ -75,9 +75,11 @@ fi
 echo
 echo "UNIT / BEHAVIOUR"
 run "capability registry (+ no-hard-coded-literals assertion)" \
-    bash scripts/tests/capability-registry.sh
+    bash scripts/tests/in-container.sh scripts/tests/capability-registry-impl.py \
+      AILOCAL_GATEWAY_SOURCE=/app/config/tool_gateway.py
 run "capability negotiator (byte accounting, modes, passthrough)" \
-    bash scripts/tests/tool-gateway.sh
+    bash scripts/tests/in-container.sh scripts/tests/tool-gateway-impl.py \
+      AILOCAL_GATEWAY_MODULE=/app/config/tool_gateway.py
 run "persona injection" \
     python3 scripts/tests/persona-injection.py
 # Both directions matter: a repair layer that fires on a tutorial fence would
