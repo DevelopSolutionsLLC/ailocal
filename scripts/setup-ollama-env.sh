@@ -27,9 +27,7 @@ FLASH_ATTN="${OLLAMA_FLASH_ATTENTION:-1}" # faster attention + lower memory, no 
 KV_CACHE="${OLLAMA_KV_CACHE_TYPE:-q8_0}" # quantize KV cache to 8-bit, halves memory at large contexts
 MODELS_DIR="${OLLAMA_MODELS:-/Users/Shared/ollama/models}" # store models outside any one user's home
 
-info() { echo "  ✓ $*"; }
-warn() { echo "  ⚠ $*" >&2; }
-step() { echo; echo "▶ $*"; }
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/output.sh"
 
 # /Users/Shared exists so the model store is not inside one user's home — a 43 GB
 # download should not be re-fetched per account, and Cadence's embedder reads the

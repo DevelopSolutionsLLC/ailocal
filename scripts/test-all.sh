@@ -156,6 +156,8 @@ run "codex MCP is withheld (no grepai/lsp/github, no re-sync)" \
 run "commit-msg hook (blocks attribution, allows product names)" \
     bash scripts/tests/commit-msg-hook.sh
 
+run "shell output helpers (streams, colour, one owner)" \
+    bash scripts/tests/shell-output.sh
 run "validator checks (deterministic, classification, bounded)" \
     python3 scripts/tests/validators.py
 run "consolidated suites stay section-isolated" \

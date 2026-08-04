@@ -26,20 +26,20 @@ pass=0; fail=0; declare -a FAILED=()
 ok()   { printf '  \033[32mPASS\033[0m  %s\n' "$1"; pass=$((pass+1)); }
 bad()  { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; fail=$((fail+1)); FAILED+=("$1"); }
 note() { printf '  \033[33mMANUAL\033[0m %s\n' "$1"; }
-info() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/output.sh"
 
 echo "══════════════════════════════════════════════════════════════════════"
 echo " VS Code -> LiteLLM -> gateway -> qwen3-coder"
 echo "══════════════════════════════════════════════════════════════════════"
 
-info "1. client prerequisites [REAL]"
+banner "1. client prerequisites [REAL]"
 if command -v code >/dev/null; then ok "code CLI present ($(code --version|head -1))"
 else bad "code CLI not on PATH"; fi
 if code --list-extensions 2>/dev/null | grep -qix "Gethnet.litellm-connector-copilot"; then
   ok "connector extension installed"
 else bad "connector extension missing"; fi
 
-info "2. provider group [REAL]"
+banner "2. provider group [REAL]"
 if [ -f "$MODELS_JSON" ]; then
   python3 - "$MODELS_JSON" "$BASE_URL" <<'PY'
 import json, sys
@@ -70,7 +70,7 @@ else
   bad "no chatLanguageModels.json — run ./scripts/install-vscode.sh"
 fi
 
-info "3. deprecated settings absent [REAL]"
+banner "3. deprecated settings absent [REAL]"
 python3 - "$USER_DIR/settings.json" <<'PY'
 import json, re, sys
 try:
@@ -88,7 +88,7 @@ else:
     print("  \033[32mPASS\033[0m  no deprecated keys")
 PY
 
-info "4. the endpoint the connector reads [REAL]"
+banner "4. the endpoint the connector reads [REAL]"
 if curl -sf -m 10 "$BASE_URL/model/info" -H "Authorization: Bearer $KEY" -o /tmp/vsc-mi.json; then
   N=$(python3 -c "import json;print(len(json.load(open('/tmp/vsc-mi.json')).get('data') or []))")
   ok "/model/info answers with $N models"
@@ -96,7 +96,7 @@ else
   bad "/model/info unreachable — start the stack"
 fi
 
-info "5. the gateway handles this route [REAL]"
+banner "5. the gateway handles this route [REAL]"
 # /v1/chat/completions is the route the connector uses. Proven here directly,
 # independent of VS Code, so a GUI problem is never confused with a gateway one.
 if curl -sf -m 120 "$BASE_URL/v1/chat/completions" \
@@ -112,7 +112,7 @@ else
   bad "/v1/chat/completions failed for a vscode-shaped request"
 fi
 
-info "6. has a REAL VS Code request ever reached the proxy? [REAL]"
+banner "6. has a REAL VS Code request ever reached the proxy? [REAL]"
 SEEN=$(docker logs --since 24h ailocal-litellm 2>&1 | grep tool_gateway_metric \
   | python3 -c "
 import sys, json
@@ -130,7 +130,7 @@ note "compatibility suite both send vscode-shaped requests themselves. Only a"
 note "chat turn you type in the editor proves the GUI path."
 
 echo
-info "the one manual step, and how to check it"
+banner "the one manual step, and how to check it"
 cat <<'TXT'
   1. Open VS Code, open Copilot Chat.
   2. In the model picker choose a "LiteLLM" model (e.g. ailocal-architecture).

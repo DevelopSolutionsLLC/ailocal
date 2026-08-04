@@ -31,7 +31,7 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$WORKDIR" "$OUT"
 printf 'print("the answer is 42")\n' > "$WORKDIR/sample.py"
 
-info() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/output.sh"
 
 # This script flips a production setting. If it dies partway — a bad flag, a
 # Ctrl-C, an unhealthy proxy — it must not leave the proxy in a mode the
@@ -39,7 +39,7 @@ info() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 # up on a later manual inspection.
 restore_default() {
   local rc=$?
-  info "restoring gateway to the committed default (off)"
+  banner "restoring gateway to the committed default (off)"
   AILOCAL_TOOL_GATEWAY=off dc up -d >/dev/null 2>&1 || true
   for _ in $(seq 1 40); do
     [ "$(docker inspect ailocal-litellm --format '{{.State.Health.Status}}' \
@@ -55,7 +55,7 @@ trap restore_default EXIT INT TERM
 restart_with() {
   # Recreate the proxy with the requested mode, then WAIT for healthy. A
   # benchmark that starts measuring before the proxy is up measures startup.
-  info "switching gateway to '$1' and waiting for health"
+  banner "switching gateway to '$1' and waiting for health"
   AILOCAL_TOOL_GATEWAY="$1" AILOCAL_TOOL_GATEWAY_CAPTURE=/app/captures \
     dc up -d >/dev/null 2>&1
   local s=""
@@ -152,7 +152,7 @@ echo
 # or not filtering helps.
 for round in $(seq 1 "$RUNS"); do
   if [ $((round % 2)) -eq 1 ]; then order="report filter"; else order="filter report"; fi
-  info "round $round/$RUNS  order: $order"
+  banner "round $round/$RUNS  order: $order"
   for mode in $order; do
     restart_with "$mode"
     # Set in the CALLER, not inside run_arm: run_arm is invoked via command

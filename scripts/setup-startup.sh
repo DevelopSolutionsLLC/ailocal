@@ -50,9 +50,7 @@ MODEL_ROLE="architecture"
 WITH_LITELLM=0
 UNINSTALL=0
 
-info() { echo "  ✓ $*"; }
-warn() { echo "  ⚠ $*" >&2; }
-step() { echo; echo "▶ $*"; }
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/output.sh"
 
 # Resolve a role name to its Ollama backend tag from models.yaml (at install time,
 # from the interactive shell — the agent can't read ~/Documents at runtime).
