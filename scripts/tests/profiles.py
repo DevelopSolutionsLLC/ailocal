@@ -18,6 +18,7 @@ Usage: profiles.py [resolver|hardware]   (default: both)
 """
 from __future__ import annotations
 
+import os
 import re
 import sys
 import json
@@ -69,17 +70,20 @@ def sandbox(marker=None, profile_text=None) -> Path:
     root = Path(tempfile.mkdtemp(prefix="pcfg-"))
     (root / "config" / "profiles").mkdir(parents=True)
     if marker is not None:
-        target = P.active_profile_path(root)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(marker)
+        _write_marker(root, marker)
     if profile_text is not None:
         (root / "config" / "profiles" / "64gb.yaml").write_text(profile_text)
     return root
 
 
+def _state(root: Path) -> Path:
+    """A sandbox's runtime state root."""
+    return root / "state"
+
+
 def _write_marker(root: Path, text: str) -> None:
-    """Write the active-tier marker into a sandbox, wherever policy puts it."""
-    target = P.active_profile_path(root)
+    """Write the active-tier marker into a sandbox's own runtime state."""
+    target = P.active_profile_path(_state(root))
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(text)
 
@@ -116,7 +120,7 @@ def resolver_checks() -> None:
     for label, root, expect, kind in cases:
         try:
             if kind == "tier":
-                P.resolve_active_tier(root)
+                P.resolve_active_tier(root, _state(root))
             else:
                 P.load_profile("64gb", root)
             got = "NO ERROR"
@@ -496,16 +500,17 @@ def resolver_checks() -> None:
     # source hash, so a fixture carrying only the active profile is incomplete.
     for _t in P.TIERS:
         _sh.copy(REPO / "config" / "profiles" / f"{_t}.yaml", box / "config" / "profiles")
-    check(P.load_effective(box)["tier"] == eff["tier"], "a faithful copy validates")
+    check(P.load_effective(box, _state(box))["tier"] == eff["tier"], "a faithful copy validates")
 
     def expect(code, mutate, label):
         b = Path(tempfile.mkdtemp(prefix="eff-"))
         _sh.copytree(box / "config", b / "config")
-        # Runtime state lives outside config/, so a sandbox must copy both.
-        _sh.copytree(P.runtime_root(box), P.runtime_root(b))
+        # Runtime state is external and sandbox-scoped: rebuild it for b from
+        # the marker box is using, then point the resolver at b's copy.
+        _write_marker(b, P.active_profile_path(_state(box)).read_text())
         mutate(b)
         try:
-            P.load_effective(b)
+            P.load_effective(b, _state(b))
             got = "NO ERROR"
         except P.ProfileError as e:
             got = e.code

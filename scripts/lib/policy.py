@@ -2,7 +2,8 @@
 """policy.py — the ONE profile parser and resolver.
 
 config/profiles/<tier>.yaml is authoritative deployment configuration.
-.runtime/active-profile selects a tier and HAS NO IMPLICIT DEFAULT.
+The active-profile marker in $AILOCAL_STATE selects a tier and HAS NO
+IMPLICIT DEFAULT.
 
 WHY NOT PyYAML — decided 2026-08-03, measured, do not re-litigate casually.
 PyYAML is genuinely absent from every interpreter ailocal can reach:
@@ -39,7 +40,7 @@ sync-models.py's load_models_yaml(), benchmark.py's parse_profile(), doctor.sh's
 sed extraction, and a `cat active-profile` in every shell entry point -- and they
 did not agree. Worse, the shell readers all shared one shape:
 
-    _TIER="$(cat .runtime/active-profile 2>/dev/null || echo 64gb)"
+    _TIER="$(cat "$AILOCAL_STATE/active-profile" 2>/dev/null || echo 64gb)"
 
 Eight occurrences across four scripts. Each one silently installs or runs the
 64 GB tier when the marker is missing, unreadable or empty. That is exactly the
@@ -239,20 +240,30 @@ def parse_profile_text(text: str) -> dict:
 CLIENTS = ("claude", "codex", "continue", "compat")
 
 
-def runtime_root(repo_root=None) -> Path:
-    """Machine-specific generated and selected state.
+def runtime_root(state_root=None) -> Path:
+    """Generated and machine-selected state, OUTSIDE the checkout.
 
-    Inside the checkout so that each checkout owns state matching its own
-    source, and so Compose can mount it with a relative path. Never tracked.
-    AILOCAL_RUNTIME overrides it for tests.
+    One artifact -- the rendered SearXNG settings -- carries the Brave API key,
+    and living outside Git's tree makes committing it impossible rather than
+    merely discouraged. All generated state shares that root so there is one
+    place to inspect, back up, repair and remove.
+
+    AILOCAL_STATE overrides it; XDG_STATE_HOME shifts the default. This is the
+    only implementation of that resolution.
     """
-    override = os.environ.get("AILOCAL_RUNTIME")
-    return Path(override) if override else _root(repo_root) / ".runtime"
+    if state_root is not None:
+        return Path(state_root)
+    override = os.environ.get("AILOCAL_STATE")
+    if override:
+        return Path(override)
+    xdg = os.environ.get("XDG_STATE_HOME") or os.path.join(
+        os.path.expanduser("~"), ".local", "state")
+    return Path(xdg) / "ailocal"
 
 
-def generated_path(name: str, repo_root=None) -> Path:
+def generated_path(name: str, state_root=None) -> Path:
     """A generated artifact under the runtime root."""
-    return runtime_root(repo_root) / name
+    return runtime_root(state_root) / name
 
 
 def profiles_dir(repo_root=None) -> Path:
@@ -263,9 +274,9 @@ def profile_path(tier: str, repo_root=None) -> Path:
     return profiles_dir(repo_root) / f"{tier}.yaml"
 
 
-def active_profile_path(repo_root=None) -> Path:
+def active_profile_path(state_root=None) -> Path:
     """Where the selected tier is recorded. The only place this is spelled."""
-    return runtime_root(repo_root) / "active-profile"
+    return runtime_root(state_root) / "active-profile"
 
 
 def client_policy_path(repo_root=None) -> Path:
@@ -359,12 +370,12 @@ def required_models(tier=None, repo_root=None) -> list:
     return sorted(set(out))
 
 
-def resolve_active_tier(repo_root=None) -> str:
+def resolve_active_tier(repo_root=None, state_root=None) -> str:
     """The active tier. NEVER defaults -- a missing marker is an error.
 
     An installation that silently picks a tier is an installation that can pull
     models the machine cannot hold."""
-    marker = active_profile_path(repo_root)
+    marker = active_profile_path(state_root)
     if not marker.exists():
         raise ProfileError(ACTIVE_PROFILE_MISSING, str(marker))
     tier = marker.read_text().strip()
@@ -531,7 +542,7 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else ""
 
 
-def load_effective(repo_root=None) -> dict:
+def load_effective(repo_root=None, state_root=None) -> dict:
     """The generated effective profile, validated against its own inputs.
 
     Staleness is DETECTED, not assumed away: the artifact records the hashes of
@@ -559,7 +570,7 @@ def load_effective(repo_root=None) -> dict:
             != data["config_sha256"]:
         raise ProfileError(EFFECTIVE_PROFILE_HASH_INVALID, "config_sha256")
 
-    marker = active_profile_path(root)
+    marker = active_profile_path(state_root)
     if not marker.exists():
         raise ProfileError(ACTIVE_PROFILE_MISSING, str(marker))
     if marker.read_text().strip() != data["tier"]:
