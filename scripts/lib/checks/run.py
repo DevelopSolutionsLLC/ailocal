@@ -12,8 +12,9 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
-from checks import exit_code, render  # noqa: E402
+from checks import FAIL, WARN, exit_code, render  # noqa: E402
 from checks import config as C  # noqa: E402
+from checks import host as H  # noqa: E402
 from checks import services as S  # noqa: E402
 
 BOLD, RESET = "\033[1;36m", "\033[0m"
@@ -90,7 +91,57 @@ def _smoke(argv: list[str]) -> int:
     return code
 
 
-COMMANDS = {"validate": _validate, "smoke": _smoke}
+def _doctor(argv: list[str]) -> int:
+    """0 healthy, 1 refuses (untrustworthy tier), 2 degraded findings.
+
+    Exit 1 is a refusal, not a failure count: diagnosing against an assumed
+    tier would report on a configuration the machine is not running.
+    """
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+    import profile_config as P
+
+    try:
+        tier = P.resolve_active_tier()
+        arch = P.resolve_role(tier, "architecture")
+    except Exception as exc:
+        print("  \033[31m✗\033[0m cannot resolve the active profile — refusing to "
+              "report on an assumed tier", file=sys.stderr)
+        print(f"      {getattr(exc, 'code', type(exc).__name__)}: {exc}", file=sys.stderr)
+        return 1
+
+    token = _master_key()
+    aliases, geometry, backends = _expected()
+
+    print(f"{BOLD}Configuration{RESET}")
+    results = C.deterministic_checks()
+    render(results, remediation=True)
+
+    print(f"\n{BOLD}Runtime{RESET}")
+    runtime = [S.check_docker(), S.check_container(), S.check_proxy_health(),
+               S.check_ollama(), S.check_models_present(backends)]
+    runtime += S.check_aliases(token, aliases)
+    runtime += [S.check_searxng(), S.check_search_tool_registered()]
+    render(runtime, remediation=True)
+
+    print(f"\n{BOLD}Host{RESET}")
+    host = H.doctor_only_checks(arch["active"], arch["context_input"])
+    render(host, remediation=True)
+
+    # Degraded means a real failure. Warnings are advisory -- a cold model or a
+    # misplaced store is expensive, not broken -- and match the previous
+    # contract, where only an error marked the run unhealthy.
+    failures = [r for r in results + runtime + host if r.status is FAIL]
+    warnings = [r for r in results + runtime + host if r.status is WARN]
+    print()
+    if not failures:
+        note = f" ({len(warnings)} advisory warning(s))" if warnings else ""
+        print(f"▶ DOCTOR: OK — ailocal looks healthy{note}")
+        return 0
+    print(f"▶ DOCTOR: DEGRADED — {len(failures)} failing check(s) above", file=sys.stderr)
+    return 2
+
+
+COMMANDS = {"validate": _validate, "smoke": _smoke, "doctor": _doctor}
 
 if __name__ == "__main__":
     if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:

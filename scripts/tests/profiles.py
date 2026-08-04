@@ -585,8 +585,14 @@ def resolver_checks() -> None:
           "flow_list is idempotent — no list→string→list round-trip")
     check(_sm.flow_list("[a, b]") == ["a", "b"],
           "flow_list still parses raw strings for config/clients.yaml")
-    check("jq -r" in (REPO / "scripts" / "doctor.sh").read_text(),
-          "doctor.sh uses jq, not a bespoke extractor")
+    # The point was never jq: it was that doctor must not extract profile fields
+    # with a bespoke parser. It now reads them through profile_config itself,
+    # which is the same guarantee one layer stronger.
+    _doc = (REPO / "scripts" / "doctor.sh").read_text()
+    check(not re.search(r"(sed|awk|grep)[^|\n]*profiles/", _doc),
+          "doctor.sh extracts no profile field with a bespoke parser")
+    check("checks/run.py" in _doc,
+          "doctor.sh reads the profile through the shared checks layer")
 
     print("\nGENERATION IS ATOMIC AND INSTALL FAILS CLOSED")
     check("flush_stage" in sync and "os.replace" in sync,
