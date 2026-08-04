@@ -74,7 +74,7 @@ def ask(ctx,label):
     before=snap()
     body=json.dumps({"model":alias,"messages":[{"role":"user","content":"hi"}],"max_tokens":4}).encode()
     t0=time.time()
-    urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:4000/v1/chat/completions",
+    urllib.request.urlopen(urllib.request.Request(f"{B.LITELLM}/v1/chat/completions",
         data=body,headers={"content-type":"application/json","Authorization":f"Bearer {key}"}),timeout=900).read()
     dt=round(time.time()-t0,1); time.sleep(2); after=snap()
     prev_ctx = before[0][0] if before else None

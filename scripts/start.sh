@@ -115,23 +115,11 @@ printf '%s' "$current_sha" > "$CONFIG_STAMP"
 if [ "$NO_WAIT" = true ]; then
   info "Services launched (skipping health wait)"
 else
-  # Wait for LiteLLM process liveness — /health/liveliness returns 200 as soon as
-  # the proxy is accepting requests, regardless of whether Ollama is reachable.
-  # (The full /health endpoint blocks until all models respond, which fails when
-  # Ollama isn't running. Don't use it here.)
   step "Waiting for LiteLLM to become ready"
-  attempts=0
-  max_attempts=30
-  until curl -sSf --max-time 3 http://localhost:4000/health/liveliness >/dev/null 2>&1; do
-    attempts=$((attempts + 1))
-    if [ $attempts -ge $max_attempts ]; then
-      warn "LiteLLM did not become ready after $((max_attempts * 3))s"
-      echo "  Check logs: docker logs ailocal-litellm"
-      break
-    fi
-    printf "  Waiting... (%ds)\r" $((attempts * 3))
-    sleep 3
-  done
+  if ! ailocal_wait_ready 30 progress; then
+    warn "LiteLLM did not become ready after 90s"
+    echo "  Check logs: docker logs ailocal-litellm"
+  fi
   echo ""
 fi
 
