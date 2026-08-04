@@ -22,7 +22,7 @@
 # Usage: ./scripts/tests/client-compatibility.sh
 set -uo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/harness.sh"
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT="$ROOT_DIR"
 cd "$ROOT"
 . scripts/lib/compose.sh
 
