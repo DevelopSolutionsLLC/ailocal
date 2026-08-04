@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# benchmark-tool-gateway.sh — A/B the gateway on the real client, real model.
+# benchmarks/tool-gateway.sh — A/B the gateway on the real client, real model.
 #
 # Runs the SAME task through claude-local twice: once with the gateway in
 # report mode (measures, changes nothing = the baseline) and once in filter
@@ -15,10 +15,10 @@
 # n=1 per arm by default. That is enough to see a 70% payload change and NOT
 # enough to resolve small latency differences; RUNS=n raises it.
 #
-# Usage:  ./scripts/benchmark-tool-gateway.sh [task-prompt]
+# Usage:  ./scripts/benchmarks/tool-gateway.sh [task-prompt]
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"   # scripts/benchmarks/ -> repo root
 cd "$ROOT"
 . scripts/lib/compose.sh
 

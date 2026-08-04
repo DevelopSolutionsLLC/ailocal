@@ -25,8 +25,8 @@ session ran; it does not prove this session caused it, and it cannot distinguish
 the model's edits from a human's in the same window. The report says so.
 
 USAGE
-    scripts/verify-session.py --repo . [--ledger <file>] [--test "pytest -q"]
-    scripts/verify-session.py --repo . --list
+    scripts/diagnostics/verify-session.py --repo . [--ledger <file>] [--test "pytest -q"]
+    scripts/diagnostics/verify-session.py --repo . --list
 
 Exit codes:  0 VERIFIED or PARTIALLY_VERIFIED
              1 usage/IO error
@@ -58,7 +58,7 @@ _FALLBACK_AMBIGUOUS = {"Bash", "exec_command", "write_stdin"}
 
 REGISTRY_YAML = os.environ.get(
     "AILOCAL_REGISTRY_HOST",
-    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                  "config/litellm/registry.yaml"))
 
 

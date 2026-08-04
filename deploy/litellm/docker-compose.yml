@@ -85,7 +85,7 @@ services:
       # Empty = no capture. Payloads contain tool schemas, not conversation.
       - AILOCAL_TOOL_GATEWAY_CAPTURE=${AILOCAL_TOOL_GATEWAY_CAPTURE:-}
       # session_observer.py — ledger of what each session asked for and which
-      # tools it called. Empty = off. Paired with scripts/verify-session.py.
+      # tools it called. Empty = off. Paired with scripts/diagnostics/verify-session.py.
       - AILOCAL_SESSION_LEDGER=${AILOCAL_SESSION_LEDGER:-}
       # request_trace.py — one JSONL record per request. Empty = off.
       # The version this stack was VALIDATED against. scripts/doctor.sh compares

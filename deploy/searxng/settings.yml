@@ -267,7 +267,7 @@ engines:
   #
   # A blended search issues one crossref request, so normal use fits inside 1/s.
   # Every 429 observed here was produced by back-to-back diagnostic probes, not
-  # by search traffic; scripts/diag-search-engines.py now paces itself for this.
+  # by search traffic; scripts/diagnostics/search-engines.py now paces itself for this.
   #
   # The polite pool would triple headroom and is entered purely by putting
   # "mailto:<address>" in the User-Agent, which SearXNG supports globally via
