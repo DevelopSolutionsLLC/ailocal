@@ -451,7 +451,13 @@ def main() -> int:
     _sp.loader.exec_module(_sm)
     _models = _sm.load_models_yaml(REPO / "config" / "profiles" /
                                    f"{P.active_tier()}.yaml")
-    _pref = _models["architecture"]["preferred"]
+    # `completion`, not `architecture`: preferred is documentation-only and
+    # optional (profile_config defaults it to []), and architecture's list was
+    # removed on 2026-08-03 when qwen3-coder:30b stopped being a supported
+    # candidate. This assertion only needs SOME typed list to prove values
+    # survive generation without a string round-trip; it must not pin a role
+    # whose fallback policy is allowed to change.
+    _pref = _models["completion"]["preferred"]
     check(isinstance(_pref, list),
           f"lists stay typed through generation (preferred is {type(_pref).__name__})")
     check(_sm.flow_list(_pref) is _pref,
