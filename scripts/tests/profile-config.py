@@ -328,9 +328,16 @@ def main() -> int:
     sync_src = (REPO / "scripts" / "sync-models.py").read_text()
     check("_pc.geometry(" in sync_src,
           "sync-models calls the shared geometry, does not re-derive it")
-    check("min(16384, max(1024, num_ctx // 4))" not in sync_src.split("max_out   =")[1][:120]
-          or "_geom(info)[\"max_output\"]" in sync_src,
-          "max_output_tokens comes from the profile, not a //4 heuristic")
+    # BEHAVIOURAL, not textual: the previous form matched one exact expression
+    # (`_geom(info)["max_output"]`) and broke the moment that value was hoisted
+    # into a local -- testing the spelling rather than the property.
+    _prof = P.load_profile(P.active_tier())
+    _emitted = [_sm4.gen_role_block(r, _prof[r])
+                for r in ("architecture", "implementation", "review")]
+    _declared = [P.resolve_role(P.active_tier(), r)["max_output"]
+                 for r in ("architecture", "implementation", "review")]
+    check(all(f"num_predict: {d}" in blk for blk, d in zip(_emitted, _declared)),
+          f"emitted num_predict equals the profile's max_output {_declared}")
 
     # Advertised must equal enforced: they disagreed before (fast advertised
     # 12288 while enforcing 4096).

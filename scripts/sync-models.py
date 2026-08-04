@@ -344,8 +344,9 @@ def gen_role_block(role, info):
     parallel  = not reasoning
     # Was min(16384, max(1024, num_ctx // 4)) -- a derivation with no owner that
     # disagreed with num_predict. max_output is now declared in the profile.
-    max_out   = _geom(info)["max_output"] or min(16384, max(1024, num_ctx // 4))
-    _g = _geom(info)
+    # One geometry derivation per call: this computed _geom(info) twice.
+    _g        = _geom(info)
+    max_out   = _g["max_output"] or min(16384, max(1024, num_ctx // 4))
     _admit, _admit_note = admission_for(role, _g["num_ctx"], _g["num_predict"])
     desc      = info.get("role", "")
 
@@ -1017,10 +1018,28 @@ def stage(path, text):
 
 
 def flush_stage():
-    """Write every staged output atomically, then swap them in.
+    """Write every staged output, then swap them in, commit marker LAST.
 
-    os.replace() is atomic within a filesystem, so a reader either sees the old
-    file or the new one -- never a half-written one."""
+    THE GUARANTEE, STATED HONESTLY. os.replace() is atomic PER FILE, so no
+    reader ever sees a half-written file. The SET is not atomic: this loop
+    replaces destinations one at a time, and a crash between two replaces leaves
+    a mixed generation on disk. The previous docstring claimed the stronger
+    property, which is why the weaker one was never designed around.
+
+    What makes that recoverable rather than silent: effective-profile.json
+    carries the SHA-256 of every source it was generated from, and
+    profile_config.load_effective() refuses a profile whose recorded hashes no
+    longer match. So the ordering below is the actual mechanism --
+
+      1. write ALL temp files first, and validate them, before replacing
+         anything: a serialization error must abort while the tree is still
+         entirely the old generation;
+      2. replace every dependent artifact;
+      3. replace effective-profile.json LAST, as the commit marker.
+
+    A crash before step 3 leaves the OLD effective-profile whose hashes no
+    longer match the new sources, so every reader fails closed and the install
+    stops -- rather than a client quietly running against half-new config."""
     tmp = {}
     try:
         for path, text in _STAGE.items():
@@ -1028,8 +1047,23 @@ def flush_stage():
             t = path.with_suffix(path.suffix + ".tmp-sync")
             t.write_text(text)
             tmp[path] = t
+        # Validate BEFORE any destination is touched. A JSON artifact that
+        # cannot be parsed back must not replace a good one.
         for path, t in tmp.items():
-            os.replace(t, path)
+            if path.suffix == ".json":
+                try:
+                    json.loads(Path(t).read_text())
+                except Exception as exc:  # noqa: BLE001
+                    raise SystemExit(
+                        f"generation aborted: {path.name} is not valid JSON "
+                        f"({exc}); nothing was replaced")
+        # Deterministic order, commit marker last.
+        marker = next((p for p in tmp if p.name == "effective-profile.json"), None)
+        ordered = sorted((p for p in tmp if p is not marker), key=lambda p: str(p))
+        if marker is not None:
+            ordered.append(marker)
+        for path in ordered:
+            os.replace(tmp[path], path)
     finally:
         for t in tmp.values():
             try:

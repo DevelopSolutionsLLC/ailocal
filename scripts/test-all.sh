@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # test-all.sh — the single regression gate. Run this before every commit.
 #
-# Six suites plus six invariants. Each reports independently and the script exits
+# Unit suites, integration checks and invariants (21 in total; the runner is the
+# source of truth for the count). Each reports independently and the script exits
 # non-zero if ANY of them fails or could not run.
 #
 # "Could not run" is treated as failure, not as a skip. Several suites need PyYAML

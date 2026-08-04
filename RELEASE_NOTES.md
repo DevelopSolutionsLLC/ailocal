@@ -96,6 +96,6 @@ Both are documented, bounded, and outside the supported working surface.
 | Client | Status |
 |---|---|
 | Claude Code (`claude-local`) | supported — routing, tools, search, streaming, resume |
-| Codex (`codex-local`) | supported for non-streaming; streamed turns blocked by #27442 |
+| Codex (`codex-local`) | configuration, routing, geometry and tool-call transport validated; **interactive turns remain blocked by LiteLLM #27442** — the Responses stream does not terminate in the form Codex requires |
 | VS Code (LiteLLM Connector) | supported; endpoint and key require a one-time entry in VS Code SecretStorage, which no script can seed |
 | VS Code (Continue) | optional; configuration generated only when installed or opted in |
