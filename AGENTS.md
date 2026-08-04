@@ -106,6 +106,32 @@ approval. Keep commits scoped to one responsibility.
 Shell: `set -euo pipefail`; reuse the `info/warn/step/backup` helpers. Python:
 stdlib only. Files and directories kebab-case.
 
+## Comments and documentation
+
+Comments explain **why** — constraints, invariants, ownership, surprising
+behaviour. Code explains **what**. Do not paraphrase the next statement.
+
+- **Python:** PEP 8, PEP 257. Docstrings on public modules and on functions
+  whose contract is not obvious; concise Google-style `Args:`/`Raises:` only
+  where the detail earns its space. A docstring that restates the function name
+  is noise.
+- **Shell:** comment platform quirks, bootstrap constraints, destructive
+  boundaries and external-tool limitations — not each command.
+- **YAML/TOML:** explain non-default values, measured constraints, ownership and
+  regeneration source. Not benchmark diaries.
+- **Investigation history belongs elsewhere:** an ADR if durable,
+  `docs/troubleshooting.md` if operational, `docs/BENCHMARK.md` if about
+  reproducibility, Git history otherwise. Keep the invariant, drop the story.
+- **No assistant or session narrative in source**, and no assistant attribution
+  anywhere — enforced by `.githooks/commit-msg`.
+- **TODOs name a concrete condition or issue.** Delete them when the condition
+  passes.
+
+Ownership: **DevelopSolutions, LLC** (Apache-2.0, see `LICENSE`), primary
+maintainer **Victor T. Chevalier**. The root LICENSE is authoritative — do not
+add per-file copyright banners. Generated files carry the marker instead:
+owner, source, and regeneration command.
+
 ## Do not
 
 - Add a second YAML parser, or parse profile fields in a shell script.
