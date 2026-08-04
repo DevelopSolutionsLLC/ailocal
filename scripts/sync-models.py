@@ -527,6 +527,13 @@ def write_integration_contract(models):
         # the facts that make Cadence describe a tool as usable or not; getting
         # them wrong makes it advertise a broken tool as a first choice.
         "compatibility": {
+            # THESE DESCRIBE DEPLOYED STATE, NOT HISTORICAL EXPERIMENTS.
+            # Both entries previously reported the outcome of an investigation
+            # rather than the configuration that ships, and Cadence reads this
+            # file to decide whether a tool is usable -- so a stale value here
+            # makes it apply the wrong policy. `execution: failing` was recorded
+            # while native LSP was being debugged; `codex_mcp_lsp.configured:
+            # true` described an experiment that was concluded and withdrawn.
             "claude_native_lsp": {
                 "configured": True,
                 # The gateway names native `LSP` explicitly (registry group
@@ -534,15 +541,31 @@ def write_integration_contract(models):
                 # fail-open, so the schema reaches the model on every task class
                 # that keeps a floor.
                 "schema_preserved": True,
-                "execution": "failing",
+                # Asserted by the gate: scripts/tests/lsp-baseline.py drives a
+                # real documentSymbol request through claude-local and requires
+                # actual symbols back. If that stops working the gate fails
+                # before this file can claim otherwise.
+                "execution": "verified",
+                "verified_by": "scripts/tests/lsp-baseline.py",
+                "scope": "python",
             },
             "codex_mcp_lsp": {
-                "configured": True,
+                # WITHHELD, so `configured` is false. codex-local ships with no
+                # MCP servers at all -- no grepai, no LSP, no GitHub -- and
+                # scripts/tests/codex-mcp-withheld.sh asserts the generated and
+                # deployed configs contain zero [mcp_servers.*] blocks.
+                "configured": False,
                 "schema_preserved": False,
-                # Codex declares MCP servers as namespace BUNDLES, which LiteLLM
-                # discards before the backend; flattening them makes Codex's own
-                # dispatcher refuse the call (openai/codex#20652).
-                "execution": "blocked_namespace_dispatch",
+                "execution": "withheld_client_incompatible",
+                # WHY, so Cadence does not read this as a transient failure and
+                # retry: Codex declares MCP servers as namespace BUNDLES, which
+                # LiteLLM discards before the backend; flattening them makes
+                # Codex's own dispatcher refuse the call (openai/codex#20652).
+                # An MCP server here would advertise a surface Codex cannot
+                # drive, so none is registered.
+                "reason": "codex_cannot_dispatch_namespaced_tools",
+                "upstream": "openai/codex#20652",
+                "verified_by": "scripts/tests/codex-mcp-withheld.sh",
             },
         },
     }

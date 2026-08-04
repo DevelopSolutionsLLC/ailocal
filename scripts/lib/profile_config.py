@@ -302,7 +302,7 @@ def geometry(context_input, max_output):
             "num_predict": max_output, "max_input_tokens": context_input}
 
 
-def resolve_role(tier: str, role: str, repo_root=None) -> dict:
+def resolve_role(tier: str, role: str, repo_root=None, _data=None) -> dict:
     """One role's effective configuration.
 
     `enabled` mirrors the benchmark's existing rule: no backend, or an explicit
@@ -310,7 +310,10 @@ def resolve_role(tier: str, role: str, repo_root=None) -> dict:
     though it did."""
     if role in NON_ROLE_SECTIONS:
         raise ProfileError(ROLE_MISSING, f"{role} is not a capability role")
-    data = load_profile(tier, repo_root)
+    # `_data` lets a caller that has ALREADY parsed the profile pass it in.
+    # profile_summary() used to parse once for itself and then again inside
+    # this function for every role -- seven parses of the same file per call.
+    data = load_profile(tier, repo_root) if _data is None else _data
     if role not in data:
         raise ProfileError(ROLE_MISSING, role)
     cfg = data[role]
@@ -338,9 +341,13 @@ def profile_summary(tier: str, repo_root=None) -> dict:
     data = load_profile(tier, repo_root)
     return {
         "tier": tier,
+        # Exposed so shell entry points never grep the YAML for it. install.sh
+        # read `status:` with grep, which was the last profile-YAML read left in
+        # a shell script.
+        "status": data.get("status") or "unknown",
         "disk_gb": data.get("disk_gb"),
         "compaction": data.get("compaction", {}),
-        "roles": {r: resolve_role(tier, r, repo_root)
+        "roles": {r: resolve_role(tier, r, repo_root, _data=data)
                   for r in ROLES if r in data},
     }
 
