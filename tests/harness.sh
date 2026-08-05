@@ -11,7 +11,7 @@
 #   bad "a failing assertion"
 #   report          # prints the summary; returns 0 clean, 1 otherwise
 
-ROOT_DIR="${ROOT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+ROOT_DIR="${ROOT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 _fails=0
 _passes=0
 _skips=0

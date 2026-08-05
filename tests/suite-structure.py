@@ -36,7 +36,7 @@ def counts(path: Path, *args: str) -> tuple[int, int]:
 
 
 for name, sections in DISPATCHED.items():
-    path = REPO / "scripts" / "tests" / name
+    path = REPO / "tests" / name
     _suite.section(name)
 
     # Importing must not assert anything: that is what hid the gateway defect.
@@ -66,16 +66,16 @@ for name, sections in DISPATCHED.items():
 
 _suite.section("no module-level mutable state")
 for name in DISPATCHED:
-    src = (REPO / "scripts" / "tests" / name).read_text()
+    src = (REPO / "tests" / name).read_text()
     n = sum(1 for line in src.splitlines() if line.strip().startswith("global "))
     check(n == 0, f"{name} declares no globals (found {n})")
 
 _suite.section("shell suites report failure")
 # A shell suite that keeps a private counter after adopting the harness will
 # print FAIL and still exit 0. Assert the wiring, not the assertions.
-for name in sorted(p.name for p in (REPO / "scripts" / "tests").glob("*.sh")
+for name in sorted(p.name for p in (REPO / "tests").glob("*.sh")
                    if p.name != "harness.sh"):
-    src = (REPO / "scripts" / "tests" / name).read_text()
+    src = (REPO / "tests" / name).read_text()
     if "harness.sh" not in src:
         _suite.skip(f"{name} does not use the shared harness")
         continue

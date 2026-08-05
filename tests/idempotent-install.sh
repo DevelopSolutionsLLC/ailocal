@@ -21,7 +21,7 @@
 # dropped). Where a file is compared by hash, it is because it should be
 # byte-stable. Each entry says which it is.
 #
-# Usage: ./scripts/tests/idempotent-install.sh [--include-vscode]
+# Usage: ./tests/idempotent-install.sh [--include-vscode]
 set -uo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/harness.sh"
 ROOT="$ROOT_DIR"
