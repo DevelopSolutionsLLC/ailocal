@@ -81,7 +81,7 @@ def check_client_mappings() -> list[CheckResult]:
             f"client:{client}", FAIL if unknown else PASS,
             f"{client} mappings resolve" if not unknown
             else f"{client} targets unknown capabilities: {', '.join(unknown)}",
-            remediation=None if not unknown else "edit config/clients.yaml"))
+            remediation=None if not unknown else "edit profiles/clients.yaml"))
     return out
 
 
@@ -324,7 +324,7 @@ def check_client_slots() -> list[CheckResult]:
         return [CheckResult("client-slots", PASS,
                             "claude slots respect profile geometry")]
     return [CheckResult("client-slots", FAIL if sev == "error" else WARN, msg,
-                        remediation="edit config/clients.yaml")
+                        remediation="edit profiles/clients.yaml")
             for sev, msg in problems]
 
 

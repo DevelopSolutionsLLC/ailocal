@@ -106,7 +106,7 @@ run "planner comparison (safe defaults, locking, blinding)" \
 # E3. Declared num_ctx vs what the backend actually serves. nomic-embed-text silently
 # CLIPS at 2048 rather than erroring, so an over-declaration yields successful-looking
 # embeddings of truncated text — no error to notice, just quietly worse vectors. The
-# 8192 over-declaration was corrected at its source in config/profiles/64gb.yaml
+# 8192 over-declaration was corrected at its source in profiles/64gb.yaml
 # (db8c9e6) and regenerated, so this now guards the corrected state rather than
 # reporting a known failure.
 # The isolated claude-local root sets ENABLE_LSP_TOOL=1, but a plugin is what puts
@@ -114,7 +114,7 @@ run "planner comparison (safe defaults, locking, blinding)" \
 # Cadence, so an ailocal-only machine got the tool switched on with nothing behind
 # it. This drives pyright-langserver over stdio against a real repo file and
 # requires real symbols back — presence of a plugin is not capability.
-# config/profiles/*.yaml are the ONLY authoritative deployment config, and
+# profiles/*.yaml are the ONLY authoritative deployment config, and
 # config/active-profile has no implicit default. These prove there is one
 # parser and that every entry point fails closed rather than assuming 64gb.
 # The benchmark library owns alias construction, evidence capture, admission

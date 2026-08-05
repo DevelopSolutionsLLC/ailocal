@@ -165,7 +165,7 @@ BACKEND="$(resolve_backend "$MODEL_ROLE")"
 [ -n "$BACKEND" ] || { warn "could not resolve '$MODEL_ROLE' in models.yaml — using it as a raw tag"; BACKEND="$MODEL_ROLE"; }
 # Resolve the role's actual configured keep_alive rather than hardcoding one here —
 # a second hardcoded copy of the profile's TTL is exactly how this previously drifted
-# out of sync with config/profiles/<tier>.yaml (this preload pinned forever via a
+# out of sync with profiles/<tier>.yaml (this preload pinned forever via a
 # hardcoded -1 even after the profile itself moved to a bounded TTL).
 PRELOAD_KEEP_ALIVE="$(python3 "$ROOT_DIR/scripts/sync-models.py" --resolve-keep-alive "$MODEL_ROLE" 2>/dev/null)"
 [ -n "$PRELOAD_KEEP_ALIVE" ] || PRELOAD_KEEP_ALIVE="-1"
