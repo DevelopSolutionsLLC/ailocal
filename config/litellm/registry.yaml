@@ -195,7 +195,7 @@ namespace_expansion:
 # would be wrong twice over: it is the engine that decides, and the same family
 # shipped as GGUF would behave the other way.
 #
-# MEASURED 2026-08-03, Ollama 0.32.5 (see scripts/diagnostics/runner-context.py):
+# Observed on Ollama 0.32.5 (see scripts/diagnostics/runner-context.py):
 #
 #   mlx        gemma4:26b-mlx. A runner first loaded at num_ctx 24,576 accepted a
 #              40,013-token request routed through a 98,304-declared alias:
@@ -389,7 +389,7 @@ model_classes:
 # Reducing a tool's payload WITHOUT removing the tool. Applied only in filter
 # mode, only to non-passthrough models, and never to protected tools.
 #
-# MEASURED on the real 104,202 B Claude Code payload:
+# On the real 104,202 B Claude Code payload:
 #   descriptions          63,706 B  (61.1%)  <- the big prize, and the risky one
 #   input_schema          37,364 B  (35.9%)
 #     $schema              3,483 B           <- JSON Schema metadata

@@ -82,7 +82,7 @@ claude-local() {
     ANTHROPIC_DEFAULT_HAIKU_MODEL  "${AILOCAL_FAST_ALIAS_OVERRIDE:-}"
     ANTHROPIC_DEFAULT_FABLE_MODEL  "${AILOCAL_REVIEW_ALIAS_OVERRIDE:-}"
   )
-  # VERIFIED precedence (code.claude.com/docs/en/settings):
+  # Precedence (code.claude.com/docs/en/settings):
   #   --model  >  settings.json "model"  >  ANTHROPIC_DEFAULT_*_MODEL
   # Our settings.json pins model=ailocal-architecture, so the slot vars alone are
   # silently outranked — a benchmark override propagated perfectly and served the
@@ -119,7 +119,7 @@ claude-local() {
   done
 
   # API_TIMEOUT_MS matches LiteLLM's own `timeout: 900` (config.template.yaml).
-  # MEASURED, and the reason the architecture route appeared to "crash" after
+  # This is why the architecture route appeared to "crash" after
   # 10-15 minutes: COLD prompt evaluation on this route is super-linear --
   #   27,791 tok -> 85 s      57,791 tok -> 341 s      87,791 tok -> 789 s
   # (326 -> 170 -> 111 tok/s; it gets SLOWER per token as the prompt grows).

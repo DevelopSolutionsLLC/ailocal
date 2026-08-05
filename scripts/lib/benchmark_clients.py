@@ -80,8 +80,8 @@ def permission_args(profile: dict) -> list:
     --add-dir. Declaring them matters because the client's settings.json here
     carries `permissions: {}` — so a benchmark that says nothing inherits
     whatever print mode defaults to, and print mode cannot approve anything
-    interactively. MEASURED consequence: Bash and Write were denied while
-    Read/Glob/Grep passed, and one candidate spent 31 internal turns replanning
+    interactively. Bash and Write were denied while Read/Glob/Grep passed,
+    and one candidate spent 31 internal turns replanning
     around a restriction the benchmark never meant to impose.
 
     Never use --dangerously-skip-permissions: a planning-only comparison that
@@ -267,7 +267,7 @@ def parse_client_result(out: str) -> dict:
     d = candidates[-1]
     return {k: d[k] for k in _CLAUDE_RESULT_KEYS if k in d}
 #: Substring of Claude Code's own message when its client-side output guard
-#: fires. MEASURED verbatim from run2 candidate-a turn 2:
+#: fires. Verbatim from a real run:
 #:   "Claude's response exceeded the 32000 output token maximum. To configure
 #:    this behavior, set the CLAUDE_CODE_MAX_OUTPUT_TOKENS environment variable."
 #: Matched loosely (no token count) so a different configured limit still hits.
@@ -609,12 +609,12 @@ def verify_routing(alias: str, model: str, cwd, key: str = None,
 
 
 # ── worktree confinement ────────────────────────────────────────────────────
-# WHY THIS EXISTS. A planner candidate read an unrelated repository and the
+# A planner candidate read an unrelated repository and the
 # ground-truth answer key. Permissions were never the gap: they control WHICH
 # TOOLS may run, not WHICH PATHS an allowed tool may touch. With Read allowed,
 # an absolute path anywhere on the machine was readable.
 #
-# MEASURED, same prompt, same permission contract, one cheap turn each:
+# Same prompt, same permission contract, one cheap turn each:
 #   without confinement   INSIDE=OK PARENT=OK AILOCAL_CFG=OK CADENCE=OK
 #                         GROUNDTRUTH=OK      <- the answer key was readable
 #   with confinement      INSIDE=OK PARENT=DENIED AILOCAL_CFG=DENIED
