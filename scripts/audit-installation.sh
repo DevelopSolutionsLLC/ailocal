@@ -218,7 +218,7 @@ if docker ps --format '{{.Names}}' | grep -qx ailocal-litellm; then
   # A hook registered but unimportable takes the proxy down at boot.
   if docker exec -i ailocal-litellm python - >/dev/null 2>&1 <<'PY'
 import importlib.util, sys
-for n in ("persona_injector","model_registrar","tool_repair","tool_gateway",
+for n in ("persona_injector","startup","tool_repair","tool_gateway",
           "session_observer","capability_registry"):
     s = importlib.util.spec_from_file_location(n, f"/app/config/hooks/{n}.py")
     m = importlib.util.module_from_spec(s); sys.modules[n] = m
