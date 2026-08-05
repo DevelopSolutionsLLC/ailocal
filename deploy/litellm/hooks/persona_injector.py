@@ -26,7 +26,7 @@ v1.83.10 and no longer applies here):
 
 Instruction source of truth: deploy/litellm/instructions/<capability>.md (a shared _core.md
 plus a per-capability enhancer), mounted read-only at $AILOCAL_INSTRUCTIONS_DIR. The
-same files document the Claude Code persona (config/clients/AGENTS.md), so the text
+same files document the Claude Code persona (clients/AGENTS.md), so the text
 lives in one place. ("persona" is retained for the hook/mechanism name; the files
 themselves are capability instruction profiles, not personalities.)
 

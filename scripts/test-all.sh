@@ -197,7 +197,7 @@ run "ailocal sync is a fixed point" idempotent
 # Every shell script must parse. Cheap, and it has caught real breakage here.
 shell_syntax() {
   local bad=0
-  for f in scripts/*.sh config/clients/*.zsh; do
+  for f in scripts/*.sh clients/*.zsh; do
     [ -e "$f" ] || continue
     bash -n "$f" 2>&1 || bad=1
   done
@@ -219,7 +219,7 @@ run "all shell scripts parse (bash -n)" shell_syntax
 timeout_alignment() {
   local proxy client
   proxy="$(sed -n 's/^ *timeout: *\([0-9]*\).*/\1/p' deploy/litellm/config.template.yaml | head -1)"
-  client="$(sed -n 's/.*AILOCAL_API_TIMEOUT_MS:-\([0-9]*\)}.*/\1/p' config/clients/configure.template.zsh | head -1)"
+  client="$(sed -n 's/.*AILOCAL_API_TIMEOUT_MS:-\([0-9]*\)}.*/\1/p' clients/configure.template.zsh | head -1)"
   if [ -z "$proxy" ] || [ -z "$client" ]; then
     echo "could not read both timeouts (proxy='$proxy' client='$client')"; return 1
   fi
