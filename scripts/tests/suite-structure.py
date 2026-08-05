@@ -23,7 +23,7 @@ check = _suite.check
 DISPATCHED = {
     "profiles.py": ("resolver", "hardware", "policy"),
     "gateway.py": ("persona", "repair", "trace"),
-    "benchmark.py": ("library", "planner", "command"),
+    "benchmark.py": ("library", "planner", "command", "runtime"),
 }
 
 
