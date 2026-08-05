@@ -36,7 +36,7 @@ claude-local() {
   # calls (the "Haiku" slot) resolve to something LiteLLM actually serves.
   # (Requires Claude Code v2.1.129+ for gateway discovery.)
   #
-  # The slot block below is GENERATED from config/clients.yaml `claude.slots` by
+  # The slot block below is GENERATED from profiles/clients.yaml `claude.slots` by
   # sync-models.py — do not hand-edit it. It used to be maintained by hand and
   # drifted: HAIKU pointed at ailocal-completion (the 4096-token FIM tier), so
   # every background call and every `model: haiku` subagent hard-400'd with

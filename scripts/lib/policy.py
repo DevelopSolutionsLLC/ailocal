@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """policy.py — the ONE profile parser and resolver.
 
-config/profiles/<tier>.yaml is authoritative deployment configuration.
+profiles/<tier>.yaml is authoritative deployment configuration.
 The active-profile marker in $AILOCAL_STATE selects a tier and HAS NO
 IMPLICIT DEFAULT.
 
@@ -26,8 +26,8 @@ environment, not adding an import.
 
 Ownership, not line count, is the criterion: 144 lines parsing a schema this
 repository itself writes are cheaper to own than a dependency lifecycle spread
-across four scripts. The parser handles exactly the subset config/profiles and
-config/clients.yaml use, and generation is validated end-to-end by the gate, so
+across four scripts. The parser handles exactly the subset profiles and
+profiles/clients.yaml use, and generation is validated end-to-end by the gate, so
 a parsing error cannot reach a client silently.
 
 REVISIT only if: a profile needs YAML this subset cannot express (anchors,
@@ -267,7 +267,7 @@ def generated_path(name: str, state_root=None) -> Path:
 
 
 def profiles_dir(repo_root=None) -> Path:
-    return _root(repo_root) / "config" / "profiles"
+    return _root(repo_root) / "profiles"
 
 
 def profile_path(tier: str, repo_root=None) -> Path:
@@ -285,7 +285,7 @@ def effective_profile_path(state_root=None) -> Path:
 
 
 def client_policy_path(repo_root=None) -> Path:
-    return _root(repo_root) / "config" / "clients.yaml"
+    return _root(repo_root) / "profiles" / "clients.yaml"
 
 
 def load_client_policy(repo_root=None) -> dict:

@@ -94,7 +94,7 @@ def run(fail_after: int | None) -> tuple[dict, dict, int]:
 
 
 def main() -> int:
-    profile = ROOT / "config" / "profiles" / "64gb.yaml"
+    profile = ROOT / "profiles" / "64gb.yaml"
     original = profile.read_text()
 
     print("GENERATION ROLLBACK")

@@ -24,8 +24,8 @@ dependency.
 ## Repository map
 
 ```
-config/profiles/      hardware policy: capability -> model, geometry, sampling
-config/clients.yaml   which capability each client surface uses
+profiles/      hardware policy: capability -> model, geometry, sampling
+profiles/clients.yaml   which capability each client surface uses
 config/clients/       client templates (authored; never generated output)
 deploy/litellm/       proxy hooks, capability registry, config template
 deploy/litellm/instructions/  per-capability personas, mounted into the proxy
@@ -39,8 +39,8 @@ scripts/tests/        domain suites; ./scripts/test-all.sh is the gate
 
 | Path | Owns |
 |---|---|
-| `config/profiles/<tier>.yaml` | capability → model, `context_input`, `max_output`, sampling, reasoning, keep-alive, persona, compaction |
-| `config/clients.yaml` | which capability each client surface uses — no model tuning |
+| `profiles/<tier>.yaml` | capability → model, `context_input`, `max_output`, sampling, reasoning, keep-alive, persona, compaction |
+| `profiles/clients.yaml` | which capability each client surface uses — no model tuning |
 | `deploy/litellm/registry.yaml` | intrinsic runtime capability: engine, context enforcement, tool support |
 
 `scripts/lib/policy.py` is the **one** reader for all of it. It fails closed:

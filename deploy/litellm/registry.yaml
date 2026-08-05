@@ -14,7 +14,7 @@
 #
 # ── What is NOT duplicated here ─────────────────────────────────────────────
 # max_context comes from config/capabilities.generated.json, which sync-models.py
-# generates from config/profiles/<tier>.yaml. Restating context windows here
+# generates from profiles/<tier>.yaml. Restating context windows here
 # would create two sources that silently disagree after a profile change. The
 # loader merges them; `max_context` below is only a fallback for a model class
 # that has no generated entry (i.e. a cloud model).

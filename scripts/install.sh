@@ -433,14 +433,14 @@ if [ -n "${PROFILE_OVERRIDE:-}" ]; then
   RAM_TIER="$PROFILE_OVERRIDE"
 fi
 
-PROFILE_SRC="$ROOT_DIR/config/profiles/${RAM_TIER}.yaml"
+PROFILE_SRC="$ROOT_DIR/profiles/${RAM_TIER}.yaml"
 # The policy owner spells this path, so moving it needs no installer change.
 ACTIVE_PROFILE="$("$ROOT_DIR/scripts/profile-config" active-profile-path)"
 
 info "Detected ${RAM_GB} GB RAM → profile: ${RAM_TIER}"
 
 # Record the active tier as a one-line marker (machine-specific, gitignored). sync-models.py reads
-# config/profiles/<tier>.yaml directly — there is no intermediate models.yaml copy to drift or to
+# profiles/<tier>.yaml directly — there is no intermediate models.yaml copy to drift or to
 # edit-then-lose. Edit the tracked profile itself to change models.
 if [ ! -f "$PROFILE_SRC" ]; then
   warn "profile $RAM_TIER not found at $PROFILE_SRC — cannot continue"
