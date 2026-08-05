@@ -17,8 +17,8 @@ Every directory owns one thing. Generated output never appears in any of them.
 
 | Directory | Owns | Never contains |
 |---|---|---|
-| `config/profiles/` | hardware-tier policy: capability → model, geometry, sampling, keep-alive, compaction | generated state |
-| `config/clients.yaml` | which capability each client surface uses | model tuning |
+| `profiles/` | hardware-tier policy: capability → model, geometry, sampling, keep-alive, compaction | generated state |
+| `profiles/clients.yaml` | which capability each client surface uses | model tuning |
 | `config/clients/` | client templates and deployment assets | rendered client configuration |
 | `deploy/litellm/` | authored proxy assets: hooks, capability registry, config template | the generated `config.yaml` |
 | `deploy/litellm/instructions/` | per-capability personas, mounted into the proxy | anything client-specific |
@@ -150,8 +150,8 @@ Ollama runs on the host, not in a container, and is reached at `OLLAMA_HOST`.
 ## Data flow
 
 ```
-config/profiles/<tier>.yaml     capability → model, geometry
-config/clients.yaml             client surface → capability
+profiles/<tier>.yaml     capability → model, geometry
+profiles/clients.yaml             client surface → capability
                     ↓
 policy.py           resolve_role · geometry · load_client_policy · required_models
                     ↓
@@ -173,14 +173,14 @@ config root — never the repository.
 
 ## Extension points
 
-**Add a model** — edit the capability's `active` in `config/profiles/<tier>.yaml`,
+**Add a model** — edit the capability's `active` in `profiles/<tier>.yaml`,
 then `ailocal sync && ailocal models-install`.
 
-**Add a profile** — create `config/profiles/<tier>.yaml` and add the tier to
+**Add a profile** — create `profiles/<tier>.yaml` and add the tier to
 `policy.TIERS`. Selection thresholds live in `scripts/install.sh`.
 
 **Add a capability** — add the role to the profiles and to `policy.ROLES`, then
-map client surfaces to it in `config/clients.yaml`.
+map client surfaces to it in `profiles/clients.yaml`.
 
 **Add a client template** — place the authored template under
 `config/clients/<client>/`, emit its rendered output to

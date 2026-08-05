@@ -786,7 +786,7 @@ def planner_checks() -> None:
               "Markdown continuation indent is removed")
 
         # The prompts must not hand the candidate the seeded root cause.
-        for leak in ("config/profiles/active-profile", "2>/dev/null",
+        for leak in ("profiles/active-profile", "2>/dev/null",
                      "hardcoded", "precedence"):
             check(not any(leak in p for p in real["prompts"]),
                   f"no prompt reveals the ground truth ({leak!r})")

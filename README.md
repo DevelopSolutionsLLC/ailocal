@@ -83,7 +83,7 @@ Any OpenAI- or Anthropic-compatible client works directly: base URL
 
 Capabilities are `architecture`, `implementation`, `review`, `fast`,
 `completion` and `embeddings`. The small tiers use `qwen2.5-coder:1.5b` for
-inline completion; the 64 GB tier uses `qwen2.5-coder:3b`. Profiles live in `config/profiles/` — edit the
+inline completion; the 64 GB tier uses `qwen2.5-coder:3b`. Profiles live in `profiles/` — edit the
 profile, never a generated file, then run `ailocal sync`.
 
 ## Commands

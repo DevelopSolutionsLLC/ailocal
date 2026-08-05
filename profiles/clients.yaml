@@ -1,6 +1,6 @@
 # clients.yaml — the semantic map generation can't infer.
 #
-# config/profiles/<tier>.yaml says WHAT each capability is. This says WHICH capability each client
+# profiles/<tier>.yaml says WHAT each capability is. This says WHICH capability each client
 # surface uses. Together they are the single source of truth: sync-models.py reads both and
 # regenerates every client config + the LiteLLM alias block, so a future capability change never
 # requires hand-editing a client file.

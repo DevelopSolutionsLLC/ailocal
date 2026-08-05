@@ -1,8 +1,8 @@
-# profile: 16gb
-# Declarative capability registry for 16 GB unified memory (Apple Silicon).
+# profile: 32gb
+# Declarative capability registry for 32 GB unified memory (Apple Silicon).
 #
 # SHARED PRIMARY BACKEND. architecture, implementation, review and fast all resolve
-# to ONE model (qwen3.5:4b). That is deliberate, not an oversight: on 16 GB there is
+# to ONE model (qwen3.5:9b). That is deliberate, not an oversight: on 32 GB there is
 # room for one resident agent model, and rotating several role-specific models would
 # spend the tier's whole memory budget on load/evict churn. The capability aliases
 # still differ — persona, sampling, reasoning and num_predict are per-capability —
@@ -17,15 +17,15 @@
 # num_predict is a generation CEILING, not an expected output length and not an
 # extra fixed allocation.
 #
-# Field meanings are documented in config/profiles/64gb.yaml, the reference schema.
-# 16 GB is the minimum supported tier. Quality is below the larger tiers by design.
-status: configuration-verified   # schema, selection and size are tested; not measured on 16 GB hardware
-disk_gb: 6
+# Field meanings are documented in profiles/64gb.yaml, the reference schema.
+# 32 GB targets useful daily coding and agent work on one shared 9b backend.
+status: configuration-verified   # schema, selection and size are tested; not measured on 32 GB hardware
+disk_gb: 9
 
 architecture:
   role: Lead architect (shared primary)
-  active: qwen3.5:4b
-  preferred: [qwen3.5:4b]
+  active: qwen3.5:9b
+  preferred: [qwen3.5:9b]
   reasoning: true
   context_input: 57344
   max_output: 8192
@@ -41,8 +41,8 @@ architecture:
 
 implementation:
   role: Daily coding (shared primary)
-  active: qwen3.5:4b
-  preferred: [qwen3.5:4b]
+  active: qwen3.5:9b
+  preferred: [qwen3.5:9b]
   reasoning: false
   context_input: 57344
   max_output: 8192
@@ -58,8 +58,8 @@ implementation:
 
 review:
   role: Code review (shared primary)
-  active: qwen3.5:4b
-  preferred: [qwen3.5:4b]
+  active: qwen3.5:9b
+  preferred: [qwen3.5:9b]
   reasoning: true
   context_input: 57344
   max_output: 8192
@@ -75,11 +75,11 @@ review:
 
 fast:
   role: Fast agent (shared primary)
-  active: qwen3.5:4b
+  active: qwen3.5:9b
   # reasoning OFF for the same reason the 64 GB tier disables it on `fast`: a
   # classification tier that thinks past its budget returns empty content.
   reasoning: false
-  preferred: [qwen3.5:4b]
+  preferred: [qwen3.5:9b]
   context_input: 61440
   max_output: 4096
   temperature: 0.0
@@ -137,7 +137,7 @@ embeddings:
 #
 # window x pct is what the CLIENT compacts at; it is NOT a model limit. The model
 # maximum stays `architecture.context` above and remains available for deliberate
-# one-shot work. config-verified, NOT measured on 16 GB hardware
+# one-shot work. config-verified, NOT measured on 32 GB hardware
 compaction:
   window: 65536       # effective window handed to the client's compactor
   pct: 70             # compact at this % of the window

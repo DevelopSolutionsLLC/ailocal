@@ -1,6 +1,6 @@
 # ── GENERATED — DO NOT EDIT ─────────────────────────────────────────────────
 # Owner:       ailocal (scripts/sync-models.py + scripts/install-clients.sh)
-# Source:      config/profiles/<active tier>.yaml  (role: implementation)
+# Source:      profiles/<active tier>.yaml  (role: implementation)
 # Deployed to: ~/.config/ailocal/codex/config.toml  (CODEX_HOME)
 #
 # model, model_context_window and model_auto_compact_token_limit are rewritten

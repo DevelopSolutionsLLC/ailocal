@@ -12,7 +12,7 @@ sessions short, diffs small, and claims verifiable. Follow it literally.
 - Check callers: grep for the function/variable/config key you're about to
   change so you know who depends on it before you change its shape.
 - For generated files (`the generated config.yaml`, `model_catalog.json`,
-  backend names in README/AGENTS.md), edit the source (`config/profiles/<tier>.yaml`)
+  backend names in README/AGENTS.md), edit the source (`profiles/<tier>.yaml`)
   and regenerate — never hand-edit generated output.
 
 ## While editing

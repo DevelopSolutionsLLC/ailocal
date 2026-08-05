@@ -42,7 +42,7 @@ check = _suite.check
 
 def parse(tier):
     """Capability -> field map. A deliberately small reader: these files are ours."""
-    text = (REPO / "config" / "profiles" / f"{tier}.yaml").read_text()
+    text = (REPO / "profiles" / f"{tier}.yaml").read_text()
     out = {}
     for m in re.finditer(r'^([a-z_]+):\n((?:  .*\n)+)', text, re.M):
         cap, body = m.group(1), m.group(2)
@@ -68,11 +68,11 @@ def sandbox(marker=None, profile_text=None) -> Path:
     Paths come from the policy owner, so relocating them needs no fixture edit.
     """
     root = Path(tempfile.mkdtemp(prefix="pcfg-"))
-    (root / "config" / "profiles").mkdir(parents=True)
+    (root / "profiles").mkdir(parents=True)
     if marker is not None:
         _write_marker(root, marker)
     if profile_text is not None:
-        (root / "config" / "profiles" / "64gb.yaml").write_text(profile_text)
+        (root / "profiles" / "64gb.yaml").write_text(profile_text)
     return root
 
 
@@ -352,16 +352,16 @@ def resolver_checks() -> None:
     # error, not a fallback: guessing which of the two old meanings was intended
     # is how both survived side by side.
     box = Path(tempfile.mkdtemp(prefix="legacy-"))
-    (box / "config" / "profiles").mkdir(parents=True)
+    (box / "profiles").mkdir(parents=True)
     _write_marker(box, "64gb")
-    (box / "config" / "profiles" / "64gb.yaml").write_text(
+    (box / "profiles" / "64gb.yaml").write_text(
         "architecture:\n  role: L\n  active: m\n  context: 4096\n")
     try:
         P.load_profile("64gb", box); got = "NO ERROR"
     except P.ProfileError as e:
         got = e.code
     check(got == P.PROFILE_SCHEMA_INVALID, f"legacy `context` fails closed (got {got})")
-    (box / "config" / "profiles" / "64gb.yaml").write_text(
+    (box / "profiles" / "64gb.yaml").write_text(
         "architecture:\n  role: L\n  active: m\n  context_input: 100\n  max_output: -1\n")
     try:
         P.load_profile("64gb", box); got = "NO ERROR"
@@ -493,7 +493,7 @@ def resolver_checks() -> None:
     print("\nSTALENESS AND CORRUPTION FAIL CLOSED")
     import shutil as _sh
     box = Path(tempfile.mkdtemp(prefix="eff-"))
-    (box / "config" / "profiles").mkdir(parents=True)
+    (box / "profiles").mkdir(parents=True)
     _eff_dst = P.effective_profile_path(_state(box))
     _eff_dst.parent.mkdir(parents=True, exist_ok=True)
     _sh.copy(P.effective_profile_path(), _eff_dst)
@@ -501,12 +501,12 @@ def resolver_checks() -> None:
     # ALL tiers: the artifact now normalizes every tier and validates every
     # source hash, so a fixture carrying only the active profile is incomplete.
     for _t in P.TIERS:
-        _sh.copy(REPO / "config" / "profiles" / f"{_t}.yaml", box / "config" / "profiles")
+        _sh.copy(REPO / "profiles" / f"{_t}.yaml", box / "profiles")
     check(P.load_effective(box, _state(box))["tier"] == eff["tier"], "a faithful copy validates")
 
     def expect(code, mutate, label):
         b = Path(tempfile.mkdtemp(prefix="eff-"))
-        _sh.copytree(box / "config", b / "config")
+        _sh.copytree(box / "profiles", b / "profiles")
         # Runtime state is external and sandbox-scoped: copy box's whole state
         # so b owns an independent, complete generation to mutate.
         _sh.copytree(_state(box), _state(b))
@@ -526,7 +526,7 @@ def resolver_checks() -> None:
            lambda b: _write_marker(b, "32gb\n"),
            "active-profile changed")
     expect(P.EFFECTIVE_PROFILE_STALE_SOURCE,
-           lambda b: (b / "config" / "profiles" / f"{eff['tier']}.yaml")
+           lambda b: (b / "profiles" / f"{eff['tier']}.yaml")
                      .write_text("architecture:\n  role: x\n  active: y\n  context: 1\n"),
            "source profile edited")
 
@@ -555,7 +555,7 @@ def resolver_checks() -> None:
           "the dead legacy parser is deleted")
 
     # NO SECOND PARSER IN A SHELL ENTRY POINT. install.sh carried a Python
-    # regex heredoc that parsed config/profiles/<tier>.yaml directly and read
+    # regex heredoc that parsed profiles/<tier>.yaml directly and read
     # `context` and `num_predict` -- fields the geometry migration removed --
     # so the install plan printed:
     #     configured context:  None
@@ -591,7 +591,7 @@ def resolver_checks() -> None:
     # Behavioural, not textual: typed values must survive generation without a
     # string round-trip. A prose mention of "reserialize" is not the defect.
     _sm = load_sync()
-    _models = _sm.load_models_yaml(REPO / "config" / "profiles" /
+    _models = _sm.load_models_yaml(REPO / "profiles" /
                                    f"{P.active_tier()}.yaml")
     # `completion`, not `architecture`: preferred is documentation-only and
     # optional (policy defaults it to []), and architecture's list was
@@ -633,7 +633,7 @@ def resolver_checks() -> None:
     _root = P.runtime_root()
     for gen in ("litellm/capabilities.json", "integration-contract.json"):
         check((_root / gen).exists(), f"{gen} exists under the runtime root")
-    check(not (REPO / "config" / "capabilities.generated.json").exists(),
+    check(not (REPO / "capabilities.generated.json").exists(),
           "no generated artefact remains in the checkout")
     caps = json.loads((_root / "litellm" / "capabilities.json").read_text())
     tier = P.resolve_active_tier()
@@ -825,7 +825,7 @@ def hardware_checks() -> None:
     # default model whose entire context is 24,576 -- unreachable, because the model
     # 400s on context length long before compaction could fire.
     codex = P.runtime_root() / "clients/codex/config.toml"
-    clients_yaml = (REPO / "config/clients.yaml").read_text()
+    clients_yaml = (REPO / "profiles/clients.yaml").read_text()
     m = re.search(r'(?m)^codex:\n(?:.*\n)*?\s*default:\s*(\w+)', clients_yaml)
     cx_cap = m.group(1) if m else "implementation"
     if codex.exists() and cc and cx_cap in PARSED[tier][0]:
@@ -885,8 +885,8 @@ def policy_checks() -> None:
         "orphan mapping":    "  default: fast\n",
     }
     for name, text in cases.items():
-        d = Path(tempfile.mkdtemp()); (d / "config").mkdir()
-        (d / "config" / "clients.yaml").write_text(text)
+        d = Path(tempfile.mkdtemp()); (d / "profiles").mkdir()
+        (d / "profiles" / "clients.yaml").write_text(text)
         try:
             P.load_client_policy(repo_root=d)
             check(False, f"{name} is rejected", "ACCEPTED")
