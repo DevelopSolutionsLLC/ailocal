@@ -10,9 +10,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent.parent   # scripts/benchmarks/ -> repo root
+REPO = Path(__file__).resolve().parent.parent   # benchmarks/ -> repo root
 sys.path.insert(0, str(REPO / "scripts" / "lib"))
-import benchmark as B  # noqa: E402
+sys.path.insert(0, str(REPO / "benchmarks"))
+import suite as B  # noqa: E402
 
 
 def cmd_setup(args):

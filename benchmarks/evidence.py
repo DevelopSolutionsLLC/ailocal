@@ -1,4 +1,4 @@
-"""benchmark_evidence.py — where durable benchmark state lives, and how it is
+"""evidence.py — where durable benchmark state lives, and how it is
 captured without leaking secrets.
 
 MOVED VERBATIM from benchmark.py. This module is the LEAF of the benchmark
@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-REPO = Path(__file__).resolve().parent.parent.parent
+REPO = Path(__file__).resolve().parent.parent   # benchmarks/ -> repo root
 
 
 def state_dir() -> Path:

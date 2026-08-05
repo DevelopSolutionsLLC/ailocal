@@ -28,12 +28,12 @@ from pathlib import Path
 
 # ── moved modules ───────────────────────────────────────────────────────────
 # The split below is BEHAVIOUR-PRESERVING. Every name these modules own is
-# re-exported here, so `import benchmark as B; B.run_client_turn(...)` keeps
-# working for scripts/benchmarks/models, scripts/lib/ruler.py,
+# re-exported here, so `import suite as B; B.run_client_turn(...)` keeps
+# working for benchmarks/models.py, scripts/lib/ruler.py,
 # scripts/tests/benchmark.py. (The A/B/C repro script that first
 # established this was deleted 2026-08-03: the hypothesis was FALSIFIED and
 # the contract is now enforced by that test, so the script only duplicated it.)
-from benchmark_evidence import (  # noqa: E402,F401
+from evidence import (  # noqa: E402,F401
     EVIDENCE_COMPLETE,
     EVIDENCE_MISSING,
     EVIDENCE_PARTIAL,
@@ -49,7 +49,7 @@ from benchmark_evidence import (  # noqa: E402,F401
     runtime_dir,
     state_dir,
 )
-from benchmark_runtime import (  # noqa: E402,F401
+from runtime import (  # noqa: E402,F401
     ALIAS_PREFIX,
     LITELLM,
     OLLAMA,
@@ -72,7 +72,7 @@ from benchmark_runtime import (  # noqa: E402,F401
     telemetry,
     unload,
 )
-from benchmark_clients import (  # noqa: E402,F401
+from clients import (  # noqa: E402,F401
     CONFINEMENT_ESCAPE_BLOCKED,
     CONFINEMENT_INVALID,
     CONFINEMENT_UNAVAILABLE,
@@ -119,7 +119,7 @@ from benchmark_clients import (  # noqa: E402,F401
     verify_permissions,
     verify_routing,
 )
-from benchmark_engines import (  # noqa: E402,F401
+from engines import (  # noqa: E402,F401
     IMPLAUSIBLE_INPUT_RATE,
     _flatten,
     _stats,
@@ -156,13 +156,13 @@ def tier_for_gb(gb: int):
     if gb >= 16:
         return "16gb"
     return None
-CONFIG = REPO / "config" / "benchmark.yaml"
+CONFIG = REPO / "benchmarks" / "benchmark.yaml"
 PROFILE, EXPLICIT, PROFILE_PLUS = "PROFILE", "EXPLICIT", "PROFILE_PLUS_EXPLICIT"
 
 
 # ── tiny config reader ──────────────────────────────────────────────────────
 # The repo has no pyyaml dependency and the benchmark is not the place to add
-# one. This reads the shape config/benchmark.yaml actually uses and RAISES on
+# one. This reads the shape benchmarks/benchmark.yaml actually uses and RAISES on
 # anything else rather than guessing.
 
 

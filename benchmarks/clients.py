@@ -1,4 +1,4 @@
-"""benchmark_clients.py — driving a real client and classifying what came back.
+"""clients.py — driving a real client and classifying what came back.
 
 MOVED VERBATIM from benchmark.py. Owns command construction for claude-local
 and codex-local, session/thread continuity, process execution, the structured
@@ -23,8 +23,8 @@ import time
 import uuid
 from pathlib import Path
 
-from benchmark_evidence import REPO, state_dir
-from benchmark_runtime import model_info, telemetry
+from evidence import REPO, state_dir
+from runtime import model_info, telemetry
 
 
 # ── client integration backend ──────────────────────────────────────────────
