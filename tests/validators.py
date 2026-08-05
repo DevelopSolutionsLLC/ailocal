@@ -23,8 +23,8 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "benchmarks"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts" / "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "benchmarks"))
 from harness import REPO, Suite  # noqa: E402
 
 from checks import BLOCKED, FAIL, PASS, WARN, CheckResult, exit_code  # noqa: E402

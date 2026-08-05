@@ -489,7 +489,7 @@ def write_integration_contract(models):
                 # fail-open, so the schema reaches the model on every task class
                 # that keeps a floor.
                 "schema_preserved": True,
-                # Asserted by the gate: scripts/tests/lsp-baseline.py drives a
+                # Asserted by the gate: tests/lsp-baseline.py drives a
                 # real documentSymbol request through claude-local and requires
                 # actual symbols back. If that stops working the gate fails
                 # before this file can claim otherwise.
@@ -502,13 +502,13 @@ def write_integration_contract(models):
                 # Measured against the real consumer: "verified" produced
                 # state='configured'; "working" produces state='working'.
                 "execution": "working",
-                "verified_by": "scripts/tests/lsp-baseline.py",
+                "verified_by": "tests/lsp-baseline.py",
                 "scope": "python",
             },
             "codex_mcp_lsp": {
                 # WITHHELD, so `configured` is false. codex-local ships with no
                 # MCP servers at all -- no grepai, no LSP, no GitHub -- and
-                # scripts/tests/codex-mcp-withheld.sh asserts the generated and
+                # tests/codex-mcp-withheld.sh asserts the generated and
                 # deployed configs contain zero [mcp_servers.*] blocks.
                 "configured": False,
                 "schema_preserved": False,
@@ -521,7 +521,7 @@ def write_integration_contract(models):
                 # drive, so none is registered.
                 "reason": "codex_cannot_dispatch_namespaced_tools",
                 "upstream": "openai/codex#20652",
-                "verified_by": "scripts/tests/codex-mcp-withheld.sh",
+                "verified_by": "tests/codex-mcp-withheld.sh",
             },
         },
     }
@@ -977,7 +977,7 @@ def flush_stage():
     it does not protect the deployed system: LiteLLM reads
     the generated config.yaml directly and the clients read their own generated
     files directly -- none of them consult the marker. Proven by fault
-    injection (scripts/tests/generation-rollback.py): failing after three
+    injection (tests/generation-rollback.py): failing after three
     replaces left config/capabilities.generated.json new while the marker and
     the client configs were still old. Mixed state, on disk, servable.
 

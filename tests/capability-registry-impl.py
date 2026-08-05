@@ -10,7 +10,7 @@ Two kinds of check here, and the second matters more:
    "no hard-coded conditionals" is an architectural property that decays the
    moment someone adds one convenient `if`.
 
-Run: python3 scripts/tests/capability-registry-impl.py   (needs PyYAML -> container)
+Run: python3 tests/capability-registry-impl.py   (needs PyYAML -> container)
 """
 
 import os
@@ -19,7 +19,7 @@ import sys
 import importlib.util
 import re
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REG_PY = os.environ.get("AILOCAL_REGISTRY_MODULE",
                         os.path.join(ROOT, "deploy/litellm/hooks/capability_registry.py"))
 REG_YAML = os.environ.get("AILOCAL_REGISTRY",
@@ -48,7 +48,7 @@ try:
     import yaml  # noqa: F401
 except ImportError:
     print("\nSKIPPED: PyYAML absent on this interpreter. Run inside the proxy "
-          "image (scripts/tests/in-container.sh). Exiting non-zero so an "
+          "image (tests/in-container.sh). Exiting non-zero so an "
           "incomplete run is never mistaken for a passing one.")
     sys.exit(1)
 

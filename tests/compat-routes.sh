@@ -17,7 +17,7 @@
 # 5-7 exist because the failure mode worth catching is not "the probe 404s" but
 # "someone made the probe work by loosening auth or routing for everything else".
 #
-# Usage: ./scripts/tests/compat-routes.sh
+# Usage: ./tests/compat-routes.sh
 set -uo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/harness.sh"
 ROOT="$ROOT_DIR"

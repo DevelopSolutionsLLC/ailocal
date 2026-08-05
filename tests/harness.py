@@ -19,7 +19,7 @@ import sys
 import tempfile
 import types
 
-REPO = pathlib.Path(__file__).resolve().parent.parent.parent
+REPO = pathlib.Path(__file__).resolve().parent.parent
 
 _GREEN, _RED, _YELLOW, _RESET = "\033[32m", "\033[31m", "\033[33m", "\033[0m"
 
