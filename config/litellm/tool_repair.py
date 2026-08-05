@@ -266,9 +266,9 @@ def _validate(name, args, tool_index):
 def recover(content, declared_tools, ctx=None):
     """(tool_calls | None, leftover_text). Pure function — unit-testable.
 
-    `ctx` is metrics-only (route/model/turn) and never affects the decision. Without
-    it the Anthropic and chat routes reported nothing, so a rejection there was as
-    invisible as the Responses rejections used to be.
+    `ctx` is metrics-only (route/model/turn) and never affects the decision.
+    Without it the Anthropic and chat routes report nothing, making a rejection
+    on those routes invisible.
     """
     if not content or not declared_tools:
         return None, content
@@ -439,9 +439,9 @@ def responses_fence_candidate(text, declared_tools, ctx=None):
     # un-corrupt and could not. Measured on a real Codex exec_command payload.
     index = _index_tools(declared_tools)
     if name not in index:
-        # Distinguished from a schema failure on purpose: an undeclared name means the
-        # model invented a tool, a schema failure means it called a real one wrongly.
-        # Those need different responses and used to be indistinguishable.
+        # Distinguished from a schema failure on purpose: an undeclared name means
+        # the model invented a tool, a schema failure means it called a real one
+        # wrongly. They need different responses.
         return _reject("undeclared_tool", tool=name, ctx=ctx)
     call = _validate(name, args, index)
     if not call:
