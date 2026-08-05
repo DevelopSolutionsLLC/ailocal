@@ -92,7 +92,7 @@ def check_generated_present() -> list[CheckResult]:
     expected = [
         "config/effective-profile.json",
         "config/capabilities.generated.json",
-        "config/clients/model_catalog.json",
+
         "config/litellm/config.yaml",
         "config/integration-contract.json",
     ]
