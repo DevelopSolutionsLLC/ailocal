@@ -18,7 +18,7 @@ model_context_window = 0
 #
 # Route ALL Codex requests through the local LiteLLM proxy.
 # Deployed to ~/.config/ailocal/codex/config.toml (CODEX_HOME for the
-# codex-local() wrapper — see config/clients/configure.zsh). Plain `codex`
+# codex-local() wrapper — see clients/configure.zsh). Plain `codex`
 # never sees this file and stays on the cloud.
 # Requires: OPENAI_API_KEY set by the wrapper (env_key below).
 #
@@ -63,7 +63,7 @@ openai_base_url = "http://localhost:4000/v1"
 # ── SessionStart hook — per-session scratchpad ──────────────────────────────
 # Creates an isolated /tmp/scratchpad/codex-<session_id>/ on session start and
 # injects the path as context (same shared script Claude Code uses). Keeps each
-# session's working notes separate. See config/clients/scratchpad-hook.sh.
+# session's working notes separate. See clients/scratchpad-hook.sh.
 [[hooks.SessionStart]]
 matcher = "startup|resume"
 

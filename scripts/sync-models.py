@@ -13,11 +13,11 @@ Single source of truth (both TRACKED — no gitignored intermediate):
 Running `ailocal sync` regenerates, deterministically:
   the generated config.yaml         model_list + model_group_alias (between markers)
   config/capabilities.generated.json resolved capabilities (for `ailocal status`)
-  config/clients/model_catalog.json  Codex picker (capability slugs)
-  config/clients/claude/settings.json launch default + valid-capability note
-  config/clients/codex/config.toml    default model + valid-capability note
-  config/clients/codex/{plan,review}.config.toml  profile models
-  config/clients/continue/config.json chat models, FIM autocomplete, embeddings
+  clients/model_catalog.json  Codex picker (capability slugs)
+  clients/claude/settings.json launch default + valid-capability note
+  clients/codex/config.toml    default model + valid-capability note
+  clients/codex/{plan,review}.config.toml  profile models
+  clients/continue/config.json chat models, FIM autocomplete, embeddings
 
 Also: `sync-models.py --resolve <capability>` prints the active Ollama backend tag, so shell
 scripts (setup-startup.sh, preload-model.sh) resolve without parsing YAML themselves.
@@ -53,19 +53,19 @@ _LITELLM_OUT   = _pc.runtime_root() / "litellm"
 LITELLM_CONFIG   = _LITELLM_OUT / "config.yaml"
 CAPS_JSON      = _LITELLM_OUT / "capabilities.json"
 CODEX_CATALOG  = _CLIENTS_OUT / "model_catalog.json"
-CLAUDE_SETTINGS_TPL = ROOT / "config/clients/claude/settings.template.json"
+CLAUDE_SETTINGS_TPL = ROOT / "clients/claude/settings.template.json"
 CLAUDE_SETTINGS = _CLIENTS_OUT / "claude/settings.json"
-CODEX_TPL        = ROOT / "config/clients/codex/config.template.toml"
-CODEX_PLAN_TPL   = ROOT / "config/clients/codex/plan.config.template.toml"
-CODEX_REVIEW_TPL = ROOT / "config/clients/codex/review.config.template.toml"
+CODEX_TPL        = ROOT / "clients/codex/config.template.toml"
+CODEX_PLAN_TPL   = ROOT / "clients/codex/plan.config.template.toml"
+CODEX_REVIEW_TPL = ROOT / "clients/codex/review.config.template.toml"
 CODEX_CONFIG   = _CLIENTS_OUT / "codex/config.toml"
 CODEX_PLAN     = _CLIENTS_OUT / "codex/plan.config.toml"
 CODEX_REVIEW   = _CLIENTS_OUT / "codex/review.config.toml"
-CONTINUE_CONFIG_TPL = ROOT / "config/clients/continue/config.template.json"
+CONTINUE_CONFIG_TPL = ROOT / "clients/continue/config.template.json"
 CONTINUE_CONFIG = _CLIENTS_OUT / "continue/config.json"
-CONFIGURE_ZSH_TPL = ROOT / "config/clients/configure.template.zsh"
+CONFIGURE_ZSH_TPL = ROOT / "clients/configure.template.zsh"
 CONFIGURE_ZSH  = _CLIENTS_OUT / "configure.zsh"
-COPILOT_REPO_TPL = ROOT / "config/clients/copilot/repo-instructions.template.md"
+COPILOT_REPO_TPL = ROOT / "clients/copilot/repo-instructions.template.md"
 COPILOT_REPO_MD  = _CLIENTS_OUT / "copilot/repo-instructions.md"
 
 # The machine-readable seam with Cadence. Cadence reads THIS and nothing else to

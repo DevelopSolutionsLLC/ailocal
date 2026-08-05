@@ -19,7 +19,7 @@ Every directory owns one thing. Generated output never appears in any of them.
 |---|---|---|
 | `profiles/` | hardware-tier policy: capability → model, geometry, sampling, keep-alive, compaction | generated state |
 | `profiles/clients.yaml` | which capability each client surface uses | model tuning |
-| `config/clients/` | client templates and deployment assets | rendered client configuration |
+| `clients/` | client templates and deployment assets | rendered client configuration |
 | `deploy/litellm/` | authored proxy assets: hooks, capability registry, config template | the generated `config.yaml` |
 | `deploy/litellm/instructions/` | per-capability personas, mounted into the proxy | anything client-specific |
 | `config/benchmark.yaml`, `config/benchmark-tasks/` | benchmark policy and task definitions | production model policy |
@@ -183,7 +183,7 @@ then `ailocal sync && ailocal models-install`.
 map client surfaces to it in `profiles/clients.yaml`.
 
 **Add a client template** — place the authored template under
-`config/clients/<client>/`, emit its rendered output to
+`clients/<client>/`, emit its rendered output to
 `$AILOCAL_STATE/clients/<client>/` from the generator, and deploy it from
 `scripts/install-clients.sh`. Never write generated output beside the template.
 
