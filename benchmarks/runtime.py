@@ -1,4 +1,4 @@
-"""benchmark_runtime.py — Ollama state, temporary aliases, and the LiteLLM
+"""runtime.py — Ollama state, temporary aliases, and the LiteLLM
 container lifecycle.
 
 MOVED VERBATIM from benchmark.py. Owns everything that touches a running
@@ -24,7 +24,7 @@ from checks.services import (  # noqa: E402  service access has one owner
     OLLAMA, PROXY as LITELLM, _key_from, master_key as api_key,
     proxy_healthy as litellm_healthy,
 )
-from benchmark_evidence import REPO, capture_litellm_log, runtime_dir, state_dir
+from evidence import REPO, capture_litellm_log, runtime_dir, state_dir
 
 
 ALIAS_PREFIX = "bench-"

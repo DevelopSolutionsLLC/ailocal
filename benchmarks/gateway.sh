@@ -15,10 +15,10 @@
 # n=1 per arm by default. That is enough to see a 70% payload change and NOT
 # enough to resolve small latency differences; RUNS=n raises it.
 #
-# Usage:  ./scripts/benchmarks/tool-gateway.sh [task-prompt]
+# Usage:  ./benchmarks/gateway.sh [task-prompt]
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"   # scripts/benchmarks/ -> repo root
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"   # benchmarks/ -> repo root
 cd "$ROOT"
 . scripts/lib/compose.sh
 

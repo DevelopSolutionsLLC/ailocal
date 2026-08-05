@@ -29,6 +29,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "benchmarks"))
 from harness import REPO, Suite, load_module  # noqa: E402
 import policy as P  # noqa: E402
 
@@ -224,7 +225,7 @@ def resolver_checks() -> None:
     sync = (REPO / "scripts" / "sync-models.py").read_text()
     check("import policy as _pc" in sync, "sync-models uses the shared resolver")
     check('return "64gb"' not in sync, "sync-models no longer defaults to 64gb")
-    bench = (REPO / "scripts" / "lib" / "benchmark.py").read_text()
+    bench = (REPO / "benchmarks" / "suite.py").read_text()
     check("import policy as _pc" in bench, "benchmark uses the shared resolver")
     check("re.finditer" not in bench.split("def parse_profile")[1].split("def ")[0],
           "benchmark's parse_profile no longer parses YAML itself")
@@ -232,7 +233,7 @@ def resolver_checks() -> None:
           "benchmark reads the generated artifact (all tiers)")
 
     print("\nBENCHMARK AND PRODUCTION AGREE ON EVERY ROLE")
-    import benchmark as B
+    import suite as B
     for t in P.TIERS:
         a = B.parse_profile(t)
         b = {r: {"active": P.resolve_role(t, r)["active"],
@@ -471,13 +472,13 @@ def resolver_checks() -> None:
         got = e.code
     check(got == P.EFFECTIVE_PROFILE_SCHEMA_INVALID, "unknown tier fails closed")
 
-    import benchmark as _B
+    import suite as _B
     for t in P.TIERS:
         a = _B.parse_profile(t)
         b = {r: {"active": c["model"], "context": c["context"], "enabled": c["enabled"]}
              for r, c in tiers[t]["roles"].items()}
         check(a == b, f"{t}: benchmark cross-tier == generated data")
-    bsrc = (REPO / "scripts" / "lib" / "benchmark.py").read_text()
+    bsrc = (REPO / "benchmarks" / "suite.py").read_text()
     check("effective_tiers" in bsrc and "re.finditer" not in
           bsrc.split("def parse_profile")[1].split("def ")[0],
           "benchmark parse_profile reads generated data, parses no YAML")

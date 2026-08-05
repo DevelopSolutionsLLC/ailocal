@@ -39,7 +39,8 @@ import pathlib
 # Resolved from this file. A hardcoded home directory breaks on every other
 # machine and leaks a personal path into a public repository.
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / 'lib'))
-import benchmark as B
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent.parent / 'benchmarks'))
+import suite as B
 
 MODEL="gemma4:26b-mlx"
 GEOM={24576:"a",65536:"b",98304:"c"}   # num_ctx -> alias suffix

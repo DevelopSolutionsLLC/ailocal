@@ -1,4 +1,4 @@
-"""benchmark_engines.py — adapters for the external evaluation engines.
+"""engines.py — adapters for the external evaluation engines.
 
 MOVED VERBATIM from benchmark.py. lm-eval, EvalPlus and the throughput/cold-load
 probes. External tools keep owning datasets, prompting and scoring; this module
@@ -14,8 +14,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from benchmark_evidence import REPO, state_dir, tooling_dir
-from benchmark_runtime import LITELLM, api_key, telemetry, unload
+from evidence import REPO, state_dir, tooling_dir
+from runtime import LITELLM, api_key, telemetry, unload
 
 
 def venv_bin(name: str) -> Path:
@@ -56,7 +56,7 @@ def run_lm_eval(alias: str, task: str, limit: int, out_dir: Path,
            "--log_samples",
            # Our corrected task definitions (extraction only; datasets, tests
            # and metrics remain lm-eval's).
-           "--include_path", str(REPO / "config" / "benchmark-tasks"),
+           "--include_path", str(REPO / "benchmarks" / "tasks"),
            "--output_path", str(out_dir)]
     if limit:
         cmd += ["--limit", str(limit)]
