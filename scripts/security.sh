@@ -115,8 +115,8 @@ while IFS= read -r line; do
   else
     bad "NOT pinned (floating tag): $img"
   fi
-done < <(grep -rh '^\s*image:' "$REPO"/deploy/*/docker-compose.yml 2>/dev/null || true)
-[[ ${#declared[@]} -eq 0 ]] && warn "no images declared under deploy/*/docker-compose.yml"
+done < <(grep -rh '^\s*image:' "$REPO"/deploy/*/compose.yaml 2>/dev/null || true)
+[[ ${#declared[@]} -eq 0 ]] && warn "no images declared under deploy/*/compose.yaml"
 
 # ── 2. running digest matches declared digest ───────────────────────────────
 head_ "DECLARED vs RUNNING"
@@ -271,7 +271,7 @@ if [[ $CHECK_UPDATES -eq 1 ]]; then
     # already run -- a downgrade. Compare VERSIONS where a version is knowable.
     cfg_ver=""
     [[ "$repo" == ghcr.io/berriai/litellm ]] && \
-      cfg_ver="$(grep -hoE 'AILOCAL_LITELLM_VERSION=[0-9.]+' "$REPO"/deploy/litellm/docker-compose.yml 2>/dev/null | head -1 | cut -d= -f2)"
+      cfg_ver="$(grep -hoE 'AILOCAL_LITELLM_VERSION=[0-9.]+' "$REPO"/deploy/litellm/compose.yaml 2>/dev/null | head -1 | cut -d= -f2)"
     printf '  %s\n' "$repo"
     printf '      configured  %s%s\n' "${cur:7:19}" "${cfg_ver:+  ($cfg_ver)}"
     printf '      newest      %s  (%s)\n' "${cand:7:19}" "$newest"
@@ -289,7 +289,7 @@ if [[ $CHECK_UPDATES -eq 1 ]]; then
       update_available=1
       printf '      \033[33mUPDATE AVAILABLE\033[0m — %s\n' "$newest"
       printf '      review:  docker scout cves --only-fixed --only-severity critical,high %s\n' "$cand_ref"
-      printf '      apply:   edit the digest in deploy/*/docker-compose.yml, then\n'
+      printf '      apply:   edit the digest in deploy/*/compose.yaml, then\n'
       printf '               ailocal start && scripts/test-all.sh --full && ailocal security\n'
       printf '      rollback: restore the previous digest and re-run ailocal start\n'
     fi

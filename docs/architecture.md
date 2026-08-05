@@ -20,8 +20,8 @@ Every directory owns one thing. Generated output never appears in any of them.
 | `config/profiles/` | hardware-tier policy: capability → model, geometry, sampling, keep-alive, compaction | generated state |
 | `config/clients.yaml` | which capability each client surface uses | model tuning |
 | `config/clients/` | client templates and deployment assets | rendered client configuration |
-| `config/litellm/` | authored proxy assets: hooks, capability registry, config template | the generated `config.yaml` |
-| `config/instructions/` | per-capability personas, mounted into the proxy | anything client-specific |
+| `deploy/litellm/` | authored proxy assets: hooks, capability registry, config template | the generated `config.yaml` |
+| `deploy/litellm/instructions/` | per-capability personas, mounted into the proxy | anything client-specific |
 | `config/benchmark.yaml`, `config/benchmark-tasks/` | benchmark policy and task definitions | production model policy |
 | `deploy/litellm/`, `deploy/searxng/` | compose definitions and authored service files | rendered secrets, generated config |
 | `scripts/` | the `ailocal` CLI, installers, lifecycle | policy |
@@ -126,8 +126,7 @@ diagnose, `2` degraded.
 
 | Mount | Kind | Why |
 |---|---|---|
-| `./config/litellm → /app/config:ro` | authored | hooks, capability registry, template |
-| `./config/instructions → /app/instructions:ro` | authored | personas, read by the injector |
+| `./deploy/litellm → /app/config:ro` | authored | hooks, capability registry, personas, template |
 | `$AILOCAL_STATE/litellm → /app/generated:ro` | generated | the config the proxy actually loads |
 | `$AILOCAL_STATE/captures → /app/captures` | writable | the only path the proxy may write |
 

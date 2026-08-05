@@ -2,7 +2,7 @@
 """verify-session.py — compare what a session claimed to do against what changed.
 
 Runs on the HOST, because the proxy container cannot see the repository. Reads a
-ledger written by config/litellm/session_observer.py (what was asked, what tools
+ledger written by deploy/litellm/hooks/session_observer.py (what was asked, what tools
 were called) and pairs it with facts only the host has: the git delta, untracked
 files, and optionally a test command's outcome.
 
@@ -53,7 +53,7 @@ _FALLBACK_AMBIGUOUS = {"Bash", "exec_command", "write_stdin"}
 REGISTRY_YAML = os.environ.get(
     "AILOCAL_REGISTRY_HOST",
     os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                 "config/litellm/registry.yaml"))
+                 "deploy/litellm/registry.yaml"))
 
 
 def mutating_sets():

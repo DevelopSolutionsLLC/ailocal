@@ -2,7 +2,7 @@
 # install-models.sh — pull or update Ollama models for ailocal
 # Usage: ./scripts/install-models.sh
 #
-# Model list is derived automatically from config/litellm/config.yaml — no
+# Model list is derived automatically from the generated config.yaml — no
 # separate list to maintain here. To add or change a model, update the config.
 #
 # Run this after 'ollama serve' is confirmed running.

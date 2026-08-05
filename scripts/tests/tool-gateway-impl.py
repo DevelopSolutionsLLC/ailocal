@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """test-tool-gateway.py — known-answer tests for the capability negotiator
-(config/litellm/tool_gateway.py) driven by the real registry.yaml.
+(deploy/litellm/hooks/tool_gateway.py) driven by the real registry.yaml.
 
 The gateway's job is to report a number and then act on it, so these tests do
 not check it against itself. Every byte assertion is pinned to a LITERAL
@@ -39,11 +39,11 @@ except ImportError:
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 GATEWAY = os.environ.get("AILOCAL_GATEWAY_MODULE",
-                         os.path.join(ROOT, "config/litellm/tool_gateway.py"))
+                         os.path.join(ROOT, "deploy/litellm/hooks/tool_gateway.py"))
 REG_PY = os.environ.get("AILOCAL_REGISTRY_MODULE",
-                        os.path.join(ROOT, "config/litellm/capability_registry.py"))
+                        os.path.join(ROOT, "deploy/litellm/hooks/capability_registry.py"))
 REG_YAML = os.environ.get("AILOCAL_REGISTRY",
-                          os.path.join(ROOT, "config/litellm/registry.yaml"))
+                          os.path.join(ROOT, "deploy/litellm/registry.yaml"))
 CAPS = os.environ.get("AILOCAL_CAPABILITIES_JSON",
                       "/app/generated/capabilities.json")
 CONF = os.environ.get("AILOCAL_CONFIG_PATH",

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""test-capability-registry.py — tests for config/litellm/capability_registry.py
-and the shipped config/litellm/registry.yaml.
+"""test-capability-registry.py — tests for deploy/litellm/hooks/capability_registry.py
+and the shipped deploy/litellm/registry.yaml.
 
 Two kinds of check here, and the second matters more:
 
@@ -21,9 +21,9 @@ import re
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 REG_PY = os.environ.get("AILOCAL_REGISTRY_MODULE",
-                        os.path.join(ROOT, "config/litellm/capability_registry.py"))
+                        os.path.join(ROOT, "deploy/litellm/hooks/capability_registry.py"))
 REG_YAML = os.environ.get("AILOCAL_REGISTRY",
-                          os.path.join(ROOT, "config/litellm/registry.yaml"))
+                          os.path.join(ROOT, "deploy/litellm/registry.yaml"))
 CAPS = os.environ.get("AILOCAL_CAPABILITIES_JSON",
                       "/app/generated/capabilities.json")
 CONF = os.environ.get("AILOCAL_CONFIG_PATH",
@@ -32,7 +32,7 @@ CONF = os.environ.get("AILOCAL_CONFIG_PATH",
 # would not find it. A missing file FAILS rather than passing vacuously —
 # this is the check that keeps the architecture honest, so it must run.
 GATEWAY_PY = os.environ.get("AILOCAL_GATEWAY_SOURCE",
-                            os.path.join(ROOT, "config/litellm/tool_gateway.py"))
+                            os.path.join(ROOT, "deploy/litellm/hooks/tool_gateway.py"))
 
 _spec = importlib.util.spec_from_file_location("capability_registry", REG_PY)
 cr = importlib.util.module_from_spec(_spec)

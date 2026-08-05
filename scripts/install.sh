@@ -653,16 +653,16 @@ OLLAMA_URL=http://host.docker.internal:11434
 LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
 
 # ── SearXNG (local web search backend) ─────────────────────────────────────
-# Consumed by deploy/searxng/docker-compose.yml. LiteLLM reaches SearXNG over
+# Consumed by deploy/searxng/compose.yaml. LiteLLM reaches SearXNG over
 # the ailocal_net bridge at http://searxng:8080 — no API key, nothing external.
 SEARXNG_SECRET=${SEARXNG_SECRET}
 
 # ── Cloud fallbacks (disabled by default) ─────────────────────────────────
 # Set ENABLE_CLOUD=true and uncomment the relevant model block in
-# config/litellm/config.yaml to enable cloud fallback for a specific model.
+# the generated config.yaml to enable cloud fallback for a specific model.
 ENABLE_CLOUD=false
 # To enable cloud fallback: add your key here, set ENABLE_CLOUD=true,
-# and uncomment the relevant model block in config/litellm/config.yaml.
+# and uncomment the relevant model block in the generated config.yaml.
 # Then: ailocal start  (or: dc restart litellm)
 ANTHROPIC_API_KEY=
 OPENAI_API_KEY=

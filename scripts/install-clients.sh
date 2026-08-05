@@ -722,7 +722,7 @@ echo ""
 # A plain symlink to scripts/ailocal would bake this checkout's path into an
 # installed command, which is how Cadence's hooks broke when their checkout moved.
 # ailocal is different from Cadence in one way that matters: its repo IS its
-# runtime — LiteLLM bind-mounts config/litellm straight out of it — so the tree
+# runtime — LiteLLM bind-mounts deploy/litellm straight out of it — so the tree
 # cannot be copied to ~/.local/share without duplicating the source of truth.
 #
 # So the launcher is a generated shim that reads the repo location from

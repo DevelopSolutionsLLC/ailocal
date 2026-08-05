@@ -220,12 +220,12 @@ if docker ps --format '{{.Names}}' | grep -qx ailocal-litellm; then
 import importlib.util, sys
 for n in ("persona_injector","model_registrar","tool_repair","tool_gateway",
           "session_observer","capability_registry"):
-    s = importlib.util.spec_from_file_location(n, f"/app/config/{n}.py")
+    s = importlib.util.spec_from_file_location(n, f"/app/config/hooks/{n}.py")
     m = importlib.util.module_from_spec(s); sys.modules[n] = m
     s.loader.exec_module(m)
 PY
   then okk "hooks import    all registered hooks load inside the image"
-  else flag DUPLICATE "a registered hook does not import" "config/litellm/" \
+  else flag DUPLICATE "a registered hook does not import" "deploy/litellm/" \
         "run ./scripts/test-all.sh to see which"
   fi
   MODE=$(docker exec ailocal-litellm printenv AILOCAL_TOOL_GATEWAY 2>/dev/null || echo off)
@@ -236,7 +236,7 @@ fi
 
 # ── stale repo artifacts ────────────────────────────────────────────────────
 hdr "Repository artifacts"
-for f in config/litellm/config.yaml.backup audit-session.json next-session.md; do
+for f in audit-session.json next-session.md; do
   if [ -e "$f" ]; then
     if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
       okk "$f (tracked)"
@@ -255,13 +255,14 @@ else
 fi
 # The generated config must match its sources, or the running proxy and the repo
 # silently disagree.
-H1=$(md5 -q config/litellm/config.yaml 2>/dev/null || md5sum config/litellm/config.yaml | cut -d' ' -f1)
+GEN="$AILOCAL_STATE/litellm/config.yaml"
+H1=$(md5 -q "$GEN" 2>/dev/null || md5sum "$GEN" 2>/dev/null | cut -d' ' -f1)
 python3 scripts/sync-models.py >/dev/null 2>&1
-H2=$(md5 -q config/litellm/config.yaml 2>/dev/null || md5sum config/litellm/config.yaml | cut -d' ' -f1)
+H2=$(md5 -q "$GEN" 2>/dev/null || md5sum "$GEN" 2>/dev/null | cut -d' ' -f1)
 if [ "$H1" = "$H2" ]; then
   okk "generated files in sync with their sources"
 else
-  flag STALE "config.yaml was out of date with its sources" "config/litellm/config.yaml" \
+  flag STALE "config.yaml was out of date with its sources" "$GEN" \
     "it has just been regenerated; review 'git diff' and commit"
 fi
 

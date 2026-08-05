@@ -4,15 +4,14 @@ be answered with "which component, and when".
 
 Writes JSONL to $AILOCAL_TRACE_DIR. Off unless that is set.
 
-The Claude-local failure was invisible for a long time because every component
-reported success: HTTP 200, gateway completed, tool repair clean, SSE well-formed.
-The failure was a ~90 s silence before the first byte, which no component
-considered its own problem. A per-request timeline makes that class of failure
-visible instead of requiring it to be re-derived each time.
+The failure class this exists for: every component reports success (HTTP 200,
+gateway completed, repair clean, SSE well-formed) while the user sees a long
+silence before the first byte, which no single component owns. A per-request
+timeline makes that visible instead of requiring it to be re-derived.
 
-WHAT IS ACTUALLY MEASURABLE HERE, AND WHAT IS NOT
-This runs inside the proxy, so it sees the proxy's view and no more. Stated
-plainly because the gaps matter:
+WHAT IS MEASURABLE HERE, AND WHAT IS NOT
+This runs inside the proxy, so it sees the proxy's view and no more. The gaps
+matter:
 
   MEASURABLE   request id, client, model, capability, route, tool count and
                bytes, time to first streamed chunk, total duration, finish/stop
@@ -31,8 +30,6 @@ plainly because the gaps matter:
                that reported an error, IS the evidence of a client timeout — but
                the disconnect itself is not observable from here. Never record a
                client-side failure as though it were seen.
-
-Registered via litellm_settings.callbacks: request_trace.proxy_handler_instance
 """
 
 import json
@@ -51,10 +48,9 @@ def _classify_event(item) -> str | None:
     the question ("did the user see anything?") is the same in each.
     """
     try:
-        # /v1/messages delivers RAW SSE FRAMES (`bytes`), not objects -- measured
-        # 2026-08-03. Every branch below assumed a mapping, so on the Anthropic
-        # route this returned None for every event and first_visible_text_ms was
-        # silently null for the entire life of this file.
+        # /v1/messages delivers RAW SSE FRAMES (`bytes`), not objects. A branch
+        # that assumes a mapping returns None for every Anthropic-route event and
+        # leaves first_visible_text_ms silently null.
         #
         # This is deliberately MARKER DETECTION, not SSE parsing: the frame is
         # tested for the two event signatures that answer "did the user see
@@ -179,9 +175,10 @@ def _completion_fields(acc, saw_any_event):
 
 
 def _load_registry():
-    """Reuse capability_registry rather than re-deriving capability/client/route.
-    A second implementation would drift from the gateway's, and then a trace and
-    a gateway metric for the SAME request could disagree about what it was."""
+    """Reuse capability_registry rather than re-deriving capability/client/route:
+    a second implementation would drift, and a trace and a gateway metric for the
+    SAME request could then disagree about what it was. Loader duplicated from
+    tool_gateway.py by necessity — see the note there."""
     import importlib.util
     import sys as _sys
     if "capability_registry" in _sys.modules:

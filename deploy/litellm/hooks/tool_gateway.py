@@ -5,7 +5,7 @@ tool_gateway.py — the Local Agent Gateway's capability negotiator.
                      -> select compatible subset -> forward
 
 This module contains NO knowledge of any specific model, client, tool or route.
-Every such fact lives in config/litellm/registry.yaml and is reached through
+Every such fact lives in deploy/litellm/registry.yaml and is reached through
 capability_registry.py. That is enforced, not merely intended:
 scripts/tests/capability-registry.py greps this file's executable code for model,
 client and tool literals and fails if it finds any. If a fact about a model
@@ -65,17 +65,16 @@ from litellm.integrations.custom_logger import CustomLogger
 
 
 def _load_registry_module():
-    """Import capability_registry.py as a SIBLING FILE, by path.
+    """Import the sibling capability_registry.py by path.
 
-    LiteLLM loads callbacks with importlib.spec_from_file_location, which does
-    NOT put the module's directory on sys.path. So `from capability_registry
-    import Registry` raises ModuleNotFoundError at proxy boot and takes the whole
-    container down — measured, by doing exactly that. Neither does a package
-    import work: /app/config is not a package.
+    LiteLLM loads callbacks with spec_from_file_location, which does not put the
+    module's directory on sys.path, and the hooks directory is not a package — so
+    `from capability_registry import Registry` raises at proxy boot. Resolving
+    relative to __file__ is the only form that holds under the proxy's file
+    loader, a direct run, and a test harness loading by path.
 
-    Resolving relative to __file__ is the only form that holds under all three
-    load paths: the proxy's file loader, a direct `python tool_gateway.py`, and
-    a test harness that loads it by path from the repo.
+    request_trace.py carries the same loader for the same reason; it cannot be
+    shared, because sharing it would itself require the import this works around.
     """
     import importlib.util
     import sys as _sys

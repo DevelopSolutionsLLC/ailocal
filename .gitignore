@@ -16,7 +16,7 @@ config/capabilities.generated.json
 # marker it came from, so it is inherently machine-specific like both of those.
 config/effective-profile.json
 config/clients/model_catalog.json
-config/litellm/config.yaml
+the generated config.yaml
 config/clients/copilot/repo-instructions.md
 config/clients/configure.zsh
 config/clients/claude/settings.json
