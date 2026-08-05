@@ -6,7 +6,7 @@ already tested: worktrees, alias lifecycle, routing, permissions, confinement,
 evidence, sessions, restoration. Nothing here reimplements them, because a
 second implementation drifts and then two runs of "the same" benchmark are not.
 
-WHY IT EXISTS. Run 2 was driven ad hoc. That is how a comparison ended up
+Run 2 was driven ad hoc. That is how a comparison ended up
 measuring one model three times, how candidates read an unrelated repository,
 and how the ground truth stayed readable by absolute path. A comparison whose
 setup is not reproducible cannot be re-run to check a result.

@@ -103,8 +103,8 @@ def capture_litellm_log(dest: Path, name: str = "ailocal-litellm") -> dict:
 # replacement starts with an empty log buffer. Both alias installation and
 # restoration do that, and every candidate block ends in restore() — so the
 # harness deleted the per-request evidence for the run it had just performed.
-# MEASURED: `docker logs --since <window>` for a failed candidate returned zero
-# lines, and its request-level cause is now permanently unrecoverable.
+# `docker logs --since <window>` for a failed candidate returned zero lines,
+# and its request-level cause is now permanently unrecoverable.
 # Capture therefore happens BEFORE any recreate, never after.
 EVIDENCE_COMPLETE, EVIDENCE_PARTIAL, EVIDENCE_MISSING = (
     "EVIDENCE_COMPLETE", "EVIDENCE_PARTIAL", "EVIDENCE_MISSING")

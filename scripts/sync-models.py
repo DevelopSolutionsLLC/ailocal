@@ -363,11 +363,9 @@ def gen_role_block(role, info):
     ]
     if vision:
         mi += ["      supports_vision: true", "      supports_pdf_input: true"]
-    # The cost zeros are emitted ONCE, above. They used to be repeated here,
-    # producing duplicate YAML keys in every model_info block: harmless in
-    # effect (both values were 0, and the later key wins) but a strict YAML
-    # parser rejects the file outright, and it made ailocal validate fail
-    # on a defect that had nothing to do with the deployment.
+    # Cost zeros are emitted ONCE, above. Repeating them here produces duplicate
+    # YAML keys in every model_info block — the later key wins, so the values are
+    # still right, but a strict parser rejects the file outright.
     mi += [
         f"      max_input_tokens: {_admit}",
         f"      max_output_tokens: {max_out}",
@@ -775,7 +773,7 @@ def regen_codex(models, clients):
             # The cap is context_input, NOT total_context. total_context is
             # input+output, and the output half is space the INPUT can never
             # occupy -- so a fraction of it can still land above the admission
-            # limit. MEASURED 2026-08-03 on implementation (16384 + 8192):
+            # limit. On implementation (16384 + 8192):
             # 75% of total_context gave a trigger of 18,432 while LiteLLM
             # admits 16,384 (max_input_tokens, confirmed via /model/info), so a
             # long session would have taken an HTTP 400 ContextWindowExceeded
@@ -978,7 +976,7 @@ def flush_stage():
     effective-profile.json last does make marker-aware readers fail closed, but
     it does not protect the deployed system: LiteLLM reads
     config/litellm/config.yaml directly and the clients read their own generated
-    files directly -- none of them consult the marker. MEASURED by fault
+    files directly -- none of them consult the marker. Proven by fault
     injection (scripts/tests/generation-rollback.py): failing after three
     replaces left config/capabilities.generated.json new while the marker and
     the client configs were still old. Mixed state, on disk, servable.

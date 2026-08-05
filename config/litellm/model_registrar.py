@@ -34,20 +34,13 @@ time. This uses only the public litellm namespace — no fork, no vendored-file
 patch, and no wholesale replacement of the cost map (LITELLM_MODEL_COST_MAP_URL
 would do the latter, since __init__.py:508 assigns rather than merges).
 
-Registered via, alongside the persona hook:
-    litellm_settings:
-      callbacks:
-        - model_registrar.proxy_handler_instance
-Ref: https://docs.litellm.ai/docs/proxy/call_hooks
-
 PROVIDER-AGNOSTIC BY DESIGN
 ---------------------------
 The key is whatever string appears in `litellm_params.model` — verbatim. Nothing
-here knows the word "ollama". Migrating a capability to vllm/, mlx/, openai/ or
-any custom provider keeps working with no edit to this file.
-
-Deployments that LiteLLM already maps (real cloud models) are left untouched, so
-this never overrides genuine upstream pricing.
+here knows the word "ollama", so migrating a capability to vllm/, mlx/, openai/
+or any custom provider keeps working with no edit here. Deployments LiteLLM
+already maps (real cloud models) are left untouched, so this never overrides
+genuine upstream pricing.
 
 Remove this module once the upstream registration/lookup inconsistency is fixed;
 the startup self-check below will say so — every model reports "already mapped".
@@ -80,12 +73,10 @@ def _load_model_list():
 def _has_exact_key(model_key):
     """True if the EXACT key is present in litellm.model_cost.
 
-    Deliberately not `litellm.get_model_info(model_key)`: that helper is more
-    permissive than the router's path — it falls back to the prefix-stripped key
-    ("qwen3-coder:30b"), which register_model already created, and so reports
-    success for models the router still cannot resolve. Gating on it made this
-    module a no-op (every model logged "already mapped" while requests kept
-    raising). The router needs the prefixed key itself, so that is what we test.
+    Deliberately not `litellm.get_model_info(model_key)`: that helper falls back
+    to the prefix-stripped key, which register_model already created, so it
+    reports success for models the router still cannot resolve — gating on it
+    makes this module a no-op. The router needs the prefixed key itself.
     """
     return model_key in litellm.model_cost
 

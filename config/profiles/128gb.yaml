@@ -42,7 +42,7 @@ implementation:
   # "smaller footprint" rationale described qwen2.5-coder:14b, which this role
   # has not used since gemma4 became active -- and it is what left context_input
   # at 16,384 on a model architecture already drives at 81,920.
-  # VERIFIED capabilities: tools YES, insert YES, thinking NO.
+  # Capabilities: tools YES, insert YES, thinking NO.
   reasoning: true
   context_input: 65536
   max_output: 8192
@@ -60,7 +60,7 @@ implementation:
 review:
   role: Code review
   active: gemma4:26b-mlx
-  reasoning: true          # VERIFIED: thinking AND tools (deepseek had NO tools)
+  reasoning: true          # thinking AND tools (deepseek had NO tools)
   context_input: 65536
   max_output: 4096
   temperature: 0.2

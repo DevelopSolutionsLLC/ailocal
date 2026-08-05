@@ -2,7 +2,6 @@
 
 ONE generic adapter, no per-model rules.
 
-WHY IT EXISTS
 lm-eval's code tasks assume a COMPLETION model: `gen_prefix` prefills an
 assistant turn opening a ```python fence, the model continues the body, and
 `until` stop sequences end it. A chat-completions API cannot prefill an
@@ -15,7 +14,7 @@ shape they like, and three different shapes were measured:
   C. prose, then a fenced block            (gemma4, some samples)
 
 lm-eval's extractor is `r[:r.find("```")]`, which returns "" for shapes B and C.
-MEASURED: gemma4 produced complete, correct implementations that extracted to
+gemma4 produced complete, correct implementations that extracted to
 nothing — 405, 1046 and 920 characters discarded — and scored 0.000.
 
 Naively switching to "largest fenced block" then broke shape A: qwen3.5:4b fell
@@ -135,7 +134,7 @@ def build_predictions_mbpp(resps, docs):
     tag and stripped. #3447 reports it against a local OpenAI-compatible
     endpoint with --apply_chat_template, the same configuration used here.
 
-    MEASURED here: gpt-oss and gemma4 both scored exactly 0.000 under it.
+    gpt-oss and gemma4 both scored exactly 0.000 under it.
 
     MBPP differs from HumanEval in one respect only — the model emits a whole
     program rather than continuing a signature — so the prompt is empty and the

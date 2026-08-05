@@ -22,8 +22,8 @@ does the comparison. The split is not incidental: the proxy runs in a container
 with no access to the repository, so a verification layer that lived entirely
 here could only ever check the model against its own claims.
 
-THE ONE NON-OBVIOUS MECHANISM
------------------------------
+WHY ONE HOOK SEES THE WHOLE SESSION
+-----------------------------------
 Agent clients are stateless over HTTP: every turn re-sends the entire
 conversation. So a single async_pre_call_hook observation carries the whole
 history — every tool call the model has made and every result it got back. There
