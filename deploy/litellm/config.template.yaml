@@ -91,14 +91,13 @@ litellm_settings:
     # raises an ERROR traceback per request. Listed FIRST so the guard is in
     # place before any request is served. Self-retiring: it no-ops if a LiteLLM
     # upgrade fixes this upstream. See the module docstring for the repro.
-    - /app/config/hooks/anthropic_stream_logging_fix.proxy_handler_instance
+    - /app/config/hooks/startup.proxy_handler_instance
     # Client compatibility endpoints LiteLLM does not implement. Claude Code
     # derives auxiliary Anthropic-shaped probes from ANTHROPIC_BASE_URL, so they
     # land here: `HEAD /api/hello` 404'd on every startup. Adds a static, unauth'd,
     # empty 200 on the live FastAPI app — no model call, no router lookup, and
     # nothing under /v1/* or the health routes is touched. See the module
     # docstring for the three client call sites and what this does NOT prove.
-    - /app/config/hooks/compat_routes.proxy_handler_instance
     - /app/config/hooks/persona_injector.proxy_handler_instance
     # Translates reasoning_effort -> Ollama's native `think`. LiteLLM 1.93.0
     # accepts reasoning_effort and drops it unmapped (BerriAI/litellm#15059):
@@ -111,7 +110,6 @@ litellm_settings:
     # pre-call check looks it up WITH the prefix, so max_input_tokens is never
     # enforced and oversized prompts are forwarded unvalidated. See the module
     # docstring for the full trace. Remove once fixed upstream.
-    - /app/config/hooks/model_registrar.proxy_handler_instance
     # Generic malformed tool-call recovery. Local models drift out of their
     # structured tool-call format and the runtime hands the whole call back as
     # plain text, stalling the agent loop. Measured here: qwen3-coder 25% -> 100%,
