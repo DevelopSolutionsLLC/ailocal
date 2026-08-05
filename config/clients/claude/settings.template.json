@@ -3,7 +3,7 @@
     "Claude Code settings \u2014 deployed to ~/.config/ailocal/claude/settings.json",
     "(CLAUDE_CONFIG_DIR for the local variant; ~/.claude is never touched).",
     "",
-    "GENERATED FIELDS ('model' + this note) \u2014 edit config/clients.yaml, run sync-models.sh.",
+    "GENERATED FIELDS ('model' + this note) \u2014 edit config/clients.yaml, run `ailocal sync`.",
     "Base URL + key are injected per-process by the claude-local() wrapper.",
     "",
     "All requests route through LiteLLM by ailocal-<capability> model id.",

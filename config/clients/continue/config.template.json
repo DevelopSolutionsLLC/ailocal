@@ -1,7 +1,7 @@
 {
   "//": [
     "ailocal \u2014 VS Code Continue config. MANAGED/GENERATED \u2014 edit config/clients.yaml +",
-    "config/profiles/<tier>.yaml + config/clients.yaml, run sync-models.sh. Deployed by",
+    "config/profiles/<tier>.yaml + config/clients.yaml, run `ailocal sync`. Deployed by",
     "install-clients.sh (vscode); __LITELLM_KEY__ substituted from .env at install.",
     "Chat/edit go through LiteLLM (4000); autocomplete hits Ollama (11434) directly for FIM.",
     "Models: ailocal-architecture | ailocal-implementation | ailocal-review | ailocal-fast | ailocal-completion | ailocal-embeddings"

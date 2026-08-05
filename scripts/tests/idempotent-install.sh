@@ -53,7 +53,7 @@ def sha(path):
 for p in ("config/litellm/config.yaml",
           "config/clients/model_catalog.json",
           "config/clients/claude/settings.json",
-          "config/clients/codex/config.toml"):
+          os.path.expanduser("~/.local/state/ailocal/clients/codex/config.toml")):
     emit("hash:" + p, sha(p))
 
 # ── capabilities.generated.json carries generated_at, so compare STRUCTURE ──
@@ -150,13 +150,13 @@ echo "════════════════════════�
 banner "fingerprint: baseline"
 fingerprint baseline >/dev/null
 
-# ── sync-models.sh ─────────────────────────────────────────────────────────
-banner "sync-models.sh x2"
-bash scripts/sync-models.sh >/dev/null 2>&1 || bad "sync-models.sh #1 failed"
+# ── ailocal sync ───────────────────────────────────────────────────────────
+banner "ailocal sync x2"
+python3 scripts/sync-models.py >/dev/null 2>&1 || bad "ailocal sync #1 failed"
 fingerprint sync1 >/dev/null
-bash scripts/sync-models.sh >/dev/null 2>&1 || bad "sync-models.sh #2 failed"
+python3 scripts/sync-models.py >/dev/null 2>&1 || bad "ailocal sync #2 failed"
 fingerprint sync2 >/dev/null
-compare sync1 sync2 "sync-models.sh"
+compare sync1 sync2 "ailocal sync"
 
 # ── install-clients.sh ─────────────────────────────────────────────────────
 # claude + codex only by default: the vscode target touches the user's editor

@@ -2,7 +2,7 @@
 # Deployed to $CODEX_HOME/plan.config.toml — select with: codex-local --profile plan
 # Overlays the base config.toml (provider/base_url stay ailocal/LiteLLM).
 
-model = "ailocal-architecture"
+model = "__AILOCAL_MODEL__"
 # Reasoning is PROFILE-OWNED: architecture/implementation/review declare
 # reasoning: true and gemma4:26b-mlx does emit thinking blocks. The earlier
 # claim that no installed model emits reasoning predates that. What follows

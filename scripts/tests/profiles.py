@@ -279,7 +279,7 @@ def resolver_checks() -> None:
           and env.get("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE") == str(comp["pct"]),
           "Claude compaction is generated from the profile block verbatim")
 
-    codex = (REPO / "config/clients/codex/config.toml").read_text()
+    codex = (P.runtime_root() / "clients/codex/config.toml").read_text()
     import re as _r
     cw = int(_r.search(r"model_context_window\s*=\s*(\d+)", codex).group(1))
     cl = int(_r.search(r"model_auto_compact_token_limit\s*=\s*(\d+)", codex).group(1))
@@ -818,7 +818,7 @@ def hardware_checks() -> None:
     # Deriving them from architecture wrote a compaction limit of 49,152 against a
     # default model whose entire context is 24,576 -- unreachable, because the model
     # 400s on context length long before compaction could fire.
-    codex = REPO / "config/clients/codex/config.toml"
+    codex = P.runtime_root() / "clients/codex/config.toml"
     clients_yaml = (REPO / "config/clients.yaml").read_text()
     m = re.search(r'(?m)^codex:\n(?:.*\n)*?\s*default:\s*(\w+)', clients_yaml)
     cx_cap = m.group(1) if m else "implementation"

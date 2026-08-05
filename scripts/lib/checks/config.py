@@ -174,7 +174,7 @@ def check_no_raw_backend_tags() -> CheckResult:
 def check_codex_no_mcp() -> CheckResult:
     """Codex cannot dispatch namespaced tools, so an empty MCP section is correct."""
     out = []
-    for label, path in (("generated", REPO / "config/clients/codex/config.toml"),
+    for label, path in (("generated", P.runtime_root() / "clients/codex/config.toml"),
                         ("deployed", pathlib.Path(os.environ.get(
                             "XDG_CONFIG_HOME", pathlib.Path.home() / ".config"))
                             / "ailocal/codex/config.toml")):
@@ -331,7 +331,7 @@ def check_generated_in_sync() -> CheckResult:
     """Regeneration is a fixed point; drift means a hand edit. Active tier only."""
     import subprocess
     try:
-        r = subprocess.run([str(REPO / "scripts" / "sync-models.sh"), "--check"],
+        r = subprocess.run([sys.executable, str(REPO / "scripts" / "sync-models.py"), "--check"],
                            capture_output=True, text=True, timeout=180)
     except (OSError, subprocess.TimeoutExpired) as exc:
         return CheckResult("generated-sync", BLOCKED,
