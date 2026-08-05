@@ -28,8 +28,8 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "benchmarks"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts" / "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "benchmarks"))
 from harness import REPO, Suite, load_module  # noqa: E402
 import policy as P  # noqa: E402
 

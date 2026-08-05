@@ -32,7 +32,7 @@ deploy/litellm/instructions/  per-capability personas, mounted into the proxy
 deploy/               compose definitions for LiteLLM and SearXNG
 scripts/              ailocal CLI, installers, lifecycle
 scripts/lib/          policy.py, checks/, benchmark modules, shared shell
-scripts/tests/        domain suites; ./scripts/test-all.sh is the gate
+tests/        domain suites; ./scripts/test-all.sh is the gate
 ```
 
 ## Canonical sources
@@ -95,8 +95,8 @@ recover.
 
 ## Testing
 
-`./scripts/test-all.sh` is the gate. Suites live in `scripts/tests/` and are
-addressable by section, for example `python3 scripts/tests/profiles.py resolver`.
+`./scripts/test-all.sh` is the gate. Suites live in `tests/` and are
+addressable by section, for example `python3 tests/profiles.py resolver`.
 
 Tests assert behaviour, not implementation text. Source inspection is
 acceptable only for a security property that cannot be observed through a

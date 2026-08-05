@@ -14,7 +14,7 @@ non-OpenAI backend, so the value is not the gateway's to guarantee. The tests
 assert only that a token figure is an int or None, never a fabricated zero.
 
 Needs PyYAML and the registry, so it runs inside the proxy image via
-scripts/tests/in-container.sh.
+tests/in-container.sh.
 """
 
 import asyncio
@@ -37,7 +37,7 @@ except ImportError:
     sys.modules["litellm.integrations"] = types.ModuleType("litellm.integrations")
     sys.modules["litellm.integrations.custom_logger"] = _clog
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GATEWAY = os.environ.get("AILOCAL_GATEWAY_MODULE",
                          os.path.join(ROOT, "deploy/litellm/hooks/tool_gateway.py"))
 REG_PY = os.environ.get("AILOCAL_REGISTRY_MODULE",
@@ -52,7 +52,7 @@ CONF = os.environ.get("AILOCAL_CONFIG_PATH",
 try:
     import yaml  # noqa: F401
 except ImportError:
-    print("SKIPPED: PyYAML absent. Run via scripts/tests/in-container.sh so the "
+    print("SKIPPED: PyYAML absent. Run via tests/in-container.sh so the "
           "registry-backed checks actually execute; exiting non-zero rather "
           "than reporting green over a reduced set.")
     sys.exit(1)

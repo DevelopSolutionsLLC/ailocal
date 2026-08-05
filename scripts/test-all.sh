@@ -75,17 +75,17 @@ fi
 echo
 echo "UNIT / BEHAVIOUR"
 run "capability registry (+ no-hard-coded-literals assertion)" \
-    bash scripts/tests/in-container.sh scripts/tests/capability-registry-impl.py \
+    bash tests/in-container.sh tests/capability-registry-impl.py \
       AILOCAL_GATEWAY_SOURCE=/app/config/hooks/tool_gateway.py
 run "capability negotiator (byte accounting, modes, passthrough)" \
-    bash scripts/tests/in-container.sh scripts/tests/tool-gateway-impl.py \
+    bash tests/in-container.sh tests/tool-gateway-impl.py \
       AILOCAL_GATEWAY_MODULE=/app/config/hooks/tool_gateway.py
 run "persona injection" \
-    python3 scripts/tests/gateway.py persona
+    python3 tests/gateway.py persona
 # Both directions matter: a repair layer that fires on a tutorial fence would
 # execute commands the model never intended.
 run "tool-call repair (repairs real calls, refuses examples)" \
-    python3 scripts/tests/gateway.py repair
+    python3 tests/gateway.py repair
 # E5. The message this replaces ("No fallback model group found ... Fallbacks=[...]")
 # was true and misleading: implementation is the TERMINAL tier, so having no chain is
 # intentional, and the real fault was upstream connectivity. Pure functions, so all
@@ -96,13 +96,13 @@ run "tool-call repair (repairs real calls, refuses examples)" \
 # real helpers and prove they never serialize, and that the token components are
 # disjoint and sum to the reported total.
 run "E1 trace schema, redaction and token reconciliation" \
-    python3 scripts/tests/gateway.py trace
+    python3 tests/gateway.py trace
 # The planner comparison is the one benchmark whose SETUP has repeatedly been the
 # defect: it once measured a single model three times, and candidates could read
 # the answer key. These prove safe defaults, manifest locking, confinement wiring
 # and identity-stripped scoring copies -- with no inference.
 run "planner comparison (safe defaults, locking, blinding)" \
-    python3 scripts/tests/benchmark.py planner
+    python3 tests/benchmark.py planner
 # E3. Declared num_ctx vs what the backend actually serves. nomic-embed-text silently
 # CLIPS at 2048 rather than erroring, so an over-declaration yields successful-looking
 # embeddings of truncated text — no error to notice, just quietly worse vectors. The
@@ -122,19 +122,19 @@ run "planner comparison (safe defaults, locking, blinding)" \
 # while the gate reported green, which is how a benchmark-only regression
 # reaches a planner run unnoticed.
 run "benchmark library (aliases, geometry, evidence, confinement)" \
-    python3 scripts/tests/benchmark.py library
+    python3 tests/benchmark.py library
 run "benchmark command (models, planner, gateway dispatch)" \
-    python3 scripts/tests/benchmark.py command
+    python3 tests/benchmark.py command
 run "benchmark runtime stages the generated config (not the authored tree)" \
-    python3 scripts/tests/benchmark.py runtime
+    python3 tests/benchmark.py runtime
 run "profile resolver (single parser, fail-closed, no 64gb default)" \
-    python3 scripts/tests/profiles.py resolver
+    python3 tests/profiles.py resolver
 run "policy ownership (one reader, client policy fails closed)" \
-    python3 scripts/tests/profiles.py policy
+    python3 tests/profiles.py policy
 run "hardware profiles (schema, tiers, dedup)" \
-    python3 scripts/tests/profiles.py hardware
+    python3 tests/profiles.py hardware
 run "Python LSP baseline for claude-local (real documentSymbol)" \
-    python3 scripts/tests/lsp-baseline.py
+    python3 tests/lsp-baseline.py
 
 echo
 echo "INTEGRATION"
@@ -150,32 +150,32 @@ echo "INTEGRATION"
 # what --full is for.
 if [ -n "$FULL" ]; then
   run "client compatibility (3 dialects x 3 modes)" \
-      bash scripts/tests/client-compatibility.sh
+      bash tests/client-compatibility.sh
 fi
 # Dry-run only (stub `claude` on PATH, no inference), so it stays on every run.
 run "client role alias overrides (defaults intact, fails closed)" \
-    bash scripts/tests/client-role-override.sh
+    bash tests/client-role-override.sh
 
 run "codex MCP is withheld (no grepai/lsp/github, no re-sync)" \
-    bash scripts/tests/codex-mcp-withheld.sh
+    bash tests/codex-mcp-withheld.sh
 
 run "commit-msg hook (blocks attribution, allows product names)" \
-    bash scripts/tests/commit-msg-hook.sh
+    bash tests/commit-msg-hook.sh
 
 run "shell output helpers (streams, colour, one owner)" \
-    bash scripts/tests/shell-output.sh
+    bash tests/shell-output.sh
 run "validator checks (deterministic, classification, bounded)" \
-    python3 scripts/tests/validators.py
+    python3 tests/validators.py
 run "consolidated suites stay section-isolated" \
-    python3 scripts/tests/suite-structure.py
+    python3 tests/suite-structure.py
 run "generation rolls back on partial failure (never mixed on disk)" \
-    python3 scripts/tests/generation-rollback.py
+    python3 tests/generation-rollback.py
 # Claude Code sends auxiliary Anthropic-shaped probes derived from
 # ANTHROPIC_BASE_URL; LiteLLM implements none of them, so HEAD /api/hello 404'd.
 # Asserts the probe answers 200 AND that nothing else moved to make that true —
 # /v1/models stays authenticated, health routes stay put, unknown paths still 404.
 run "client compatibility probes (/api/hello, no side effects)" \
-    bash scripts/tests/compat-routes.sh
+    bash tests/compat-routes.sh
 
 echo
 echo "INVARIANTS"
@@ -276,7 +276,7 @@ run "every registered hook imports inside the proxy image" hooks_importable
 # Re-running an installer must change nothing. This is the check that catches an
 # installation rotting into duplicate MCP stanzas / provider groups / shell
 # blocks — invisible until something picks the wrong duplicate.
-run "installers are idempotent" bash scripts/tests/idempotent-install.sh
+run "installers are idempotent" bash tests/idempotent-install.sh
 
 # The audit exits 3 when it finds actionable items. That is informational here,
 # not a gate failure: untracked notes are a normal working state. Only a hard

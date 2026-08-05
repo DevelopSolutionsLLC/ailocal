@@ -7,7 +7,7 @@ tool_gateway.py — the Local Agent Gateway's capability negotiator.
 This module contains NO knowledge of any specific model, client, tool or route.
 Every such fact lives in deploy/litellm/registry.yaml and is reached through
 capability_registry.py. That is enforced, not merely intended:
-scripts/tests/capability-registry.py greps this file's executable code for model,
+tests/capability-registry.py greps this file's executable code for model,
 client and tool literals and fails if it finds any. If a fact about a model
 belongs anywhere, it belongs in the registry.
 

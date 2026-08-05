@@ -9,7 +9,7 @@
 # Usage: in-container.sh <impl.py> [NAME=VALUE ...]
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONTAINER="${AILOCAL_LITELLM_CONTAINER:-ailocal-litellm}"
 TIMEOUT="${AILOCAL_CONTAINER_TEST_TIMEOUT:-120}"
 
@@ -28,7 +28,7 @@ trap cleanup EXIT
 docker exec "$CONTAINER" mkdir -p "$STAGE" >/dev/null
 # harness.py travels with the implementation: the image has no checkout, so the
 # suite would otherwise need its own copy of the shared mechanics.
-docker cp "$ROOT/scripts/tests/harness.py" "$CONTAINER:$STAGE/harness.py" >/dev/null
+docker cp "$ROOT/tests/harness.py" "$CONTAINER:$STAGE/harness.py" >/dev/null
 docker cp "$ROOT/$IMPL" "$CONTAINER:$STAGE/impl.py" >/dev/null
 
 # Paths the suites resolve inside the image, not in the checkout.

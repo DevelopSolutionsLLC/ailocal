@@ -26,7 +26,7 @@ Every directory owns one thing. Generated output never appears in any of them.
 | `deploy/litellm/`, `deploy/searxng/` | compose definitions and authored service files | rendered secrets, generated config |
 | `scripts/` | the `ailocal` CLI, installers, lifecycle | policy |
 | `scripts/lib/` | shared implementation: `policy.py`, `checks/`, benchmark modules, shell helpers | duplicate owners |
-| `scripts/tests/` | domain suites; `./scripts/test-all.sh` is the gate | production code |
+| `tests/` | domain suites; `./scripts/test-all.sh` is the gate | production code |
 | `docs/` | this document set | history |
 
 ---

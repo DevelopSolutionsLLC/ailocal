@@ -19,7 +19,7 @@
 #                                      profile drops nothing and this proves the
 #                                      route works, NOT that the profile is right.
 #
-# Usage: ./scripts/tests/client-compatibility.sh
+# Usage: ./tests/client-compatibility.sh
 set -uo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/harness.sh"
 ROOT="$ROOT_DIR"
