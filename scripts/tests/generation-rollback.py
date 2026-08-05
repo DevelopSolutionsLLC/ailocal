@@ -10,8 +10,8 @@ destinations new and some old.
 Ordering alone does not save the deployed system either. Writing the marker
 last makes marker-aware readers fail closed, but LiteLLM reads
 config/litellm/config.yaml directly and each client reads its own generated
-file directly -- none of them consult effective-profile.json. MEASURED before
-the fix: failing after three replaces left capabilities.generated.json new
+file directly -- none of them consult effective-profile.json. Before the fix,
+failing after three replaces left capabilities.generated.json new
 while the marker and client configs were still old. Mixed state, on disk,
 servable.
 

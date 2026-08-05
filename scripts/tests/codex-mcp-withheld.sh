@@ -119,7 +119,7 @@ fi
 # compatibility: this contract exists solely for Cadence, so it is checked
 # against Cadence's actual loader.
 #
-# MEASURED 2026-08-04: compose_instructions.py maps `execution` onto a FIXED
+# compose_instructions.py maps `execution` onto a FIXED
 # vocabulary in _state_from() -- working | failing | blocked |
 # blocked_namespace_dispatch -- and anything else falls through to `configured`.
 # An invented value of "verified" therefore produced state='configured'

@@ -1,8 +1,6 @@
 """
 compat_routes.py — client compatibility endpoints LiteLLM does not implement.
 
-WHY THIS EXISTS
----------------
 Claude Code is pointed at this proxy through ANTHROPIC_BASE_URL. It does not
 send only `/v1/messages`: several auxiliary probes are built against the shape of
 api.anthropic.com, and one of them is derived from ANTHROPIC_BASE_URL, so it
@@ -10,7 +8,7 @@ lands here. LiteLLM has no such route, so it 404s:
 
     INFO: 172.18.0.1:58848 - "HEAD /api/hello HTTP/1.1" 404 Not Found
 
-MEASURED, not assumed. Verified two ways:
+Confirmed two ways:
   1. The 404 appears in `docker logs ailocal-litellm`, sourced from the Docker
      bridge gateway (172.18.0.1 = the host, i.e. the CLI) rather than from any
      in-container caller.

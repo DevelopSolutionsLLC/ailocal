@@ -569,7 +569,7 @@ fi
 # the isolated profiles it creates. Cadence provides repository intelligence,
 # broader language tooling, cross-client integration, and policy.
 #
-# WHY THIS EXISTS AT ALL. The generated settings.json for the isolated root sets
+# The generated settings.json for the isolated root sets
 # ENABLE_LSP_TOOL=1, but plugins are what put a language server behind that tool.
 # Delegating ALL plugin provisioning to Cadence meant an ailocal-only machine got
 # the LSP tool switched on with nothing behind it — the fail-quiet shape this
