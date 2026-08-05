@@ -45,7 +45,7 @@ from litellm.integrations.custom_logger import CustomLogger
 log = logging.getLogger("persona_injector")
 
 INSTRUCTIONS_DIR = os.environ.get("AILOCAL_INSTRUCTIONS_DIR", "/app/instructions")
-CONFIG_PATH = os.environ.get("AILOCAL_CONFIG_PATH", "/app/config/config.yaml")
+CONFIG_PATH = os.environ.get("AILOCAL_CONFIG_PATH", "/app/generated/config.yaml")
 
 
 def _read(path):
