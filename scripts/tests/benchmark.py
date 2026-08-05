@@ -57,6 +57,18 @@ _suite = Suite()
 check = _suite.check
 
 
+def check_all(label: str, failures) -> bool:
+    """One contract over many data rows.
+
+    A table of cases is one invariant, not one invariant per row. Failure names
+    every offending row, so diagnostics survive the aggregation.
+    """
+    failures = list(failures)
+    return check(not failures, label,
+                 "; ".join(str(f) for f in failures[:8])
+                 + (f" (+{len(failures) - 8} more)" if len(failures) > 8 else ""))
+
+
 def library_checks() -> None:
     PROMPT = 'def add(a, b):\n    """Add two numbers."""\n'
     BODY = "return a + b"
@@ -99,28 +111,29 @@ def library_checks() -> None:
         "ellipsis only": "    ...\n",
         "comment only": "    # nothing here\n",
     }
+    import ast as _a
+    bad = []
     for name, resp in ACCEPT.items():
         out = utils._extract(resp, PROMPT)
-        check(bool(out), f"ACCEPT {name}", repr(out[:90]))
-        if out:
-            import ast as _a
-            try:
-                _a.parse(out)
-                check(True, f"ACCEPT {name}: parses")
-            except SyntaxError as ex:
-                check(False, f"ACCEPT {name}: parses", str(ex))
-    for name, resp in REJECT.items():
-        check(utils._extract(resp, PROMPT) == "",
-              f"REJECT {name} (INVALID_EXTRACTION, not a prompt-only fallback)")
+        if not out:
+            bad.append(f"{name}: extracted nothing"); continue
+        try:
+            _a.parse(out)
+        except SyntaxError as ex:
+            bad.append(f"{name}: does not parse ({ex})")
+    check_all(f"every accepted shape yields parseable Python ({len(ACCEPT)} shapes)", bad)
+    check_all(f"every trivial body is rejected, not returned as a prompt fallback "
+              f"({len(REJECT)} shapes)",
+              [n for n, r in REJECT.items() if utils._extract(r, PROMPT) != ""])
     check("# step one" in utils._extract(ACCEPT["inline comments preserved"], PROMPT),
           "inline comments survive extraction")
     check("This works" not in utils._extract(ACCEPT["fenced then prose"], PROMPT),
           "trailing prose is dropped because it does not parse")
     print("\nadapter: structural rules, not model rules")
     src = (REPO / "config" / "benchmark-tasks" / "utils.py").read_text()
-    for tag in ("qwen", "gemma", "gpt-oss", "gpt_oss", "coder"):
-        check(tag not in src.lower().split("MEASURED")[0].split('"""')[-1],
-              f"no branch on model name `{tag}`")
+    _body = src.lower().split("MEASURED")[0].split('"""')[-1]
+    check_all("the extractor branches on structure, never on a model name",
+              [t for t in ("qwen", "gemma", "gpt-oss", "gpt_oss", "coder") if t in _body])
     indented = utils._extract("    print(a)\n    return a + b\n", PROMPT)
     check("print(a)" in indented and BODY in indented,
           "an INDENTED print() is body, not a terminator")
@@ -271,8 +284,8 @@ def library_checks() -> None:
           "never bypasses permissions (planning-only must not be able to write)")
     for _tool in ("Read", "Glob", "Grep"):
         check(_tool in _pp["allowed"], f"{_tool} is allowed for read-only investigation")
-    for _tool in ("Write", "Edit", "Task"):
-        check(_tool in _pp["denied"], f"{_tool} is explicitly denied")
+    check_all("every mutating tool is explicitly denied",
+              [t for t in ("Write", "Edit", "Task") if t not in _pp["denied"]])
     check("Bash(./scripts/status.sh)" in _pp["allowed"],
           "the command the prompt cites is runnable")
     check("Bash)" not in _pp["allowed"].replace("Bash(", "") and
