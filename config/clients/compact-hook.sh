@@ -4,7 +4,7 @@
 # Deliberately METADATA ONLY. The hook payload carries the generated compact
 # summary and a transcript path; writing those would persist private conversation
 # text outside the client's own storage. This records trigger and summary SIZE so
-# compaction can be VERIFIED, never what was said.
+# compaction can be confirmed, never what was said.
 #
 # The first version had TWO stdin redirections on one command (a heredoc for the
 # script plus a here-string for the payload). The here-string won, python received

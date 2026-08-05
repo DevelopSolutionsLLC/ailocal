@@ -20,7 +20,7 @@ output_ceiling: 32768
 # for no measurable gain.
 context_tolerance: 0.02
 
-# Vendor inference presets. VERIFIED against official documentation 2026-08-01.
+# Vendor inference presets, taken from each vendor's official documentation.
 # Ollama's baked tag defaults are deliberately NOT used: for qwen3.5 they are the
 # GENERAL thinking preset (temp 1.0 / presence_penalty 1.5), while Qwen publishes
 # a separate CODING preset. Benchmarking code on the general preset measures the
@@ -81,7 +81,7 @@ suites:
   # COMPLETION task: it stops on ['\ndef','\nclass',...] and expects the model to
   # continue the function body directly. A chat model answers "Looking at this
   # function, I need to..." instead, the stop sequence fires on the first line,
-  # and the filter concatenates prompt + prose into invalid Python. MEASURED:
+  # and the filter concatenates prompt + prose into invalid Python:
   # every one of six models scored 0.000 on humaneval_plus while qwen3-coder
   # scored 0.8 on humaneval_instruct. That was a harness misuse, not six failing
   # models.

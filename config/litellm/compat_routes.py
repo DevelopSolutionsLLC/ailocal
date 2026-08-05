@@ -1,8 +1,6 @@
 """
 compat_routes.py — client compatibility endpoints LiteLLM does not implement.
 
-WHY THIS EXISTS
----------------
 Claude Code is pointed at this proxy through ANTHROPIC_BASE_URL. It does not
 send only `/v1/messages`: several auxiliary probes are built against the shape of
 api.anthropic.com, and one of them is derived from ANTHROPIC_BASE_URL, so it
@@ -10,27 +8,20 @@ lands here. LiteLLM has no such route, so it 404s:
 
     INFO: 172.18.0.1:58848 - "HEAD /api/hello HTTP/1.1" 404 Not Found
 
-MEASURED, not assumed. Verified two ways:
-  1. The 404 appears in `docker logs ailocal-litellm`, sourced from the Docker
-     bridge gateway (172.18.0.1 = the host, i.e. the CLI) rather than from any
-     in-container caller.
-  2. `/api/hello` appears in NEITHER this repo nor cadence (`grep -rn`), so it
-     originates in the client, not in our middleware. The claude-cli 2.1.220
-     binary contains three call sites, all against `<base>/api/hello`:
+The probe originates in the client, not in this middleware. claude-cli has three
+`<base>/api/hello` call sites:
 
-       a. HEAD, base = `ANTHROPIC_BASE_URL || BASE_API_URL`
-              fetch(`${e}/api/hello`, {method:"HEAD", signal:...}).catch(()=>{})
-          This is the one we observe. It is skipped entirely when a proxy /
-          unix socket / client cert / Bedrock-style env var is set.
-       b. GET,  base = BASE_API_URL (the built-in constant)  — connectivity
-          telemetry; classifies the result as `http_<status>`.
-       c. GET,  base = BASE_API_URL — the `preflight_endpoint` check, which
-          treats any status != 200 as a connection failure.
+  a. HEAD, base = `ANTHROPIC_BASE_URL || BASE_API_URL`. The one that arrives
+     here. Skipped entirely when a proxy / unix socket / client cert /
+     Bedrock-style env var is set, and its result is discarded
+     (`.catch(()=>{})`, no status inspection).
+  b. GET, base = BASE_API_URL — connectivity telemetry, classified `http_<status>`.
+  c. GET, base = BASE_API_URL — `preflight_endpoint`, which treats any status
+     != 200 as a connection failure.
 
-    (b) and (c) read the BUILT-IN base rather than ANTHROPIC_BASE_URL, so they do
-    not reach this proxy. GET is nevertheless served here: it costs nothing, and
-    it means a future client build that redirects either of them to
-    ANTHROPIC_BASE_URL gets a 200 instead of a fresh 404.
+(b) and (c) read the BUILT-IN base, so they do not reach this proxy. GET is
+served anyway: it costs nothing, and a future client build that redirects either
+onto ANTHROPIC_BASE_URL gets a 200 rather than a fresh 404.
 
 HONEST SCOPE — what this does and does not fix
 ----------------------------------------------
@@ -52,12 +43,9 @@ DESIGN CONSTRAINTS
 - Idempotent: re-importing the module never double-registers the route.
 - Touches nothing under /v1/*, no existing health route, and no routing config.
 
-Registered via, alongside the other hooks:
-    litellm_settings:
-      callbacks:
-        - compat_routes.proxy_handler_instance
-Listing it as a callback is only the mechanism that makes LiteLLM import this
-file; the class below is an intentional no-op. Same pattern as model_registrar.
+Listing this module as a `litellm_settings.callbacks` entry is only the mechanism
+that makes LiteLLM import it; the class below is an intentional no-op. Same
+pattern as model_registrar.
 """
 
 import logging

@@ -4,7 +4,6 @@ be answered with "which component, and when".
 
 Writes JSONL to $AILOCAL_TRACE_DIR. Off unless that is set.
 
-WHY THIS EXISTS
 The Claude-local failure was invisible for a long time because every component
 reported success: HTTP 200, gateway completed, tool repair clean, SSE well-formed.
 The failure was a ~90 s silence before the first byte, which no component
@@ -685,9 +684,9 @@ class RequestTrace(CustomLogger):
                                                  if first_tool and st.get("t_start") else None),
                 "event_gap_max_ms": round(max(gaps), 1) if gaps else None,
                 "events_per_second": round(eps, 1) if eps else None,
-                # MEASURED at the source (2026-07-28): Ollama emits a tool call as
-                # ONE atomic chunk with complete arguments -- there are no partial
-                # function-call deltas to forward. So a tool-call turn having
+                # Ollama emits a tool call as ONE atomic chunk with complete
+                # arguments -- there are no partial function-call deltas to
+                # forward. So a tool-call turn having
                 # almost no events is CORRECT, not a buffering fault.
                 "tool_call_only": bool(first_tool) and not saw_text,
                 # A local model cannot emit >200 events/sec through this stack.
