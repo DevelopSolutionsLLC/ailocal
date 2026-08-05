@@ -4,215 +4,138 @@
 [![Platform](https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-lightgrey.svg)]()
 [![Status](https://img.shields.io/badge/status-release%20candidate-orange.svg)]()
 
-Run AI coding tools — Claude Code, Codex, VS Code Copilot Chat — against local models on Apple Silicon. No cloud costs, no data leaving your machine, no changes to the tools: Ollama runs the models natively (Metal/MLX GPU) and LiteLLM fronts them as an OpenAI/Anthropic-compatible proxy on `localhost:4000` that exposes **capability names** (`architecture`, `implementation`, `review`, `fast`, `completion`, `embeddings`) instead of raw model tags. Point a tool at the proxy instead of Anthropic/OpenAI — everything else stays the same.
+Run Claude Code, Codex CLI and VS Code Copilot Chat against local models on
+Apple Silicon. No cloud costs, no data leaving the machine, no changes to the
+tools themselves.
 
-## What this is, and what it is not
+Ollama runs the models natively on the GPU. LiteLLM fronts them on
+`localhost:4000` as an OpenAI- and Anthropic-compatible proxy. Point a tool at
+that address instead of Anthropic or OpenAI; everything else stays the same.
 
-**ailocal is infrastructure: local inference and routing.** It runs Ollama, fronts
-it with LiteLLM, and owns everything about *which model answers and how* —
-capability routing, personas, the tool gateway, token optimisation, SearXNG
-integration. That is the whole job.
+## What you get
 
-It does **not** own developer tooling. MCP registration, LSP provisioning,
-repository intelligence (grepai/Qdrant), client installation and validation
-belong to **[Cadence](https://github.com/DevelopSolutionsLLC/cadence)**, which
-enhances any AI client whether or not ailocal is installed.
-
-The two compose but do not depend on each other in both directions:
-
-- **Cadence without ailocal** — fully supported. MCP, LSP and grepai work
-  against hosted Claude or hosted Codex with no LiteLLM anywhere.
-- **ailocal without Cadence** — works. You get local models through the proxy,
-  without repository intelligence.
-- **Both** — Cadence detects ailocal and enables the LiteLLM-backed extras
-  (local search routing, capability-aware tooling).
-
-If you do not use LiteLLM, you do not need this repo.
-
-## Start here
-
-| Question | Answer |
-|---|---|
-| **Supported clients?** | `claude-local`, `codex-local`, VS Code, plus hosted Claude/Codex untouched alongside. Per-client state: [compatibility matrix](docs/architecture.md) |
-| **Which model?** | `architecture` for anything agentic (default), `implementation` for edits, `review` for critique, `fast` for background work. `completion` is FIM autocomplete **only** — it hard-400s on a chat turn |
-| **Which tools do I get?** | The gateway removes what a local model cannot drive: Claude Code declares 54 tools, 41 are kept, 13 orchestration tools are dropped (~14,500 tokens, 56% of tool schema). Filtering is per-model, not per-question — a trivial question receives the same 41. |
-| **LSP?** | Native Claude Code LSP. ailocal installs the **Python** baseline (`pyright-lsp`) into the isolated `claude-local` root; Cadence adds TypeScript/Go/C and repository intelligence. Shell has no native plugin — use `bash -n`, `zsh -n`, `shellcheck` |
-| **grepai or LSP?** | grepai for *concepts* ("where is retry handled"), LSP for *exact* ("where is this defined, what calls it"). Prefer LSP's document-scoped tools |
-| **Something's wrong** | `ailocal doctor` → `ailocal validate` → `ailocal smoke` → `./scripts/test-all.sh`. Run them **idle**; contention causes phantom failures |
-| **Why is it built this way?** | [ADRs](docs/adr/) — one per decision, with the measurements behind it |
-| **What's not done?** | [future work](docs/architecture.md) |
-
-**Common mistakes:** editing a generated region instead of the two source files
-(`config/profiles/<tier>.yaml`, `config/clients.yaml`); expecting
-`docker compose up -d` to pick up a config change (it will not — use
-`ailocal start`); reading `content[0].text` on a `review` response and
-seeing empty (it returns a `thinking` block first); treating an empty LSP or
-grepai result as proof of absence (it usually means still-indexing, or the wrong
-language server answered).
-
-Full operational detail: [environment cheat sheet](docs/architecture.md).
-Architecture and file map: [AGENTS.md](AGENTS.md).
+- **Capability names, not model tags.** Clients ask for `ailocal-architecture`
+  or `ailocal-implementation`; the profile decides which model answers. Change
+  models without touching a client.
+- **Hardware-sized profiles.** One profile per memory class picks models,
+  context windows and output limits the machine can actually hold.
+- **Isolated client profiles.** `claude-local` and `codex-local` launch with
+  their own config roots, so local and cloud sessions coexist untouched.
+- **Local web search** through SearXNG behind the proxy, with an optional Brave
+  API key.
+- **A Python language server for `claude-local`**, working out of the box.
+- **A tool gateway** that trims oversized tool schemas before a local model sees
+  them — often the difference between a usable and an unusable session.
 
 ## Requirements
 
-**A bare Mac is fine.** `install.sh` reports everything missing up front, asks
-once, then requests administrator rights once. Docker's licence terms are
-recorded in Docker's own settings file before first launch, so there is no
-manual accept-and-re-run step. `--yes` runs unattended.
+macOS on Apple Silicon · 16 GB unified memory minimum · Docker Desktop ·
+Ollama · `jq`
 
-| Prerequisite | Administrator rights | Why |
-|---|---|---|
-| git (Command Line Tools) | **yes** | `softwareupdate -i` runs as root; installed headlessly, no dialog |
-| Homebrew | **yes** | creates `/opt/homebrew` |
-| jq | no | Homebrew formula, user-owned prefix |
-| Docker Desktop | **yes** | root-owned privileged helpers (cask `docker-desktop`, not the CLI-only formula) |
-| Ollama | no | cask `ollama-app`; `/Applications` is admin-group writable |
-
-You must be an **administrator**. A standard account cannot install these, and
-the installer says so up front rather than failing partway through.
-
-### Prerequisites
-
-- macOS 13+ (Apple Silicon, M1 or newer)
-- **16 GB unified memory minimum.** The installer reads `sysctl hw.memsize` and
-  picks the highest tier that does not exceed it, never rounding up: 16-31 GB
-  selects `16gb`, 32-63 `32gb`, 64-127 `64gb`, 128+ `128gb`. Below 16 GB it stops
-  rather than offering a profile that would swap.
-- Disk depends on the tier and on what is already installed. The installer prints
-  the unique model set, what you already have, and the additional space needed
-  before pulling anything.
+Disk depends on the profile: roughly 25 GB at 16 GB RAM, 40 GB at 64 GB.
 
 ## Install
 
 ```bash
 brew install git jq
-brew install --cask docker ollama     # open Docker Desktop once to finish first-run setup
-ollama serve                          # or open Ollama.app
-./scripts/install.sh                  # deps, .env, models, proxy, health check, client configs
-ailocal smoke               # verify a real model request succeeds
+brew install --cask docker ollama    # open Docker Desktop once to finish setup
+ollama serve                         # or open Ollama.app
+
+git clone https://github.com/DevelopSolutionsLLC/ailocal.git
+cd ailocal
+./scripts/install.sh
 ```
 
-`install.sh` can also install login LaunchAgents (autostart `ollama serve` + preload the resident model) — answer `y` when prompted, or manage it later with `./scripts/setup-startup.sh`.
+The installer detects memory, selects a profile, pulls the models, starts the
+services and deploys the client configurations. It refuses to select a profile
+the machine cannot hold.
+
+It can also install login agents that start Ollama and preload the resident
+model — answer `y` when prompted, or run `./scripts/setup-startup.sh` later.
 
 ## Verify
 
-Everything routes through the proxy on `localhost:4000`:
-
 ```bash
-KEY=$(grep LITELLM_MASTER_KEY .env | cut -d= -f2)
-curl -s http://localhost:4000/v1/chat/completions \
-  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
-  -d '{"model":"ailocal-implementation","messages":[{"role":"user","content":"say ok"}]}' \
-  | jq -r '.choices[0].message.content'
+ailocal doctor      # health, with a fix for anything wrong
+ailocal smoke       # bounded runtime check: one real model response
+ailocal validate    # configuration consistency; works with the stack stopped
 ```
 
-Any client that speaks OpenAI (`/v1/chat/completions`) or Anthropic (`/v1/messages`) works the same way: base URL `http://localhost:4000`, key `LITELLM_MASTER_KEY`, model = `ailocal-<capability>` (e.g. `ailocal-architecture`, `ailocal-implementation`, `ailocal-review`, `ailocal-fast`, `ailocal-completion`, `ailocal-embeddings`). Configured clients (`claude-local`, `codex-local`, the VS Code connector) remap their own model slots to these automatically — you only type a bare capability name inside those tools' `/model` pickers, not on the raw HTTP API.
+Then start a session:
 
-## Architecture
+```bash
+claude-local        # Claude Code against local models
+codex-local         # Codex CLI against local models
+```
 
-Clients speak to LiteLLM on `127.0.0.1:4000`, which routes each request to an
-Ollama-hosted model by **capability** — never by model name. Server-side hooks
-inject the per-capability persona and trim the client's tool payload before the
-request reaches the backend.
+Any OpenAI- or Anthropic-compatible client works directly: base URL
+`http://localhost:4000`, key from `LITELLM_MASTER_KEY` in `.env`, model
+`ailocal-<capability>`.
 
-Full design in [`docs/architecture.md`](docs/architecture.md).
+## Profiles
 
-### Services
+| Profile | Architecture model | Context / output |
+|---|---|---|
+| `16gb` | `qwen3.5:4b` | 64K total (57 344 in / 8 192 out) |
+| `32gb` | `qwen3.5:9b` | 64K total (57 344 in / 8 192 out) |
+| `64gb` | `gemma4:26b-mlx` | 96K total (81 920 in / 16 384 out) |
+| `128gb` | `gemma4:26b-mlx` | pending hardware validation |
 
-- **litellm** — one Docker container on `127.0.0.1:4000` (localhost only, authed with `LITELLM_MASTER_KEY`). No database, no cache.
-- **Ollama** — runs natively on the host (`:11434`) for Metal GPU access; the only heavy memory user.
+Capabilities are `architecture`, `implementation`, `review`, `fast`,
+`completion` and `embeddings`. The small tiers use `qwen2.5-coder:1.5b` for
+inline completion; the 64 GB tier uses `qwen2.5-coder:3b`. Profiles live in `config/profiles/` — edit the
+profile, never a generated file, then run `ailocal sync`.
 
-### Capabilities
+## Commands
 
-LiteLLM exposes capability names only — the router owns the backend, context, sampling, and residency, so a model swap never touches a client config. The active profile is chosen from detected memory and recorded in
-`config/active-profile`. Four exist:
+```
+ailocal status | doctor | validate | smoke      inspect
+ailocal start | stop | update | sync            lifecycle
+ailocal clients | vscode | models-install       deploy
+ailocal trace | metrics | e2e <client>          diagnostics
+ailocal benchmark <models|planner|gateway>      developer benchmarks
+ailocal teardown                                remove everything
+```
 
-| Tier | architecture / implementation / review / fast | completion | embeddings | Unique models | Level |
-|---|---|---|---|---|---|
-| `16gb` | `qwen3.5:4b` — one shared backend | `qwen2.5-coder:1.5b` | `nomic-embed-text` | 3 | configuration-verified |
-| `32gb` | `qwen3.5:9b` — one shared backend | `qwen2.5-coder:1.5b` | `nomic-embed-text` | 3 | configuration-verified |
-| `64gb` | specialised per capability | `qwen2.5-coder:3b` | `nomic-embed-text` | 6 | **measured** |
-| `128gb` | exact copy of `64gb` | same | same | 6 | configuration-verified |
+`ailocal sync` regenerates every derived file from the profile and client
+policy. Generated output lives outside the repository, under
+`${AILOCAL_STATE:-~/.local/state/ailocal}`. Deleting that directory and
+re-running `ailocal sync` is a supported repair.
 
-The smaller tiers deliberately point four capabilities at **one** resident model.
-The aliases still differ in persona, sampling and reasoning — they share a backend
-so the tier holds one model instead of rotating several. Configured context is a
-maximum, not a guarantee that two parallel requests can each consume all of it.
+## Supported clients
 
-`128gb` mirrors `64gb` exactly for this release. It is not claimed to be faster or
-more capable, because nothing has been measured on 128 GB hardware.
-
-| Capability | Purpose |
+| Client | Status |
 |---|---|
-| `architecture` | Shared big-context hub: design, deep reasoning, large agent prompts |
-| `implementation` | Everyday coding, features, tests |
-| `review` | Code review, bug & security |
-| `fast` | Classification, summarisation, cheap tool-driven lookups |
-| `completion` | Inline autocomplete (FIM) **only**; never a chat tier |
-| `embeddings` | Retrieval infrastructure |
+| Claude Code | fully supported — tools, search, and a Python LSP |
+| VS Code Copilot Chat | supported for chat and completion |
+| Codex CLI | configuration, routing, geometry and tool transport work; interactive streaming is blocked upstream |
 
-Which model backs each capability, its context window, and its `keep_alive` are all tier-specific — see the table above and `config/profiles/<tier>.yaml` for what your detected profile actually runs (`config/active-profile` names it; `ailocal status` shows it live). Nothing generation-side stays resident forever: `architecture` holds for a bounded number of hours to survive a working session without reload cost, then frees on genuine idle; the rotating capabilities (`implementation`/`review`/`fast`/`completion`) self-unload sooner. Only `embeddings` is pinned permanently — it's small (~370 MB) and other tools (grepai) depend on it never reloading. Exact durations live in the profile YAML, not here, so this doc can't drift from what's actually configured.
+## Known limitations
 
-Order in the `/model` picker follows the key order of the active profile.
+- **Codex interactive sessions do not complete.** A streamed turn never emits a
+  terminal event — [BerriAI/litellm#27442](https://github.com/BerriAI/litellm/issues/27442),
+  not an ailocal defect. Configuration and routing are validated.
+- **Claude Code reports "0 searches"** even when retrieval worked. The count is
+  a display artefact: the search block is dropped during response serialisation
+  upstream.
+- **The 128 GB profile is unvalidated.** It mirrors the 64 GB policy and is not
+  a completed sizing recommendation.
+- **Local models are not frontier models.** Expect a capable everyday assistant,
+  not a replacement for hosted Opus or GPT on hard problems.
 
-Change a backend in `config/profiles/<tier>.yaml`, run `ailocal sync`, and every generated client config regenerates. `architecture`/`implementation`/`review` get a server-side engineering persona (`config/instructions/<capability>.md`), injected on both the OpenAI and Anthropic routes. Use capability names only — never raw model tags.
+## Documentation
 
-### Clients
-
-```bash
-ailocal clients          # all three (or one: vscode | codex | claude)
-```
-
-Client state (model routing, base URL, keys) lives in `~/.config/ailocal/`; your cloud `~/.claude` / `~/.codex` sessions keep pointing at Anthropic/OpenAI's cloud, not the local proxy — ailocal never changes which backend they talk to. The one exception is the Python LSP baseline (`pyright-lsp`): it's installed and enabled into both `claude-local` and plain `claude`, since it's a Claude Code plugin wiring up a binary you already have, independent of routing.
-
-- **Claude Code** — `claude-local` (launches on `architecture`, the only tier measured able to sustain a tool loop; `/model` to switch). Plain `claude` stays on cloud for model routing, but gets the same LSP baseline.
-- **Codex** — `codex-local`. Plain `codex` stays on cloud.
-- **VS Code Copilot Chat** — `ailocal-code [path]` opens an isolated VS Code profile with the [LiteLLM Connector](https://marketplace.visualstudio.com/items?itemName=Gethnet.litellm-connector-copilot) wired up; models auto-discover from `/model/info`. To wire it manually: Copilot model-picker → **Manage Models → LiteLLM Connector**, base URL `http://localhost:4000`, key = `LITELLM_MASTER_KEY`, then ⌘⇧P → **LiteLLM: Reload Models**.
-
-## Update
-
-```bash
-ailocal start                # start
-ailocal stop                 # stop
-ailocal update               # pull latest image + restart
-ailocal doctor               # health summary (0 healthy / 1 profile unresolved / 2 degraded)
-ailocal teardown --clients   # full removal + client uninstall
-```
-
-## Uninstall
-
-```sh
-ailocal teardown          # stop services, remove containers and client configs
-```
-
-Removes only what ailocal installed. Models, `~/.claude`, `~/.codex` and Cadence
-content are left alone. Runtime state under `~/.local/state/ailocal` is kept —
-delete it yourself if you want it gone.
-
-## Troubleshooting
-
-**"Message exceeds token limit" (VS Code)** — select `architecture` (96K, ~73K usable after VS Code's 0.75 reserve); the smaller-window capabilities can't hold a large workspace prompt.
-
-**VS Code utility-model error** (`copilot-utility-small`) — set `"chat.byokUtilityModelDefault": "mainAgent"` and reload the window (the installer adds it).
-
-**LiteLLM won't start** — `docker logs ailocal-litellm`; usually a YAML error in `config/litellm/config.yaml` or a missing `LITELLM_MASTER_KEY`.
-
-**404 on a capability** — Ollama isn't running, the backend model isn't pulled (`ollama list`), or it's missing from `config/litellm/config.yaml`.
-
-**Claude Code `/model` shows only Opus/Sonnet/Haiku** — reload your shell and relaunch `claude-local` (the wrapper enables gateway discovery and remaps the built-in slots to local capabilities).
-
-**Models unload too fast** — the Ollama app ignores `~/.zshrc`; run `bash scripts/setup-ollama-env.sh` and restart Ollama.
-
-## Links
-
-- [`docs/architecture.md`](docs/architecture.md) — system design, ownership, data flow
-- [`docs/troubleshooting.md`](docs/troubleshooting.md) — runtime symptoms
-- [`docs/adr/`](docs/adr/) — durable decisions
-- [`AGENTS.md`](AGENTS.md) — AI operating instructions
-- Cadence — optional repository-intelligence layer; see its README
+| Document | Purpose |
+|---|---|
+| [docs/architecture.md](docs/architecture.md) | how the pieces fit together |
+| [docs/operations.md](docs/operations.md) | install, update, repair, uninstall |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | symptoms and fixes |
+| [docs/security.md](docs/security.md) | secrets, permissions, exposure |
+| [docs/BENCHMARK.md](docs/BENCHMARK.md) | reproducing model comparisons |
+| [AGENTS.md](AGENTS.md) | contributing and agent operating rules |
 
 ## License
 
-[Apache License 2.0](LICENSE) — Copyright © 2026 DevelopSolutions, LLC.
+Apache-2.0 — see [LICENSE](LICENSE).
 
 Developed and maintained by Victor T. Chevalier for DevelopSolutions, LLC.
