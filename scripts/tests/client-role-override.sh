@@ -7,7 +7,7 @@
 # `env "${slots[@]}" ... claude`, and env execs a binary.
 set -uo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/harness.sh"
-CONFIGURE="$ROOT_DIR/config/clients/configure.zsh"
+CONFIGURE="$("$ROOT_DIR/scripts/profile-config" state-root)/clients/configure.zsh"
 
 STUB="$(mktemp -d)"; trap 'rm -rf "$STUB"' EXIT
 cat > "$STUB/claude" <<'EOF'

@@ -156,7 +156,7 @@ EOF
   chmod 600 "$env_path"
   info "$env_path written (chmod 600)"
 
-  cp "$ROOT_DIR/config/clients/configure.zsh" "$AILOCAL_CFG/configure.zsh"
+  cp "$AILOCAL_STATE/clients/configure.zsh" "$AILOCAL_CFG/configure.zsh"
   cp "$ROOT_DIR/config/clients/finalize.zsh" "$AILOCAL_CFG/finalize.zsh"
   # Shared SessionStart hook (claude-local + codex-local) — per-session scratchpad.
   cp "$ROOT_DIR/config/clients/scratchpad-hook.sh" "$AILOCAL_CFG/scratchpad-hook.sh"
@@ -385,10 +385,10 @@ PYEOF
   # hand-maintained in .github/ and drifted — four of six capability rows were
   # wrong and it pointed at config/models.yaml, which has not existed for a long
   # time. A VS Code agent following it was being sent to a nonexistent file.
-  # Source: config/clients/copilot/repo-instructions.md (its capability table is
+  # Source: the generated copilot instructions (its capability table is
   # a sync-models.py generated region). .github/ is gitignored for this name.
   mkdir -p "$ROOT_DIR/.github"
-  cp "$ROOT_DIR/config/clients/copilot/repo-instructions.md" \
+  cp "$AILOCAL_STATE/clients/copilot/repo-instructions.md" \
      "$ROOT_DIR/.github/copilot-instructions.md"
   info ".github/copilot-instructions.md generated (from config/clients/copilot/)"
 
@@ -427,7 +427,7 @@ PYEOF
     mkdir -p "$HOME/.continue"
     backup "$CONTINUE_CFG" || true
     sed "s|__LITELLM_KEY__|${LITELLM_KEY}|g" \
-        "$ROOT_DIR/config/clients/continue/config.json" > "$CONTINUE_CFG"
+        "$AILOCAL_STATE/clients/continue/config.json" > "$CONTINUE_CFG"
     info "Continue config deployed to ~/.continue/config.json (autocomplete: qwen2.5-coder:3b direct to Ollama)"
   else
     info "Continue extension not installed — skipping ~/.continue/config.json"
@@ -474,7 +474,7 @@ if has_target "codex"; then
 
   # model_catalog.json — always update (our managed file, no user customization)
   backup "$CODEX_CAT" || true
-  cp "$ROOT_DIR/config/clients/model_catalog.json" "$CODEX_CAT"
+  cp "$AILOCAL_STATE/clients/model_catalog.json" "$CODEX_CAT"
   info "$CODEX_CAT written"
 
   # AGENTS.md — operating protocol (config/clients/codex/AGENTS.md.template, a TRACKED source)
@@ -532,7 +532,7 @@ if has_target "claude"; then
   # settings.json — always overwrite (managed file, no secrets — key comes
   # from the claude-local wrapper's process-scoped env, never written to disk here).
   backup "$CLAUDE_CFG" || true
-  cp "$ROOT_DIR/config/clients/claude/settings.json" "$CLAUDE_CFG"
+  cp "$AILOCAL_STATE/clients/claude/settings.json" "$CLAUDE_CFG"
   info "$CLAUDE_CFG written"
 
   # AGENTS.md is NOT written here. Cadence owns client instruction policy for
