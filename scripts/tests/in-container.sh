@@ -35,8 +35,8 @@ docker cp "$ROOT/$IMPL" "$CONTAINER:$STAGE/impl.py" >/dev/null
 env_args=(
   -e "AILOCAL_REGISTRY_MODULE=/app/config/capability_registry.py"
   -e "AILOCAL_REGISTRY=/app/config/registry.yaml"
-  -e "AILOCAL_CONFIG_PATH=/app/config/config.yaml"
-  -e "AILOCAL_CAPABILITIES_JSON=/app/ailocal-config/capabilities.generated.json"
+  -e "AILOCAL_CONFIG_PATH=/app/generated/config.yaml"
+  -e "AILOCAL_CAPABILITIES_JSON=/app/generated/capabilities.json"
   -e "AILOCAL_TEST_REPO=$STAGE"
 )
 for kv in "$@"; do env_args+=(-e "$kv"); done

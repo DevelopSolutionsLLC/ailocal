@@ -50,7 +50,7 @@ def sha(path):
         return "absent"
 
 # ── byte-stable files: a hash is the right comparison ──────────────────────
-for p in ("config/litellm/config.yaml",
+for p in (os.path.expanduser("~/.local/state/ailocal/litellm/config.yaml"),
           os.path.expanduser("~/.local/state/ailocal/clients/model_catalog.json"),
           os.path.expanduser("~/.local/state/ailocal/clients/claude/settings.json"),
           os.path.expanduser("~/.local/state/ailocal/clients/codex/config.toml")):

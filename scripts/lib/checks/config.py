@@ -88,25 +88,26 @@ def check_client_mappings() -> list[CheckResult]:
 # ── generated state ─────────────────────────────────────────────────────────
 
 def check_generated_present() -> list[CheckResult]:
-    """The generated artefacts every consumer reads must exist."""
-    expected = [
-        "config/effective-profile.json",
-        "config/capabilities.generated.json",
-
-        "config/litellm/config.yaml",
-        "config/integration-contract.json",
-    ]
-    out = []
-    for rel in expected:
-        p = REPO / rel
-        out.append(CheckResult(f"generated:{rel}", PASS if p.is_file() else FAIL,
-                               rel if p.is_file() else f"{rel} is missing",
-                               remediation=None if p.is_file() else "ailocal sync"))
-    return out
+    """Every generated artefact exists, under the one runtime root."""
+    root = P.runtime_root()
+    expected = [P.effective_profile_path(),
+                root / "litellm" / "capabilities.json",
+                root / "litellm" / "config.yaml",
+                root / "integration-contract.json",
+                root / "clients" / "model_catalog.json",
+                root / "clients" / "configure.zsh",
+                root / "clients" / "claude" / "settings.json",
+                root / "clients" / "codex" / "config.toml"]
+    missing = [str(p.relative_to(root)) for p in expected if not p.is_file()]
+    return [CheckResult(
+        "generated", PASS if not missing else FAIL,
+        f"all {len(expected)} generated artefacts present under {root}"
+        if not missing else f"missing: {', '.join(missing)}",
+        remediation=None if not missing else "ailocal sync")]
 
 
 def check_effective_profile() -> CheckResult:
-    p = REPO / "config" / "effective-profile.json"
+    p = P.effective_profile_path()
     if not p.is_file():
         return CheckResult("effective-profile", FAIL, "effective-profile.json is missing",
                            remediation="ailocal sync")
@@ -144,9 +145,9 @@ def _model_names(cfg: pathlib.Path) -> list[str]:
 
 def check_alias_uniqueness() -> CheckResult:
     """A duplicated alias silently shadows a capability."""
-    cfg = REPO / "config" / "litellm" / "config.yaml"
+    cfg = P.runtime_root() / "litellm" / "config.yaml"
     if not cfg.is_file():
-        return CheckResult("aliases", FAIL, "config/litellm/config.yaml is missing",
+        return CheckResult("aliases", FAIL, "generated config.yaml is missing",
                            remediation="ailocal sync")
     names = _model_names(cfg)
     dupes = sorted({n for n in names if names.count(n) > 1})
@@ -158,9 +159,9 @@ def check_alias_uniqueness() -> CheckResult:
 
 def check_no_raw_backend_tags() -> CheckResult:
     """Clients must reach models through ailocal-<capability>, never a raw tag."""
-    cfg = REPO / "config" / "litellm" / "config.yaml"
+    cfg = P.runtime_root() / "litellm" / "config.yaml"
     if not cfg.is_file():
-        return CheckResult("raw-tags", FAIL, "config/litellm/config.yaml is missing")
+        return CheckResult("raw-tags", FAIL, "generated config.yaml is missing")
     raw = [n for n in _model_names(cfg)
            if not n.startswith(("ailocal-", "bench-"))]
     return CheckResult("raw-tags", FAIL if raw else PASS,
@@ -202,16 +203,16 @@ def check_mount_drift() -> CheckResult:
     if state != "running":
         return CheckResult("mount-drift", BLOCKED,
                            f"cannot compare mounted config: container is {state}")
-    inside = S.container_file("/app/config/config.yaml")
+    inside = S.container_file("/app/generated/config.yaml")
     if inside is None:
         return CheckResult("mount-drift", FAIL,
-                           "/app/config/config.yaml is not readable in the container",
+                           "/app/generated/config.yaml is not readable in the container",
                            remediation="ailocal start")
-    local = (REPO / "config" / "litellm" / "config.yaml").read_text()
+    local = (P.runtime_root() / "litellm" / "config.yaml").read_text()
     ok = inside.strip() == local.strip()
     return CheckResult("mount-drift", PASS if ok else FAIL,
                        "container is running the repo's config.yaml" if ok
-                       else "MOUNT DRIFT: container config.yaml != config/litellm/config.yaml",
+                       else "MOUNT DRIFT: the container config.yaml is not the generated one",
                        remediation=None if ok else "ailocal start")
 
 
@@ -302,7 +303,7 @@ def check_compose_config() -> list[CheckResult]:
         f"litellm and searxng share network: {','.join(nets['litellm'])}" if shared
         else f"litellm and searxng are NOT on a shared network: {nets}"))
 
-    cfg = REPO / "config" / "litellm" / "config.yaml"
+    cfg = P.runtime_root() / "litellm" / "config.yaml"
     agrees = ("searxng" in svcs and cfg.is_file()
               and re.search(r"api_base:\s*http://searxng:8080", cfg.read_text()))
     out.append(CheckResult(

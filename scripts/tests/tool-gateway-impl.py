@@ -45,9 +45,9 @@ REG_PY = os.environ.get("AILOCAL_REGISTRY_MODULE",
 REG_YAML = os.environ.get("AILOCAL_REGISTRY",
                           os.path.join(ROOT, "config/litellm/registry.yaml"))
 CAPS = os.environ.get("AILOCAL_CAPABILITIES_JSON",
-                      os.path.join(ROOT, "config/capabilities.generated.json"))
+                      "/app/generated/capabilities.json")
 CONF = os.environ.get("AILOCAL_CONFIG_PATH",
-                      os.path.join(ROOT, "config/litellm/config.yaml"))
+                      "/app/generated/config.yaml")
 
 try:
     import yaml  # noqa: F401

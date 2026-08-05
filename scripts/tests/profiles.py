@@ -321,7 +321,7 @@ def resolver_checks() -> None:
         "max_output": 10, "role": "F"})
     check("model: ollama_chat/nomic-shaped-name:1b" in blk,
           "a nomic-SHAPED name no longer forces the embedding route")
-    cfg = (REPO / "config/litellm/config.yaml").read_text()
+    cfg = (P.runtime_root() / "litellm" / "config.yaml").read_text()
     check("model: ollama/nomic-embed-text" in cfg,
           "embeddings still generates the ollama (non-chat) route")
     check(cfg.count("model: ollama_chat/") == 5,
@@ -392,7 +392,7 @@ def resolver_checks() -> None:
     # Advertised must equal enforced: they disagreed before (fast advertised
     # 12288 while enforcing 4096).
     import re as _re3
-    cfg3 = (REPO / "config" / "litellm" / "config.yaml").read_text()
+    cfg3 = (P.runtime_root() / "litellm" / "config.yaml").read_text()
     for blk in cfg3.split("  - model_name: ")[1:]:
         name = blk.split("\n")[0].strip()
         gg = lambda k: (int(m.group(1)) if (m := _re3.search(rf"{k}:\s*(-?\d+)", blk)) else None)
@@ -429,7 +429,7 @@ def resolver_checks() -> None:
 
     # Every generated finite-output alias must satisfy the invariant.
     import re as _re
-    cfg = (REPO / "config" / "litellm" / "config.yaml").read_text()
+    cfg = (P.runtime_root() / "litellm" / "config.yaml").read_text()
     checked = 0
     for blk in cfg.split("  - model_name: ")[1:]:
         name = blk.split("\n")[0].strip()
@@ -494,7 +494,9 @@ def resolver_checks() -> None:
     import shutil as _sh
     box = Path(tempfile.mkdtemp(prefix="eff-"))
     (box / "config" / "profiles").mkdir(parents=True)
-    _sh.copy(REPO / "config" / "effective-profile.json", box / "config")
+    _eff_dst = P.effective_profile_path(_state(box))
+    _eff_dst.parent.mkdir(parents=True, exist_ok=True)
+    _sh.copy(P.effective_profile_path(), _eff_dst)
     _write_marker(box, P.active_profile_path().read_text())
     # ALL tiers: the artifact now normalizes every tier and validates every
     # source hash, so a fixture carrying only the active profile is incomplete.
@@ -505,9 +507,9 @@ def resolver_checks() -> None:
     def expect(code, mutate, label):
         b = Path(tempfile.mkdtemp(prefix="eff-"))
         _sh.copytree(box / "config", b / "config")
-        # Runtime state is external and sandbox-scoped: rebuild it for b from
-        # the marker box is using, then point the resolver at b's copy.
-        _write_marker(b, P.active_profile_path(_state(box)).read_text())
+        # Runtime state is external and sandbox-scoped: copy box's whole state
+        # so b owns an independent, complete generation to mutate.
+        _sh.copytree(_state(box), _state(b))
         mutate(b)
         try:
             P.load_effective(b, _state(b))
@@ -518,7 +520,7 @@ def resolver_checks() -> None:
         _sh.rmtree(b, ignore_errors=True)
 
     expect(P.EFFECTIVE_PROFILE_MISSING,
-           lambda b: (b / "config" / "effective-profile.json").unlink(),
+           lambda b: P.effective_profile_path(_state(b)).unlink(),
            "artifact deleted")
     expect(P.EFFECTIVE_PROFILE_STALE_TIER,
            lambda b: _write_marker(b, "32gb\n"),
@@ -529,14 +531,14 @@ def resolver_checks() -> None:
            "source profile edited")
 
     def corrupt(b):
-        f = b / "config" / "effective-profile.json"
+        f = P.effective_profile_path(_state(b))
         d = json.loads(f.read_text())
         d["config_sha256"] = "0" * 64
         f.write_text(json.dumps(d))
     expect(P.EFFECTIVE_PROFILE_HASH_INVALID, corrupt, "config hash corrupted")
 
     def bad_schema(b):
-        f = b / "config" / "effective-profile.json"
+        f = P.effective_profile_path(_state(b))
         d = json.loads(f.read_text())
         d["schema_version"] = 99
         f.write_text(json.dumps(d))
@@ -627,9 +629,13 @@ def resolver_checks() -> None:
           "install.sh stops before install-models.sh on generation failure")
 
     print("\nGENERATED FILES ARE OUTPUTS, NOT SOURCES")
-    for gen in ("config/capabilities.generated.json", "config/integration-contract.json"):
-        check((REPO / gen).exists(), f"{gen} exists")
-    caps = json.loads((REPO / "config/capabilities.generated.json").read_text())
+    # Generated artefacts live under the runtime root, never in the checkout.
+    _root = P.runtime_root()
+    for gen in ("litellm/capabilities.json", "integration-contract.json"):
+        check((_root / gen).exists(), f"{gen} exists under the runtime root")
+    check(not (REPO / "config" / "capabilities.generated.json").exists(),
+          "no generated artefact remains in the checkout")
+    caps = json.loads((_root / "litellm" / "capabilities.json").read_text())
     tier = P.resolve_active_tier()
     arch = P.resolve_role(tier, "architecture")
     blob = json.dumps(caps)

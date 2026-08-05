@@ -279,6 +279,11 @@ def active_profile_path(state_root=None) -> Path:
     return runtime_root(state_root) / "active-profile"
 
 
+def effective_profile_path(state_root=None) -> Path:
+    """The generated, resolved profile every consumer reads."""
+    return runtime_root(state_root) / "litellm" / "effective-profile.json"
+
+
 def client_policy_path(repo_root=None) -> Path:
     return _root(repo_root) / "config" / "clients.yaml"
 
@@ -585,7 +590,7 @@ def load_effective(repo_root=None, state_root=None) -> dict:
     the profile and the active marker it was generated from, so editing either
     without re-running sync is an error rather than a silently wrong runtime."""
     root = _root(repo_root)
-    path = root / "config" / "effective-profile.json"
+    path = effective_profile_path(state_root)
     if not path.exists():
         raise ProfileError(EFFECTIVE_PROFILE_MISSING, str(path))
     try:
