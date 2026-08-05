@@ -25,9 +25,9 @@ REG_PY = os.environ.get("AILOCAL_REGISTRY_MODULE",
 REG_YAML = os.environ.get("AILOCAL_REGISTRY",
                           os.path.join(ROOT, "config/litellm/registry.yaml"))
 CAPS = os.environ.get("AILOCAL_CAPABILITIES_JSON",
-                      os.path.join(ROOT, "config/capabilities.generated.json"))
+                      "/app/generated/capabilities.json")
 CONF = os.environ.get("AILOCAL_CONFIG_PATH",
-                      os.path.join(ROOT, "config/litellm/config.yaml"))
+                      "/app/generated/config.yaml")
 # Overridable: inside the container ROOT resolves from /tmp, so the default
 # would not find it. A missing file FAILS rather than passing vacuously —
 # this is the check that keeps the architecture honest, so it must run.

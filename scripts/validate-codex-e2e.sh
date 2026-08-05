@@ -83,7 +83,7 @@ s = importlib.util.spec_from_file_location(
 m = importlib.util.module_from_spec(s); sys.modules["capability_registry"] = m
 s.loader.exec_module(m)
 reg = m.Registry(path="/app/config/registry.yaml",
-                 caps_json="/app/ailocal-config/capabilities.generated.json",
+                 caps_json="/app/generated/capabilities.json",
                  config_path="/app/config/config.yaml")
 print(reg.namespace_expansion()["enabled"])
 PY

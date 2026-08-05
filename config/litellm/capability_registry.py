@@ -34,7 +34,7 @@ import os
 REGISTRY_PATH = os.environ.get("AILOCAL_REGISTRY",
                                "/app/config/registry.yaml")
 CAPS_JSON = os.environ.get("AILOCAL_CAPABILITIES_JSON",
-                           "/app/config/capabilities.generated.json")
+                           "/app/generated/capabilities.json")
 CONFIG_PATH = os.environ.get("AILOCAL_CONFIG_PATH", "/app/config/config.yaml")
 
 
