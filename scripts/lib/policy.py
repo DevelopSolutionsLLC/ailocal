@@ -35,7 +35,7 @@ multi-line scalars, nested sequences of mappings), a parsing defect reaches
 generated output, or ailocal acquires a core venv for some OTHER reason -- at
 which point PyYAML rides along for free and this decision flips.
 
-WHY THIS EXISTS. Profile parsing had grown four independent implementations --
+Profile parsing had grown four independent implementations --
 sync-models.py's load_models_yaml(), benchmark.py's parse_profile(), doctor.sh's
 sed extraction, and a `cat active-profile` in every shell entry point -- and they
 did not agree. Worse, the shell readers all shared one shape:

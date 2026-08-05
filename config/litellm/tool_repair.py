@@ -1,8 +1,6 @@
 """
 tool_repair.py — generic recovery of malformed tool calls from local models.
 
-WHY THIS EXISTS
----------------
 Local models routinely "drift" out of the structured tool-call format their
 runtime expects, and the runtime's parser then hands the whole call back as
 plain assistant text. The agent client is waiting for a tool_call that never

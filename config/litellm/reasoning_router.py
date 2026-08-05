@@ -30,7 +30,7 @@ It does not decide how hard to think. It only translates an explicit request.
 An automatic task->effort classifier belongs in registry.yaml alongside the
 existing `task_classes`, and is deliberately not implemented here.
 
-`none` is aspirational on reasoning-native models. MEASURED: gpt-oss:20b with
+`none` is aspirational on reasoning-native models: gpt-oss:20b with
 `think: false` still emitted 253 characters of reasoning. `low` is the real
 floor. The mapping is honest about this rather than promising silence.
 """

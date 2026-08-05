@@ -169,7 +169,7 @@ def _single_user_turn(data):
         opening with a chat question stays tool-less forever, so a later
         "now fix this file" can never touch anything.
       - Release it on the agent's own continuation turn and the override lapses
-        mid-loop. MEASURED: "show me an example of hello world in c++"
+        mid-loop. In one run, "show me an example of hello world in c++"
         classified conversational, the model produced a second turn, tools
         re-armed (48 of 61 kept) and it went on to call rg, Bash x3 and Write.
         That is the exact repo-crawling behaviour the class exists to stop, and
