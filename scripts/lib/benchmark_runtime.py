@@ -196,7 +196,7 @@ def apply_aliases(entries: list) -> dict:
     dst = runtime_dir() / "litellm"
     if dst.exists():
         shutil.rmtree(dst)
-    shutil.copytree(REPO / "config" / "litellm", dst,
+    shutil.copytree(REPO / "deploy" / "litellm", dst,
                     ignore=shutil.ignore_patterns("__pycache__"))
     cfg = dst / "config.yaml"
     text = cfg.read_text()
@@ -242,8 +242,8 @@ def restore() -> dict:
 
 
 def _compose(args: list, extra=None):
-    files = ["-f", str(REPO / "deploy/litellm/docker-compose.yml"),
-             "-f", str(REPO / "deploy/searxng/docker-compose.yml")]
+    files = ["-f", str(REPO / "deploy/litellm/compose.yaml"),
+             "-f", str(REPO / "deploy/searxng/compose.yaml")]
     for f in (extra or []):
         files += ["-f", str(f)]
     import policy

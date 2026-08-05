@@ -44,7 +44,7 @@ from pathlib import Path
 ROOT = str(REPO)
 os.environ.setdefault("AILOCAL_INSTRUCTIONS_DIR", "/nonexistent")   # _load_personas → {} (we override)
 pi = load_module("persona_injector",
-                 os.path.join(ROOT, "config/litellm/persona_injector.py"))
+                 os.path.join(ROOT, "deploy/litellm/hooks/persona_injector.py"))
 inj = pi.PersonaInjector()
 inj.personas = {"implementation": "IMPL_XYZ", "architecture": "ARCH_XYZ", "review": "REV_XYZ"}
 inj.alias = {"claude-sonnet-4-6": "ailocal-implementation"}
@@ -68,7 +68,7 @@ except ImportError:
     sys.modules["litellm.integrations"] = types.ModuleType("litellm.integrations")
     sys.modules["litellm.integrations.custom_logger"] = _c
 tr = load_module("tool_repair", os.environ.get(
-    "AILOCAL_TOOL_REPAIR", REPO / "config/litellm/tool_repair.py"))
+    "AILOCAL_TOOL_REPAIR", REPO / "deploy/litellm/hooks/tool_repair.py"))
 TOOLS = [
     {"name": "Read", "description": "Read a file",
      "input_schema": {"type": "object",
@@ -85,7 +85,7 @@ import json
 import re
 import sys
 from pathlib import Path
-TRACE = REPO / "config" / "litellm" / "request_trace.py"
+TRACE = REPO / "deploy" / "litellm" / "hooks" / "request_trace.py"
 def load_helpers():
     """Execute only the module-level helpers, skipping the litellm import.
 

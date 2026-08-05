@@ -31,7 +31,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from harness import REPO, Suite
 ROOT = Path.home() / ".config" / "ailocal" / "claude"
-PROBE = REPO / "config" / "litellm" / "persona_injector.py"
+PROBE = REPO / "deploy" / "litellm" / "hooks" / "persona_injector.py"
 
 _suite = Suite()
 check = _suite.check

@@ -23,7 +23,7 @@ So the axis is the RUNNER, not the model family:
              (llama_server.go:314 "truncating input prompt"
               limit=20482 prompt=43647 keep=4 new=20482)
 
-Recorded as intrinsic capability in config/litellm/registry.yaml under
+Recorded as intrinsic capability in deploy/litellm/registry.yaml under
 runtime_engines, WITH the tested Ollama/MLX versions -- this is observed runner
 behaviour, not a documented contract, and must be revalidated after upgrades.
 

@@ -1,7 +1,7 @@
 # ── ailocal :: SearXNG (local web search backend) ───────────────────────────
 #
 # The OTHER HALF of the ailocal stack. Never used alone — always merged with
-# deploy/litellm/docker-compose.yml into the single "ailocal" Compose project
+# deploy/litellm/compose.yaml into the single "ailocal" Compose project
 # (see scripts/lib/compose.sh). The project name is declared there; this file
 # deliberately omits `name:` so the merge cannot conflict.
 #
@@ -13,7 +13,7 @@
 # shared ailocal_net bridge. That hostname is the Compose *service* name
 # (`searxng` below) — it resolves regardless of container_name. It must stay
 # in sync with search_tools[].litellm_params.api_base in
-# config/litellm/config.yaml. LiteLLM appends /search and requests format=json,
+# the generated config.yaml. LiteLLM appends /search and requests format=json,
 # so settings.yml MUST keep `json` in search.formats.
 
 services:

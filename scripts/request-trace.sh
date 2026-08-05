@@ -6,7 +6,7 @@
 #   ./scripts/request-trace.sh --slow 5000  only requests slower than N ms
 #   ./scripts/request-trace.sh --id <id>    one request in full
 #
-# Reads the JSONL written by config/litellm/request_trace.py.
+# Reads the JSONL written by deploy/litellm/hooks/request_trace.py.
 #
 # READ THE COLUMNS LITERALLY:
 #   ttfb_ms   time to the FIRST STREAMED CHUNK. It is a PROXY for prompt-eval

@@ -11,7 +11,7 @@ Single source of truth (both TRACKED — no gitignored intermediate):
                         profiles, Continue entries, compat aliases).
 
 Running `ailocal sync` regenerates, deterministically:
-  config/litellm/config.yaml         model_list + model_group_alias (between markers)
+  the generated config.yaml         model_list + model_group_alias (between markers)
   config/capabilities.generated.json resolved capabilities (for `ailocal status`)
   config/clients/model_catalog.json  Codex picker (capability slugs)
   config/clients/claude/settings.json launch default + valid-capability note
@@ -47,7 +47,7 @@ import policy as _pc  # noqa: E402
 
 ACTIVE_PROFILE = _pc.active_profile_path(ROOT)   # machine-selected tier
 CLIENTS_YAML   = ROOT / "config/clients.yaml"
-LITELLM_TEMPLATE = ROOT / "config/litellm/config.template.yaml"
+LITELLM_TEMPLATE = ROOT / "deploy/litellm/config.template.yaml"
 _CLIENTS_OUT   = _pc.runtime_root() / "clients"
 _LITELLM_OUT   = _pc.runtime_root() / "litellm"
 LITELLM_CONFIG   = _LITELLM_OUT / "config.yaml"
@@ -975,7 +975,7 @@ def flush_stage():
     WHY ROLLBACK AND NOT JUST AN ORDERED COMMIT MARKER. Writing
     effective-profile.json last does make marker-aware readers fail closed, but
     it does not protect the deployed system: LiteLLM reads
-    config/litellm/config.yaml directly and the clients read their own generated
+    the generated config.yaml directly and the clients read their own generated
     files directly -- none of them consult the marker. Proven by fault
     injection (scripts/tests/generation-rollback.py): failing after three
     replaces left config/capabilities.generated.json new while the marker and
@@ -1073,7 +1073,7 @@ def main():
             sys.exit(f"error: {message}")
         warn(message)
 
-    step("Regenerating config/litellm/config.yaml (model_list + aliases)")
+    step("Regenerating the generated config.yaml (model_list + aliases)")
     ok("litellm config regenerated" if regen_litellm(models, clients) else "litellm config unchanged/skipped")
 
     step("Writing derived files")

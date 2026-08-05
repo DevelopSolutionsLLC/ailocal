@@ -27,8 +27,8 @@ dependency.
 config/profiles/      hardware policy: capability -> model, geometry, sampling
 config/clients.yaml   which capability each client surface uses
 config/clients/       client templates (authored; never generated output)
-config/litellm/       proxy hooks, capability registry, config template
-config/instructions/  per-capability personas, mounted into the proxy
+deploy/litellm/       proxy hooks, capability registry, config template
+deploy/litellm/instructions/  per-capability personas, mounted into the proxy
 deploy/               compose definitions for LiteLLM and SearXNG
 scripts/              ailocal CLI, installers, lifecycle
 scripts/lib/          policy.py, checks/, benchmark modules, shared shell
@@ -41,7 +41,7 @@ scripts/tests/        domain suites; ./scripts/test-all.sh is the gate
 |---|---|
 | `config/profiles/<tier>.yaml` | capability → model, `context_input`, `max_output`, sampling, reasoning, keep-alive, persona, compaction |
 | `config/clients.yaml` | which capability each client surface uses — no model tuning |
-| `config/litellm/registry.yaml` | intrinsic runtime capability: engine, context enforcement, tool support |
+| `deploy/litellm/registry.yaml` | intrinsic runtime capability: engine, context enforcement, tool support |
 
 `scripts/lib/policy.py` is the **one** reader for all of it. It fails closed:
 no default tier, unknown fields rejected, duplicate keys and sections rejected.

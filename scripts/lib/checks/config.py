@@ -261,8 +261,8 @@ def _compose_json() -> dict | None:
     try:
         r = subprocess.run(
             ["docker", "compose", "--project-directory", str(REPO),
-             "-f", str(REPO / "deploy" / "litellm" / "docker-compose.yml"),
-             "-f", str(REPO / "deploy" / "searxng" / "docker-compose.yml"),
+             "-f", str(REPO / "deploy" / "litellm" / "compose.yaml"),
+             "-f", str(REPO / "deploy" / "searxng" / "compose.yaml"),
              "config", "--format", "json"],
             capture_output=True, text=True, timeout=60, cwd=REPO,
             env=_compose_env())
