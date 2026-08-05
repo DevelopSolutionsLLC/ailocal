@@ -254,8 +254,8 @@ run "all python modules parse" python_syntax
 hooks_importable() {
   docker exec -i "$CONTAINER" python - <<'PY'
 import importlib.util, sys
-mods = ["persona_injector", "model_registrar", "tool_repair", "tool_gateway",
-        "session_observer", "capability_registry", "compat_routes"]
+mods = ["persona_injector", "reasoning_router", "startup", "tool_repair",
+        "tool_gateway", "session_observer", "capability_registry"]
 bad = []
 for name in mods:
     try:
