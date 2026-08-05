@@ -130,8 +130,18 @@ def library_checks() -> None:
     check("This works" not in utils._extract(ACCEPT["fenced then prose"], PROMPT),
           "trailing prose is dropped because it does not parse")
     print("\nadapter: structural rules, not model rules")
-    src = (REPO / "config" / "benchmark-tasks" / "utils.py").read_text()
-    _body = src.lower().split("MEASURED")[0].split('"""')[-1]
+    # Assert on CODE, not on prose: docstrings legitimately name the models the
+    # extractor was developed against.
+    import ast as _ast
+    _src = (REPO / "config" / "benchmark-tasks" / "utils.py").read_text()
+    _tree = _ast.parse(_src)
+    _docs = {_ast.get_docstring(n, clean=False) for n in _ast.walk(_tree)
+             if isinstance(n, (_ast.Module, _ast.FunctionDef, _ast.ClassDef))}
+    _body = _src
+    for _d in _docs:
+        if _d:
+            _body = _body.replace(_d, "")
+    _body = _body.lower()
     check_all("the extractor branches on structure, never on a model name",
               [t for t in ("qwen", "gemma", "gpt-oss", "gpt_oss", "coder") if t in _body])
     indented = utils._extract("    print(a)\n    return a + b\n", PROMPT)
