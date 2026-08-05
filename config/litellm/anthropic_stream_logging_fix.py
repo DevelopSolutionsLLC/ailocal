@@ -2,68 +2,44 @@
 anthropic_stream_logging_fix.py — backport of a missing type guard in LiteLLM's
 Anthropic success-logging path.
 
-THE BUG (upstream, LiteLLM 1.93.0; STILL PRESENT in 1.94.1)
-----------------------------------
-Two LiteLLM features collide. Reproduced deterministically with plain curl, no
-client involved:
+THE BUG (upstream; present in LiteLLM 1.93.0 and 1.94.1)
+A streamed /v1/messages request carrying a web-search tool makes LiteLLM's own
+success logging raise. Reproduces with plain curl, no client involved:
 
     POST /v1/messages   stream: true   tools: [{"type": "web_search_20250305",
                                                 "name": "web_search"}]
       -> 3 x "LiteLLM.Success_Call Error: 1 validation error for AnthropicResponse"
-    same request with stream: false
+    the same request with stream: false
       -> 0 errors
 
-The chain, read from the installed source rather than inferred:
+The websearch interception hook flips `stream=True -> False`, then
+`_maybe_wrap_in_fake_stream` wraps the result in a
+`FakeAnthropicMessagesStreamIterator` so the client still receives SSE. Success
+logging hands that iterator to
+`LiteLLMLoggingObj._handle_anthropic_messages_response_logging`, which
+early-returns for `ModelResponse`, `ResponsesAPIResponse` and the
+`ResponseCompletedEvent` family, then falls through to
+`AnthropicResponse.model_validate(result)`. The iterator is none of those, so
+pydantic raises. Upstream patched this same method once before for unhandled
+types (BerriAI/litellm#27091) and missed this one.
 
-1. `WebSearchInterceptionLogger.async_filter_deployment_hook` converts a
-   web-search tool and, when the caller asked for streaming, flips
-   `stream=True -> False` and sets `_websearch_interception_converted_stream`
-   (integrations/websearch_interception/handler.py).
-2. After the call, `_maybe_wrap_in_fake_stream` wraps the resulting dict in a
-   `FakeAnthropicMessagesStreamIterator` so the client still receives SSE
-   (llms/custom_httpx/llm_http_handler.py).
-3. Success logging then calls
-   `LiteLLMLoggingObj._handle_anthropic_messages_response_logging(result=...)`
-   with that iterator (litellm_core_utils/litellm_logging.py:1823).
-4. That method early-returns for `ModelResponse` and for the
-   `ResponseCompletedEvent` / `ResponseIncompleteEvent` / `ResponseFailedEvent`
-   family, then falls through to `AnthropicResponse.model_validate(result)`.
-   The iterator is none of those, so pydantic raises.
-
-Its own docstring states the contract it is relying on — "For streaming
-responses, anthropic_messages handler calls success_handler with a assembled
-ModelResponse" — which the websearch path does not honour. Upstream has already
-patched this same method once for unhandled types (the ResponseCompletedEvent
-family, BerriAI/litellm#27091) and missed this one.
-
-RE-CHECKED on the 1.94.1 image (2026-07-30, security upgrade): the method still
-early-returns only for the ResponseCompletedEvent family and ResponsesAPIResponse,
-then reaches `AnthropicResponse.model_validate(result)` with no iterator guard.
-This shim is still required. Read the installed source again after any upgrade --
-do not assume a version bump fixed it.
-
-NOT CAUSED BY OUR HOOKS. The traceback contains no frame from request_trace,
-tool_gateway, tool_repair or persona_injector, and the repro needs none of them.
-
-IMPACT: non-blocking. The client still receives the full stream — the failure is
-in LiteLLM's own success/spend logging, which is skipped for those requests. Our
-`request_trace` and `tool_gateway_metric` lines are emitted by separate callbacks
-and are unaffected (verified: both still appear for the failing requests). The
-practical cost is an ERROR-level traceback per streamed web-search request, which
-buries real errors during a log audit.
+IMPACT: non-blocking. The client still receives the full stream — only LiteLLM's
+own success/spend logging is skipped. `request_trace` and `tool_gateway_metric`
+are separate callbacks and still emit. The cost is an ERROR-level traceback per
+streamed web-search request, which buries real errors during a log audit.
 
 THE FIX
--------
-Add the missing guard, in the same shape as the guards upstream already has:
-if the result is a fake stream iterator, return it unchanged. This is a
-BACKPORT, not a local invention and not a suppression — nothing is caught,
-nothing is logged away, and the type mismatch itself stops happening. Streaming,
-tracing, metrics and every other callback are untouched.
+Add the missing guard in the shape upstream already uses: a fake stream iterator
+is returned unchanged. Nothing is caught and nothing is logged away — the type
+mismatch stops happening. Streaming, tracing and every other callback are
+untouched.
 
 SELF-RETIRING. The patch checks whether the installed method already handles the
 type and does nothing if so, so a LiteLLM upgrade that fixes this upstream
-silently disables it. Delete this file and its `callbacks:` entry once
-`scripts/test-anthropic-stream-logging.py` passes with the patch disabled.
+disables it — the boot line below reports `skipped:`/`already patched` rather
+than `patched`. Re-read the installed method after any upgrade; do not assume a
+version bump fixed it. Once the curl repro above is clean with this hook removed
+from `litellm_settings.callbacks`, delete this file and that entry.
 """
 
 import logging
