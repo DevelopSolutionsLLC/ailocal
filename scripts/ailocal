@@ -80,6 +80,7 @@ ailocal — local model runtime
   clients | vscode | models-install               deploy
   audit | cleanup | teardown                      installation
   trace | metrics | e2e <client>                  diagnostics
+  benchmark <models|planner|gateway>              developer benchmarks
   resolve <capability>                            print the active backend
 USAGE
      exit 0 ;;
