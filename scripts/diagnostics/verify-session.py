@@ -6,23 +6,20 @@ ledger written by config/litellm/session_observer.py (what was asked, what tools
 were called) and pairs it with facts only the host has: the git delta, untracked
 files, and optionally a test command's outcome.
 
-WHAT THIS IS FOR
-----------------
-The interesting local-model failure is not a wrong answer. It is a confident
-report of work that did not happen: mutating tools called (or claimed), and
-nothing on disk different afterwards. That is invisible from inside the
-conversation and obvious from outside it.
+The failure it targets is not a wrong answer but a confident report of work that
+did not happen: mutating tools called or claimed, and nothing on disk different
+afterwards. That is invisible from inside the conversation and obvious from
+outside it.
 
-WHAT IT DELIBERATELY DOES NOT DO
---------------------------------
-It does not feed results back into the conversation, inject turns, or modify
-client state. It prints a report. Closing that loop needs protocol ownership
-that does not exist yet, and a verification layer that silently edited the
-conversation would be a worse problem than the one it solves.
+SCOPE
+-----
+It prints a report and nothing else — no feedback into the conversation, no
+injected turns, no client-state changes. Closing that loop needs protocol
+ownership that does not exist yet.
 
-It also does not claim causation. A git delta proves the tree changed while the
-session ran; it does not prove this session caused it, and it cannot distinguish
-the model's edits from a human's in the same window. The report says so.
+It does not claim causation. A git delta proves the tree changed while the
+session ran, not that the session caused it, and it cannot separate the model's
+edits from a human's in the same window. The report says so.
 
 USAGE
     scripts/diagnostics/verify-session.py --repo . [--ledger <file>] [--test "pytest -q"]
@@ -45,14 +42,11 @@ import sys
 DEFAULT_LEDGERS = "data/tool-captures/sessions"
 
 # Which tools mutate the tree is a registry fact (registry.yaml:mutating_tools),
-# because the verification pipeline and the negotiator must not disagree about
-# it. But this script runs on the HOST, where PyYAML is not installed, so the
-# registry may be unreadable here even when it is present and correct.
-#
-# Resolution: try the registry, fall back to these constants, and always REPORT
-# which source was used. A silent fallback would let the two definitions drift
-# apart invisibly — the report says "mutating-tool source: builtin fallback" so
-# a divergence is visible rather than assumed away.
+# so the verification pipeline and the negotiator cannot disagree about it. This
+# script runs on the HOST, where PyYAML is absent, so the registry may be
+# unreadable even when correct. Fall back to these constants and always report
+# which source was used, so a drift between the two is visible rather than
+# silently assumed away.
 _FALLBACK_DEFINITE = {"Edit", "Write", "NotebookEdit", "MultiEdit", "apply_patch"}
 _FALLBACK_AMBIGUOUS = {"Bash", "exec_command", "write_stdin"}
 
@@ -104,9 +98,8 @@ def git_state(repo):
     return {
         "changed_paths": len(lines),
         # `git status --porcelain` is "XY<space>PATH", but the status field is
-        # not always two characters wide in practice, and a fixed l[3:] slice
-        # ate the first letter of the filename ("calc.py" printed as "alc.py").
-        # Splitting on whitespace is what the format actually guarantees.
+        # not reliably two characters wide, so a fixed l[3:] slice eats the first
+        # character of the path. Whitespace splitting is what the format guarantees.
         "paths": [l.split(None, 1)[1] if len(l.split(None, 1)) > 1 else l
                   for l in lines[:40]],
         "untracked": sum(1 for l in lines if l.startswith("??")),
@@ -188,28 +181,22 @@ def main():
         print()
         print(f"TESTS  $ {args.test}")
         # shell=True because --test is an operator-supplied command line, and
-        # naive .split() mangles anything quoted: `python3 -c "import calc; ..."`
-        # arrived at the interpreter as three broken fragments and failed with a
-        # SyntaxError that looked like a real test failure.
+        # naive .split() mangles quoting: `python3 -c "import calc; ..."` would
+        # reach the interpreter as broken fragments and fail as a bogus test error.
         test_rc, out, err = run(args.test, args.repo, shell=True)
         tail = (out or err).splitlines()[-8:]
         for line in tail:
             print(f"    {line}")
         print(f"    exit {test_rc}")
 
-    # ── classification (Phase E) ────────────────────────────────────────────
-    # Four outcomes, deliberately including two that are NOT verdicts:
-    #
-    #   VERIFIED            evidence that the work happened AND holds
+    # ── classification ──────────────────────────────────────────────────────
+    #   VERIFIED            the work happened AND holds
     #   PARTIALLY_VERIFIED  it happened, but something is unresolved
     #   UNVERIFIED          no evidence either way — the checks could not run
-    #   SUSPICIOUS          positive evidence of a claim without substance
+    #   SUSPICIOUS          a claim with positive evidence of no substance
     #
-    # UNVERIFIED exists so that "we could not check" never renders as "clean".
-    # That distinction is the whole point of this pipeline: a verification layer
-    # whose failure mode looks like success is worse than no layer at all.
+    # UNVERIFIED exists so "could not check" never renders as "clean".
     print()
-    findings = []
     signals = []          # (name, outcome) for the evidence table
 
     called = set(led.get("tool_calls_by_name") or {})
@@ -327,9 +314,7 @@ def main():
           "whether")
     print("something plausibly happened at all.")
 
-    # Exit codes are stable for scripting: 0 verified-ish, 2 suspicious,
-    # 3 unverified. UNVERIFIED is NOT 0 — a caller that treats "could not
-    # check" as success is the failure this whole file exists to prevent.
+    # Stable for scripting; UNVERIFIED is deliberately non-zero (see docstring).
     return {"VERIFIED": 0, "PARTIALLY_VERIFIED": 0,
             "SUSPICIOUS": 2, "UNVERIFIED": 3}[verdict]
 
