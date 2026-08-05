@@ -25,7 +25,7 @@ set -uo pipefail
 
 echo "CODEX MCP IS WITHHELD"
 
-GEN="$ROOT_DIR/config/clients/codex/config.toml"
+GEN="$("$ROOT_DIR/scripts/profile-config" state-root)/clients/codex/config.toml"
 check $([ -f "$GEN" ] && echo 0 || echo 1) "generated codex config exists"
 
 # 1. The generated artifact carries no MCP server blocks.

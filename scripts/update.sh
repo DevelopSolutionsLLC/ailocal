@@ -56,7 +56,7 @@ fi
 # want to:  ailocal clients [claude|codex|vscode]
 
 step "Regenerating model config (sync-models)"
-bash "$ROOT_DIR/scripts/sync-models.sh"
+python3 "$ROOT_DIR/scripts/sync-models.py"
 
 # ── Rolling restart (dependency order) ────────────────────────────────────
 # Restart infrastructure first, then dependents.

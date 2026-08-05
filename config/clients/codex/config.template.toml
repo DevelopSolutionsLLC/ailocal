@@ -1,7 +1,6 @@
 # ── GENERATED — DO NOT EDIT ─────────────────────────────────────────────────
 # Owner:       ailocal (scripts/sync-models.py + scripts/install-clients.sh)
 # Source:      config/profiles/<active tier>.yaml  (role: implementation)
-# Regenerate:  ./scripts/sync-models.sh   then   ./scripts/install-clients.sh codex
 # Deployed to: ~/.config/ailocal/codex/config.toml  (CODEX_HOME)
 #
 # model, model_context_window and model_auto_compact_token_limit are rewritten
@@ -13,8 +12,8 @@
 # names, so an MCP server here advertises a surface it cannot drive. ailocal
 # used to re-run `cadence mcp sync` after this rewrite to put them back --
 # that behaviour was removed. An empty MCP section is the correct state.
-model_auto_compact_token_limit = 49152
-model_context_window = 73728
+model_auto_compact_token_limit = 0
+model_context_window = 0
 # ── ailocal provider — injected by scripts/install-clients.sh ───────────────
 #
 # Route ALL Codex requests through the local LiteLLM proxy.
@@ -24,13 +23,13 @@ model_context_window = 73728
 # Requires: OPENAI_API_KEY set by the wrapper (env_key below).
 #
 # Switch model per-session: codex --model <name>
-# Valid models: ailocal-architecture | ailocal-implementation | ailocal-review | ailocal-fast | ailocal-completion | ailocal-embeddings
+# Valid models: __AILOCAL_VALID_MODELS__
 # Phase profiles (deployed alongside): codex-local --profile plan | review
 
 # ── Core Model Selection ────────────────────────────────────────────────────
 
 # Primary model used by Codex
-model = "ailocal-implementation"
+model = "__AILOCAL_MODEL__"
 
 # Provider id selected from [model_providers] (default: "openai")
 model_provider = "ailocal"

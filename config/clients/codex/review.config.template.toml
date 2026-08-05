@@ -2,4 +2,4 @@
 # Deployed to $CODEX_HOME/review.config.toml — select with: codex-local --profile review
 # Overlays the base config.toml. Review only — verdict + findings, no edits.
 
-model = "ailocal-review"
+model = "__AILOCAL_MODEL__"

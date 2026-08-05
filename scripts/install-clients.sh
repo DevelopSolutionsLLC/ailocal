@@ -29,6 +29,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+AILOCAL_STATE="${AILOCAL_STATE:-$("$ROOT_DIR/scripts/profile-config" state-root)}"
 ENV_FILE="$ROOT_DIR/.env"
 AILOCAL_CFG="${XDG_CONFIG_HOME:-$HOME/.config}/ailocal"
 
@@ -467,8 +468,9 @@ if has_target "codex"; then
 
   # config.toml — always overwrite from template (our managed file)
   # This ensures the latest fixes: openai_base_url fallback, sandbox_mode fix, wire_api, etc.
-  CODEX_HOME="$CODEX_HOME_DIR" envsubst '${CODEX_HOME}' < "$ROOT_DIR/config/clients/codex/config.toml" > "$CODEX_CFG"
-  info "$CODEX_CFG written (from config/clients/codex/config.toml)"
+  CODEX_GEN="$AILOCAL_STATE/clients/codex"
+  CODEX_HOME="$CODEX_HOME_DIR" envsubst '${CODEX_HOME}' < "$CODEX_GEN/config.toml" > "$CODEX_CFG"
+  info "$CODEX_CFG written (from $CODEX_GEN/config.toml)"
 
   # model_catalog.json — always update (our managed file, no user customization)
   backup "$CODEX_CAT" || true
@@ -487,8 +489,7 @@ if has_target "codex"; then
   # /local-build prompt + plan/review model profiles — managed, always overwrite.
   mkdir -p "$CODEX_HOME_DIR/prompts"
   cp "$ROOT_DIR/config/clients/codex/prompts/"*.md "$CODEX_HOME_DIR/prompts/"
-  cp "$ROOT_DIR/config/clients/codex/plan.config.toml" \
-     "$ROOT_DIR/config/clients/codex/review.config.toml" "$CODEX_HOME_DIR/"
+  cp "$CODEX_GEN/plan.config.toml" "$CODEX_GEN/review.config.toml" "$CODEX_HOME_DIR/"
   info "prompts/ ($(ls "$ROOT_DIR/config/clients/codex/prompts/" | tr '\n' ' ')) + plan/review profiles written"
 
   echo

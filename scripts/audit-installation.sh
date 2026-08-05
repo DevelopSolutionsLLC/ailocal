@@ -256,7 +256,7 @@ fi
 # The generated config must match its sources, or the running proxy and the repo
 # silently disagree.
 H1=$(md5 -q config/litellm/config.yaml 2>/dev/null || md5sum config/litellm/config.yaml | cut -d' ' -f1)
-bash scripts/sync-models.sh >/dev/null 2>&1
+python3 scripts/sync-models.py >/dev/null 2>&1
 H2=$(md5 -q config/litellm/config.yaml 2>/dev/null || md5sum config/litellm/config.yaml | cut -d' ' -f1)
 if [ "$H1" = "$H2" ]; then
   okk "generated files in sync with their sources"
