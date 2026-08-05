@@ -185,6 +185,14 @@ def _emit(entry: dict) -> str:
     return "\n".join(lines)
 
 
+def generated_dir() -> Path:
+    """The generated LiteLLM config directory, via the one state-root owner."""
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import policy
+    return policy.runtime_root() / "litellm"
+
+
 def apply_aliases(entries: list) -> dict:
     """Install temporary aliases and restart LiteLLM.
 
@@ -192,11 +200,15 @@ def apply_aliases(entries: list) -> dict:
     its docs confirm that without one the proxy relies entirely on config.yaml at
     startup — no hot-reload, no includes. A copied config plus one restart is the
     documented path. Production config is never edited.
+
+    The aliases go into the GENERATED config, which Compose mounts at
+    /app/generated. The authored subsystem at /app/config is not involved and is
+    never copied.
     """
-    dst = runtime_dir() / "litellm"
+    dst = runtime_dir() / "generated"
     if dst.exists():
         shutil.rmtree(dst)
-    shutil.copytree(REPO / "deploy" / "litellm", dst,
+    shutil.copytree(generated_dir(), dst,
                     ignore=shutil.ignore_patterns("__pycache__"))
     cfg = dst / "config.yaml"
     text = cfg.read_text()
@@ -210,7 +222,7 @@ def apply_aliases(entries: list) -> dict:
 
     override = runtime_dir() / "docker-compose.bench.yml"
     override.write_text("services:\n  litellm:\n    volumes:\n"
-                        f"      - {dst}:/app/config:ro\n")
+                        f"      - {dst}:/app/generated:ro\n")
     # BEFORE the recreate: the current buffer is about to be discarded.
     pre = capture_litellm_log(runtime_dir() / "litellm.pre-apply.log")
     _compose(["up", "-d", "--force-recreate", "litellm"], [override])

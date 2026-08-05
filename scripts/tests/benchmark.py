@@ -1098,8 +1098,52 @@ def command_checks() -> None:
           "the permission manifest hash is unchanged")
 
 
+def runtime_checks() -> None:
+    """apply_aliases stages the GENERATED config, not the authored subsystem.
+
+    Regression: it copied deploy/litellm (authored) and then read config.yaml
+    from it. That file is generated to $AILOCAL_STATE, so the read raised
+    FileNotFoundError and no benchmark alias could ever be installed.
+    """
+    _suite.section("BENCHMARK RUNTIME")
+    import benchmark_runtime as BR
+
+    check(BR.generated_dir() == _pc.runtime_root() / "litellm",
+          "the generated config dir comes from the one state-root owner")
+    check("litellm" not in str(BR.generated_dir().parent),
+          "it is not derived from the authored deploy/ tree")
+
+    gen = BR.generated_dir() / "config.yaml"
+    if not gen.exists():
+        check(False, "generated config.yaml exists to stage from", str(gen))
+        return
+
+    entry = BR.build_alias("m:1b", "off", 4096, 512, {}, keep_alive="1m")
+    calls = {}
+    real_compose, real_wait, real_aliases = BR._compose, BR._wait_healthy, BR.aliases
+    BR._compose = lambda *a, **k: calls.setdefault("compose", a)
+    BR._wait_healthy = lambda *a, **k: True
+    BR.aliases = lambda *a, **k: [entry["model_name"]]
+    try:
+        res = BR.apply_aliases([entry])
+    finally:
+        BR._compose, BR._wait_healthy, BR.aliases = real_compose, real_wait, real_aliases
+
+    check(res["ok"], "apply_aliases completes against the real generated config")
+    staged = BR.runtime_dir() / "generated" / "config.yaml"
+    check(staged.exists(), "it stages a copy of the generated config")
+    body = staged.read_text() if staged.exists() else ""
+    check(entry["model_name"] in body, "the temporary alias is injected")
+    check("TEMPORARY BENCHMARK ALIASES" in body, "the injected block is marked")
+    ov = (BR.runtime_dir() / "docker-compose.bench.yml").read_text()
+    check("/app/generated:ro" in ov,
+          "the override remaps /app/generated, where the proxy reads config.yaml")
+    check("/app/config:ro" not in ov,
+          "it does not remap the authored /app/config mount")
+
+
 SECTIONS = {"library": library_checks, "planner": planner_checks,
-            "command": command_checks}
+            "command": command_checks, "runtime": runtime_checks}
 
 if __name__ == "__main__":
     which = sys.argv[1] if len(sys.argv) > 1 else None
