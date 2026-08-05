@@ -54,7 +54,9 @@ from litellm.integrations.custom_logger import CustomLogger
 
 log = logging.getLogger("model_registrar")
 
-CONFIG_PATH = os.environ.get("AILOCAL_CONFIG_PATH", "/app/config/config.yaml")
+# The GENERATED config — sync-models.py writes it to $AILOCAL_STATE and Compose
+# mounts it at /app/generated. It is NOT in the authored /app/config mount.
+CONFIG_PATH = os.environ.get("AILOCAL_CONFIG_PATH", "/app/generated/config.yaml")
 
 
 def _load_model_list():
