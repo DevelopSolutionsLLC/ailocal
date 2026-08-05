@@ -8,7 +8,7 @@
 #   ailocal doctor     health check (scripts/doctor.sh)
 #   ailocal benchmark  developer benchmark suites (models|planner|gateway)
 #   ailocal security   container pins, digest drift, reachability (--scan for CVEs)
-#   ailocal sync       regenerate derived configs (scripts/sync-models.sh)
+#   ailocal sync       regenerate derived configs
 #   ailocal start|stop|update|smoke    lifecycle
 #   ailocal resolve <capability>       print the active Ollama backend tag
 #
@@ -27,7 +27,7 @@ case "$cmd" in
   validate) exec bash "$SCRIPTS/validate.sh" "$@" ;;
   doctor)  exec bash "$SCRIPTS/doctor.sh" "$@" ;;
   security) exec bash "$SCRIPTS/security.sh" "$@" ;;
-  sync)    exec bash "$SCRIPTS/sync-models.sh" "$@" ;;
+  sync)    exec python3 "$SCRIPTS/sync-models.py" "$@" ;;
   start)   exec bash "$SCRIPTS/start.sh" "$@" ;;
   stop)    exec bash "$SCRIPTS/stop.sh" "$@" ;;
   update)  exec bash "$SCRIPTS/update.sh" "$@" ;;

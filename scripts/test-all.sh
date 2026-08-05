@@ -178,7 +178,7 @@ run "client compatibility probes (/api/hello, no side effects)" \
 echo
 echo "INVARIANTS"
 
-# sync-models.sh must be idempotent: the generated config is the deployed config,
+# Generation must be idempotent: the generated config is the deployed config,
 # so a generator that is not a fixed point means the running proxy and the repo
 # can silently disagree. Compared by hash, not by `git diff`, which would also
 # report legitimately uncommitted work.
@@ -186,12 +186,12 @@ idempotent() {
   local before after
   before="$(md5 -q config/litellm/config.yaml 2>/dev/null \
             || md5sum config/litellm/config.yaml | cut -d' ' -f1)"
-  bash scripts/sync-models.sh >/dev/null 2>&1 || return 1
+  python3 scripts/sync-models.py >/dev/null 2>&1 || return 1
   after="$(md5 -q config/litellm/config.yaml 2>/dev/null \
            || md5sum config/litellm/config.yaml | cut -d' ' -f1)"
-  [ "$before" = "$after" ] || { echo "sync-models.sh is not idempotent"; return 1; }
+  [ "$before" = "$after" ] || { echo "ailocal sync is not idempotent"; return 1; }
 }
-run "sync-models.sh is a fixed point" idempotent
+run "ailocal sync is a fixed point" idempotent
 
 # Every shell script must parse. Cheap, and it has caught real breakage here.
 shell_syntax() {
