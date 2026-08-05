@@ -24,6 +24,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+AILOCAL_STATE="${AILOCAL_STATE:-$("$ROOT_DIR/scripts/profile-config" state-root)}"
 LA_DIR="$HOME/Library/LaunchAgents"
 LOG_DIR="$HOME/Library/Logs/ailocal"
 # Agent-run scripts must live OUTSIDE TCC-protected folders (~/Documents, ~/Desktop,
@@ -220,7 +221,7 @@ cd "$ROOT_DIR"
 set -a; . "$ROOT_DIR/.env"; set +a
 export OLLAMA_URL="http://127.0.0.1:11434"
 for _ in \$(seq 1 60); do curl -fsS -m 3 http://127.0.0.1:11434/api/version >/dev/null 2>&1 && break; sleep 2; done
-exec "${LITELLM_BIN:-litellm}" --config "$ROOT_DIR/config/litellm/config.yaml" --port 4000 --host 127.0.0.1
+exec "${LITELLM_BIN:-litellm}" --config "$AILOCAL_STATE/litellm/config.yaml" --port 4000 --host 127.0.0.1
 WRAP
   chmod +x "$WRAP"
   cat > "$LA_DIR/com.ailocal.litellm.plist" <<PLIST

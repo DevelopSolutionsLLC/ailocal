@@ -79,7 +79,7 @@ check $([ "${pres:-0}" -ge 1 ] && echo 0 || echo 1) \
 
 
 # ── Integration contract agrees with the generated clients ─────────────────
-# Cadence reads config/integration-contract.json to decide whether a tool is
+# Cadence reads the deployed integration-contract.json to decide whether a tool is
 # usable. It previously published claude_native_lsp.execution="failing" (while
 # the LSP baseline was green) and codex_mcp_lsp.configured=true (while Codex
 # shipped zero MCP servers) -- historical experiment outcomes, not deployed
@@ -87,7 +87,7 @@ check $([ "${pres:-0}" -ge 1 ] && echo 0 || echo 1) \
 # is checked AGAINST the generated configuration rather than on its own.
 echo
 echo "INTEGRATION CONTRACT MATCHES GENERATED CLIENTS"
-CONTRACT="$ROOT_DIR/config/integration-contract.json"
+CONTRACT="$("$ROOT_DIR/scripts/profile-config" state-root)/integration-contract.json"
 if [ -f "$CONTRACT" ] && command -v jq >/dev/null 2>&1; then
   cfg_codex=$(jq -r '.compatibility.codex_mcp_lsp.configured' "$CONTRACT")
   check $([ "$cfg_codex" = "false" ] && echo 0 || echo 1) \
@@ -132,7 +132,7 @@ echo
 echo "CADENCE CONSUMER (read-only)"
 CADENCE_RT="$HOME/.local/share/cadence/runtime/scripts/compose_instructions.py"
 if [ -f "$CADENCE_RT" ] && command -v python3 >/dev/null 2>&1; then
-  out=$(python3 - "$CADENCE_RT" "$ROOT_DIR/config/integration-contract.json" <<'PY' 2>&1
+  out=$(python3 - "$CADENCE_RT" "$CONTRACT" <<'PY' 2>&1
 import importlib.util, os, pathlib, sys, tempfile
 loader, contract = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
 spec = importlib.util.spec_from_file_location("ci", loader)

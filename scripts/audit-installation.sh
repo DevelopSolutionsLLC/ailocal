@@ -213,7 +213,7 @@ if docker ps --format '{{.Names}}' | grep -qx ailocal-litellm; then
   MOUNTED=$(docker inspect ailocal-litellm --format '{{range .Mounts}}{{.Source}}|{{end}}' \
             | tr '|' '\n' | grep -c "$ROOT" || true)
   okk "mounts          $MOUNTED path(s) from this repo"
-  CB=$(grep -cE '^\s+- [a-z_]+\.proxy_handler_instance' config/litellm/config.yaml || echo 0)
+  CB=$(grep -cE '^\s+- .*\.proxy_handler_instance' "$AILOCAL_STATE/litellm/config.yaml" || echo 0)
   okk "callbacks       $CB hook(s) registered"
   # A hook registered but unimportable takes the proxy down at boot.
   if docker exec -i ailocal-litellm python - >/dev/null 2>&1 <<'PY'

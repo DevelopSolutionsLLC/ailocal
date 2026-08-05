@@ -9,6 +9,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+AILOCAL_STATE="${AILOCAL_STATE:-$("$ROOT_DIR/scripts/profile-config" state-root)}"
 
 OLLAMA="${OLLAMA_CLI:-ollama}"
 # Fail closed: no implicit tier. A suppressed read falling through to a
@@ -19,7 +20,7 @@ _TIER="$("$ROOT_DIR/scripts/profile-config" active-tier)" || {
 # The GENERATED artifact, not the profile. install.sh runs sync-models before
 # this script, so generated state exists by now — and reading it removes the
 # fourth hand-rolled YAML parser in this repository.
-EFFECTIVE_JSON="$ROOT_DIR/config/effective-profile.json"
+EFFECTIVE_JSON="$AILOCAL_STATE/litellm/effective-profile.json"
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 

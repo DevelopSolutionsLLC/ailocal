@@ -184,11 +184,10 @@ echo "INVARIANTS"
 # report legitimately uncommitted work.
 idempotent() {
   local before after
-  before="$(md5 -q config/litellm/config.yaml 2>/dev/null \
-            || md5sum config/litellm/config.yaml | cut -d' ' -f1)"
+  _gen="$(./scripts/profile-config state-root)/litellm/config.yaml"
+  before="$(md5 -q "$_gen" 2>/dev/null || md5sum "$_gen" | cut -d' ' -f1)"
   python3 scripts/sync-models.py >/dev/null 2>&1 || return 1
-  after="$(md5 -q config/litellm/config.yaml 2>/dev/null \
-           || md5sum config/litellm/config.yaml | cut -d' ' -f1)"
+    after="$(md5 -q "$_gen" 2>/dev/null || md5sum "$_gen" | cut -d' ' -f1)"
   [ "$before" = "$after" ] || { echo "ailocal sync is not idempotent"; return 1; }
 }
 run "ailocal sync is a fixed point" idempotent

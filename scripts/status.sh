@@ -20,7 +20,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 AILOCAL_STATE="${AILOCAL_STATE:-$("$ROOT_DIR/scripts/profile-config" state-root)}"
-CAPS="$ROOT_DIR/config/capabilities.generated.json"
+CAPS="$AILOCAL_STATE/litellm/capabilities.json"
 OLLAMA_URL="${OLLAMA_HOST:-http://127.0.0.1:11434}"
 MODE="dashboard"
 case "${1:-}" in

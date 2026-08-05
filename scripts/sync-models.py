@@ -49,8 +49,9 @@ ACTIVE_PROFILE = _pc.active_profile_path(ROOT)   # machine-selected tier
 CLIENTS_YAML   = ROOT / "config/clients.yaml"
 LITELLM_TEMPLATE = ROOT / "config/litellm/config.template.yaml"
 _CLIENTS_OUT   = _pc.runtime_root() / "clients"
-LITELLM_CONFIG   = ROOT / "config/litellm/config.yaml"
-CAPS_JSON      = ROOT / "config/capabilities.generated.json"
+_LITELLM_OUT   = _pc.runtime_root() / "litellm"
+LITELLM_CONFIG   = _LITELLM_OUT / "config.yaml"
+CAPS_JSON      = _LITELLM_OUT / "capabilities.json"
 CODEX_CATALOG  = _CLIENTS_OUT / "model_catalog.json"
 CLAUDE_SETTINGS_TPL = ROOT / "config/clients/claude/settings.template.json"
 CLAUDE_SETTINGS = _CLIENTS_OUT / "claude/settings.json"
@@ -70,7 +71,7 @@ COPILOT_REPO_MD  = _CLIENTS_OUT / "copilot/repo-instructions.md"
 # The machine-readable seam with Cadence. Cadence reads THIS and nothing else to
 # learn about the local runtime — see write_integration_contract(). ailocal does
 # NOT own client instruction policy; Cadence composes it from this contract.
-CONTRACT_JSON  = ROOT / "config/integration-contract.json"
+CONTRACT_JSON  = _pc.runtime_root() / "integration-contract.json"
 BASE_URL       = "http://localhost:4000"
 
 
@@ -870,7 +871,7 @@ def parse_profile_flag(argv):
 
 
 EFFECTIVE_SCHEMA_VERSION = 2
-EFFECTIVE_JSON = ROOT / "config/effective-profile.json"
+EFFECTIVE_JSON = _pc.effective_profile_path()
 
 
 def build_effective_profile(active_tier, path):

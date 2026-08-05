@@ -167,11 +167,11 @@ cp "$ROOT_DIR/config/clients/compact-hook.sh" "$AILOCAL_CFG/compact-hook.sh"
   # The integration contract — the ONLY thing Cadence reads to learn about this
   # runtime. Deployed to a stable path so Cadence never has to know where the
   # ailocal repo lives, and never parses our generated Markdown for a fact.
-  if [ -f "$ROOT_DIR/config/integration-contract.json" ]; then
-    cp "$ROOT_DIR/config/integration-contract.json" "$AILOCAL_CFG/integration-contract.json"
+  if [ -f "$AILOCAL_STATE/integration-contract.json" ]; then
+    cp "$AILOCAL_STATE/integration-contract.json" "$AILOCAL_CFG/integration-contract.json"
     info "$AILOCAL_CFG/integration-contract.json published (schema for Cadence)"
   else
-    warn "config/integration-contract.json missing — run ailocal sync"
+    warn "integration-contract.json missing — run ailocal sync"
   fi
 
   local rc="${ZDOTDIR:-$HOME}/.zshrc"
