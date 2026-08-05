@@ -6,11 +6,11 @@
 # and `codex`, which will silently stop talking to the cloud and start
 # talking to the local LiteLLM proxy instead. If you want an isolated,
 # per-invocation local session instead, use the `claude-local` / `codex-local`
-# wrapper functions (config/clients/configure.zsh, sourced by ~/.zshrc) —
+# wrapper functions (clients/configure.zsh, sourced by ~/.zshrc) —
 # they scope the env to a single process and never touch the calling shell.
 #
 # Usage (manual, per-session):
-#   source "~/ailocal/config/clients/env.sh"
+#   source "~/ailocal/clients/env.sh"
 #
 # What this does:
 #   Sets AILOCAL_BASE_URL as the single source of truth for the LiteLLM proxy.

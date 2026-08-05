@@ -26,7 +26,7 @@ dependency.
 ```
 profiles/      hardware policy: capability -> model, geometry, sampling
 profiles/clients.yaml   which capability each client surface uses
-config/clients/       client templates (authored; never generated output)
+clients/       client templates (authored; never generated output)
 deploy/litellm/       proxy hooks, capability registry, config template
 deploy/litellm/instructions/  per-capability personas, mounted into the proxy
 deploy/               compose definitions for LiteLLM and SearXNG

@@ -17,7 +17,7 @@
 #            (CLAUDE_CONFIG_DIR for the claude-local wrapper — ~/.claude is NEVER touched)
 #
 # All targets also (re)install two silent, idempotent lines in ~/.zshrc that
-# source config/clients/{configure,finalize}.zsh — these define the
+# source clients/{configure,finalize}.zsh — these define the
 # claude-local / codex-local / ailocal-code wrapper functions and fix the
 # VS Code terminal-hang issue. Those two marker-commented lines
 # (# ailocal-configure / # ailocal-finalize) are the ONLY footprint this
@@ -157,12 +157,15 @@ EOF
   info "$env_path written (chmod 600)"
 
   cp "$AILOCAL_STATE/clients/configure.zsh" "$AILOCAL_CFG/configure.zsh"
-  cp "$ROOT_DIR/config/clients/finalize.zsh" "$AILOCAL_CFG/finalize.zsh"
+  cp "$ROOT_DIR/clients/finalize.zsh" "$AILOCAL_CFG/finalize.zsh"
   # Shared SessionStart hook (claude-local + codex-local) — per-session scratchpad.
-  cp "$ROOT_DIR/config/clients/scratchpad-hook.sh" "$AILOCAL_CFG/scratchpad-hook.sh"
-cp "$ROOT_DIR/config/clients/compact-hook.sh" "$AILOCAL_CFG/compact-hook.sh"
-  chmod +x "$AILOCAL_CFG/scratchpad-hook.sh"
-  info "configure.zsh / finalize.zsh / scratchpad-hook.sh deployed to $AILOCAL_CFG"
+  # Client-invoked hooks: the client execs these, so the deployed copy must be
+  # executable regardless of the mode the file carries in the checkout.
+  for _hook in scratchpad-hook.sh compact-hook.sh; do
+    cp "$ROOT_DIR/clients/$_hook" "$AILOCAL_CFG/$_hook"
+    chmod +x "$AILOCAL_CFG/$_hook"
+  done
+  info "configure.zsh / finalize.zsh / scratchpad-hook.sh / compact-hook.sh deployed to $AILOCAL_CFG"
 
   # The integration contract — the ONLY thing Cadence reads to learn about this
   # runtime. Deployed to a stable path so Cadence never has to know where the
@@ -247,7 +250,7 @@ if has_target "vscode"; then
 
   # The provider group and the deprecated-settings cleanup live in ONE place:
   # scripts/install-vscode.sh. It is the per-client installer, matching the
-  # config/clients/vscode/ layout and the install-*.sh naming used elsewhere.
+  # clients/vscode/ layout and the install-*.sh naming used elsewhere.
   # Delegating rather than duplicating means the researched details (which
   # settings VS Code still honours, and that the SecretStorage apiKey reference
   # must be preserved) are not maintained in two files that can drift.
@@ -372,13 +375,13 @@ PYEOF
   COPILOT_INSTR="$HOME/.copilot/instructions"
   mkdir -p "$COPILOT_INSTR"
   # ailocal.instructions.md gains the shared build checklist at install time
-  # (single source: config/clients/claude/references/build-checklist.md).
+  # (single source: clients/claude/references/build-checklist.md).
   # Claude-only blocks (subagent guidance) are stripped for non-Claude clients.
-  cat "$ROOT_DIR/config/clients/copilot/ailocal.instructions.md" \
+  cat "$ROOT_DIR/clients/copilot/ailocal.instructions.md" \
       <(sed '/<!-- claude-only -->/,/<!-- \/claude-only -->/d' \
-          "$ROOT_DIR/config/clients/claude/references/build-checklist.md") \
+          "$ROOT_DIR/clients/claude/references/build-checklist.md") \
       > "$COPILOT_INSTR/ailocal.instructions.md"
-  cp "$ROOT_DIR/config/clients/copilot/session-primer.md" "$COPILOT_INSTR/session-primer.md"
+  cp "$ROOT_DIR/clients/copilot/session-primer.md" "$COPILOT_INSTR/session-primer.md"
   info "Copilot instruction files deployed to ~/.copilot/instructions/"
 
   # Repo-level Copilot instructions. GENERATED, not tracked: this file used to be
@@ -390,7 +393,7 @@ PYEOF
   mkdir -p "$ROOT_DIR/.github"
   cp "$AILOCAL_STATE/clients/copilot/repo-instructions.md" \
      "$ROOT_DIR/.github/copilot-instructions.md"
-  info ".github/copilot-instructions.md generated (from config/clients/copilot/)"
+  info ".github/copilot-instructions.md generated (from clients/copilot/)"
 
   # ── Continue extension (local autocomplete + chat) ────────────────────────
   # Continue gives VS Code local tab-autocomplete (FIM) that Copilot can't. Deploy
@@ -477,20 +480,20 @@ if has_target "codex"; then
   cp "$AILOCAL_STATE/clients/model_catalog.json" "$CODEX_CAT"
   info "$CODEX_CAT written"
 
-  # AGENTS.md — operating protocol (config/clients/codex/AGENTS.md.template, a TRACKED source)
+  # AGENTS.md — operating protocol (clients/codex/AGENTS.md.template, a TRACKED source)
   # + the shared build checklist, concatenated at install time. The template carries the .template
   # extension so the /AGENTS.md gitignore rule cannot swallow it (that bare pattern once did).
-  cat "$ROOT_DIR/config/clients/codex/AGENTS.md.template" \
+  cat "$ROOT_DIR/clients/codex/AGENTS.md.template" \
       <(sed '/<!-- claude-only -->/,/<!-- \/claude-only -->/d' \
-          "$ROOT_DIR/config/clients/claude/references/build-checklist.md") \
+          "$ROOT_DIR/clients/claude/references/build-checklist.md") \
       > "$CODEX_HOME_DIR/AGENTS.md"
   info "$CODEX_HOME_DIR/AGENTS.md written (protocol + build checklist)"
 
   # /local-build prompt + plan/review model profiles — managed, always overwrite.
   mkdir -p "$CODEX_HOME_DIR/prompts"
-  cp "$ROOT_DIR/config/clients/codex/prompts/"*.md "$CODEX_HOME_DIR/prompts/"
+  cp "$ROOT_DIR/clients/codex/prompts/"*.md "$CODEX_HOME_DIR/prompts/"
   cp "$CODEX_GEN/plan.config.toml" "$CODEX_GEN/review.config.toml" "$CODEX_HOME_DIR/"
-  info "prompts/ ($(ls "$ROOT_DIR/config/clients/codex/prompts/" | tr '\n' ' ')) + plan/review profiles written"
+  info "prompts/ ($(ls "$ROOT_DIR/clients/codex/prompts/" | tr '\n' ' ')) + plan/review profiles written"
 
   echo
   echo "  Codex configuration (CODEX_HOME=$CODEX_HOME_DIR):"
@@ -546,7 +549,7 @@ if has_target "claude"; then
   # Local agent trio + /local-build command + checklist — ailocal owns these FILES, but not the
   # directories they live in. Cadence deploys into the same directories; see install_managed_dir.
   for d in agents commands references; do
-    install_managed_dir "$ROOT_DIR/config/clients/claude/$d" "$CLAUDE_HOME_DIR/$d"
+    install_managed_dir "$ROOT_DIR/clients/claude/$d" "$CLAUDE_HOME_DIR/$d"
   done
   info "$CLAUDE_HOME_DIR/{agents,commands,references} written (Cadence overlays preserved)"
 

@@ -68,7 +68,7 @@ def _key_from(text: str, var: str) -> str:
 def master_key() -> str:
     """The LiteLLM master key.
 
-    Resolution order matters. config/clients/env.sh carries ANTHROPIC_API_KEY
+    Resolution order matters. clients/env.sh carries ANTHROPIC_API_KEY
     and OPENAI_API_KEY for the CLIENTS, and those are not necessarily the master
     key -- measured, they were 12-character placeholders while the running proxy
     held a 51-character key. An unrecognised key sends LiteLLM to a key database
@@ -81,7 +81,7 @@ def master_key() -> str:
     if os.environ.get("LITELLM_MASTER_KEY"):
         return os.environ["LITELLM_MASTER_KEY"]
     repo = pathlib.Path(__file__).resolve().parent.parent.parent.parent
-    for path in (repo / ".env", repo / "config" / "clients" / "env.sh"):
+    for path in (repo / ".env", repo / "clients" / "env.sh"):
         if path.is_file():
             for line in path.read_text().splitlines():
                 line = line.strip().lstrip("export ").strip()
@@ -90,7 +90,7 @@ def master_key() -> str:
     for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
         if os.environ.get(var):
             return os.environ[var]
-    env = repo / "config" / "clients" / "env.sh"
+    env = repo / "clients" / "env.sh"
     if env.is_file():
         for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
             for line in env.read_text().splitlines():
