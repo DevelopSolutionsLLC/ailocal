@@ -44,7 +44,7 @@ fi
 
 ORIGINAL_EXPANSION="$(python3 - <<'PY'
 import re
-src = open("config/litellm/registry.yaml", encoding="utf-8").read()
+src = open("deploy/litellm/registry.yaml", encoding="utf-8").read()
 m = re.search(r"namespace_expansion:\s*\n\s*enabled:\s*(\S+)", src)
 print(m.group(1) if m else "false")
 PY
@@ -62,7 +62,7 @@ set_expansion() { # $1=true|false
   python3 - "$1" <<'PY'
 import re, sys
 want = sys.argv[1]
-path = "config/litellm/registry.yaml"
+path = "deploy/litellm/registry.yaml"
 src = open(path, encoding="utf-8").read()
 src = re.sub(r"(namespace_expansion:\s*\n\s*enabled:\s*)\S+",
              lambda m: m.group(1) + want, src, count=1)
@@ -79,7 +79,7 @@ PY
   docker exec -i ailocal-litellm python - <<'PY'
 import importlib.util, sys
 s = importlib.util.spec_from_file_location(
-    "capability_registry", "/app/config/capability_registry.py")
+    "capability_registry", "/app/config/hooks/capability_registry.py")
 m = importlib.util.module_from_spec(s); sys.modules["capability_registry"] = m
 s.loader.exec_module(m)
 reg = m.Registry(path="/app/config/registry.yaml",

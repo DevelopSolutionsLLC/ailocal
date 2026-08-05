@@ -69,7 +69,7 @@ fi
 if [ "$REMOVE_IMAGES" = true ]; then
   step "Removing Docker images"
   # Extract image names from the deploy/ compose files and remove them
-  grep -h '^\s*image:' deploy/litellm/docker-compose.yml deploy/searxng/docker-compose.yml \
+  grep -h '^\s*image:' deploy/litellm/compose.yaml deploy/searxng/compose.yaml \
     | awk '{print $2}' \
     | while read -r img; do
         if docker image inspect "$img" >/dev/null 2>&1; then

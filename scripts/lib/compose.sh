@@ -34,8 +34,8 @@ export AILOCAL_STATE="${AILOCAL_STATE:-$("$AILOCAL_ROOT/scripts/profile-config" 
 mkdir -p "$AILOCAL_STATE"
 
 AILOCAL_COMPOSE_FILES=(
-  -f "$AILOCAL_ROOT/deploy/litellm/docker-compose.yml"
-  -f "$AILOCAL_ROOT/deploy/searxng/docker-compose.yml"
+  -f "$AILOCAL_ROOT/deploy/litellm/compose.yaml"
+  -f "$AILOCAL_ROOT/deploy/searxng/compose.yaml"
 )
 
 # Rendered SearXNG settings. SearXNG has NO environment interpolation for an
@@ -147,5 +147,5 @@ dc() {
 
 # Space-separated form for scripts that need to echo the command to a user.
 ailocal_compose_cmd() {
-  echo "docker compose --project-directory \"$AILOCAL_ROOT\" -f deploy/litellm/docker-compose.yml -f deploy/searxng/docker-compose.yml"
+  echo "docker compose --project-directory \"$AILOCAL_ROOT\" -f deploy/litellm/compose.yaml -f deploy/searxng/compose.yaml"
 }

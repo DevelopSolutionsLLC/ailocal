@@ -24,7 +24,7 @@ v1.83.10 and no longer applies here):
     uses): the system prompt lives in the TOP-LEVEL data["system"] field (a string or
     a list of content blocks), NOT in messages[] — merge the persona into data["system"].
 
-Instruction source of truth: config/instructions/<capability>.md (a shared _core.md
+Instruction source of truth: deploy/litellm/instructions/<capability>.md (a shared _core.md
 plus a per-capability enhancer), mounted read-only at $AILOCAL_INSTRUCTIONS_DIR. The
 same files document the Claude Code persona (config/clients/AGENTS.md), so the text
 lives in one place. ("persona" is retained for the hook/mechanism name; the files
@@ -57,7 +57,7 @@ def _read(path):
 
 def _load_personas():
     """capability -> instruction text: the shared _core.md prepended to each curated
-    per-capability enhancer config/instructions/<capability>.md. Files whose name starts
+    per-capability enhancer deploy/litellm/instructions/<capability>.md. Files whose name starts
     with '_' are shared fragments, not capabilities."""
     core = _read(os.path.join(INSTRUCTIONS_DIR, "_core.md"))
     personas = {}

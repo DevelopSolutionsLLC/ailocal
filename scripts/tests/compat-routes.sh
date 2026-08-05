@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-compat-routes.sh — the client compatibility probe endpoints.
 #
-# Guards config/litellm/compat_routes.py. Claude Code derives auxiliary
+# Guards deploy/litellm/hooks/compat_routes.py. Claude Code derives auxiliary
 # Anthropic-shaped probes from ANTHROPIC_BASE_URL, so they arrive at this proxy;
 # LiteLLM implements none of them and returned 404 for `HEAD /api/hello`.
 #

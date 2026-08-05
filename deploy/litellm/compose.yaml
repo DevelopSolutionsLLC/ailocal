@@ -3,12 +3,12 @@ name: ailocal
 # ── ailocal :: LiteLLM proxy ────────────────────────────────────────────────
 #
 # This file is ONE HALF of the ailocal stack. It is never used alone — scripts
-# always merge it with deploy/searxng/docker-compose.yml into a single Compose
+# always merge it with deploy/searxng/compose.yaml into a single Compose
 # project named "ailocal" (see scripts/lib/compose.sh):
 #
 #   docker compose --project-directory <repo root> \
-#     -f deploy/litellm/docker-compose.yml \
-#     -f deploy/searxng/docker-compose.yml  ...
+#     -f deploy/litellm/compose.yaml \
+#     -f deploy/searxng/compose.yaml  ...
 #
 # Because --project-directory is the repo root, every relative path below is
 # resolved from the repo root (NOT from this file's directory), and Compose
@@ -52,11 +52,11 @@ services:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
       - OLLAMA_URL=${OLLAMA_URL}
       # Optional cloud fallback — disabled unless you add a key AND uncomment a
-      # cloud-backed model block in config/litellm/config.yaml.
+      # cloud-backed model block in the generated config.yaml.
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       # persona_injector.py reads the baked instruction files from here.
-      - AILOCAL_INSTRUCTIONS_DIR=/app/instructions
+      - AILOCAL_INSTRUCTIONS_DIR=/app/config/instructions
       # tool_gateway.py — tool-payload measurement / filtering.
       #   off    (default) hook returns immediately, nothing measured or changed
       #   report measure and log; NEVER mutates the request
@@ -68,7 +68,7 @@ services:
       # Empty = no capture. Payloads contain tool schemas, not conversation.
       - AILOCAL_TOOL_GATEWAY_CAPTURE=${AILOCAL_TOOL_GATEWAY_CAPTURE:-}
       # session_observer.py — ledger of what each session asked for and which
-      # tools it called. Empty = off. Paired with scripts/diagnostics/verify-session.py.
+      # tools it called. Empty = off. Paired with lib/diagnostics/verify-session.py.
       - AILOCAL_SESSION_LEDGER=${AILOCAL_SESSION_LEDGER:-}
       # request_trace.py — one JSONL record per request. Empty = off.
       # The version this stack was VALIDATED against. scripts/doctor.sh compares
@@ -87,10 +87,9 @@ services:
       # active profile. Never restated in the registry: two sources drift.
       - AILOCAL_CAPABILITIES_JSON=/app/generated/capabilities.json
     volumes:
-      # Authored LiteLLM source: hooks, the capability registry and templates.
-      - ./config/litellm:/app/config:ro
-      # Instruction source of truth — read by the persona_injector hook.
-      - ./config/instructions:/app/instructions:ro
+      # The whole authored LiteLLM subsystem: hooks/, registry.yaml,
+      # instructions/ and the config template. One mount, one owner.
+      - ./deploy/litellm:/app/config:ro
       # Generated runtime state, from $AILOCAL_STATE. Mounted as a DIRECTORY,
       # not as single files: generation replaces each file, and a single-file
       # bind mount would keep pointing at the replaced inode and serve stale

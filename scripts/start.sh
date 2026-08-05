@@ -100,9 +100,9 @@ mkdir -p "$(dirname "$CONFIG_STAMP")"
 # with no restart leaves the OLD tool policy in force — which is how a change to
 # tool-group membership can appear to do nothing at all.
 current_sha=$(cat "$AILOCAL_STATE/litellm/config.yaml" \
-                  "$ROOT_DIR/config/litellm/registry.yaml" \
-                  "$ROOT_DIR"/config/litellm/*.py \
-                  "$ROOT_DIR"/config/instructions/*.md 2>/dev/null | shasum -a 256 | cut -d' ' -f1)
+                  "$ROOT_DIR/deploy/litellm/registry.yaml" \
+                  "$ROOT_DIR"/deploy/litellm/hooks/*.py \
+                  "$ROOT_DIR"/deploy/litellm/instructions/*.md 2>/dev/null | shasum -a 256 | cut -d' ' -f1)
 previous_sha=$(cat "$CONFIG_STAMP" 2>/dev/null || echo "")
 
 if [ "$WAS_RUNNING" = true ] && [ -n "$previous_sha" ] && [ "$current_sha" != "$previous_sha" ]; then

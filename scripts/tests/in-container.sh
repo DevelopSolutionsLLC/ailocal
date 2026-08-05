@@ -33,7 +33,7 @@ docker cp "$ROOT/$IMPL" "$CONTAINER:$STAGE/impl.py" >/dev/null
 
 # Paths the suites resolve inside the image, not in the checkout.
 env_args=(
-  -e "AILOCAL_REGISTRY_MODULE=/app/config/capability_registry.py"
+  -e "AILOCAL_REGISTRY_MODULE=/app/config/hooks/capability_registry.py"
   -e "AILOCAL_REGISTRY=/app/config/registry.yaml"
   -e "AILOCAL_CONFIG_PATH=/app/generated/config.yaml"
   -e "AILOCAL_CAPABILITIES_JSON=/app/generated/capabilities.json"

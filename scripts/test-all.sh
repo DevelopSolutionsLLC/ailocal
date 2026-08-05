@@ -76,10 +76,10 @@ echo
 echo "UNIT / BEHAVIOUR"
 run "capability registry (+ no-hard-coded-literals assertion)" \
     bash scripts/tests/in-container.sh scripts/tests/capability-registry-impl.py \
-      AILOCAL_GATEWAY_SOURCE=/app/config/tool_gateway.py
+      AILOCAL_GATEWAY_SOURCE=/app/config/hooks/tool_gateway.py
 run "capability negotiator (byte accounting, modes, passthrough)" \
     bash scripts/tests/in-container.sh scripts/tests/tool-gateway-impl.py \
-      AILOCAL_GATEWAY_MODULE=/app/config/tool_gateway.py
+      AILOCAL_GATEWAY_MODULE=/app/config/hooks/tool_gateway.py
 run "persona injection" \
     python3 scripts/tests/gateway.py persona
 # Both directions matter: a repair layer that fires on a tutorial fence would
@@ -216,7 +216,7 @@ run "all shell scripts parse (bash -n)" shell_syntax
 # -- because reproducing the latency itself costs 13 minutes of GPU time.
 timeout_alignment() {
   local proxy client
-  proxy="$(sed -n 's/^ *timeout: *\([0-9]*\).*/\1/p' config/litellm/config.template.yaml | head -1)"
+  proxy="$(sed -n 's/^ *timeout: *\([0-9]*\).*/\1/p' deploy/litellm/config.template.yaml | head -1)"
   client="$(sed -n 's/.*AILOCAL_API_TIMEOUT_MS:-\([0-9]*\)}.*/\1/p' config/clients/configure.template.zsh | head -1)"
   if [ -z "$proxy" ] || [ -z "$client" ]; then
     echo "could not read both timeouts (proxy='$proxy' client='$client')"; return 1
@@ -235,7 +235,7 @@ python_syntax() {
   python3 - <<'PY'
 import ast, glob, sys
 bad = 0
-for path in glob.glob("scripts/*.py") + glob.glob("config/litellm/*.py"):
+for path in glob.glob("scripts/*.py") + glob.glob("deploy/litellm/hooks/*.py"):
     try:
         ast.parse(open(path, encoding="utf-8").read())
     except SyntaxError as exc:
@@ -258,7 +258,7 @@ bad = []
 for name in mods:
     try:
         spec = importlib.util.spec_from_file_location(
-            name, f"/app/config/{name}.py")
+            name, f"/app/config/hooks/{name}.py")
         mod = importlib.util.module_from_spec(spec)
         sys.modules[name] = mod
         spec.loader.exec_module(mod)

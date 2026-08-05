@@ -5,7 +5,7 @@
 # memory, so the three roles cost one model's VRAM rather than three.
 #
 # Model selection evidence lives in docs/BENCHMARK.md. Engine behaviour
-# (context enforcement, truncation) is owned by config/litellm/registry.yaml.
+# (context enforcement, truncation) is owned by deploy/litellm/registry.yaml.
 disk_gb: 40
 
 # ── architecture — shared large-context coding/reasoning tier ─────────────────
@@ -87,7 +87,7 @@ fast:
   max_output: 4096
   temperature: 0.0
   keep_alive: 20m
-  # No config/instructions/fast.md on purpose: this tier gets _core.md only, so
+  # No deploy/litellm/instructions/fast.md on purpose: this tier gets _core.md only, so
   # every extra system-prompt token is a larger share of its small budget. Adding
   # the file is enough to change that -- the injector needs no code change.
   persona: true
