@@ -89,7 +89,7 @@ suites:
   code-understanding: {engine: lm-eval, task: cruxeval_output, role: review}
   # EvalPlus's MBPP+ — a second executable coding set, independent of HumanEval.
   # Upstream extractor is broken for chat models (#3793/#3447); see
-  # config/benchmark-tasks/utils.py. Dataset/tests/metric remain lm-eval's.
+  # benchmarks/tasks/utils.py. Dataset/tests/metric remain lm-eval's.
   coding2:          {engine: lm-eval, task: mbpp_plus_robust, role: implementation}
 
 # Read-only permission contract for the planner scenario. DECLARED, not
@@ -134,7 +134,7 @@ client_scenarios:
     - "Without rereading your prior response, restate the task graph in dependency order, including the assigned subagent for each task."
 
   soak:
-    - "Summarise what scripts/lib/benchmark.py does. Do not modify anything."
+    - "Summarise what benchmarks/suite.py does. Do not modify anything."
     - "List three things it deliberately does NOT own."
     - "Name the external tool that owns scoring."
     - "Continue: what transport must every scored request use?"

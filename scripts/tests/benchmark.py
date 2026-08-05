@@ -28,18 +28,19 @@ import sys
 from pathlib import Path
 import pathlib
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(REPO / "config" / "benchmark-tasks"))
+sys.path.insert(0, str(REPO / "benchmarks" / "tasks"))
 sys.path.insert(0, str(REPO / "scripts" / "lib"))
+sys.path.insert(0, str(REPO / "benchmarks"))
 import utils  # noqa: E402
 import ast as _ast
-import benchmark as B  # noqa: E402
+import suite as B  # noqa: E402
 import os  # noqa: E402
 import json as _json
 import tempfile as _tf, inspect as _insp  # noqa: E402
 import json as _js, shutil, tempfile, pathlib as _pl
 import inspect as _insp
-import benchmark_clients as _bc
-import benchmark_clients as _bc2
+import clients as _bc
+import clients as _bc2
 import policy as _pc
 import importlib.util
 import json
@@ -51,7 +52,8 @@ import tempfile
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(REPO / "scripts" / "lib"))
-import benchmark as B  # noqa: E402
+sys.path.insert(0, str(REPO / "benchmarks"))
+import suite as B  # noqa: E402
 
 _suite = Suite()
 check = _suite.check
@@ -133,7 +135,7 @@ def library_checks() -> None:
     # Assert on CODE, not on prose: docstrings legitimately name the models the
     # extractor was developed against.
     import ast as _ast
-    _src = (REPO / "config" / "benchmark-tasks" / "utils.py").read_text()
+    _src = (REPO / "benchmarks" / "tasks" / "utils.py").read_text()
     _tree = _ast.parse(_src)
     _docs = {_ast.get_docstring(n, clean=False) for n in _ast.walk(_tree)
              if isinstance(n, (_ast.Module, _ast.FunctionDef, _ast.ClassDef))}
@@ -156,7 +158,7 @@ def library_checks() -> None:
         _ast.parse(utils._extract(_resp, PROMPT))
     check(True, "every shape yields PARSEABLE Python")
     print("\ntask definition")
-    y = (REPO / "config" / "benchmark-tasks"
+    y = (REPO / "benchmarks" / "tasks"
          / "humaneval_instruct_robust.yaml").read_text()
     check("until:" in y, "stop sequences are retained (removing them emptied output)")
     check('"\\ndef"' not in y and '"\\nclass"' not in y,
@@ -585,7 +587,7 @@ def library_checks() -> None:
           "planner overlay preserved: 32768 in + 8192 out = 40960 total")
     check(B.build_alias("m", "off", 100, 10, {}, keep_alive="6h")["litellm_params"]["keep_alive"] == "6h",
           "keep_alive is overridable, not hardcoded")
-    src = (REPO / "scripts" / "lib" / "benchmark_runtime.py").read_text()
+    src = (REPO / "benchmarks" / "runtime.py").read_text()
     check('"num_ctx": g["num_ctx"]' in src and "_pc.geometry(" in src,
           "num_ctx is taken from geometry(), not recomputed inline")
     check(src.count("THINK_MODES") >= 2 and src.count('{"off": False, "on": True') == 1,
@@ -598,7 +600,7 @@ def library_checks() -> None:
 def planner_checks() -> None:
     def load_driver():
         return load_module("planner_driver",
-                           REPO / "scripts" / "benchmarks/planner-comparison.py")
+                           REPO / "benchmarks" / "planner.py")
     D = load_driver()
     def _planner_body() -> None:
         print("SAFE DEFAULTS")
@@ -607,7 +609,7 @@ def planner_checks() -> None:
         check(r.returncode == 2, "no arguments ⇒ refuses to act (rc=2)")
         check("never implicit" in r.stderr, "refusal explains that inference is never implicit")
 
-        src = (REPO / "scripts" / "benchmarks/planner-comparison.py").read_text()
+        src = (REPO / "benchmarks" / "planner.py").read_text()
         check("--continue" not in src and '"--last"' not in src,
               "--continue and --last are never used (implicit resume is forbidden)")
         check("--force-rerun" in src, "re-running a completed candidate needs an explicit flag")
@@ -821,7 +823,7 @@ def planner_checks() -> None:
               "a missing file fails PROMPTS_MISSING")
 
         # There must be no placeholder path back into the driver.
-        drv_src = (REPO / "scripts" / "benchmarks/planner-comparison.py").read_text()
+        drv_src = (REPO / "benchmarks" / "planner.py").read_text()
         check("[planner turn" not in drv_src,
               "no placeholder prompt text survives anywhere in the driver")
         raised = False
@@ -985,7 +987,7 @@ def planner_checks() -> None:
         check(raised, "assert_no_placeholder rejects a placeholder")
         D.assert_no_placeholder("bench-real-alias", None)
         check(True, "a real alias passes the assertion")
-        drv = (REPO / "scripts" / "benchmarks/planner-comparison.py").read_text()
+        drv = (REPO / "benchmarks" / "planner.py").read_text()
         check('f"<alias-for-{cand}>"' not in drv,
               "the driver no longer constructs placeholder aliases")
         check("assert_no_placeholder(alias)" in drv,
@@ -1092,7 +1094,7 @@ def command_checks() -> None:
           "an unknown planner flag fails")
 
     # The permission contract must survive the command surface unchanged.
-    import benchmark_clients as _bc
+    import clients as _bc
     check(_bc.permission_manifest_hash({"permissions": {"allow": ["Read"], "deny": []}})
           == "960d22201caa1416fd21b613f0e16826aaf98cb539e2d07a9ca2de5212f9e546",
           "the permission manifest hash is unchanged")
@@ -1106,7 +1108,7 @@ def runtime_checks() -> None:
     FileNotFoundError and no benchmark alias could ever be installed.
     """
     _suite.section("BENCHMARK RUNTIME")
-    import benchmark_runtime as BR
+    import runtime as BR
 
     check(BR.generated_dir() == _pc.runtime_root() / "litellm",
           "the generated config dir comes from the one state-root owner")

@@ -22,7 +22,7 @@ Every directory owns one thing. Generated output never appears in any of them.
 | `clients/` | client templates and deployment assets | rendered client configuration |
 | `deploy/litellm/` | authored proxy assets: hooks, capability registry, config template | the generated `config.yaml` |
 | `deploy/litellm/instructions/` | per-capability personas, mounted into the proxy | anything client-specific |
-| `config/benchmark.yaml`, `config/benchmark-tasks/` | benchmark policy and task definitions | production model policy |
+| `benchmarks/benchmark.yaml`, `benchmarks/tasks/` | benchmark policy and task definitions | production model policy |
 | `deploy/litellm/`, `deploy/searxng/` | compose definitions and authored service files | rendered secrets, generated config |
 | `scripts/` | the `ailocal` CLI, installers, lifecycle | policy |
 | `scripts/lib/` | shared implementation: `policy.py`, `checks/`, benchmark modules, shell helpers | duplicate owners |
@@ -187,7 +187,7 @@ map client surfaces to it in `profiles/clients.yaml`.
 `$AILOCAL_STATE/clients/<client>/` from the generator, and deploy it from
 `scripts/install-clients.sh`. Never write generated output beside the template.
 
-**Add a benchmark suite** — implement it under `scripts/benchmarks/` and add a
+**Add a benchmark suite** — implement it under `benchmarks/` and add a
 case to the `benchmark` dispatcher in `scripts/ailocal`.
 
 ---

@@ -47,9 +47,9 @@ case "$cmd" in
   benchmark)
     suite="${1:-help}"; shift || true
     case "$suite" in
-      models)  exec python3 "$SCRIPTS/benchmarks/models" "$@" ;;
-      planner) exec python3 "$SCRIPTS/benchmarks/planner-comparison.py" "$@" ;;
-      gateway) exec bash   "$SCRIPTS/benchmarks/tool-gateway.sh" "$@" ;;
+      models)  exec python3 "$ROOT_DIR/benchmarks/models.py" "$@" ;;
+      planner) exec python3 "$ROOT_DIR/benchmarks/planner.py" "$@" ;;
+      gateway) exec bash   "$ROOT_DIR/benchmarks/gateway.sh" "$@" ;;
       *)
         cat >&2 <<'BENCH'
 usage: ailocal benchmark <suite> [options]

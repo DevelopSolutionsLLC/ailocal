@@ -35,7 +35,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from benchmark import LITELLM, IMPLAUSIBLE_INPUT_RATE, venv_bin
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / 'benchmarks'))
+from suite import LITELLM, IMPLAUSIBLE_INPUT_RATE, venv_bin
 
 #: Pinned upstream. Apache 2.0.
 RULER_COMMIT = "c3f5e3b4f87f97e048793bb510a3a6b19a46bf3a"
@@ -78,7 +79,7 @@ TOKENS_TO_GENERATE = {"niah": 128, "variable_tracking": 30,
 
 
 def ruler_dir() -> Path:
-    from benchmark_evidence import tooling_dir
+    from evidence import tooling_dir
     return tooling_dir() / "ruler"
 
 
