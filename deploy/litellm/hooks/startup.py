@@ -36,41 +36,22 @@ def _say(msg):
 
 
 # ── model registration ──────────────────────────────────────────────────────
-# THE BUG (upstream, reproduced against ghcr.io/berriai/litellm:main-stable)
-# Router.__init__ registers each deployment's model_info, but register_model
-# normalizes the provider prefix OFF the key, while the router's pre-call check
-# builds the key WITH the prefix. They never match:
+# LiteLLM does not register context limits for locally added deployments: it
+# stores model_info under the provider-stripped key while the router's pre-call
+# check looks it up WITH the provider prefix. The lookup raises, the router
+# swallows it, and the whole max_input_tokens validation block is skipped — so an
+# oversized prompt is forwarded unvalidated and silently truncated. The config's
+# own `model_info:` block cannot fix this; the router merges it after the lookup
+# that throws.
 #
-#     Router.__init__()
-#         -> litellm.register_model({"ollama_chat/qwen3-coder:30b": {...}})
-#         -> utils.py:2713-2716  model_cost_key = builtin["key"]   # prefix stripped
-#         -> litellm.model_cost["qwen3-coder:30b"]                 # stored HERE
-#     ...
-#     Router._pre_call_checks()                       router.py:9888
-#         -> get_router_model_info()
-#         -> router.py:8549  litellm.get_model_info("ollama_chat/qwen3-coder:30b")
-#         -> raises "This model isn't mapped yet"     # looked up THERE
+# Register generated models under the exact prefixed key at startup so pre-call
+# admission checks stay active. Public litellm namespace only — no fork, no
+# vendored patch. The key is whatever `litellm_params.model` says, verbatim, so
+# nothing here is provider-specific; deployments LiteLLM already maps are left
+# alone and genuine upstream pricing is never overridden.
 #
-# The raise is swallowed by the broad `except Exception` at router.py:9911, so the
-# request still succeeds with a 200 — but the entire validation block at
-# router.py:9889-9910 is skipped. That block compares input_tokens against
-# max_input_tokens, so an oversized prompt is forwarded unvalidated and silently
-# truncated instead of rejected.
-#
-# The config's own `model_info:` block cannot fix this: the router merges it at
-# router.py:8555, six lines AFTER the call that throws at 8549.
-#
-# THE WORKAROUND. Populate litellm.model_cost under the EXACT key the lookup
-# builds, at import. Public litellm namespace only — no fork, no vendored patch,
-# and no wholesale replacement of the cost map.
-#
-# PROVIDER-AGNOSTIC. The key is whatever string appears in `litellm_params.model`,
-# verbatim; nothing here knows the word "ollama". Deployments LiteLLM already maps
-# (real cloud models) are left untouched, so genuine upstream pricing is never
-# overridden.
-#
-# Remove once the upstream registration/lookup inconsistency is fixed: the
-# self-check below will report every model "already mapped".
+# Remove when upstream resolves the registration/lookup mismatch: the self-check
+# below then reports every model "already mapped".
 
 
 def _load_model_list():
@@ -91,16 +72,14 @@ def _has_exact_key(model_key):
     """True if the EXACT key is present in litellm.model_cost.
 
     Deliberately not `litellm.get_model_info(model_key)`: that helper falls back
-    to the prefix-stripped key, which register_model already created, so it
-    reports success for models the router still cannot resolve — gating on it
-    makes this a no-op. The router needs the prefixed key itself.
+    to the prefix-stripped key, so it reports success for models the router still
+    cannot resolve. The router needs the prefixed key itself.
     """
     return model_key in litellm.model_cost
 
 
 def _router_can_resolve(model_key):
-    """Replicate the router's own lookup (router.py:8549) from outside, for the
-    post-registration self-check."""
+    """Replicate the router's own lookup from outside, for the self-check."""
     try:
         litellm.get_model_info(model=model_key)
         return model_key in litellm.model_cost
@@ -124,8 +103,8 @@ def _cost_entry(model_key, model_info):
     }
     if provider:
         entry["litellm_provider"] = provider
-    # These two are the whole point: they are what router.py:9895 compares the
-    # counted input tokens against.
+    # These two are the whole point: the admission check compares counted input
+    # tokens against them.
     for field in ("max_input_tokens", "max_output_tokens", "max_tokens"):
         if model_info.get(field) is not None:
             entry[field] = model_info[field]
@@ -145,8 +124,8 @@ def register_local_models():
         if _has_exact_key(model_key):
             already.append(model_key)
             continue
-        # Assign directly rather than via litellm.register_model(): register_model
-        # is precisely what rewrites the key (utils.py:2713-2716), which is the bug.
+        # Assign directly rather than via litellm.register_model(): that helper is
+        # what strips the provider prefix, which is the defect being worked around.
         litellm.model_cost[model_key] = _cost_entry(
             model_key, deployment.get("model_info") or {})
         registered.append(model_key)
@@ -159,9 +138,8 @@ def register_local_models():
     except Exception:  # noqa: BLE001 - private helper; absence is not fatal
         pass
 
-    # get_model_info is LRU-cached (_cached_get_model_info, utils.py:5654). Clear
-    # it or a lookup performed before this injection keeps returning the stale
-    # prefix-stripped answer.
+    # get_model_info is LRU-cached; clear it or a lookup made before this
+    # injection keeps returning the stale prefix-stripped answer.
     try:
         from litellm.utils import _cached_get_model_info
 
@@ -169,9 +147,9 @@ def register_local_models():
     except Exception:  # noqa: BLE001 - private helper; absence is not fatal
         pass
 
-    # Fail LOUDLY rather than silently losing context-window validation again if
-    # LiteLLM's internals shift. This re-runs the real lookup, not a dict
-    # membership test, because that is what router.py:8549 calls.
+    # Fail LOUDLY rather than silently losing context-window validation if
+    # LiteLLM's internals shift. Re-runs the real lookup, not a dict membership
+    # test, because the lookup is what the router actually performs.
     for model_key in registered:
         if not _router_can_resolve(model_key):
             failed.append(model_key)
@@ -185,9 +163,9 @@ def register_local_models():
         _say("model_registrar: FAILED " + ", ".join(failed))
         log.error(
             "model_registrar: %d model(s) STILL unmapped after registration: %s. "
-            "Context-window validation is DISABLED for these — router._pre_call_checks "
-            "will skip max_input_tokens enforcement. LiteLLM internals may have "
-            "changed; re-check router.py get_router_model_info().",
+            "Context-window validation is DISABLED for these — the router will "
+            "skip max_input_tokens enforcement. LiteLLM internals may have "
+            "changed; re-check get_router_model_info().",
             len(failed), ", ".join(failed))
     return registered, already, failed
 
