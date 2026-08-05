@@ -273,7 +273,7 @@ def resolver_checks() -> None:
     comp = eff["compaction"]
     check(comp.get("window") and comp.get("pct"),
           f"profile owns compaction ({comp.get('window')} x {comp.get('pct')}%)")
-    claude = json.loads((REPO / "config/clients/claude/settings.json").read_text())
+    claude = json.loads((P.runtime_root() / "clients/claude/settings.json").read_text())
     env = claude.get("env", {})
     check(env.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW") == str(comp["window"])
           and env.get("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE") == str(comp["pct"]),
@@ -803,7 +803,7 @@ def hardware_checks() -> None:
     active = P.active_profile_path()
     tier = active.read_text().strip() if active.exists() else "64gb"
     cc = PARSED[tier][0].get("compaction", {})
-    settings = REPO / "config/clients/claude/settings.json"
+    settings = P.runtime_root() / "clients/claude/settings.json"
     if settings.exists() and cc:
         import json
         env = json.loads(settings.read_text()).get("env", {})

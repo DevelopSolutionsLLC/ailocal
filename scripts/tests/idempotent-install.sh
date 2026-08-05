@@ -51,8 +51,8 @@ def sha(path):
 
 # ── byte-stable files: a hash is the right comparison ──────────────────────
 for p in ("config/litellm/config.yaml",
-          "config/clients/model_catalog.json",
-          "config/clients/claude/settings.json",
+          os.path.expanduser("~/.local/state/ailocal/clients/model_catalog.json"),
+          os.path.expanduser("~/.local/state/ailocal/clients/claude/settings.json"),
           os.path.expanduser("~/.local/state/ailocal/clients/codex/config.toml")):
     emit("hash:" + p, sha(p))
 
