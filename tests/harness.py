@@ -95,11 +95,6 @@ def load_module(name: str, path: os.PathLike | str) -> types.ModuleType:
     return module
 
 
-def load_lib(name: str) -> types.ModuleType:
-    """Import a module from lib by its module name."""
-    return load_module(name, REPO / "lib" / f"{name}.py")
-
-
 @contextlib.contextmanager
 def temp_dir(prefix: str = "ailocal-test-"):
     """A temporary directory removed on exit, including after a failure."""
@@ -108,29 +103,6 @@ def temp_dir(prefix: str = "ailocal-test-"):
         yield path
     finally:
         shutil.rmtree(path, ignore_errors=True)
-
-
-@contextlib.contextmanager
-def temp_home(prefix: str = "ailocal-home-"):
-    """An isolated HOME and XDG_CONFIG_HOME, restored on exit.
-
-    Tests that write client configuration must never touch the real ~/.config:
-    a test that mutates the deployment to prove the deployment works is a second
-    way to break it.
-    """
-    saved = {k: os.environ.get(k) for k in ("HOME", "XDG_CONFIG_HOME")}
-    with temp_dir(prefix) as home:
-        (home / ".config").mkdir()
-        os.environ["HOME"] = str(home)
-        os.environ["XDG_CONFIG_HOME"] = str(home / ".config")
-        try:
-            yield home
-        finally:
-            for key, value in saved.items():
-                if value is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = value
 
 
 def run(cmd: list[str], timeout: int = 60, cwd: os.PathLike | str | None = None,

@@ -61,8 +61,3 @@ e2e_workdir() {
   _E2E_DIRS="${_E2E_DIRS:-} $d"
   printf '%s' "$d"
 }
-
-e2e_cleanup() {
-  [ -n "${_E2E_DIRS:-}" ] && rm -rf ${_E2E_DIRS}
-  return 0
-}

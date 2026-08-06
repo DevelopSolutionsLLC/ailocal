@@ -146,6 +146,3 @@ dc() {
 }
 
 # Space-separated form for scripts that need to echo the command to a user.
-ailocal_compose_cmd() {
-  echo "docker compose --project-directory \"$AILOCAL_ROOT\" -f deploy/litellm/compose.yaml -f deploy/searxng/compose.yaml"
-}
