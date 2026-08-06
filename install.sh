@@ -558,7 +558,7 @@ run_next_steps() {
 
   echo
   step "Starting Docker services"
-  bash "$ROOT_DIR/lib/start.sh" --no-wait
+  bash "$ROOT_DIR/lib/lifecycle.sh" start --no-wait
 
   # Always restart LiteLLM so it picks up any config or model changes.
   echo
