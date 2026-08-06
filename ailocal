@@ -67,7 +67,7 @@ usage: ailocal benchmark <suite> [options]
 Benchmarks are a developer utility: they never modify a profile, and they are
 not part of install, update or the regression gate.
 BENCH
-        [ "$suite" = help ] && exit 0 || exit 2 ;;
+        case "$suite" in help|--help|-h) exit 0 ;; *) exit 2 ;; esac ;;
     esac ;;
   e2e)      # e2e <claude|codex|vscode>
             case "${1:-}" in
