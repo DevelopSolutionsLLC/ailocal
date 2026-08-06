@@ -121,6 +121,48 @@ def bounded_checks() -> None:
         check(isinstance(v, int) and 0 < v <= 600, f"services.{attr} is bounded ({v})")
 
 
+def search_quota_checks() -> None:
+    """Default diagnostics must never spend metered external search quota.
+
+    Configuration-level, deliberately: proving this by issuing a real federated
+    query would spend the very quota the check exists to protect.
+    """
+    _suite.section("DEFAULT CHECKS SPEND NO SEARCH QUOTA")
+    src = (REPO / "lib" / "checks" / "services.py").read_text()
+    run_src = (REPO / "lib" / "checks" / "run.py").read_text()
+
+    check("!wp" in S.FREE_ENGINE_QUERY,
+          "the default search query pins a single engine", S.FREE_ENGINE_QUERY)
+    check(S.FREE_ENGINE_NAME == "wikipedia",
+          f"the pinned engine is free ({S.FREE_ENGINE_NAME})")
+
+    # check_searxng is what doctor runs: it must not hit /search at all.
+    body = src.split("def check_searxng(")[1].split("def check_searxng_query(")[0]
+    check("/config" in body and "/search?" not in body,
+          "doctor's reachability check queries no engine (uses /config)")
+
+    # The federated path exists but must be reachable only through the flag.
+    check("def check_searxng_external(" in src,
+          "the federated search is a separate, named function")
+    ext = run_src.split("check_searxng_external")[0]
+    check("--external-search" in run_src,
+          "the federated search requires an explicit --external-search flag")
+    check(ext.rstrip().endswith("results.append(S.") or "--external-search" in ext[-200:],
+          "nothing calls the federated search outside that flag")
+
+    # No default caller anywhere may reach it.
+    for name in ("test-all.sh", "install-clients.sh", "install.sh"):
+        path = REPO / "lib" / name if (REPO / "lib" / name).exists() else REPO / name
+        if path.exists():
+            check("check_searxng_external" not in path.read_text()
+                  and "--external-search" not in path.read_text(),
+                  f"{name} never triggers the federated search")
+
+    # The query the default path issues must name exactly one engine.
+    check(S.FREE_ENGINE_QUERY.strip().startswith("!"),
+          "the default query uses engine-restricting bang syntax")
+
+
 def exits_checks() -> None:
     """doctor's three states, and the two-state contract of validate/smoke."""
     import subprocess
@@ -191,6 +233,7 @@ def e2e_checks() -> None:
 
 
 SECTIONS = {"deterministic": deterministic_checks,
+            "search-quota": search_quota_checks,
             "classification": classification_checks,
             "bounded": bounded_checks,
             "exits": exits_checks,
