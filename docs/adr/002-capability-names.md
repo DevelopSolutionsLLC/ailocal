@@ -25,8 +25,8 @@ rewritten whenever a model changes, and they encode no intent — nothing says
 
 Each capability is exactly one `model_list` entry named `ailocal-<capability>`.
 Client compat names are aliased onto those groups via `model_group_alias`,
-generated from `config/clients.yaml`. Two source files drive everything:
-`config/profiles/<tier>.yaml` (what a capability *is*) and `clients.yaml` (which
+generated from `profiles/clients.yaml`. Two source files drive everything:
+`profiles/<tier>.yaml` (what a capability *is*) and `clients.yaml` (which
 capability each client surface uses).
 
 ## Why

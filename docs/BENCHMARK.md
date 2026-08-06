@@ -83,8 +83,8 @@ and rubric hashes, permission contract, and the resolved candidate set.
 To reproduce a run, use the same profile tier and the recorded run manifest.
 Changing the profile changes the geometry, which changes the result.
 
-Benchmark candidates live in `config/benchmark.yaml`. Production model policy
-lives in `config/profiles/` and is never modified by a benchmark.
+Benchmark candidates live in `benchmarks/benchmark.yaml`. Production model policy
+lives in `profiles/` and is never modified by a benchmark.
 
 ---
 

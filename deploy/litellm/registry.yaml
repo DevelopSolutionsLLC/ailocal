@@ -1,0 +1,612 @@
+# registry.yaml — the Local Agent Gateway's capability registry.
+#
+# Single source of truth for what every MODEL can do, what every CLIENT sends,
+# and what every ROUTE survives. The negotiator (tool_gateway.py) contains no
+# knowledge of any specific model, client, or tool — it asks this file. If you
+# find yourself adding an `if model == ...` downstream, the fact belongs here.
+#
+# ── Why the gateway, not the models, is the subject ─────────────────────────
+# This file describes capability, not identity. A model class is matched by
+# pattern, so swapping qwen3-coder for something else is a registry edit, not a
+# code change — and a frontier/cloud model matched by `passthrough` is forwarded
+# untouched. The gateway must remain useful when the models underneath it change,
+# which means no assumption about any single one of them may live in code.
+#
+# ── What is NOT duplicated here ─────────────────────────────────────────────
+# max_context comes from config/capabilities.generated.json, which sync-models.py
+# generates from profiles/<tier>.yaml. Restating context windows here
+# would create two sources that silently disagree after a profile change. The
+# loader merges them; `max_context` below is only a fallback for a model class
+# that has no generated entry (i.e. a cloud model).
+
+version: 1
+
+# ── Tool groups ─────────────────────────────────────────────────────────────
+# Logical names, normalised across all three API dialects. A trailing '*' is a
+# prefix match. Membership is a claim about what a tool is FOR, which is what
+# lets a model or client select by need instead of by name.
+
+groups:
+
+  edit_and_run:
+    - Bash
+    - Read
+    - Edit
+    - Write
+    - NotebookEdit
+    - Glob
+    - Grep
+    - exec_command        # Codex
+    - write_stdin
+    - apply_patch
+    - view_image
+
+  search:
+    - "mcp__grepai__*"
+    - WebSearch
+    - WebFetch
+    - web_search
+
+  lsp:
+    - "mcp__lsp__*"
+
+  # Claude Code's NATIVE LSP tool — a client-side tool, not an MCP server, so it
+  # is a bare name and does NOT match `mcp__lsp__*` above. It is deliberately a
+  # separate group from `lsp`: `lsp` is shed by the conversational and
+  # simple_edit classes, and native LSP must not be.
+  #
+  # This group exists to make an EXISTING behaviour explicit rather than to
+  # change it. Before it, `LSP` matched no group, and the gateway's fail-open
+  # rule (`group_of(name) is None` -> keep) forwarded it — correct by accident.
+  # Listing it in the `always` floor below reproduces that outcome by
+  # construction, so a future tightening of fail-open cannot silently remove the
+  # client's language-server access.
+  native_lsp:
+    - LSP
+
+  mcp_plumbing:
+    - ListMcpResourcesTool
+    - ReadMcpResourceTool
+    - ReadMcpResourceDirTool
+    - list_mcp_resources
+    - list_mcp_resource_templates
+    - read_mcp_resource
+
+  planning:
+    - update_plan
+    - create_goal
+    - update_goal
+    - get_goal
+
+  # Subagent delegation is its own group: a model that cannot drive orchestration
+  # may still delegate, and collapsing the two removed delegation from tiers that
+  # could use it.
+  delegation:
+    - Agent               # the subagent spawn tool (was `Task` before v2.1.63)
+    - "Task*"             # alias + background-task tools; harmless to keep together
+
+  orchestration:
+    - Workflow            # measured 21,525 B — the largest single tool observed
+    - DesignSync
+    - SendMessage
+    - Skill
+    - ReportFindings
+    - multi_agent_v1
+
+  scheduling:
+    - "Cron*"
+    - Monitor
+    - ScheduleWakeup
+    - PushNotification
+
+  worktree:
+    - EnterWorktree
+    - ExitWorktree
+
+  interactive:
+    - request_user_input
+
+# Tools whose purpose is to change the tree. Used by the verification pipeline
+# to decide whether "no filesystem delta" is suspicious. `ambiguous` ones can
+# legitimately be read-only (a Bash that only greps), so they never on their own
+# support a fabrication finding. Previously hard-coded in verify-session.py.
+mutating_tools:
+  definite:
+    - Edit
+    - Write
+    - NotebookEdit
+    - MultiEdit
+    - apply_patch
+  ambiguous:
+    - Bash
+    - exec_command
+    - write_stdin
+
+# ── Routes ──────────────────────────────────────────────────────────────────
+# Facts about the transport, not about any model. `drops_tool_types` is LiteLLM's
+# own behaviour when translating a dialect down to Chat Completions: those tools
+# never reach a backend, so the gateway must not count removing them as a saving.
+#
+# Source: litellm/responses/litellm_completion_transformation/transformation.py
+# on the 1.93.0 image (read, not inferred). Re-check after a LiteLLM upgrade.
+
+routes:
+
+  /v1/messages:
+    dialect: anthropic
+    call_types: [anthropic_messages]
+    tools_key: tools
+    tool_shape: "{name, description, input_schema}"
+    drops_tool_types: []
+    result_status: explicit        # tool_result carries is_error
+
+  /v1/chat/completions:
+    dialect: openai
+    call_types: [completion, acompletion, chat_completion, text_completion]
+    tools_key: tools
+    tool_shape: "{type:function, function:{name, description, parameters}}"
+    drops_tool_types: []
+    # No error flag exists on this route. A result's status is UNKNOWN, never
+    # success — absence of an error signal is not evidence of one.
+    result_status: unknown
+
+  /v1/responses:
+    dialect: openai_responses
+    call_types: [aresponses, responses]
+    tools_key: tools
+    tool_shape: "{type:function, name, description, parameters}"
+    drops_tool_types: [computer_use, image_generation, namespace, shell]
+    result_status: heuristic       # inspect function_call_output text
+
+# ── Namespace expansion ─────────────────────────────────────────────────────
+#
+# MCP tools arrive namespaced (mcp__server__tool). A model that cannot dispatch
+# a namespaced name sees the expansion instead, so the surface it is offered
+# matches what it can actually call.
+namespace_expansion:
+  enabled: false
+  # The tool `type` that denotes a bundle. Declared here rather than hard-coded
+  # in the negotiator: the architectural test greps that module for tool/type
+  # literals and correctly rejected `type == "namespace"` when it appeared there.
+  source_type: namespace
+  # {namespace} is the bundle's own name (already "mcp__lsp"), {tool} the
+  # sub-tool. The default reproduces the mcp__<server>__<tool> convention Claude
+  # Code uses, which is the only convention observed in this stack.
+  name_template: "{namespace}__{tool}"
+  # Expand only bundles whose flattened tools land in these groups. Empty = all.
+  only_groups: []
+  # Never expand a bundle into more than this many tools; a runaway server with
+  # hundreds of tools would otherwise reintroduce the payload problem being
+  # solved.
+  max_tools_per_namespace: 40
+
+# ── Model classes ───────────────────────────────────────────────────────────
+# Matched against the RESOLVED capability (via model_group_alias) first, then
+# against the raw requested model name by pattern. First match wins.
+#
+# `passthrough: true` means the gateway measures and forwards, never filters —
+# regardless of feature flags. Frontier models do not need their tools trimmed
+# and must not be silently degraded.
+
+# ── Runtime engines ─────────────────────────────────────────────────────────
+# INTRINSIC RUNTIME FACT, not a deployment choice and not a model-family fact.
+# The distinction that matters is which RUNNER serves the model, because the two
+# runners enforce context differently. Encoding this as `if model == "gemma4"`
+# would be wrong twice over: it is the engine that decides, and the same family
+# shipped as GGUF would behave the other way.
+#
+# Observed on Ollama 0.32.5 (see lib/diagnostics/runner-context.py):
+#
+#   mlx        gemma4:26b-mlx. A runner first loaded at num_ctx 24,576 accepted a
+#              40,013-token request routed through a 98,304-declared alias:
+#              prompt_eval_count 40,013, 47.7s prefill (consistent with really
+#              processing ~40K at the measured ~1000 tok/s), no reload, and NO
+#              "truncating input prompt" line in the server log. /api/ps keeps
+#              reporting the LOAD-TIME context, which is why it looked otherwise.
+#
+#   llama_cpp  qwen3.5 / qwen2.5-coder. num_ctx is a hard wall. Proven by
+#              llama_server.go:314 "truncating input prompt" limit=20482
+#              prompt=43647 keep=4 new=20482 — the front of the prompt is
+#              discarded and only 4 head tokens are kept, with HTTP 200 and no
+#              error to the caller.
+#
+# CONSEQUENCE: admission policy stays conservative for BOTH. Dynamic context is a
+# reason a role may safely declare a larger window, never a reason to relax
+# max_input_tokens — LiteLLM's pre-call guard is the only layer that fails loudly.
+#
+# REVALIDATE AFTER ANY OLLAMA OR MLX UPGRADE. This is observed behaviour of two
+# specific runner builds, not a documented API contract, and neither project
+# guarantees it across releases.
+runtime_engines:
+  mlx:
+    context_enforcement: dynamic_per_request
+    reports_load_time_context: true      # /api/ps is stale, not authoritative
+    evidence: lib/diagnostics/runner-context.py
+    tested_ollama: "0.32.5"
+    tested_mlx: "0.32.0-21-g973e27f"
+    tested_on: "2026-08-03"
+    confidence: VERIFIED
+    revalidate_on_runtime_upgrade: true
+    matches: ["*-mlx", "*-mlx:*"]
+  llama_cpp:
+    context_enforcement: fixed_runner_window
+    reports_load_time_context: false
+    truncation_direction: front         # keep=4 head tokens, remainder discarded
+    evidence: lib/diagnostics/runner-context.py
+    tested_ollama: "0.32.5"
+    tested_on: "2026-08-03"
+    confidence: VERIFIED
+    revalidate_on_runtime_upgrade: true
+    matches: ["*"]                       # default for anything not MLX-tagged
+
+
+model_classes:
+
+  # ── Local: agentic ────────────────────────────────────────────────────────
+  # REAL: qwen3-coder:30b-a3b-q4_K_M drove multi-step tool loops reliably
+  # (16/16 agentic runs, 148 tool executions, and a clean Read->Edit repair of
+  # calc.py in two calls under filtering).
+  local_agentic:
+    match_capabilities: [architecture]
+    match_models: ["*qwen3-coder*"]
+    supports_tools: true
+    supports_mcp: true
+    supports_parallel_tools: true
+    supports_structured_output: true
+    supports_reasoning: false      # Qwen's non-thinking variant; emits no <think>
+    preferred_groups: [edit_and_run, search, lsp, mcp_plumbing, planning, delegation]
+    # `delegation` is deliberately NOT denied: this is the one local tier measured
+    # able to drive a multi-step tool loop, so it is the only one that can usefully
+    # act as a parent agent. Heavy orchestration stays denied.
+    denied_groups: [orchestration, scheduling, worktree, interactive]
+    routing_hints:
+      warmup: true                 # keep_alive -1; worth pre-warming
+      notes: "Default target for agentic local work."
+
+  # ── Local: weak at agentic loops ──────────────────────────────────────────
+  # REAL: qwen2.5-coder:14b-instruct-q4_K_M was measured non-agentic. It is kept
+  # available (it is a fine single-shot coder) but the registry declares the
+  # limitation rather than encoding it in a conditional somewhere.
+  local_nonagentic:
+    match_capabilities: [implementation, review]
+    match_models: ["*qwen2.5-coder:14b*", "*deepseek-coder-v2*"]
+    supports_tools: true
+    supports_mcp: false
+    supports_parallel_tools: false
+    supports_structured_output: false
+    supports_reasoning: false
+    preferred_groups: [edit_and_run, search]
+    denied_groups: [orchestration, delegation, scheduling, worktree, interactive,
+                    lsp, mcp_plumbing, planning]
+    routing_hints:
+      warmup: false
+      notes: >
+        Measured non-agentic: it does not sustain a multi-step tool loop. Given a
+        narrow tool set it still edits competently. Prefer local_agentic for any
+        task needing more than one or two calls.
+
+  # ── Local: FIM autocomplete ───────────────────────────────────────────────
+  # 4096-token window. Any conversational turn routed here 400s with "No models
+  # have context window large enough"; a real agent turn cannot fit at all.
+  # ── Local: small, tool-capable, background tier ───────────────────────────
+  # qwen3.5:2b behind `fast`. This is the capability Claude Code's HAIKU slot
+  # now maps to, so it takes real traffic: background summarisation, post-tool
+  # processing, task classification. Before this entry it matched no class at
+  # all and the gateway reported model_class=unknown, i.e. "no opinion" — which
+  # meant the one tier serving the highest-frequency requests had no tool policy.
+  #
+  # supports_tools is true (native tool calling, verified in Ollama metadata),
+  # but MCP is false and the group list is deliberately narrow: 32768 ctx sounds
+  # roomy until Claude Code's ~24K of tool schemas is subtracted, leaving ~8K for
+  # the actual conversation. A 2B model handed the full tool surface will spend
+  # its window describing tools it cannot drive.
+  local_small_agentic:
+    match_capabilities: [fast]
+    match_models: ["*qwen3.5:2b*"]
+    supports_tools: true
+    supports_mcp: false
+    supports_parallel_tools: false
+    supports_structured_output: false
+    supports_reasoning: false       # capable of it, but disabled: it thinks past
+                                    # its budget and returns empty content
+    preferred_groups: [search]
+    denied_groups: [orchestration, delegation, scheduling, worktree, interactive,
+                    lsp, mcp_plumbing, planning, edit_and_run]
+    routing_hints:
+      warmup: false
+      notes: >
+        Background/summarisation tier. Fine for classification and short
+        lookups; do not route file edits or multi-step tool loops here.
+
+  local_completion:
+    match_capabilities: [completion]
+    supports_tools: false
+    supports_mcp: false
+    supports_parallel_tools: false
+    supports_structured_output: false
+    supports_reasoning: false
+    preferred_groups: []
+    denied_groups: []              # supports_tools:false already means "none"
+    routing_hints:
+      warmup: true
+      notes: "FIM/autocomplete only. Never map a conversational alias here."
+
+  local_embeddings:
+    match_capabilities: [embeddings]
+    supports_tools: false
+    supports_mcp: false
+    supports_parallel_tools: false
+    supports_structured_output: false
+    supports_reasoning: false
+    preferred_groups: []
+    denied_groups: []
+    routing_hints:
+      warmup: true
+      notes: "Infrastructure: Cadence's semantic index depends on this."
+
+  # ── Frontier / cloud: forward untouched ───────────────────────────────────
+  # Deliberately last and deliberately passthrough. These have large context and
+  # drive orchestration tools well; trimming their payload would remove
+  # capability for no benefit. Listed so the gateway stays correct if a cloud
+  # fallback is ever enabled, rather than filtering a frontier model by accident.
+  frontier_passthrough:
+    match_models: ["claude-*-2024*", "claude-*-2025*", "gpt-4*", "gpt-5*",
+                   "o1*", "o3*", "*sonnet-4*", "*opus-4*"]
+    passthrough: true
+    supports_tools: true
+    supports_mcp: true
+    supports_parallel_tools: true
+    supports_structured_output: true
+    supports_reasoning: true
+    max_context: 200000
+    preferred_groups: []           # unused under passthrough
+    denied_groups: []
+    routing_hints:
+      warmup: false
+      notes: >
+        Measure and forward, never filter. NOTE: ailocal's compat aliases
+        (claude-sonnet-4-6, gpt-4o, ...) resolve to LOCAL capabilities through
+        model_group_alias, and capability matching runs first — so those are
+        correctly treated as local, not as frontier.
+
+  # Anything unmatched. Fails open: measured, never modified. An unrecognised
+  # model is a reason to change nothing.
+  unknown:
+    match_models: ["*"]
+    passthrough: true
+    supports_tools: true
+    supports_mcp: true
+    supports_parallel_tools: false
+    supports_structured_output: false
+    supports_reasoning: false
+    preferred_groups: []
+    denied_groups: []
+    routing_hints:
+      warmup: false
+      notes: "Unmatched model — forwarded untouched by design."
+
+# ── Schema rewrites (Phase C) ───────────────────────────────────────────────
+# Reducing a tool's payload WITHOUT removing the tool. Applied only in filter
+# mode, only to non-passthrough models, and never to protected tools.
+#
+# On the real 104,202 B Claude Code payload:
+#   descriptions          63,706 B  (61.1%)  <- the big prize, and the risky one
+#   input_schema          37,364 B  (35.9%)
+#     $schema              3,483 B           <- JSON Schema metadata
+#     additionalProperties 1,134 B           <- ditto
+#
+# strip_keys removes keys a MODEL never reads. $schema and additionalProperties
+# are validator metadata: they constrain a JSON Schema checker, not a language
+# model choosing a tool. Removing them cannot change which tool the model picks.
+#
+# The description limits are a different bet: descriptions are how a model knows
+# what a tool does, and truncating them could plausibly hurt tool selection in a
+# way byte counts will not show. They default to null (disabled) and must not be
+# enabled without an A/B on task success, not just on bytes.
+schema_rewrites:
+  defaults:
+    enabled: true
+    strip_keys: ["$schema", "additionalProperties"]
+    max_description_chars: null
+    max_param_description_chars: null
+    truncation_marker: " ..."
+
+# ── Task classes (Phase D) ──────────────────────────────────────────────────
+# Automatic negotiation: instead of one static allowlist per client, infer what
+# the TASK needs and send only that.
+#
+#   task -> classify -> required capabilities -> minimum viable tools
+#
+# HOW THE TASK IS READ, AND WHY THAT IS SAFE
+# The classifier reads the FIRST user message only, which the proxy already sees.
+# It never reads tool results or assistant turns: those are the model's own
+# output, and letting them steer which tools remain available would let a
+# confused model narrow its own capabilities mid-loop.
+#
+# WHY THIS IS OFF BY DEFAULT (AILOCAL_TASK_NEGOTIATION)
+# Keyword classification of a natural-language request is a HEURISTIC. It will
+# misread some tasks, and the cost of a miss is asymmetric: dropping a tool the
+# task genuinely needed produces a stuck agent, while keeping an unnecessary tool
+# only costs tokens. So:
+#   - an unmatched task keeps everything the client/model rules already allow
+#   - `always` groups are added to every classification, matched or not
+#   - a classification only ever SUBTRACTS from what Phase B already permitted;
+#     it can never grant a group the client or model disallows
+#
+# Patterns are matched case-insensitively as substrings, in listed order; the
+# first class with a hit wins. `min_confidence_hits` requires that many distinct
+# pattern matches before the class is accepted, so a single incidental word does
+# not reclassify a whole session.
+
+task_classes:
+
+  # Groups every task keeps regardless of classification. Reading and running
+  # things is the floor: a task that cannot read a file cannot be verified.
+  always: [edit_and_run, mcp_plumbing, native_lsp]
+
+  # Groups force-added when the request EXPLICITLY asks for them, whatever class
+  # it matched. Classification is substring matching, so it reads the topic and
+  # is blind to an instruction about HOW to work.
+  #
+  # Measured: "delegate the security analysis to the 'reviewer' subagent" matched
+  # the `review` class on the word "security", and `review` sheds delegation — so
+  # the gateway removed the Task tool from a request whose entire point was to
+  # use it. The user asked in plain language and the middleware silently made it
+  # impossible.
+  #
+  # These patterns are high-precision on purpose: they name the mechanism, not a
+  # topic. Asking about "security" is a subject; asking to "delegate to a
+  # subagent" is an instruction, and an instruction the user gives explicitly
+  # should never be filtered away.
+  mention_overrides:
+    delegation: ["delegate", "subagent", "sub-agent", "task tool",
+                 "spawn an agent", "hand off to", "hand this off"]
+
+  classes:
+
+    # MUST stay first: first class with enough hits wins.
+    #
+    # The problem this solves, observed in codex-local: "show me an example of
+    # hello world in c++" made the agent inspect repository files, search the
+    # filesystem and read cadence scripts before answering. Nothing was broken —
+    # the `always` floor handed it Read/Glob/Grep/Bash, and an engineering
+    # persona with file tools in hand investigates. The request never needed the
+    # repository at all.
+    #
+    # `override_always: true` is what makes this class different from every
+    # other: it drops BELOW the floor to no tools, so a general knowledge
+    # question is answered from the model's own knowledge, immediately.
+    #
+    # PRECISION OVER RECALL, deliberately. A misclassified conversational task
+    # only wastes tokens; a misclassified ENGINEERING task loses its tools and
+    # produces a stuck agent, which is far worse. So these patterns are phrasing
+    # that a repository task would not use — asking to be shown or taught
+    # something generic. Anything mentioning this repo, a file, or a fix falls
+    # through to the classes below and keeps its full toolset.
+    - name: conversational
+      min_confidence_hits: 1
+      override_always: true
+      patterns: ["hello world", "show me an example", "give me an example",
+                 "what is the difference between", "what's the difference between",
+                 "how do i write a", "how do you write a", "write a simple example",
+                 "explain the concept", "what does the keyword", "syntax for"]
+      groups: []
+      notes: >
+        General knowledge question. No repository access, no MCP, no LSP, no
+        search — answer directly. Verified: this is the difference between an
+        instant answer and a filesystem crawl.
+
+    - name: simple_edit
+      min_confidence_hits: 1
+      patterns: ["fix the typo", "rename ", "change the ", "replace ",
+                 "add a comment", "update the string", "bump the version"]
+      groups: []          # `always` alone: read + edit + run
+      notes: >
+        A narrow, located change. The task already names the file and the edit,
+        so search and symbol tools add tokens without adding capability.
+
+    - name: explore
+      min_confidence_hits: 1
+      patterns: ["where is", "how does", "find the", "search for", "which file",
+                 "explain the", "trace ", "what calls", "look for"]
+      groups: [search, lsp]
+      notes: "Understanding existing code: semantic search plus symbols."
+
+    - name: architecture
+      min_confidence_hits: 1
+      patterns: ["design ", "architecture", "refactor", "restructure",
+                 "should we", "trade-off", "tradeoff", "migrate ", "plan the"]
+      groups: [search, lsp, planning, delegation]
+      notes: >
+        Needs the widest read surface plus planning, and it is the one task class
+        where handing off to a subagent is the point — so `delegation` (Task) is
+        included. Heavy `orchestration` (Workflow, Cron, worktree) stays excluded:
+        that machinery is what local models drive worst, and Workflow alone is
+        21,525 B. Splitting Task out of orchestration is what makes this
+        distinction expressible at all.
+
+    - name: debug
+      min_confidence_hits: 1
+      patterns: ["bug", "failing", "error", "stack trace", "traceback",
+                 "why does", "broken", "crash", "regression"]
+      groups: [search, lsp, delegation]
+      notes: >
+        Read widely, run tests, edit narrowly. `delegation` is available because
+        a non-trivial debug legitimately farms out "run the suite and report" or
+        "find every caller" — the parent keeps its own context for the diagnosis.
+
+    - name: review
+      min_confidence_hits: 1
+      patterns: ["review", "audit", "security", "vulnerability", "code smell"]
+      groups: [search, lsp, delegation]
+      notes: >
+        Read-heavy; mutation is incidental but not forbidden. `delegation` is
+        included because "review this" is one of the most common things to hand
+        to the reviewer subagent, and this class matching on the word "security"
+        was what silently stripped Task from an explicit delegation request.
+
+# ── Client profiles ─────────────────────────────────────────────────────────
+# What each client sends and how it should be treated. `drop_groups` here is
+# intersected with the model's own denied_groups: a tool is removed only when
+# BOTH the client profile and the model class permit removing it, so neither
+# side can unilaterally strip something the other needs.
+
+clients:
+
+  claude-code:
+    detect:
+      user_agent_contains: ["claude-cli"]
+      headers: {x-app: cli}
+    routes: [/v1/messages]
+    # Token figures are approximate and measured against a live client session;
+    # they size the gateway's budget, not a contract.
+    observed_payload: {tools: 39, bytes: 93266, real_tokens: 21438}
+    observed_payload_filtered: {tools: 26, bytes: 31472, real_tokens: 6955}
+    observed_payload_measured_on: "2026-07-29"
+    drop_groups: [orchestration, scheduling, worktree]
+    keep_groups: [edit_and_run, search, lsp, mcp_plumbing, planning]
+    warmup: [lsp, grepai]
+
+  codex:
+    detect:
+      originator_contains: ["codex"]
+      user_agent_contains: ["codex"]
+    routes: [/v1/responses]
+    # REAL: 16 tools / 38,388 B, but 27,168 B of that is namespace-typed and
+    # dropped by LiteLLM before the backend. Attributable gain is ~18%, not 71%.
+    observed_payload: {tools: 16, bytes: 38388, real_tokens: 8026}
+    drop_groups: [orchestration, scheduling, interactive]
+    keep_groups: [edit_and_run, search, lsp, mcp_plumbing, planning]
+    warmup: [grepai]
+
+  vscode:
+    detect:
+      user_agent_contains: ["vscode", "copilot", "continue"]
+    routes: [/v1/chat/completions]
+    # HYPOTHESIS: payload not yet captured from a real VS Code session. Until it
+    # is, this profile drops nothing — see Phase H.
+    observed_payload: null
+    drop_groups: []
+    keep_groups: []
+    warmup: [grepai]
+
+  unknown:
+    detect: {}
+    routes: []
+    observed_payload: null
+    # An unidentified client gets no filtering. Guessing at what it needs is how
+    # a gateway breaks a tool nobody knew was load-bearing.
+    drop_groups: []
+    keep_groups: []
+    warmup: []
+
+# ── Never remove, whatever the rules say ────────────────────────────────────
+# A hard floor checked after group logic. Each entry is here because removing it
+# caused, or would cause, a silent failure rather than a visible one.
+protected:
+  # LiteLLM's websearch_interception rewrites the client's web_search tool into a
+  # SearXNG call. Remove the tool and there is nothing to rewrite: search fails
+  # silently. Codex sends it as a bare {"type":"web_search"} with NO name, which
+  # is also why unnamed entries are never dropped.
+  - web_search
+  - WebSearch
