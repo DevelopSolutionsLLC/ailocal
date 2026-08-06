@@ -1103,6 +1103,43 @@ def command_checks() -> None:
           "the permission manifest hash is unchanged")
 
 
+def worktree_checks() -> None:
+    """No non-inference planner path may create a git worktree.
+
+    Regression: `--candidate <bad>` satisfied the explicit-intent check, so
+    prepare_worktrees ran and created one real worktree per candidate before the
+    name was validated. The error exit never reached cleanup, so every gate run
+    leaked three.
+    """
+    _suite.section("NO WORKTREE LEAK FROM NON-INFERENCE PATHS")
+    import subprocess as _sp
+    cli = str(REPO / "ailocal")
+
+    def count() -> int:
+        r = _sp.run(["git", "-C", str(REPO), "worktree", "list"],
+                    capture_output=True, text=True, timeout=120)
+        return len(r.stdout.splitlines())
+
+    for args in (["--help"], [], ["--dry-run"], ["--validate-private-routing"],
+                 ["--candidate", "not-a-candidate"], ["--no-such-flag"]):
+        before = count()
+        _sp.run([cli, "benchmark", "planner", *args],
+                capture_output=True, text=True, timeout=300)
+        after = count()
+        check(after == before,
+              f"planner {' '.join(args) or '<no args>'} creates no worktree",
+              f"{before} -> {after}")
+
+    # Repeated invocation must also be neutral: a leak of one per call hides in
+    # a single-shot check.
+    before = count()
+    for _ in range(3):
+        _sp.run([cli, "benchmark", "planner", "--dry-run"],
+                capture_output=True, text=True, timeout=300)
+    check(count() == before, "three dry-runs leave the worktree count unchanged",
+          f"{before} -> {count()}")
+
+
 def runtime_checks() -> None:
     """apply_aliases stages the GENERATED config, not the authored subsystem.
 
@@ -1148,7 +1185,8 @@ def runtime_checks() -> None:
 
 
 SECTIONS = {"library": library_checks, "planner": planner_checks,
-            "command": command_checks, "runtime": runtime_checks}
+            "command": command_checks, "runtime": runtime_checks,
+            "worktree": worktree_checks}
 
 if __name__ == "__main__":
     which = sys.argv[1] if len(sys.argv) > 1 else None
