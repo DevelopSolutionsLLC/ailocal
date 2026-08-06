@@ -29,12 +29,6 @@ prompt_value() {
 }
 
 # Prompt for a secret (no echo); skips prompt if already set in env.
-prompt_secret() {
-  local varname="$1"
-  local prompt="$2"
-  read -r -s -p "  $prompt (leave blank to auto-generate): " REPLY
-  echo
-}
 
 # ── Preflight: what is missing, what it costs ──────────────────────────────
 #
