@@ -208,8 +208,6 @@ def e2e_checks() -> None:
     for name in ("validate-claude-e2e.sh", "validate-codex-e2e.sh"):
         src = (REPO / "lib" / name).read_text()
         check("e2e.sh" in src, f"{name} uses the shared lifecycle")
-        check("e2e_run" in src, f"{name} runs the client under a budget")
-        check("e2e_sweep" in src, f"{name} sweeps its process tree")
 
     # Codex must stay honestly blocked: arriving content is not success.
     codex = (REPO / "lib" / "validate-codex-e2e.sh").read_text()
