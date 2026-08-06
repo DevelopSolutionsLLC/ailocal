@@ -72,6 +72,30 @@ if [ "$health" != healthy ]; then
   exit 1
 fi
 
+# Container health is /health/liveliness — the proxy PROCESS is up. It does not
+# mean the router is serving /v1/models, which is what several checks actually
+# need: the client wrapper validates an alias override against that endpoint and
+# FAILS CLOSED after 5s, so a gate started while the proxy is still loading
+# reports a behaviour failure that is really a readiness race. Wait for the real
+# condition, bounded, and refuse rather than run against a half-ready proxy.
+# 401 counts as ready: it proves the router is answering THIS route, which is
+# the condition the dependent checks need. That keeps the probe independent of
+# whether a master key is readable here.
+_ready=""
+for _i in $(seq 1 60); do
+  _code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+             http://127.0.0.1:4000/v1/models 2>/dev/null || echo 000)"
+  case "$_code" in 200|401) _ready=1; break ;; esac
+  sleep 1
+done
+if [ -z "$_ready" ]; then
+  echo
+  echo "  $CONTAINER is healthy but /v1/models did not serve within 60s."
+  echo "  Checks that resolve aliases through the proxy would fail as behaviour"
+  echo "  regressions. Refusing to run: PRECONDITION NOT MET."
+  exit 1
+fi
+
 echo
 echo "UNIT / BEHAVIOUR"
 run "capability registry (+ no-hard-coded-literals assertion)" \

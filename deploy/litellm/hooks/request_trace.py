@@ -858,8 +858,13 @@ class RequestTrace(CustomLogger):
                 "traceback": (traceback_str or "")[:1500],
             })
             self._write(rec)
-            emit({k: rec[k] for k in ("request_id", "phase", "error_type",
-                                      "total_ms", "model")})
+            # Keys must exist in _base()'s output. `model` was removed at
+            # event_version 4 (it was overloaded); asking for it here raised
+            # KeyError on EVERY failure, so the operator saw trace_failure_failed
+            # instead of the failure summary. Use .get so a future field removal
+            # degrades one value rather than the whole record.
+            emit({k: rec.get(k) for k in ("request_id", "phase", "error_type",
+                                          "total_ms", "requested_alias")})
         except Exception as exc:
             emit({"event": "trace_failure_failed", "error": str(exc)})
         return None
