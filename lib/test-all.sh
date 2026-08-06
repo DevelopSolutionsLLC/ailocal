@@ -110,10 +110,10 @@ run "planner comparison (safe defaults, locking, blinding)" \
 # (db8c9e6) and regenerated, so this now guards the corrected state rather than
 # reporting a known failure.
 # The isolated claude-local root sets ENABLE_LSP_TOOL=1, but a plugin is what puts
-# a server behind that tool. Provisioning used to be delegated entirely to
-# Cadence, so an ailocal-only machine got the tool switched on with nothing behind
-# it. This drives pyright-langserver over stdio against a real repo file and
-# requires real symbols back — presence of a plugin is not capability.
+# a server behind that tool; delegating all plugin provisioning elsewhere leaves
+# the tool switched on with nothing behind it. This drives pyright-langserver over
+# stdio against a real repo file and requires real symbols back — presence of a
+# plugin is not capability.
 # profiles/*.yaml are the ONLY authoritative deployment config, and
 # config/active-profile has no implicit default. These prove there is one
 # parser and that every entry point fails closed rather than assuming 64gb.

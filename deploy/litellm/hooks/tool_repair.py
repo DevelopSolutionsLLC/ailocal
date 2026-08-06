@@ -7,26 +7,19 @@ plain assistant text. The agent client is waiting for a tool_call that never
 arrives, so the loop stalls (this is the "Codex hangs until I type continue"
 symptom).
 
-Measured on this stack with real Claude Code Read/Edit/Write/Bash schemas:
+Affected models go from mostly-failing to 8/8 tool calls with repair enabled;
+models with working native tool calls are untouched because the hook never fires.
 
-    model                        native      + repair
-    qwen3-coder:30b              2/8  (25%)   8/8 (100%)
-    qwen2.5-coder:14b            0/8   (0%)   8/8 (100%)
-    qwen2.5-coder:32b            0/8   (0%)   8/8 (100%)
-    devstral:24b                 8/8 (100%)   8/8 (100%)   <- hook never fires
-
-Upstream references (this is a known, UNFIXED runtime bug):
-  ollama/ollama#16686  parser drops tool calls when the model omits the opening
-                       <tool_call> tag — describes our exact failure
-  ollama/ollama#16693  proposed fix, OPEN and stale since 2026-06-12
-  ollama/ollama#16732  alternative fix, CLOSED unmerged
-  block/goose#6883     same bug from another agent framework; they shipped the
-                       same client-side fallback (PR #6882)
+Upstream: a known, UNFIXED runtime bug. ollama/ollama#16686 (parser drops tool
+calls when the model omits the opening <tool_call> tag) describes this exact
+failure; #16693 proposes a fix, open and stale; #16732 was closed unmerged.
+block/goose#6883 is the same bug from another agent framework, fixed the same
+client-side way.
 
 NOT A QWEN HACK. Deliberately model-agnostic: it recognises *formats*, never
-model names. Keep this module even if Ollama fixes #16686 — it is a general
-compatibility layer, and the next model will drift in some other direction.
-It costs ~0.1-0.2 ms and does nothing at all when native tool calls work.
+model names. Keep this module even if #16686 is fixed — it is a general
+compatibility layer, costs ~0.1-0.2 ms, and does nothing when native tool
+calls work.
 
 SAFETY MODEL
 ------------
