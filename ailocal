@@ -30,9 +30,9 @@ case "$cmd" in
   test)     exec bash "$LIB/test-all.sh" "$@" ;;
   profile)  exec python3 "$LIB/profile-config" "$@" ;;
   sync)    exec python3 "$LIB/sync-models.py" "$@" ;;
-  start)   exec bash "$LIB/start.sh" "$@" ;;
-  stop)    exec bash "$LIB/stop.sh" "$@" ;;
-  update)  exec bash "$LIB/update.sh" "$@" ;;
+  start)   exec bash "$LIB/lifecycle.sh" start "$@" ;;
+  stop)    exec bash "$LIB/lifecycle.sh" stop "$@" ;;
+  update)  exec bash "$LIB/lifecycle.sh" update "$@" ;;
   smoke)   exec python3 "$LIB/checks/run.py" smoke "$@" ;;
   resolve) exec python3 "$LIB/sync-models.py" --resolve "$@" ;;
   # Client deployment and the lifecycle actions that used to be run as
@@ -42,7 +42,7 @@ case "$cmd" in
   models-install) exec bash "$LIB/install-models.sh" "$@" ;;
   audit)    exec bash "$LIB/audit-installation.sh" "$@" ;;
   cleanup)  exec bash "$LIB/cleanup-installation.sh" "$@" ;;
-  teardown) exec bash "$LIB/teardown.sh" "$@" ;;
+  teardown) exec bash "$LIB/lifecycle.sh" teardown "$@" ;;
   autostart) exec bash "$LIB/setup-startup.sh" "$@" ;;
   ollama-env) exec bash "$LIB/setup-ollama-env.sh" "$@" ;;
   preload)  exec bash "$LIB/preload-model.sh" "$@" ;;
