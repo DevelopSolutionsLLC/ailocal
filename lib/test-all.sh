@@ -148,6 +148,10 @@ run "benchmark command (models, planner, gateway dispatch)" \
     python3 tests/benchmark.py command
 run "benchmark runtime stages the generated config (not the authored tree)" \
     python3 tests/benchmark.py runtime
+# Non-inference paths must acquire nothing: a leaked worktree per gate run
+# accumulated 1,745 registrations and 2.5 GB before this was caught.
+run "benchmark leaks no git worktree" \
+    python3 tests/benchmark.py worktree
 run "profile resolver (single parser, fail-closed, no 64gb default)" \
     python3 tests/profiles.py resolver
 run "policy ownership (one reader, client policy fails closed)" \

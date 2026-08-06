@@ -573,12 +573,21 @@ def main() -> int:
               "--candidate <id>. Inference is never implicit.", file=sys.stderr)
         return 2
 
+    # Validate the candidate BEFORE acquiring anything. prepare_worktrees below
+    # creates one real git worktree per candidate for a non-dry run, and the
+    # error exit for an unknown name does not reach the cleanup path — so
+    # rejecting it late leaked three worktrees per invocation.
+    if a.candidate and a.candidate not in CANDIDATES:
+        print(f"unknown candidate {a.candidate!r}; have {list(CANDIDATES)}",
+              file=sys.stderr)
+        return 2
+
     out = Path(a.output_dir) if a.output_dir else \
         Path.home() / ".local/state/ailocal/benchmark/planner" / a.run_id
     env = environment_state()
     # Validation and dry-run must not create real git worktrees: neither runs
-    # the cleanup path, so both leaked one worktree per candidate per
-    # invocation until this was caught.
+    # the cleanup path. Any argument rejection must also happen BEFORE this
+    # line, for the same reason.
     wts = prepare_worktrees(a.run_id, a.dry_run or a.validate_private_routing)
     manifest = build_manifest(a.run_id, a.turns, a.probe_model, wts)
 
