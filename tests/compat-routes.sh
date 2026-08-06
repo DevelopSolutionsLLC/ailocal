@@ -63,14 +63,42 @@ code="$(status HEAD /api/hello)"
                     || bad "HEAD /api/hello unauthenticated -> $code (want 200)"
 
 # 4. No model invocation. A probe that woke a backend would be a latency and
-# memory regression that no status-code assertion would ever catch. Compare the
-# proxy's own request log across the call: a real inference logs a request_trace.
-before="$(docker logs ailocal-litellm 2>&1 | grep -c 'request_trace' || true)"
-curl -s -o /dev/null -m 15 -I "$PROXY/api/hello"
-curl -s -o /dev/null -m 15 "$PROXY/api/hello"
-after="$(docker logs ailocal-litellm 2>&1 | grep -c 'request_trace' || true)"
-[ "$before" = "$after" ] && ok "no model invoked (request_trace count $before unchanged)" \
-  || bad "probe invoked a model: request_trace went $before -> $after"
+# memory regression that no status-code assertion would ever catch.
+#
+# Count the trace LEDGER, not `docker logs`. Only the failure path prints to
+# stdout, so a successful inference adds no stdout line at all and a count of
+# those cannot detect a woken backend. Every request — success or failure —
+# appends to the JSONL ledger, so that is the signal.
+#
+# The ledger is shared and written asynchronously after the response, so a
+# record from a preceding check can land mid-measurement. Settle first: read
+# until the count stops moving, bounded, then measure.
+trace_count() {
+  docker exec ailocal-litellm sh -c 'cat /app/captures/traces/*.jsonl 2>/dev/null | wc -l' \
+    2>/dev/null | tr -d ' \n' || echo 0
+}
+settle_traces() {   # bounded wait for the ledger to stop growing
+  local prev cur i
+  prev="$(trace_count)"
+  for i in $(seq 1 20); do
+    sleep 0.25
+    cur="$(trace_count)"
+    [ "$cur" = "$prev" ] && { printf '%s' "$cur"; return 0; }
+    prev="$cur"
+  done
+  printf '%s' "$prev"          # unsettled: measure anyway, the diff still reports
+}
+
+if [ -z "$(trace_count)" ] || [ "$(trace_count)" = "0" ]; then
+  skip "no trace ledger (AILOCAL_TRACE_DIR unset?) — model-invocation check not run"
+else
+  before="$(settle_traces)"
+  curl -s -o /dev/null -m 15 -I "$PROXY/api/hello"
+  curl -s -o /dev/null -m 15 "$PROXY/api/hello"
+  after="$(settle_traces)"
+  [ "$before" = "$after" ] && ok "no model invoked (trace ledger $before unchanged)" \
+    || bad "probe invoked a model: trace ledger went $before -> $after"
+fi
 
 echo
 echo "==> no side effects on existing routes"
