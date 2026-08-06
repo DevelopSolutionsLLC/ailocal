@@ -21,7 +21,7 @@ check $([ -x "$HOOK" ] && echo 0 || echo 1) "the hook is executable"
 [ -f "$HOOK" ] || { report || true; exit 1; }
 
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+trap '_harness_cleanup; rm -rf "$WORK"' EXIT
 git -C "$WORK" init -q .
 git -C "$WORK" config user.name  "Test Person"
 git -C "$WORK" config user.email "test@example.invalid"
