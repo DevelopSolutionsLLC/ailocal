@@ -45,7 +45,7 @@ flag() { # $1=class $2=item $3=location $4=action
 }
 
 echo "══════════════════════════════════════════════════════════════════════"
-echo " AILOCAL / CADENCE INSTALLATION AUDIT"
+echo " AILOCAL INSTALLATION AUDIT"
 echo " $(date '+%Y-%m-%d %H:%M:%S')   read-only"
 echo "══════════════════════════════════════════════════════════════════════"
 
