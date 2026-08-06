@@ -17,16 +17,16 @@ Every directory owns one thing. Generated output never appears in any of them.
 
 | Directory | Owns | Never contains |
 |---|---|---|
-| `config/profiles/` | hardware-tier policy: capability → model, geometry, sampling, keep-alive, compaction | generated state |
-| `config/clients.yaml` | which capability each client surface uses | model tuning |
-| `config/clients/` | client templates and deployment assets | rendered client configuration |
-| `config/litellm/` | authored proxy assets: hooks, capability registry, config template | the generated `config.yaml` |
-| `config/instructions/` | per-capability personas, mounted into the proxy | anything client-specific |
-| `config/benchmark.yaml`, `config/benchmark-tasks/` | benchmark policy and task definitions | production model policy |
+| `profiles/` | hardware-tier policy: capability → model, geometry, sampling, keep-alive, compaction | generated state |
+| `profiles/clients.yaml` | which capability each client surface uses | model tuning |
+| `clients/` | client templates and deployment assets | rendered client configuration |
+| `deploy/litellm/` | authored proxy assets: hooks, capability registry, config template | the generated `config.yaml` |
+| `deploy/litellm/instructions/` | per-capability personas, mounted into the proxy | anything client-specific |
+| `benchmarks/` | benchmark policy, tasks, and suite implementations | production model policy |
 | `deploy/litellm/`, `deploy/searxng/` | compose definitions and authored service files | rendered secrets, generated config |
-| `scripts/` | the `ailocal` CLI, installers, lifecycle | policy |
-| `scripts/lib/` | shared implementation: `policy.py`, `checks/`, benchmark modules, shell helpers | duplicate owners |
-| `scripts/tests/` | domain suites; `./scripts/test-all.sh` is the gate | production code |
+| `./ailocal`, `./install.sh` | the only public entry points | implementation |
+| `lib/` | shared implementation and lifecycle: `policy.py`, `checks/`, `diagnostics/`, shell helpers | duplicate owners, public entry points |
+| `tests/` | domain suites; `ailocal test` is the gate | production code |
 | `docs/` | this document set | history |
 
 ---
@@ -111,7 +111,7 @@ ailocal benchmark <models|planner|gateway>      developer benchmarks
 ailocal teardown                                remove everything
 ```
 
-`ailocal` is the only supported entry point. Scripts under `scripts/` implement
+`ailocal` is the only supported entry point. Modules under `lib/` implement
 these commands and are not a public interface.
 
 Exit codes: `validate` and `smoke` return `0` or `1`. `doctor` returns `0`
@@ -126,8 +126,7 @@ diagnose, `2` degraded.
 
 | Mount | Kind | Why |
 |---|---|---|
-| `./config/litellm → /app/config:ro` | authored | hooks, capability registry, template |
-| `./config/instructions → /app/instructions:ro` | authored | personas, read by the injector |
+| `./deploy/litellm → /app/config:ro` | authored | hooks, capability registry, personas, template |
 | `$AILOCAL_STATE/litellm → /app/generated:ro` | generated | the config the proxy actually loads |
 | `$AILOCAL_STATE/captures → /app/captures` | writable | the only path the proxy may write |
 
@@ -151,8 +150,8 @@ Ollama runs on the host, not in a container, and is reached at `OLLAMA_HOST`.
 ## Data flow
 
 ```
-config/profiles/<tier>.yaml     capability → model, geometry
-config/clients.yaml             client surface → capability
+profiles/<tier>.yaml     capability → model, geometry
+profiles/clients.yaml             client surface → capability
                     ↓
 policy.py           resolve_role · geometry · load_client_policy · required_models
                     ↓
@@ -174,22 +173,22 @@ config root — never the repository.
 
 ## Extension points
 
-**Add a model** — edit the capability's `active` in `config/profiles/<tier>.yaml`,
+**Add a model** — edit the capability's `active` in `profiles/<tier>.yaml`,
 then `ailocal sync && ailocal models-install`.
 
-**Add a profile** — create `config/profiles/<tier>.yaml` and add the tier to
-`policy.TIERS`. Selection thresholds live in `scripts/install.sh`.
+**Add a profile** — create `profiles/<tier>.yaml` and add the tier to
+`policy.TIERS`. Selection thresholds live in `install.sh`.
 
 **Add a capability** — add the role to the profiles and to `policy.ROLES`, then
-map client surfaces to it in `config/clients.yaml`.
+map client surfaces to it in `profiles/clients.yaml`.
 
 **Add a client template** — place the authored template under
-`config/clients/<client>/`, emit its rendered output to
+`clients/<client>/`, emit its rendered output to
 `$AILOCAL_STATE/clients/<client>/` from the generator, and deploy it from
-`scripts/install-clients.sh`. Never write generated output beside the template.
+`lib/install-clients.sh`. Never write generated output beside the template.
 
-**Add a benchmark suite** — implement it under `scripts/benchmarks/` and add a
-case to the `benchmark` dispatcher in `scripts/ailocal`.
+**Add a benchmark suite** — implement it under `benchmarks/` and add a
+case to the `benchmark` dispatcher in `ailocal`.
 
 ---
 

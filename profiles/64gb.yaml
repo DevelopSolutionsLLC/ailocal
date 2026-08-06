@@ -1,0 +1,152 @@
+# 64 GB profile — validated on this hardware class.
+#
+# One resident model serves architecture, implementation and review; they differ
+# only in context, output ceiling and reasoning. Ollama keeps a single copy in
+# memory, so the three roles cost one model's VRAM rather than three.
+#
+# Model selection evidence lives in docs/BENCHMARK.md. Engine behaviour
+# (context enforcement, truncation) is owned by deploy/litellm/registry.yaml.
+disk_gb: 40
+
+# ── architecture — shared large-context coding/reasoning tier ─────────────────
+# The one big-context capability every client shares (Claude Code, Codex, VS Code):
+# design, deep reasoning, AND large interactive/agent prompts. 65536 num_ctx gives clients
+# a genuinely large input window; qwen3-coder:30b-a3b-q4_K_M supports 262144, so 128K is a future
+# "architecture-deep" capability, not this one (a resident -1 model carries its full KV,
+# so 64K is the balance between input capacity and permanent memory).
+architecture:
+  role: Lead architect
+  active: gemma4:26b-mlx
+  reasoning: true          # gpt-oss:20b HAS thinking; qwen3-coder did not
+  context_input: 81920
+  max_output: 16384
+  temperature: 0.1
+  keep_alive: 6h
+  persona: true
+  purpose: [architecture, complex refactoring, multi-step debugging, design, repository-wide planning, large interactive/agent prompts]
+  strengths: [large 64K input window shared across clients, holds a whole subsystem in view, strong code generation]
+  weaknesses: [slower, higher resident memory (64K KV pinned), non-thinking (no <think> stream)]
+  top_p: 0.9
+  top_k: 20
+  repeat_penalty: 1.0
+  # Low temperature: answers must be reproducible across runs.
+# ── implementation — everyday working coder ──────────────────────────────────
+implementation:
+  role: Daily coding
+  active: gemma4:26b-mlx
+  # Same physical model as architecture, deliberately: this is a role boundary
+  # (persona, sampling, output ceiling), not a model boundary. The former
+  # "smaller footprint" rationale described qwen2.5-coder:14b, which this role
+  # has not used since gemma4 became active -- and it is what left context_input
+  # at 16,384 on a model architecture already drives at 81,920.
+  # Capabilities: tools YES, insert YES, thinking NO.
+  reasoning: true
+  context_input: 65536
+  max_output: 8192
+  temperature: 0.1
+  keep_alive: -1           # same physical model as architecture
+  persona: true
+  purpose: [implementation, features, refactoring, tests, shell, python, typescript]
+  strengths: [fast, low memory, excellent everyday code generation]
+  weaknesses: [architecture, repository-wide planning]
+  top_p: 0.9
+  top_k: 20
+  repeat_penalty: 1.0
+  # Low temperature: answers must be reproducible across runs.
+# ── review — code review / bug & security detection ──────────────────────────
+review:
+  role: Code review
+  active: gemma4:26b-mlx
+  reasoning: true          # thinking AND tools (deepseek had NO tools)
+  context_input: 65536
+  max_output: 4096
+  temperature: 0.2
+  keep_alive: -1           # same physical model as architecture
+  persona: true
+  purpose: [code review, bug detection, security review, alternative solutions]
+  strengths: [careful analysis, security awareness, concrete findings]
+  weaknesses: [slower than the implementation tier, not for bulk generation]
+  top_p: 0.9
+  top_k: 20
+  repeat_penalty: 1.0
+  # Reasoning is on here and nowhere else: review is the one tier where thinking
+  # earns its latency. Per-request reasoning_effort is UNRELIABLE (BerriAI/litellm
+  # #15059 maps it incorrectly for Ollama); the per-role default below works.
+# ── fast — lightweight tool-enabled agent (NOT autocomplete) ────────────────
+# Deliberately not the completion tier: this model exposes no FIM/insert
+# capability, so inline autocomplete would fail QUIETLY.
+fast:
+  role: Fast agent
+  active: qwen3.5:2b
+  preferred: [qwen3.5:2b]
+  # reasoning is off although the model supports it: with thinking enabled it
+  # emitted ~19k reasoning characters and returned EMPTY content within its
+  # budget. This tier answers in a word or two and must not think itself out.
+  reasoning: false
+  context_input: 45056
+  max_output: 4096
+  temperature: 0.0
+  keep_alive: 20m
+  # No deploy/litellm/instructions/fast.md on purpose: this tier gets _core.md only, so
+  # every extra system-prompt token is a larger share of its small budget. Adding
+  # the file is enough to change that -- the injector needs no code change.
+  persona: true
+  purpose: [task classification, doc summarisation, quick edits, tool-driven lookups]
+  strengths: [tiny footprint, native tool calling, very long context, low latency]
+  weaknesses: [no FIM/insert - cannot do inline autocomplete, weaker on large refactors]
+  top_p: 0.9
+  top_k: 20
+  repeat_penalty: 1.0
+  # Low temperature: answers must be reproducible across runs.
+# ── completion — inline autocomplete (FIM) ───────────────────────────────────
+# STANDBY — not in active use. Zero recorded requests across every trace, and the
+# only consumer (Continue) is not installed. Kept mapped so inline autocomplete
+# works the moment Continue is installed, but no longer PINNED: keep_alive -1 was
+# reserving memory permanently on a machine where paging is the known failure
+# mode. qwen2.5-coder:3b remains the right model here — it is the only small one
+# with BOTH `insert` (FIM) and `tools`, verified across six candidates.
+completion:
+  role: Autocomplete (standby)
+  active: qwen2.5-coder:3b-instruct-q4_K_M
+  preferred: [qwen2.5-coder:3b-instruct-q4_K_M, qwen2.5-coder:1.5b]
+  context_input: 3968
+  max_output: 128
+  temperature: 0.1
+  keep_alive: 2h
+  purpose: [inline completion, FIM, quick syntax fixes, small transforms]
+  strengths: [very fast, tiny footprint, native FIM tokens]
+  weaknesses: [no deep reasoning, short context]
+  top_p: 0.9
+  top_k: 20
+  repeat_penalty: 1.0
+  # Low temperature: answers must be reproducible across runs.
+# ── embeddings — semantic retrieval (INFRASTRUCTURE) ─────────────────────────
+embeddings:
+  role: Semantic retrieval
+  active: nomic-embed-text
+  # ollama, NOT ollama_chat: LiteLLM has no embeddings route for the
+  # chat provider — /v1/embeddings against it returns 'Unmapped LLM provider'.
+  provider: ollama
+  # 2048 is nomic-embed-text's REAL maximum. Measured: it silently CLIPS above this
+  # and still returns a valid 768-dim vector, so 8192 advertised 4x the true capacity
+  # and produced successful-looking embeddings of truncated text. Two inputs sharing
+  # a prefix and differing only past the boundary embed BYTE-IDENTICALLY (cosine
+  # 1.0000000000); a control differing inside the prefix does not (0.9833).
+  context_input: 2048
+  keep_alive: -1
+  purpose: [semantic search, memory, retrieval for grepai]
+  strengths: [always-on, tiny, grepai calls it directly on :11434]
+  weaknesses: [not a chat model]
+
+# ── interactive compaction (client-native; ailocal does NOT summarise) ───────
+# Only `architecture` needs this. implementation/review cap at 24,576 and fast at
+# 49,152 -- their ENTIRE context sits below the cold-prefill danger zone, so they
+# cannot reach the failure and are deliberately left alone.
+#
+# window x pct is what the CLIENT compacts at; it is NOT a model limit. The model
+# maximum stays `architecture.context` above and remains available for deliberate
+# one-shot work. Cold prefill passes ~5 min at ~58K, 13 min at ~88K.
+compaction:
+  window: 65536       # effective window handed to the client's compactor
+  pct: 75             # compact at this % of the window
+  # trigger: 49152 tokens

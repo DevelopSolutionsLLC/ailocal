@@ -1,0 +1,144 @@
+# profile: 32gb
+# Declarative capability registry for 32 GB unified memory (Apple Silicon).
+#
+# SHARED PRIMARY BACKEND. architecture, implementation, review and fast all resolve
+# to ONE model (qwen3.5:9b). That is deliberate, not an oversight: on 32 GB there is
+# room for one resident agent model, and rotating several role-specific models would
+# spend the tier's whole memory budget on load/evict churn. The capability aliases
+# still differ — persona, sampling, reasoning and num_predict are per-capability —
+# they simply share a backend. One model resident, no swapping.
+#
+# CONTEXT IS A MAXIMUM, NOT A RESERVATION. context: 65536 is the largest prompt the
+# tier accepts. With OLLAMA_NUM_PARALLEL=2, Ollama divides a runner's context across
+# parallel sequences, so two simultaneous near-64K requests are NOT guaranteed —
+# they contend for the same KV budget. Sized for one large request plus one small
+# one, which is the real agent+completion pattern.
+#
+# num_predict is a generation CEILING, not an expected output length and not an
+# extra fixed allocation.
+#
+# Field meanings are documented in profiles/64gb.yaml, the reference schema.
+# 32 GB targets useful daily coding and agent work on one shared 9b backend.
+status: configuration-verified   # schema, selection and size are tested; not measured on 32 GB hardware
+disk_gb: 9
+
+architecture:
+  role: Lead architect (shared primary)
+  active: qwen3.5:9b
+  preferred: [qwen3.5:9b]
+  reasoning: true
+  context_input: 57344
+  max_output: 8192
+  temperature: 0.1
+  keep_alive: 6h
+  persona: true
+  purpose: [architecture, refactoring, multi-step debugging, design]
+  strengths: [shared resident primary - no load/evict churn, native tool calling, 64K context]
+  weaknesses: [smaller than the 64 GB tier's specialised models, one backend serves four roles]
+  top_p: 0.9
+  top_k: 20
+  repeat_penalty: 1.0
+
+implementation:
+  role: Daily coding (shared primary)
+  active: qwen3.5:9b
+  preferred: [qwen3.5:9b]
+  reasoning: false
+  context_input: 57344
+  max_output: 8192
+  temperature: 0.1
+  keep_alive: 6h
+  persona: true
+  purpose: [everyday coding, features, tests]
+  strengths: [same resident backend as architecture - no reload between roles]
+  weaknesses: [shares its budget with every other chat capability]
+  top_p: 0.9
+  top_k: 20
+  repeat_penalty: 1.0
+
+review:
+  role: Code review (shared primary)
+  active: qwen3.5:9b
+  preferred: [qwen3.5:9b]
+  reasoning: true
+  context_input: 57344
+  max_output: 8192
+  temperature: 0.2
+  keep_alive: 6h
+  persona: true
+  purpose: [code review, bug detection, security review]
+  strengths: [reasoning enabled for review depth, no separate model to load]
+  weaknesses: [not a dedicated review model as on the 64 GB tier]
+  top_p: 0.9
+  top_k: 20
+  repeat_penalty: 1.0
+
+fast:
+  role: Fast agent (shared primary)
+  active: qwen3.5:9b
+  # reasoning OFF for the same reason the 64 GB tier disables it on `fast`: a
+  # classification tier that thinks past its budget returns empty content.
+  reasoning: false
+  preferred: [qwen3.5:9b]
+  context_input: 61440
+  max_output: 4096
+  temperature: 0.0
+  keep_alive: 6h
+  persona: true
+  purpose: [task classification, summarisation, quick edits, tool-driven lookups]
+  strengths: [no extra model resident - shares the primary]
+  weaknesses: [larger than a dedicated 2b would be, so marginally slower per token]
+  top_p: 0.9
+  top_k: 20
+  repeat_penalty: 1.0
+
+completion:
+  role: Autocomplete (FIM)
+  # SEPARATE MODEL ON PURPOSE. The primary is an instruct model without FIM/insert
+  # tokens, so it cannot do inline completion at all, and IDE completion needs
+  # latency the primary cannot meet. qwen2.5-coder carries native FIM tokens.
+  active: qwen2.5-coder:1.5b
+  preferred: [qwen2.5-coder:1.5b]
+  reasoning: false
+  context_input: 3968
+  max_output: 128
+  temperature: 0.1
+  # Rotating, not pinned: self-unloads after 2h idle rather than staying resident
+  # beside the primary indefinitely. ~1 GB footprint keeps this cheap to reload.
+  keep_alive: 2h
+  persona: false
+  purpose: [inline completion, FIM, quick syntax fixes]
+  strengths: [native FIM tokens, very fast, ~1 GB footprint]
+  weaknesses: [no reasoning, short context, not for chat]
+  top_p: 0.9
+  top_k: 20
+  repeat_penalty: 1.0
+
+embeddings:
+  role: Embeddings
+  active: nomic-embed-text
+  # ollama, NOT ollama_chat: LiteLLM has no embeddings route for the
+  # chat provider — /v1/embeddings against it returns 'Unmapped LLM provider'.
+  provider: ollama
+  preferred: [nomic-embed-text]
+  # 2048 is the model's REAL limit. Do not inherit a chat context here.
+  context_input: 2048
+  temperature: 0.0
+  keep_alive: -1
+  persona: false
+  purpose: [semantic search, retrieval]
+  strengths: [tiny, fast, well-understood]
+  weaknesses: [2048-token ceiling - chunk before embedding]
+
+# ── interactive compaction (client-native; ailocal does NOT summarise) ───────
+# Only `architecture` needs this. implementation/review cap at 24,576 and fast at
+# 49,152 -- their ENTIRE context sits below the cold-prefill danger zone, so they
+# cannot reach the failure and are deliberately left alone.
+#
+# window x pct is what the CLIENT compacts at; it is NOT a model limit. The model
+# maximum stays `architecture.context` above and remains available for deliberate
+# one-shot work. config-verified, NOT measured on 32 GB hardware
+compaction:
+  window: 65536       # effective window handed to the client's compactor
+  pct: 70             # compact at this % of the window
+  # trigger: 45875 tokens
