@@ -541,7 +541,7 @@ def resolver_checks() -> None:
     check("_legacy_load_models_yaml" not in sync,
           "the dead legacy parser is deleted")
 
-    # NO SECOND PARSER IN A SHELL ENTRY POINT. install.sh carried a Python
+    # NO SECOND PARSER IN A SHELL ENTRY POINT. lib/install.sh carried a Python
     # regex heredoc that parsed profiles/<tier>.yaml directly and read
     # `context` and `num_predict` -- fields the geometry migration removed --
     # so the install plan printed:
@@ -557,7 +557,7 @@ def resolver_checks() -> None:
         "grep -m1 '^status:",                 # the last single-field grep
         "^  context_input:", "^  max_output:", "^  active:",
     )
-    for entry in ("install.sh", "install-models.sh", "install-clients.sh",
+    for entry in ("lib/install.sh", "install-models.sh", "install-clients.sh",
                   "lifecycle.sh"):
         path = REPO / "lib" / entry
         if not path.exists():
@@ -568,13 +568,13 @@ def resolver_checks() -> None:
               f"{entry} does not read profile YAML fields itself (found {hit})")
 
     # And the plan it prints must use the CURRENT schema, from the resolver.
-    inst = (REPO / "install.sh").read_text()
+    inst = (REPO / "lib/install.sh").read_text()
     check("context_input" in inst and "max_output" in inst,
-          "install.sh reports context_input/max_output, not the removed fields")
+          "lib/install.sh reports context_input/max_output, not the removed fields")
     check("profile-config" in inst and "profile-summary" in inst,
-          "install.sh renders its plan from the resolver, not from YAML")
+          "lib/install.sh renders its plan from the resolver, not from YAML")
     check(inst.index("sync-models.py") < inst.index("profile-summary"),
-          "install.sh generates BEFORE printing a plan derived from generation")
+          "lib/install.sh generates BEFORE printing a plan derived from generation")
     # Behavioural, not textual: typed values must survive generation without a
     # string round-trip. A prose mention of "reserialize" is not the defect.
     _sm = load_sync()
@@ -605,12 +605,12 @@ def resolver_checks() -> None:
     print("\nGENERATION IS ATOMIC AND INSTALL FAILS CLOSED")
     check("flush_stage" in sync and "os.replace" in sync,
           "outputs are staged and swapped atomically")
-    inst = (REPO / "install.sh").read_text()
+    inst = (REPO / "lib/install.sh").read_text()
     check("sync-models.py\" || true" not in inst and "|| true" not in
           inst.split("Syncing model config")[1].split("step ")[0],
-          "install.sh no longer swallows a generation failure")
+          "lib/install.sh no longer swallows a generation failure")
     check("stopping before any model is pulled" in inst,
-          "install.sh stops before install-models.sh on generation failure")
+          "lib/install.sh stops before install-models.sh on generation failure")
 
     print("\nGENERATED FILES ARE OUTPUTS, NOT SOURCES")
     # Generated artefacts live under the runtime root, never in the checkout.
@@ -726,7 +726,7 @@ def hardware_checks() -> None:
 
     # ── tier selection ──────────────────────────────────────────────────────────
     print("\nTIER SELECTION")
-    install = (REPO / "install.sh").read_text()
+    install = (REPO / "lib/install.sh").read_text()
     for gb, expected in ((8, None), (16, "16gb"), (18, "16gb"), (24, "16gb"),
                          (32, "32gb"), (36, "32gb"), (48, "32gb"),
                          (64, "64gb"), (96, "64gb"), (128, "128gb"), (192, "128gb")):
@@ -739,9 +739,9 @@ def hardware_checks() -> None:
               f"got {got}")
 
     check('RAM_GB" -ge 128' in install and 'RAM_GB" -ge 64' in install,
-          "install.sh selects tiers at their real thresholds, never rounding up")
+          "lib/install.sh selects tiers at their real thresholds, never rounding up")
     check("requires at least 16 GB" in install,
-          "install.sh refuses machines below 16 GB")
+          "lib/install.sh refuses machines below 16 GB")
     check("PROFILE_OVERRIDE" in install and "Refusing an unsafe override under --yes" in install,
           "an override above physical memory is refused unattended")
 

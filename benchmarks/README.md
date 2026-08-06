@@ -1,7 +1,7 @@
 # Benchmarking
 
 A developer utility for comparing models and measuring the effect of runtime
-changes. It is not installed by `install.sh`, never runs in the request path,
+changes. It is not installed by `ailocal install`, never runs in the request path,
 and never modifies a profile.
 
 ```sh

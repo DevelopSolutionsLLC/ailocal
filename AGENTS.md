@@ -24,8 +24,7 @@ dependency.
 ## Repository map
 
 ```
-./ailocal          the only public command
-./install.sh       bootstrap, before ailocal is on PATH
+./ailocal          the only public command; `ailocal install` bootstraps
 
 profiles/          hardware policy: capability -> model, geometry, sampling
 profiles/clients.yaml  which capability each client surface uses

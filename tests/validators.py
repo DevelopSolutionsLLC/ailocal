@@ -151,7 +151,7 @@ def search_quota_checks() -> None:
           "nothing calls the federated search outside that flag")
 
     # No default caller anywhere may reach it.
-    for name in ("test-all.sh", "install-clients.sh", "install.sh"):
+    for name in ("test-all.sh", "install-clients.sh", "lib/install.sh"):
         path = REPO / "lib" / name if (REPO / "lib" / name).exists() else REPO / name
         if path.exists():
             check("check_searxng_external" not in path.read_text()

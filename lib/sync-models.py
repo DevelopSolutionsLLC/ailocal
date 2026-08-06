@@ -5,7 +5,7 @@ Single source of truth (both TRACKED — no gitignored intermediate):
   profiles/<tier>.yaml  WHAT each capability is (backend `active`, context, sampling,
                         keep_alive, persona, decision metadata), per RAM tier. Edit the profile
                         directly. The active tier lives in $AILOCAL_STATE (machine-specific,
-                        written by install.sh from detected RAM) or `--profile <tier>`. There is NO
+                        written by `ailocal install` from detected RAM) or `--profile <tier>`. There is NO
                         default tier: an unresolvable marker is an error.
   profiles/clients.yaml   WHICH capability each client surface uses (launch defaults, Codex
                         profiles, Continue entries, compat aliases).

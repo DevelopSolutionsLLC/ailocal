@@ -3,7 +3,7 @@
 # Idempotent: safe to run multiple times.
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ENV_FILE="$ROOT_DIR/.env"
 
 # Single source of truth for how this stack is composed (deploy/litellm + deploy/searxng).
@@ -12,7 +12,7 @@ AILOCAL_ROOT="$ROOT_DIR"
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/output.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/output.sh"
 
 
 # Prompt for a value; shows default in brackets; returns default if user hits Enter.
@@ -43,6 +43,19 @@ ASSUME_YES=false
 PROFILE_OVERRIDE=""
 _prev=""
 for a in "$@"; do
+  case "$a" in
+    -h|--help)
+      cat <<'USAGE'
+usage: ailocal install [--yes] [--profile <16gb|32gb|64gb|128gb>]
+
+Bootstraps the stack: prerequisites, .env, profile selection, generation,
+models, service and client configuration. Safe to re-run; it is idempotent.
+
+  --yes              unattended; also enables production autostart
+  --profile <tier>   override the tier detected from installed memory
+USAGE
+      exit 0 ;;
+  esac
   [ "$a" = "--yes" ] && ASSUME_YES=true
   [ "$_prev" = "--profile" ] && PROFILE_OVERRIDE="$a"
   _prev="$a"

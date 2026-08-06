@@ -235,13 +235,13 @@ python3 "$ROOT_DIR/lib/sync-models.py"
 # ── Validate pre-conditions ────────────────────────────────────────────────
 
 if [ ! -f "$ENV_FILE" ]; then
-  echo "  ✗ .env not found — run ./install.sh first"
+  echo "  ✗ .env not found — run ./ailocal install first"
   exit 1
 fi
 
 LITELLM_KEY=$(grep '^LITELLM_MASTER_KEY=' "$ENV_FILE" | cut -d= -f2-)
 if [ -z "$LITELLM_KEY" ]; then
-  echo "  ✗ LITELLM_MASTER_KEY not set in .env — run ./install.sh first"
+  echo "  ✗ LITELLM_MASTER_KEY not set in .env — run ./ailocal install first"
   exit 1
 fi
 
@@ -727,6 +727,6 @@ has_target "claude"  && echo "    rm $AILOCAL_CFG/claude/settings.json"
 has_target "vscode"  && echo "    VS Code:  no file to delete — re-enter via \"Chat: Manage Language Models\" (key lives in SecretStorage)"
 echo "  Then: ailocal clients [target]"
 echo ""
-echo "  Key rotation: after running install.sh, restart the proxy with:"
+echo "  Key rotation: after running `ailocal install`, restart the proxy with:"
 echo "    ailocal start   # LiteLLM reloads LITELLM_MASTER_KEY from .env"
 echo "  ...then re-run ailocal clients to refresh ~/.config/ailocal/env"
