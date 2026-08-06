@@ -5,7 +5,7 @@
 #   ailocal models     compact capability -> backend -> status table
 #   ailocal validate   end-to-end sanity: capabilities, backends, client mappings, aliases, sync
 #   ailocal validate --runtime   also probe the live proxy: /v1/models, advertised contexts, embeddings
-#   ailocal doctor     health check (lib/doctor.sh)
+#   ailocal doctor     health check
 #   ailocal benchmark  developer benchmark suites (models|planner|gateway)
 #   ailocal security   container pins, digest drift, reachability (--scan for CVEs)
 #   ailocal sync       regenerate derived configs
@@ -24,8 +24,8 @@ cmd="${1:-help}"; shift || true
 case "$cmd" in
   status)   exec bash "$LIB/status.sh" "$@" ;;
   models)   exec bash "$LIB/status.sh" --table ;;
-  validate) exec bash "$LIB/validate.sh" "$@" ;;
-  doctor)  exec bash "$LIB/doctor.sh" "$@" ;;
+  validate) exec python3 "$LIB/checks/run.py" validate "$@" ;;
+  doctor)  exec python3 "$LIB/checks/run.py" doctor "$@" ;;
   security) exec bash "$LIB/security.sh" "$@" ;;
   test)     exec bash "$LIB/test-all.sh" "$@" ;;
   profile)  exec python3 "$LIB/profile-config" "$@" ;;
@@ -33,7 +33,7 @@ case "$cmd" in
   start)   exec bash "$LIB/start.sh" "$@" ;;
   stop)    exec bash "$LIB/stop.sh" "$@" ;;
   update)  exec bash "$LIB/update.sh" "$@" ;;
-  smoke)   exec bash "$LIB/smoke-test.sh" "$@" ;;
+  smoke)   exec python3 "$LIB/checks/run.py" smoke "$@" ;;
   resolve) exec python3 "$LIB/sync-models.py" --resolve "$@" ;;
   # Client deployment and the lifecycle actions that used to be run as
   # individual scripts. Those files are internal; this is the supported entry.

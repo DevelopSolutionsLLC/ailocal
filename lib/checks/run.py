@@ -1,8 +1,24 @@
 #!/usr/bin/env python3
-"""Entry point behind `ailocal validate` and `ailocal smoke`.
+"""Entry point behind `ailocal validate`, `ailocal smoke` and `ailocal doctor`.
 
-Both commands are the same shape: collect CheckResults, render them, exit on
-the outcome. They differ only in which checks they collect.
+All three are the same shape: collect CheckResults, render them, exit on the
+outcome. They differ only in which checks they collect.
+
+  validate  Deterministic consistency, from files on disk. Runs with LiteLLM
+            and Ollama stopped, makes no inference request and mutates
+            nothing, so a configuration check never depends on a service.
+            Optional `--profile <tier>`. Exit 0 clean, 1 if any check failed;
+            Docker being unavailable blocks the mounted-config comparison
+            rather than failing the run.
+  smoke     Bounded runtime verification of a running stack: containers, proxy
+            health, served aliases, advertised geometry, Ollama inventory, one
+            bounded model response, search. Every call carries a timeout.
+            Exit 0 clean, 1 if a required check failed; absent search degrades
+            the report without failing it.
+  doctor    validate + smoke plus host-machine guidance, with a remediation
+            attached to every finding. Exit 0 healthy, 1 when the active tier
+            cannot be resolved and diagnosis is REFUSED rather than reported
+            against an assumed configuration, 2 degraded.
 """
 
 from __future__ import annotations
