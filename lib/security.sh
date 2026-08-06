@@ -34,7 +34,7 @@ fail=0; degraded=0; update_available=0
 
 # ── optional weekly check (OFF unless explicitly installed) ─────────────────
 # ONE scheduler, not two. ailocal owns the LaunchAgent; it invokes each product's
-# OWN check, so Cadence keeps ownership of the Qdrant logic while the machine
+# OWN check, so that logic stays with its owner while the machine
 # gets a single weekly wakeup instead of two overlapping ones.
 #
 # It never upgrades anything. It writes state under XDG_STATE_HOME and notifies
