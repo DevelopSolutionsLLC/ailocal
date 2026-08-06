@@ -103,12 +103,10 @@ run "E1 trace schema, redaction and token reconciliation" \
 # and identity-stripped scoring copies -- with no inference.
 run "planner comparison (safe defaults, locking, blinding)" \
     python3 tests/benchmark.py planner
-# E3. Declared num_ctx vs what the backend actually serves. nomic-embed-text silently
-# CLIPS at 2048 rather than erroring, so an over-declaration yields successful-looking
-# embeddings of truncated text — no error to notice, just quietly worse vectors. The
-# 8192 over-declaration was corrected at its source in profiles/64gb.yaml
-# (db8c9e6) and regenerated, so this now guards the corrected state rather than
-# reporting a known failure.
+# E3. Declared num_ctx vs what the backend actually serves. nomic-embed-text
+# silently CLIPS at 2048 rather than erroring, so an over-declaration yields
+# successful-looking embeddings of truncated text — no error, just quietly worse
+# vectors.
 # The isolated claude-local root sets ENABLE_LSP_TOOL=1, but a plugin is what puts
 # a server behind that tool; delegating all plugin provisioning elsewhere leaves
 # the tool switched on with nothing behind it. This drives pyright-langserver over
@@ -118,9 +116,8 @@ run "planner comparison (safe defaults, locking, blinding)" \
 # config/active-profile has no implicit default. These prove there is one
 # parser and that every entry point fails closed rather than assuming 64gb.
 # The benchmark library owns alias construction, evidence capture, admission
-# geometry and restoration. It was NOT in the gate: a whole suite could fail
-# while the gate reported green, which is how a benchmark-only regression
-# reaches a planner run unnoticed.
+# geometry and restoration. It is gated here so a benchmark-only regression
+# cannot reach a planner run while the gate reports green.
 run "benchmark library (aliases, geometry, evidence, confinement)" \
     python3 tests/benchmark.py library
 run "benchmark command (models, planner, gateway dispatch)" \
