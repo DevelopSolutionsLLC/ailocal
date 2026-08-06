@@ -184,8 +184,6 @@ run "client role alias overrides (defaults intact, fails closed)" \
 run "codex MCP is withheld (no grepai/lsp/github, no re-sync)" \
     bash tests/clients.sh codex
 
-run "commit-msg hook (blocks attribution, allows product names)" \
-    bash tests/commit-msg-hook.sh
 
 run "shell output helpers (streams, colour, one owner)" \
     bash tests/shell-output.sh

@@ -114,9 +114,8 @@ expected geometry. A tag bump without a digest change is not an upgrade.
 
 ## Commit attribution
 
-`.githooks/commit-msg` rejects assistant attribution trailers, session
-identifiers, session URLs and vendor noreply addresses. It matches trailer
-shape, not words, so product references remain legal.
+Commits carry one identity: the configured human author, with no assistant
+attribution trailers or session identifiers.
 
 Session URLs are permanent public metadata that cannot be recalled once pushed
 — a force-push removes them from a branch, but the objects can remain reachable
