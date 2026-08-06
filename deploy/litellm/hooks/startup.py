@@ -277,28 +277,20 @@ def register_compat_routes():
 #       -> 3 x "LiteLLM.Success_Call Error: 1 validation error for AnthropicResponse"
 #     the same request with stream: false -> 0 errors
 #
-# The websearch interception hook flips `stream=True -> False`, then
-# `_maybe_wrap_in_fake_stream` wraps the result in a
-# `FakeAnthropicMessagesStreamIterator` so the client still receives SSE. Success
-# logging hands that iterator to
-# `LiteLLMLoggingObj._handle_anthropic_messages_response_logging`, which
-# early-returns for `ModelResponse`, `ResponsesAPIResponse` and the
-# `ResponseCompletedEvent` family, then falls through to
-# `AnthropicResponse.model_validate(result)`. The iterator is none of those, so
-# pydantic raises. Upstream patched this same method once before for unhandled
-# types (BerriAI/litellm#27091) and missed this one.
+# The websearch path converts the stream and hands a fake stream iterator to
+# _handle_anthropic_messages_response_logging, which validates it as an
+# AnthropicResponse and raises. Upstream patched that method once before for
+# unhandled types (BerriAI/litellm#27091) and missed this one.
 #
-# IMPACT: non-blocking. The client still receives the full stream — only
-# LiteLLM's success/spend logging is skipped. The cost is an ERROR-level
-# traceback per streamed web-search request, which buries real errors in a log
-# audit.
+# Non-blocking: the client still receives the full stream, only LiteLLM's own
+# success/spend logging is skipped. The cost is an ERROR traceback per streamed
+# web-search request, which buries real errors in a log audit.
 #
-# SELF-RETIRING. The patch checks whether the installed method already handles
-# the type and does nothing if so, so an upgrade that fixes this upstream
-# disables it — the boot line reports `skipped:`/`already patched`. Re-read the
-# installed method after any LiteLLM upgrade; do not assume a version bump fixed
-# it. Once the curl repro above is clean with this module removed from
-# `litellm_settings.callbacks`, delete this section.
+# SELF-RETIRING. The guard no-ops if the installed method already handles the
+# type, so an upstream fix disables it and the boot line reports
+# `skipped:`/`already patched`. Re-read the installed method after any upgrade.
+# Delete this section once the curl repro above is clean with the module removed
+# from `litellm_settings.callbacks`.
 
 PATCH_MARKER = "_ailocal_fake_stream_guard"
 
