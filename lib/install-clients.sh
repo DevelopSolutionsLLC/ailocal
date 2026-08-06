@@ -13,7 +13,7 @@
 #            (the key lives in VS Code SecretStorage — no file is written)
 #   codex  → ~/.config/ailocal/codex/config.toml, model_catalog.json
 #            (CODEX_HOME for the codex-local wrapper — ~/.codex is NEVER touched)
-#   claude → ~/.config/ailocal/claude/settings.json (AGENTS.md is Cadence-owned)
+#   claude → ~/.config/ailocal/claude/settings.json (instruction policy not written here)
 #            (CLAUDE_CONFIG_DIR for the claude-local wrapper — ~/.claude is NEVER touched)
 #
 # All targets also (re)install two silent, idempotent lines in ~/.zshrc that
@@ -74,24 +74,30 @@ already_has() {
   [ -f "$file" ] && grep -qF "$marker" "$file" 2>/dev/null
 }
 
-# ── Composing with Cadence ───────────────────────────────────────────────
-# Cadence (github.com/DevelopSolutionsLLC/cadence) deploys into this same config root and owns
-# two things inside directories ailocal also writes:
+# ── Composition by other tools ────────────────────────────────────────────
+# ailocal provisions an isolated client home and owns the files it ships there.
+# It does NOT own the directory: a user or another tool may add content to an
+# installed home, in two shapes ailocal must not destroy:
 #
-#   1. a <!-- cadence:start -->…<!-- cadence:end --> block appended INTO our own agent files
-#   2. symlinks for agents that have no ailocal counterpart (e.g. repository-health.md)
+#   1. a marked block appended INTO a file ailocal also writes
+#   2. symlinks for entries that have no ailocal counterpart
 #
-# Never replace this directory wholesale: that destroys both, silently, and only in
-# one install order (ailocal after cadence). Same reasoning as .claude.json, which is
-# preserved rather than clobbered.
+# Replacing such a directory wholesale destroys both, silently, and only in one
+# install order. Same reasoning as .claude.json, which is preserved rather than
+# clobbered. Reinstalling ailocal restores the ailocal baseline; it does not
+# rebuild anything another tool contributed, and does not assume anything will.
 #
-# ailocal remains the owner of the files it ships. It is not the owner of the directory.
-CADENCE_START='<!-- cadence:start -->'
-CADENCE_END='<!-- cadence:end -->'
+# The marker below is a literal external interface: the string is fixed because
+# another tool writes it, not because ailocal depends on that tool existing.
+#: Literal marker pair another tool appends into files ailocal also writes.
+#: The strings are fixed because that tool writes them; ailocal only has to
+#: recognise and carry the block, and works unchanged if nothing ever writes one.
+OVERLAY_START='<!-- cadence:start -->'
+OVERLAY_END='<!-- cadence:end -->'
 MANIFEST_NAME=".ailocal-managed"
 
 # Copy a directory of managed files WITHOUT taking ownership of the directory itself.
-# Preserves foreign files, preserves symlinks it does not own, and carries any Cadence block
+# Preserves foreign files, preserves symlinks it does not own, and carries any marked block
 # in a destination file across the overwrite.
 install_managed_dir() {
   local src="$1" dst="$2" f base carried manifest="$2/$MANIFEST_NAME"
@@ -118,11 +124,11 @@ install_managed_dir() {
       rm -rf "${dst:?}/$base"; cp -R "$f" "$dst/$base"; continue
     fi
 
-    # Capture any Cadence block already present so overwriting our file does not drop it.
+    # Capture any marked block already present so overwriting our file does not drop it.
     carried=""
     if [ -f "$dst/$base" ] && [ ! -L "$dst/$base" ] \
-       && grep -qF "$CADENCE_START" "$dst/$base" 2>/dev/null; then
-      carried="$(sed -n "/$(printf '%s' "$CADENCE_START" | sed 's/[][\.*^$/]/\\&/g')/,/$(printf '%s' "$CADENCE_END" | sed 's/[][\.*^$/]/\\&/g')/p" "$dst/$base")"
+       && grep -qF "$OVERLAY_START" "$dst/$base" 2>/dev/null; then
+      carried="$(sed -n "/$(printf '%s' "$OVERLAY_START" | sed 's/[][\.*^$/]/\\&/g')/,/$(printf '%s' "$OVERLAY_END" | sed 's/[][\.*^$/]/\\&/g')/p" "$dst/$base")"
     fi
 
     # Never write THROUGH a symlink — that would edit the linked source file in its own repo.
@@ -131,7 +137,7 @@ install_managed_dir() {
 
     if [ -n "$carried" ]; then
       printf '\n%s\n' "$carried" >> "$dst/$base"
-      info "  preserved Cadence block in $base"
+      info "  preserved external block in $base"
     fi
   done
 }
@@ -167,12 +173,12 @@ EOF
   done
   info "configure.zsh / finalize.zsh / scratchpad-hook.sh / compact-hook.sh deployed to $AILOCAL_CFG"
 
-  # The integration contract — the ONLY thing Cadence reads to learn about this
-  # runtime. Deployed to a stable path so Cadence never has to know where the
+  # The integration contract — the published description of this runtime for any
+  # external consumer. Deployed to a stable path so a consumer never has to know where the
   # ailocal repo lives, and never parses our generated Markdown for a fact.
   if [ -f "$AILOCAL_STATE/integration-contract.json" ]; then
     cp "$AILOCAL_STATE/integration-contract.json" "$AILOCAL_CFG/integration-contract.json"
-    info "$AILOCAL_CFG/integration-contract.json published (schema for Cadence)"
+    info "$AILOCAL_CFG/integration-contract.json published (runtime schema)"
   else
     warn "integration-contract.json missing — run ailocal sync"
   fi
@@ -529,20 +535,17 @@ if has_target "claude"; then
   cp "$AILOCAL_STATE/clients/claude/settings.json" "$CLAUDE_CFG"
   info "$CLAUDE_CFG written"
 
-  # AGENTS.md is NOT written here. Cadence owns client instruction policy for
-  # every root it detects, including this one, and composes it from the
-  # integration contract published above. ailocal writing a policy file here
-  # would fight that generator and re-create the drift this replaced.
-  if [ -f "$CLAUDE_MD" ] && ! grep -q "Generated by Cadence" "$CLAUDE_MD" 2>/dev/null; then
-    warn "$CLAUDE_MD is not Cadence-managed — run: cadence install"
-  fi
+  # No instruction-policy file is written into this root. ailocal publishes the
+  # integration contract above and stops there; composing client instruction
+  # policy is outside its ownership. Writing one here would fight whatever
+  # composes this root and re-create the drift that removal fixed.
 
   # Local agent trio + /local-build command + checklist — ailocal owns these FILES, but not the
-  # directories they live in. Cadence deploys into the same directories; see install_managed_dir.
+  # directories they live in. Other tools may deploy into them too; see install_managed_dir.
   for d in agents commands references; do
     install_managed_dir "$ROOT_DIR/clients/claude/$d" "$CLAUDE_HOME_DIR/$d"
   done
-  info "$CLAUDE_HOME_DIR/{agents,commands,references} written (Cadence overlays preserved)"
+  info "$CLAUDE_HOME_DIR/{agents,commands,references} written (external overlays preserved)"
 
   # .claude.json — seed onboarding-complete only if absent, so a real session
   # under this CLAUDE_CONFIG_DIR never gets clobbered.
@@ -560,7 +563,7 @@ fi
 
 # ── Minimum Python LSP baseline (ailocal-owned) ────────────────────────────
 # ailocal provides the minimum local-client compatibility baseline required by
-# the isolated profiles it creates. Cadence provides repository intelligence,
+# the isolated profiles it creates. Anything broader is owned elsewhere:
 # broader language tooling, cross-client integration, and policy.
 #
 # The generated settings.json sets ENABLE_LSP_TOOL=1, but a plugin is what puts a
@@ -569,7 +572,7 @@ fi
 # which is worse than leaving the tool off.
 #
 # ONE LANGUAGE, DELIBERATELY. Python, because this repository is Python and its
-# own agents edit it. Everything else — TypeScript, Go, C — stays Cadence's, so
+# own agents edit it. Everything else — TypeScript, Go, C — is owned elsewhere, so
 # there is exactly one owner per layer and no duplicate plugin management.
 #
 # A plugin only wires up a binary the user already has, so this checks for the
@@ -645,18 +648,13 @@ if has_target "claude"; then
   lsp_baseline "$HOME/.claude" "claude (cloud)"
 fi
 
-# ── Broader language servers: Cadence installs its own ────────────────────
-# ailocal used to run `cadence lsp install` here. That inverted the dependency:
-# a capability Cadence owns was provisioned only when ailocal happened to run, so
-# a hosted-only machine had nothing until someone knew to type the command. LSP
-# beyond the Python baseline is now installed by `cadence install`, which is the
-# third step of the documented order. We only report the state.
+# ── Broader language servers: not ailocal's to install ────────────────────
+# ailocal provisions ONLY the Python baseline its own agents need. Installing
+# language servers it does not own inverts the dependency: a capability owned
+# elsewhere would be provisioned only when ailocal happened to run. Anything
+# beyond the baseline is installed by whatever owns it. We only report state.
 if has_target "claude"; then
-  if command -v cadence >/dev/null 2>&1; then
-    info "TypeScript/Go/C language servers: run 'cadence install claude --root $AILOCAL_CFG/claude'"
-  else
-    skip "cadence not installed — Python baseline only (Cadence adds TS/Go/C + retrieval)"
-  fi
+  info "language servers: Python baseline only — anything broader is provisioned by its own owner"
 fi
 
 # ── Codex MCP: WITHHELD BY POLICY, not restored ────────────────────────────
@@ -665,49 +663,28 @@ fi
 #   MCP server there advertises a surface it cannot drive.
 #
 # An empty [mcp_servers.*] section is therefore the CORRECT outcome, not a
-# condition to warn about or restore. Never run a GLOBAL `cadence mcp sync` here:
-# it re-adds what policy withholds and mutates other clients as a side effect of
-# installing this one. claude-local needs no restoration — its registrations live
-# in .claude.json, which this script preserves. Cadence keeps MCP ownership.
-if command -v cadence >/dev/null 2>&1; then
-  info "Codex MCP intentionally withheld (Codex cannot dispatch namespaced tools)"
-  info "  Cadence owns MCP policy; claude-local registrations in .claude.json are preserved."
-fi
+# condition to warn about or restore. Never invoke another tool's global MCP
+# sync from here: it re-adds what this policy withholds and mutates other
+# clients as a side effect of installing this one. claude-local needs no
+# restoration — its MCP registrations live in .claude.json, which this script
+# preserves rather than rewriting.
+info "Codex MCP intentionally withheld (Codex cannot dispatch namespaced tools)"
+info "  claude-local MCP registrations in .claude.json are preserved."
 
-# ── Cadence agent overlay: DETECT what this script stripped ────────────────
-# Rewriting the deployed agents removes Cadence's marker block. Nothing here
-# restores it -- ailocal no longer re-invokes Cadence at all -- so the root is
-# left partially converged and nothing says so until someone runs Cadence's
-# verifier.
-#
-# We detect and name the exact command rather than re-invoking Cadence: ailocal
-# does not drive another product's installer. The marker is the only Cadence
-# internal referenced here, and ailocal already has to know it — stripping it is
-# what creates the condition.
-if command -v cadence >/dev/null 2>&1 && [ -d "$AILOCAL_CFG/claude/agents" ]; then
-  if ! grep -rlq "cadence:start" "$AILOCAL_CFG/claude/agents" 2>/dev/null; then
-    warn "Cadence agent overlay was stripped by this install (expected — it rewrites agents)."
-    warn "  Restore it:  cadence install claude --root $AILOCAL_CFG/claude"
-  else
-    info "Cadence agent overlay intact"
-  fi
-fi
+# ── External agent overlays ───────────────────────────────────────────────
+# install_managed_dir carries any marked block in a destination file across the
+# overwrite, and leaves foreign files and symlinks it does not own alone. That
+# is the whole contract: ailocal restores its own baseline and preserves what it
+# did not write. It does not detect, warn about, or re-invoke another product's
+# installer.
 
-# ── Done ───────────────────────────────────────────────────────────────────
-
-echo ""
-echo "  ✓ Done. Restart affected tools to pick up changes:"
-has_target "vscode"  && echo "    VS Code:      Cmd+Shift+P → \"LiteLLM: Reload Models\" (after the one-time key entry above)"
-has_target "codex"   && echo "    Codex:        use 'codex-local' — restart any open codex-local sessions"
-has_target "claude"  && echo "    Claude Code:  use 'claude-local' — restart any open claude-local sessions"
-echo ""
 # ── ailocal launcher ─────────────────────────────────────────────────────────
 # Put `ailocal` on PATH via ~/.local/bin, the XDG location for user executables.
 #
-# A plain symlink to ailocal would bake this checkout's path into an
-# installed command, which is how Cadence's hooks broke when their checkout moved.
-# ailocal is different from Cadence in one way that matters: its repo IS its
-# runtime — LiteLLM bind-mounts deploy/litellm straight out of it — so the tree
+# A plain symlink to ailocal would bake this checkout's path into an installed
+# command, which breaks the moment the checkout moves. ailocal also has a
+# property that rules out copying: its repo IS its runtime — LiteLLM bind-mounts
+# deploy/litellm straight out of it — so the tree
 # cannot be copied to ~/.local/share without duplicating the source of truth.
 #
 # So the launcher is a generated shim that reads the repo location from

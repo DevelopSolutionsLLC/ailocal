@@ -70,7 +70,7 @@ COPILOT_REPO_MD  = _CLIENTS_OUT / "copilot/repo-instructions.md"
 
 # The machine-readable seam with Cadence. Cadence reads THIS and nothing else to
 # learn about the local runtime — see write_integration_contract(). ailocal does
-# NOT own client instruction policy; Cadence composes it from this contract.
+# NOT own client instruction policy; an external consumer composes it from this contract.
 CONTRACT_JSON  = _pc.runtime_root() / "integration-contract.json"
 BASE_URL       = "http://localhost:4000"
 
@@ -433,7 +433,7 @@ def write_caps_json(models):
 def write_integration_contract(models):
     """The ONLY surface Cadence reads to learn about this runtime.
 
-    Cadence owns client instruction policy; ailocal owns the runtime. The seam
+    ailocal owns the runtime; client instruction policy is composed elsewhere. The seam
     between them is this file and nothing else — Cadence must never parse
     ailocal's prose or generated Markdown to discover a fact, because that
     couples a policy generator to our formatting.
