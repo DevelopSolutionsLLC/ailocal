@@ -24,15 +24,18 @@ dependency.
 ## Repository map
 
 ```
-profiles/      hardware policy: capability -> model, geometry, sampling
-profiles/clients.yaml   which capability each client surface uses
-clients/       client templates (authored; never generated output)
-deploy/litellm/       proxy hooks, capability registry, config template
-deploy/litellm/instructions/  per-capability personas, mounted into the proxy
-deploy/               compose definitions for LiteLLM and SearXNG
-scripts/              ailocal CLI, installers, lifecycle
-lib/          policy.py, checks/, benchmark modules, shared shell
-tests/        domain suites; ailocal test is the gate
+./ailocal          the only public command
+./install.sh       bootstrap, before ailocal is on PATH
+
+profiles/          hardware policy: capability -> model, geometry, sampling
+profiles/clients.yaml  which capability each client surface uses
+clients/           authored client templates (never generated output)
+deploy/litellm/    proxy hooks/, capability registry, config template, personas
+deploy/searxng/    search service definition
+benchmarks/        benchmark policy, tasks and suite implementations
+lib/               shared implementation and lifecycle; not executable
+tests/             domain suites; `ailocal test` is the gate
+docs/              architecture, security, troubleshooting
 ```
 
 ## Canonical sources
