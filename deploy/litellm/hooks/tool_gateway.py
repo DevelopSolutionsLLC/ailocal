@@ -7,17 +7,16 @@ tool_gateway.py — the Local Agent Gateway's capability negotiator.
 This module contains NO knowledge of any specific model, client, tool or route.
 Every such fact lives in deploy/litellm/registry.yaml and is reached through
 capability_registry.py. That is enforced, not merely intended:
-tests/capability-registry.py greps this file's executable code for model,
+tests/capability-registry-impl.py greps this file's executable code for model,
 client and tool literals and fails if it finds any. If a fact about a model
 belongs anywhere, it belongs in the registry.
 
-WHY THE GATEWAY, NOT THE MODEL, IS THE SUBJECT
-----------------------------------------------
-Earlier revisions were built around "make the local model work", which put model
-assumptions into code. This one is built around the boundary. A model the
-registry marks `passthrough` — any frontier/cloud model — is measured and
-forwarded untouched, no matter what the feature flags say. A local model is
-optimised aggressively. Swapping either is a registry edit.
+THE BOUNDARY IS THE SUBJECT, NOT THE MODEL
+------------------------------------------
+Building around "make the local model work" puts model assumptions into code.
+A model the registry marks `passthrough` — any frontier/cloud model — is
+measured and forwarded untouched no matter what the feature flags say; a local
+model is optimised aggressively. Swapping either is a registry edit.
 
 MODES (env AILOCAL_TOOL_GATEWAY, read per-request)
 --------------------------------------------------

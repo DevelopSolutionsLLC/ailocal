@@ -465,13 +465,9 @@ PROFILE_STATUS=""
 # artifact, so generation has to have succeeded first -- and a generation
 # failure must stop the install before any model is pulled.
 #
-# This block used to be a Python regex heredoc parsing the profile YAML
-# directly: a SECOND parser, in a shell entry point, which is exactly what
-# policy.py exists to prevent. It read `context` and `num_predict`,
-# fields the geometry migration removed, so on the current schema it printed:
-#
-#     configured context:  None
-#     max output:          None
+# The plan is read through policy.py, never parsed here: a second profile
+# parser in a shell entry point is exactly what policy.py exists to prevent,
+# and it silently prints None once the schema moves.
 #
 # and would have kept printing plausible-looking stale numbers had the field
 # names survived. Shell entry points ask the resolver; they do not parse YAML.

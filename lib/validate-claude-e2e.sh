@@ -136,9 +136,9 @@ chmod +x "$WORK/run_tests.sh"
   && git -c user.email=e2e@test -c user.name=e2e commit -qm "initial" )
 
 banner "fixture at $WORK (total_units multiplies; the test expects 5, gets 6)"
-# rc!=0 is NOT good enough here: a broken runner also exits non-zero, and that
-# is how the first version of this harness "passed" its own precondition while
-# running zero tests. Require the assertion to actually fire.
+# rc!=0 is NOT good enough here: a broken runner also exits non-zero, so a
+# harness can "pass" its own precondition while running zero tests. Require the
+# assertion to actually fire.
 BASE_TEST="$(cd "$WORK" && ./run_tests.sh; echo "rc=$?")"
 if printf '%s' "$BASE_TEST" | grep -q 'AssertionError' \
    && printf '%s' "$BASE_TEST" | grep -q 'FAILED'; then

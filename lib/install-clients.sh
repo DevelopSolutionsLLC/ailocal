@@ -81,9 +81,9 @@ already_has() {
 #   1. a <!-- cadence:start -->…<!-- cadence:end --> block appended INTO our own agent files
 #   2. symlinks for agents that have no ailocal counterpart (e.g. repository-health.md)
 #
-# This directory used to be replaced wholesale with `rm -rf`, which destroyed both — silently,
-# and only in one install order (ailocal after cadence). We already reason this way about
-# .claude.json, which we preserve rather than clobber; the same applies here.
+# Never replace this directory wholesale: that destroys both, silently, and only in
+# one install order (ailocal after cadence). Same reasoning as .claude.json, which is
+# preserved rather than clobbered.
 #
 # ailocal remains the owner of the files it ships. It is not the owner of the directory.
 CADENCE_START='<!-- cadence:start -->'
@@ -384,12 +384,10 @@ PYEOF
   cp "$ROOT_DIR/clients/copilot/session-primer.md" "$COPILOT_INSTR/session-primer.md"
   info "Copilot instruction files deployed to ~/.copilot/instructions/"
 
-  # Repo-level Copilot instructions. GENERATED, not tracked: this file used to be
-  # hand-maintained in .github/ and drifted — four of six capability rows were
-  # wrong and it pointed at config/models.yaml, which has not existed for a long
-  # time. A VS Code agent following it was being sent to a nonexistent file.
-  # Source: the generated copilot instructions (its capability table is
-  # a sync-models.py generated region). .github/ is gitignored for this name.
+  # Repo-level Copilot instructions. GENERATED, not tracked: hand-maintaining
+  # this in .github/ lets its capability table drift from the profile, and a VS
+  # Code agent then follows stale rows and dead paths. Source is the generated
+  # copilot instructions. .github/ is gitignored for this name.
   mkdir -p "$ROOT_DIR/.github"
   cp "$AILOCAL_STATE/clients/copilot/repo-instructions.md" \
      "$ROOT_DIR/.github/copilot-instructions.md"

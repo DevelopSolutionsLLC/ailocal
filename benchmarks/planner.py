@@ -6,10 +6,10 @@ already tested: worktrees, alias lifecycle, routing, permissions, confinement,
 evidence, sessions, restoration. Nothing here reimplements them, because a
 second implementation drifts and then two runs of "the same" benchmark are not.
 
-Run 2 was driven ad hoc. That is how a comparison ended up
-measuring one model three times, how candidates read an unrelated repository,
-and how the ground truth stayed readable by absolute path. A comparison whose
-setup is not reproducible cannot be re-run to check a result.
+A comparison whose setup is not reproducible cannot be re-run to check its
+result. Driving one ad hoc is how a comparison measures one model three times,
+lets candidates read an unrelated repository, and leaves the ground truth
+readable by absolute path.
 
 SAFE BY DEFAULT. With no arguments it does nothing: inference requires --all or
 an explicit --candidate. --dry-run never opens the private mapping and never

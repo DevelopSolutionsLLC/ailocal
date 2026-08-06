@@ -272,16 +272,10 @@ echo
 banner "verdict"
 # POSITIVE EVIDENCE ONLY.
 #
-# The first version of this check asked "did the model emit a flattened call, and
-# is none of my guessed error strings present?" It answered PASS — while the log
-# contained:
-#     ERROR codex_core::tools::router: error=unsupported call: mcp__lsp__...
-# because the pattern list said "unsupported tool" and Codex says "unsupported
-# call". One word, and a definitive failure read as success. The feature would
-# have been enabled on it.
-#
-# So the verdict is now driven by what Codex's own router logged about the exact
-# tool the model called, not by the absence of strings I thought to look for.
+# The verdict is driven by what Codex's own router logged about the exact tool
+# the model called — never by the absence of guessed error strings. Codex says
+# "unsupported call", not "unsupported tool"; a pattern list that guesses the
+# wording reads a definitive failure as success.
 CALLED_TOOL="$(printf '%s' "$ON_TOOLS" | tr ' ' '\n' | grep '^mcp__' | head -1)"
 ROUTER_ERROR=""
 if [ -n "$CALLED_TOOL" ]; then
