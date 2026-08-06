@@ -32,12 +32,10 @@ prompt_value() {
 
 # ── Preflight: what is missing, what it costs ──────────────────────────────
 #
-# A bare Mac may have none of these. The old flow discovered that one tool at a
-# time and curl|bash'd Homebrew with no prompt, so the first thing a new user saw
-# was an unexplained sudo password request from a script they had just cloned.
-#
-# Everything missing is reported FIRST, with whether it needs administrator
-# rights, then a single consent prompt, then one sudo authorisation up front.
+# A bare Mac may have none of these. Report everything missing FIRST, with
+# whether it needs administrator rights, then take a single consent prompt and
+# one sudo authorisation up front — never an unexplained password request part
+# way through a script the user just cloned.
 # --yes runs unattended.
 ASSUME_YES=false
 PROFILE_OVERRIDE=""
@@ -133,9 +131,9 @@ fi
 # when both are missing, installing Homebrew first gets git too, with no GUI
 # dialog and no second password prompt (we already hold sudo from the preflight).
 #
-# This used to run `xcode-select --install` first, which pops a macOS dialog the
-# user has to click and then polls for up to twenty minutes. That path is now the
-# FALLBACK, for the narrow case where brew exists but git somehow does not.
+# `xcode-select --install` is the FALLBACK only: it pops a macOS dialog the user
+# must click and then polls for up to twenty minutes. Use it just for the narrow
+# case where brew exists but git does not.
 #
 # There is no sudo-free way to install the Command Line Tools: `softwareupdate -i`
 # requires root, which is why the preflight asks once, up front.
@@ -163,8 +161,8 @@ if ! has brew; then
   NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
     || { error "Homebrew install failed. See https://brew.sh"; exit 1; }
   BREW_BIN="/opt/homebrew/bin/brew"; [ -x "$BREW_BIN" ] || BREW_BIN="/usr/local/bin/brew"
-  # Append the shellenv line ONCE. This used to append unconditionally, so every
-  # re-run added another copy to ~/.zprofile.
+  # Append the shellenv line ONCE: an unconditional append adds another copy to
+  # ~/.zprofile on every re-run.
   if ! grep -qs "$BREW_BIN shellenv" ~/.zprofile 2>/dev/null; then
     echo "eval \"\$($BREW_BIN shellenv)\"" >> ~/.zprofile
   fi
@@ -222,8 +220,9 @@ fi
 # The licence is accepted by pre-seeding Docker's OWN settings file before first
 # launch — the same key Docker writes when you click Accept. It lives under
 # ~/Library/Group Containers and is owned by the user, so this needs no sudo.
-# Previously the script installed Docker, told the user to open it, accept the
-# terms and re-run, then exited 0 — a success code for an incomplete install.
+# Accepting the licence here is what keeps the install non-interactive. Telling
+# the user to open Docker, accept terms and re-run would mean exiting 0 on an
+# incomplete install.
 docker_accept_license() {
   local dir="$HOME/Library/Group Containers/group.com.docker"
   mkdir -p "$dir"
@@ -294,8 +293,8 @@ info "Docker present and running ($(docker --version | awk '{print $3}' | tr -d 
 
 # ── Ollama ─────────────────────────────────────────────────────────────────
 # Installed above with the other Homebrew packages; this only verifies it.
-# The old block re-tried `--cask ollama` then fell back to the FORMULA, which
-# gives a CLI with no app — a different install shape reached by accident.
+# Never fall back from the cask to the FORMULA: that yields a CLI with no app,
+# a different install shape reached by accident.
 step "Checking Ollama"
 if has ollama; then
   info "Ollama CLI present ($(ollama --version 2>/dev/null | awk '{print $NF}'))"
@@ -358,10 +357,9 @@ step "Detecting hardware profile"
 RAM_BYTES=$(sysctl -n hw.memsize 2>/dev/null || echo 0)
 RAM_GB=$((RAM_BYTES / 1024 / 1024 / 1024))
 
-# NEVER ROUND UP. This used to select the tier at 75% of its name — 24 GB got the
-# 32gb profile, 48 GB got 64gb, 96 GB got 128gb — so a machine was routinely given
-# models sized for memory it did not have. A tier is chosen only when the machine
-# actually has that much memory.
+# NEVER ROUND UP. A tier is chosen only when the machine actually has that much
+# memory. Selecting at a fraction of the tier's name (24 GB -> 32gb, 48 -> 64gb)
+# hands a machine models sized for memory it does not have.
 #
 #   >= 128   128gb
 #   64-127   64gb
