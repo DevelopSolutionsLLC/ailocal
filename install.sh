@@ -576,7 +576,7 @@ run_next_steps() {
 
   echo
   step "Checking health"
-  bash "$ROOT_DIR/lib/doctor.sh" || true
+  python3 "$ROOT_DIR/lib/checks/run.py" doctor || true
 
   # Client configs are OPT-IN — installing them rewrites/merges existing
   # Claude Code / Codex / VS Code settings, which can disrupt a customized

@@ -36,7 +36,7 @@ _suite = Suite("VALIDATOR CHECKS")
 check = _suite.check
 
 # Public validators. A network call in any of these must carry a timeout.
-PUBLIC = ("validate.sh", "smoke-test.sh", "doctor.sh",
+PUBLIC = ("checks/run.py",
           "validate-claude-e2e.sh", "validate-codex-e2e.sh",
           "validate-vscode-e2e.sh")
 
@@ -126,32 +126,34 @@ def exits_checks() -> None:
     import subprocess
     root = REPO / "lib"
 
-    def run(script: str, env: dict | None = None, args: list[str] | None = None) -> int:
+    def run(mode: str, env: dict | None = None, args: list[str] | None = None) -> int:
+        """validate / smoke / doctor are modes of one implementation."""
         e = {**os.environ, **(env or {})}
-        return subprocess.run(["bash", str(root / script), *(args or [])],
-                              capture_output=True, text=True, timeout=600, env=e).returncode
+        return subprocess.run(
+            ["python3", str(root / "checks" / "run.py"), mode, *(args or [])],
+            capture_output=True, text=True, timeout=600, env=e).returncode
 
-    check(run("doctor.sh") == 0, "doctor exits 0 on a healthy stack")
-    check(run("doctor.sh", {"AILOCAL_PROXY": "http://127.0.0.1:1"}) == 2,
+    check(run("doctor") == 0, "doctor exits 0 on a healthy stack")
+    check(run("doctor", {"AILOCAL_PROXY": "http://127.0.0.1:1"}) == 2,
           "doctor exits 2 when checks fail (degraded)")
 
     marker = P.active_profile_path()
     original = marker.read_text()
     try:
         marker.write_text("999gb\n")
-        rc = run("doctor.sh")
+        rc = run("doctor")
         check(rc == 1, f"doctor exits 1 when the tier is unresolvable (got {rc})")
-        check(run("validate.sh") == 1, "validate fails on an unresolvable tier")
+        check(run("validate") == 1, "validate fails on an unresolvable tier")
     finally:
         marker.write_text(original)
 
-    check(run("validate.sh") == 0, "validate exits 0 once restored")
+    check(run("validate") == 0, "validate exits 0 once restored")
     # The defining property: deterministic validation needs no running stack.
-    check(run("validate.sh", {"AILOCAL_PROXY": "http://127.0.0.1:1",
+    check(run("validate", {"AILOCAL_PROXY": "http://127.0.0.1:1",
                               "OLLAMA_HOST": "http://127.0.0.1:1",
                               "AILOCAL_LITELLM_CONTAINER": "ailocal-absent"}) == 0,
           "validate exits 0 with the whole stack unreachable")
-    check(run("smoke-test.sh", {"AILOCAL_PROXY": "http://127.0.0.1:1"}) == 1,
+    check(run("smoke", {"AILOCAL_PROXY": "http://127.0.0.1:1"}) == 1,
           "smoke exits 1 when the proxy is unreachable")
 
 

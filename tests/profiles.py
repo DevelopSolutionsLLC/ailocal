@@ -203,7 +203,7 @@ def resolver_checks() -> None:
     shutil.rmtree(root, ignore_errors=True)
 
     print("\nNO SECOND PARSER, NO SILENT FALLBACK")
-    shells = ["install-models.sh", "start.sh", "validate.sh", "doctor.sh"]
+    shells = ["install-models.sh", "start.sh", "update.sh"]
     for name in shells:
         src = (REPO / "lib" / name).read_text()
         check("echo 64gb" not in src, f"{name} has no hardcoded 64gb fallback")
@@ -218,10 +218,6 @@ def resolver_checks() -> None:
                   f"{name} delegates tier resolution to the shared checks layer")
         else:
             check(n == 1, f"{name} resolves the tier exactly once")
-    doctor = (REPO / "lib" / "doctor.sh").read_text()
-    check(not re.search(r"sed -n .*profiles/", doctor),
-          "doctor.sh no longer parses profile YAML with sed")
-
     sync = (REPO / "lib" / "sync-models.py").read_text()
     check("import policy as _pc" in sync, "sync-models uses the shared resolver")
     check('return "64gb"' not in sync, "sync-models no longer defaults to 64gb")
@@ -486,7 +482,7 @@ def resolver_checks() -> None:
           "benchmark parse_profile reads generated data, parses no YAML")
 
     # Shell consumers must not parse YAML either.
-    for name in ("start.sh", "doctor.sh", "install-models.sh"):
+    for name in ("start.sh", "update.sh", "install-models.sh"):
         src = (REPO / "lib" / name).read_text()
         check("active:" not in src or "grep -E" not in src.split("active:")[0][-80:],
               f"{name} does not grep|sed profile YAML")
@@ -574,7 +570,7 @@ def resolver_checks() -> None:
         "^  context_input:", "^  max_output:", "^  active:",
     )
     for entry in ("install.sh", "install-models.sh", "install-clients.sh",
-                  "doctor.sh", "update.sh"):
+                  "update.sh"):
         path = REPO / "lib" / entry
         if not path.exists():
             continue
@@ -612,14 +608,11 @@ def resolver_checks() -> None:
     check(_sm.flow_list(None) == [], "an absent optional list reads as empty")
     check(not hasattr(_sm, "flow_dict") and not hasattr(_sm, "truthy"),
           "the generator carries no second scalar parser")
-    # The point was never jq: it was that doctor must not extract profile fields
-    # with a bespoke parser. It now reads them through policy itself,
-    # which is the same guarantee one layer stronger.
-    _doc = (REPO / "lib" / "doctor.sh").read_text()
-    check(not re.search(r"(sed|awk|grep)[^|\n]*profiles/", _doc),
-          "doctor.sh extracts no profile field with a bespoke parser")
-    check("checks/run.py" in _doc,
-          "doctor.sh reads the profile through the shared checks layer")
+    # validate/smoke/doctor are one Python implementation calling policy
+    # directly, so "no bespoke profile parser" is structural rather than a
+    # property of some shell script's text.
+    check(not (REPO / "lib" / "doctor.sh").exists(),
+          "doctor is not a shell wrapper with its own parsing")
 
     print("\nGENERATION IS ATOMIC AND INSTALL FAILS CLOSED")
     check("flush_stage" in sync and "os.replace" in sync,
