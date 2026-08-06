@@ -22,10 +22,10 @@ Every directory owns one thing. Generated output never appears in any of them.
 | `clients/` | client templates and deployment assets | rendered client configuration |
 | `deploy/litellm/` | authored proxy assets: hooks, capability registry, config template | the generated `config.yaml` |
 | `deploy/litellm/instructions/` | per-capability personas, mounted into the proxy | anything client-specific |
-| `benchmarks/benchmark.yaml`, `benchmarks/tasks/` | benchmark policy and task definitions | production model policy |
+| `benchmarks/` | benchmark policy, tasks, and suite implementations | production model policy |
 | `deploy/litellm/`, `deploy/searxng/` | compose definitions and authored service files | rendered secrets, generated config |
-| `scripts/` | the `ailocal` CLI, installers, lifecycle | policy |
-| `lib/` | shared implementation: `policy.py`, `checks/`, benchmark modules, shell helpers | duplicate owners |
+| `./ailocal`, `./install.sh` | the only public entry points | implementation |
+| `lib/` | shared implementation and lifecycle: `policy.py`, `checks/`, `diagnostics/`, shell helpers | duplicate owners, public entry points |
 | `tests/` | domain suites; `ailocal test` is the gate | production code |
 | `docs/` | this document set | history |
 
@@ -111,7 +111,7 @@ ailocal benchmark <models|planner|gateway>      developer benchmarks
 ailocal teardown                                remove everything
 ```
 
-`ailocal` is the only supported entry point. Scripts under `scripts/` implement
+`ailocal` is the only supported entry point. Modules under `lib/` implement
 these commands and are not a public interface.
 
 Exit codes: `validate` and `smoke` return `0` or `1`. `doctor` returns `0`
