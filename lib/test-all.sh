@@ -185,7 +185,7 @@ run "commit-msg hook (blocks attribution, allows product names)" \
 
 run "shell output helpers (streams, colour, one owner)" \
     bash tests/shell-output.sh
-run "validator checks (deterministic, classification, bounded)" \
+run "validator checks (deterministic, classification, bounded, search quota)" \
     python3 tests/validators.py
 run "consolidated suites stay section-isolated" \
     python3 tests/suite-structure.py

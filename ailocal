@@ -33,6 +33,7 @@ case "$cmd" in
   start)   exec bash "$LIB/lifecycle.sh" start "$@" ;;
   stop)    exec bash "$LIB/lifecycle.sh" stop "$@" ;;
   update)  exec bash "$LIB/lifecycle.sh" update "$@" ;;
+  # --external-search issues one federated query and SPENDS Brave API quota.
   smoke)   exec python3 "$LIB/checks/run.py" smoke "$@" ;;
   resolve) exec python3 "$LIB/sync-models.py" --resolve "$@" ;;
   # Client deployment and the lifecycle actions that used to be run as
