@@ -23,7 +23,7 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts" / "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "benchmarks"))
 from harness import REPO, Suite  # noqa: E402
 
@@ -102,7 +102,7 @@ def classification_checks() -> None:
 def bounded_checks() -> None:
     """No public validator may issue an unbounded network call."""
     for name in PUBLIC:
-        path = REPO / "scripts" / name
+        path = REPO / "lib" / name
         if not path.is_file():
             _suite.skip(f"{name} absent")
             continue
@@ -124,7 +124,7 @@ def bounded_checks() -> None:
 def exits_checks() -> None:
     """doctor's three states, and the two-state contract of validate/smoke."""
     import subprocess
-    root = REPO / "scripts"
+    root = REPO / "lib"
 
     def run(script: str, env: dict | None = None, args: list[str] | None = None) -> int:
         e = {**os.environ, **(env or {})}
@@ -158,17 +158,17 @@ def exits_checks() -> None:
 def e2e_checks() -> None:
     """The E2E validators must be bounded and must not leak processes."""
     import subprocess
-    lib = REPO / "scripts" / "lib" / "e2e.sh"
+    lib = REPO / "lib" / "e2e.sh"
     check(lib.is_file(), "shared E2E process lifecycle exists")
 
     for name in ("validate-claude-e2e.sh", "validate-codex-e2e.sh"):
-        src = (REPO / "scripts" / name).read_text()
-        check("lib/e2e.sh" in src, f"{name} uses the shared lifecycle")
+        src = (REPO / "lib" / name).read_text()
+        check("e2e.sh" in src, f"{name} uses the shared lifecycle")
         check("e2e_run" in src, f"{name} runs the client under a budget")
         check("e2e_sweep" in src, f"{name} sweeps its process tree")
 
     # Codex must stay honestly blocked: arriving content is not success.
-    codex = (REPO / "scripts" / "validate-codex-e2e.sh").read_text()
+    codex = (REPO / "lib" / "validate-codex-e2e.sh").read_text()
     check("BLOCKED_UPSTREAM_LITELLM_27442" in codex,
           "codex keeps its upstream-blocked classification")
 

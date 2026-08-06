@@ -24,7 +24,7 @@ set -uo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/harness.sh"
 ROOT="$ROOT_DIR"
 cd "$ROOT"
-. scripts/lib/compose.sh
+. lib/compose.sh
 
 PROXY="${AILOCAL_PROXY:-http://127.0.0.1:4000}"
 KEY="$(grep -E '^LITELLM_MASTER_KEY=' .env 2>/dev/null | cut -d= -f2-)"

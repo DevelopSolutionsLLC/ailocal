@@ -29,7 +29,7 @@ from pathlib import Path
 import pathlib
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(REPO / "benchmarks" / "tasks"))
-sys.path.insert(0, str(REPO / "scripts" / "lib"))
+sys.path.insert(0, str(REPO / "lib"))
 sys.path.insert(0, str(REPO / "benchmarks"))
 import utils  # noqa: E402
 import ast as _ast
@@ -51,7 +51,7 @@ import sys
 import tempfile
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(REPO / "scripts" / "lib"))
+sys.path.insert(0, str(REPO / "lib"))
 sys.path.insert(0, str(REPO / "benchmarks"))
 import suite as B  # noqa: E402
 
@@ -299,7 +299,7 @@ def library_checks() -> None:
     check_all("every mutating tool is explicitly denied",
               [t for t in ("Write", "Edit", "Task") if t not in _pp["denied"]])
     check("Bash(./scripts/status.sh)" in _pp["allowed"],
-          "the command the prompt cites is runnable")
+          "the allowlist covers the command the pinned prompt cites")
     check("Bash)" not in _pp["allowed"].replace("Bash(", "") and
           ",Bash," not in "," + _pp["allowed"] + ",",
           "Bash is never allowed wholesale, only per-command")
@@ -350,7 +350,7 @@ def library_checks() -> None:
           _d / "z.log", name="ailocal-nonexistent-container")["path"] or True,
           "capturing a missing container does not raise")
     check((_d / "z.log").exists(), "a failed capture still writes a file")
-    install = (REPO / "scripts" / "install.sh").read_text()
+    install = (REPO / "install.sh").read_text()
     for gb in ("128", "64", "32", "16"):
         check(f"-ge {gb}" in install,
               f"install.sh still uses the {gb} GB threshold this ladder mirrors")
@@ -604,7 +604,7 @@ def planner_checks() -> None:
     D = load_driver()
     def _planner_body() -> None:
         print("SAFE DEFAULTS")
-        r = subprocess.run([str(REPO / "scripts" / "ailocal"), "benchmark", "planner"],
+        r = subprocess.run([str(REPO / "ailocal"), "benchmark", "planner"],
                            capture_output=True, text=True, timeout=120)
         check(r.returncode == 2, "no arguments ⇒ refuses to act (rc=2)")
         check("never implicit" in r.stderr, "refusal explains that inference is never implicit")
@@ -616,7 +616,7 @@ def planner_checks() -> None:
 
         print("\nDRY RUN DOES NOT TOUCH THE MAPPING OR A MODEL")
         out = Path(tempfile.mkdtemp(prefix="drv-"))
-        r = subprocess.run([str(REPO / "scripts" / "ailocal"), "benchmark", "planner",
+        r = subprocess.run([str(REPO / "ailocal"), "benchmark", "planner",
                             "--dry-run", "--all", "--output-dir", str(out),
                             "--run-id", "unit-dry"],
                            capture_output=True, text=True, timeout=300)
@@ -1060,7 +1060,7 @@ def command_checks() -> None:
     Behavioural throughout -- these run the real command. Nothing here inspects
     implementation source.
     """
-    cli = str(REPO / "scripts" / "ailocal")
+    cli = str(REPO / "ailocal")
 
     def run(*args, env=None, timeout=300):
         return subprocess.run([cli, "benchmark", *args], capture_output=True,

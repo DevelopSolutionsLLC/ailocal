@@ -152,9 +152,9 @@ fingerprint baseline >/dev/null
 
 # ── ailocal sync ───────────────────────────────────────────────────────────
 banner "ailocal sync x2"
-python3 scripts/sync-models.py >/dev/null 2>&1 || bad "ailocal sync #1 failed"
+python3 lib/sync-models.py >/dev/null 2>&1 || bad "ailocal sync #1 failed"
 fingerprint sync1 >/dev/null
-python3 scripts/sync-models.py >/dev/null 2>&1 || bad "ailocal sync #2 failed"
+python3 lib/sync-models.py >/dev/null 2>&1 || bad "ailocal sync #2 failed"
 fingerprint sync2 >/dev/null
 compare sync1 sync2 "ailocal sync"
 
@@ -162,9 +162,9 @@ compare sync1 sync2 "ailocal sync"
 # claude + codex only by default: the vscode target touches the user's editor
 # config, which is opt-in here.
 banner "install-clients.sh claude codex x2"
-if bash scripts/install-clients.sh claude codex >/dev/null 2>&1; then
+if bash lib/install-clients.sh claude codex >/dev/null 2>&1; then
   fingerprint clients1 >/dev/null
-  bash scripts/install-clients.sh claude codex >/dev/null 2>&1
+  bash lib/install-clients.sh claude codex >/dev/null 2>&1
   fingerprint clients2 >/dev/null
   compare clients1 clients2 "install-clients.sh claude codex"
 else
@@ -174,9 +174,9 @@ fi
 # ── install-vscode.sh (opt-in) ─────────────────────────────────────────────
 if [ -n "$INCLUDE_VSCODE" ]; then
   banner "install-vscode.sh x2"
-  if bash scripts/install-vscode.sh >/dev/null 2>&1; then
+  if bash lib/install-vscode.sh >/dev/null 2>&1; then
     fingerprint vsc1 >/dev/null
-    bash scripts/install-vscode.sh >/dev/null 2>&1
+    bash lib/install-vscode.sh >/dev/null 2>&1
     fingerprint vsc2 >/dev/null
     compare vsc1 vsc2 "install-vscode.sh"
   else

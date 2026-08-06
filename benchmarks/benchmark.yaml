@@ -100,7 +100,10 @@ suites:
 # replanning around a denial the benchmark never intended to impose.
 #
 # Bash is allowed only for an explicit read-only command set, never wholesale.
-# `./scripts/status.sh` is on it because the scenario prompt names that command
+# `./scripts/status.sh` is on it because the scenario prompt names that command.
+# That path predates the repository layout change and is PINNED: the planner
+# prompt is byte-locked to a recorded run (T1 is exactly 604 chars). Re-baselining
+# the scenario is a deliberate act that invalidates comparison with that run.
 # as the reported symptom; denying it makes the task unanswerable as written.
 planner_permissions:
   allowed: "Read,Glob,Grep,Bash(./scripts/status.sh),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(cat:*),Bash(ls:*),Bash(head:*),Bash(wc:*)"

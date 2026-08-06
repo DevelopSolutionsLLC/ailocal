@@ -385,7 +385,7 @@ def _context_budget(self_registry, data, components) -> dict:
             # declared_context_tokens and context_headroom_tokens as None, so the
             # one record that could attribute an overflow to a component was the
             # one field guaranteed to be empty. Caught by E3's six controlled
-            # cases (scripts/test-context-cases.py), where all six came back with
+            # cases (lib/test-context-cases.py), where all six came back with
             # a null budget while the component counts were all correct.
             declared = self_registry.max_context(d.get("model"))
     except Exception:

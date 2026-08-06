@@ -96,8 +96,8 @@ def load_module(name: str, path: os.PathLike | str) -> types.ModuleType:
 
 
 def load_lib(name: str) -> types.ModuleType:
-    """Import a module from scripts/lib by its module name."""
-    return load_module(name, REPO / "scripts" / "lib" / f"{name}.py")
+    """Import a module from lib by its module name."""
+    return load_module(name, REPO / "lib" / f"{name}.py")
 
 
 @contextlib.contextmanager

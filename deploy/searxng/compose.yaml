@@ -2,7 +2,7 @@
 #
 # The OTHER HALF of the ailocal stack. Never used alone — always merged with
 # deploy/litellm/compose.yaml into the single "ailocal" Compose project
-# (see scripts/lib/compose.sh). The project name is declared there; this file
+# (see lib/compose.sh). The project name is declared there; this file
 # deliberately omits `name:` so the merge cannot conflict.
 #
 # Relative paths resolve from the REPO ROOT, because scripts pass
@@ -22,7 +22,7 @@ services:
     # PINNED BY DIGEST (2026-07-30). `latest` is a FLOATING tag -- it moved
     # under us mid-audit, which is precisely why no production service may
     # depend on it. Scout: no vulnerable package detected at this digest.
-    # To upgrade: pull, scan, run scripts/test-all.sh, then update this line.
+    # To upgrade: pull, scan, run lib/test-all.sh, then update this line.
     image: searxng/searxng@sha256:79c2be18a18367484474bae9b18a8cd9085114ab3dcd49cac091cad8c548a0a9
     container_name: ailocal-searxng
     restart: unless-stopped
@@ -48,12 +48,12 @@ services:
       SEARXNG_SECRET: ${SEARXNG_SECRET}
     volumes:
       # RENDERED settings, not the tracked source. deploy/searxng/settings.yml
-      # holds a __BRAVE_API_KEY__ placeholder; scripts/lib/compose.sh renders it
+      # holds a __BRAVE_API_KEY__ placeholder; lib/compose.sh renders it
       # into $AILOCAL_STATE (outside the checkout, mode 0600) with the value of
       # BRAVE_API from .env. SearXNG has no env interpolation for engine
       # api_key, so substitution before mount is the only secret-safe path.
       # Mounted read-only: the container must never write the rendered secret.
-      - ${AILOCAL_SEARXNG_SETTINGS:?run via scripts/lib/compose.sh (dc) so settings are rendered}:/etc/searxng/settings.yml:ro
+      - ${AILOCAL_SEARXNG_SETTINGS:?run via lib/compose.sh (dc) so settings are rendered}:/etc/searxng/settings.yml:ro
       # Silences the two botdetection startup lines. Does NOT enable the
       # limiter (server.limiter: false does that) — see the file's header.
       - ./deploy/searxng/limiter.toml:/etc/searxng/limiter.toml:ro

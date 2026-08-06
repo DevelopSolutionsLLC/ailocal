@@ -28,7 +28,7 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts" / "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "benchmarks"))
 from harness import REPO, Suite, load_module  # noqa: E402
 import policy as P  # noqa: E402
@@ -60,7 +60,7 @@ PARSED = {t: parse(t) for t in PROFILES}
 
 def load_sync():
     """Fresh sync-models module: each sandbox needs unshared state."""
-    return load_module("sync_models", REPO / "scripts" / "sync-models.py")
+    return load_module("sync_models", REPO / "lib" / "sync-models.py")
 
 
 def sandbox(marker=None, profile_text=None) -> Path:
@@ -205,7 +205,7 @@ def resolver_checks() -> None:
     print("\nNO SECOND PARSER, NO SILENT FALLBACK")
     shells = ["install-models.sh", "start.sh", "validate.sh", "doctor.sh"]
     for name in shells:
-        src = (REPO / "scripts" / name).read_text()
+        src = (REPO / "lib" / name).read_text()
         check("echo 64gb" not in src, f"{name} has no hardcoded 64gb fallback")
         check(not re.search(r"cat .*active-profile", src),
               f"{name} does not read active-profile directly")
@@ -218,11 +218,11 @@ def resolver_checks() -> None:
                   f"{name} delegates tier resolution to the shared checks layer")
         else:
             check(n == 1, f"{name} resolves the tier exactly once")
-    doctor = (REPO / "scripts" / "doctor.sh").read_text()
+    doctor = (REPO / "lib" / "doctor.sh").read_text()
     check(not re.search(r"sed -n .*profiles/", doctor),
           "doctor.sh no longer parses profile YAML with sed")
 
-    sync = (REPO / "scripts" / "sync-models.py").read_text()
+    sync = (REPO / "lib" / "sync-models.py").read_text()
     check("import policy as _pc" in sync, "sync-models uses the shared resolver")
     check('return "64gb"' not in sync, "sync-models no longer defaults to 64gb")
     bench = (REPO / "benchmarks" / "suite.py").read_text()
@@ -243,22 +243,24 @@ def resolver_checks() -> None:
         check(a == b, f"{t}: benchmark and resolver return identical role values")
 
     print("\nCLI IS USABLE FROM A SHELL AND FAILS NON-ZERO")
-    cli = str(REPO / "scripts" / "profile-config")
-    r = subprocess.run([cli, "active-tier"], capture_output=True, text=True)
+    # The public surface is `ailocal profile <...>`; lib/profile-config is an
+    # internal implementation and is deliberately not executable.
+    cli = [str(REPO / "ailocal"), "profile"]
+    r = subprocess.run(cli + ["active-tier"], capture_output=True, text=True)
     check(r.returncode == 0 and r.stdout.strip() in P.TIERS,
           f"active-tier prints a bare scalar ({r.stdout.strip()})")
-    r = subprocess.run([cli, "role", "architecture", "--field", "model"],
+    r = subprocess.run(cli + ["role", "architecture", "--field", "model"],
                        capture_output=True, text=True)
     check(r.returncode == 0 and ":" in r.stdout,
           "role --field prints a bare scalar")
-    r = subprocess.run([cli, "role", "embeddings", "--field", "top_p"],
+    r = subprocess.run(cli + ["role", "embeddings", "--field", "top_p"],
                        capture_output=True, text=True)
     check(r.returncode == 0 and r.stdout.strip() == "",
           "an absent optional field prints empty, not the string 'None'")
-    r = subprocess.run([cli, "role", "nosuchrole"], capture_output=True, text=True)
+    r = subprocess.run(cli + ["role", "nosuchrole"], capture_output=True, text=True)
     check(r.returncode != 0 and P.ROLE_MISSING in r.stderr,
           "an unknown role exits non-zero with a code on stderr")
-    r = subprocess.run([cli, "validate"], capture_output=True, text=True)
+    r = subprocess.run(cli + ["validate"], capture_output=True, text=True)
     check(r.returncode == 0, "validate passes for the current repository")
 
 
@@ -298,7 +300,7 @@ def resolver_checks() -> None:
           f"({impl['context_input']})")
     # The regression this guards: the codex block read a key the geometry
     # migration deleted, so it silently never regenerated and kept stale values.
-    sync = (REPO / "scripts" / "sync-models.py").read_text()
+    sync = (REPO / "lib" / "sync-models.py").read_text()
     check('_cx = _geom(' in sync and 'cx_in = _cx["context_input"]' in sync,
           "Codex compaction reads shared geometry and caps on context_input")
     check("codex compaction cannot be derived" in sync,
@@ -376,7 +378,7 @@ def resolver_checks() -> None:
     check(g["total_context"] == 1200 and g["num_ctx"] == 1200
           and g["num_predict"] == 200 and g["max_input_tokens"] == 1000,
           "geometry() derives all four values from the two declared ones")
-    sync_src = (REPO / "scripts" / "sync-models.py").read_text()
+    sync_src = (REPO / "lib" / "sync-models.py").read_text()
     check("_pc.geometry(" in sync_src,
           "sync-models calls the shared geometry, does not re-derive it")
     # BEHAVIOURAL, not textual: the previous form matched one exact expression
@@ -485,10 +487,10 @@ def resolver_checks() -> None:
 
     # Shell consumers must not parse YAML either.
     for name in ("start.sh", "doctor.sh", "install-models.sh"):
-        src = (REPO / "scripts" / name).read_text()
+        src = (REPO / "lib" / name).read_text()
         check("active:" not in src or "grep -E" not in src.split("active:")[0][-80:],
               f"{name} does not grep|sed profile YAML")
-    check("effective-profile.json" in (REPO / "scripts" / "install-models.sh").read_text(),
+    check("effective-profile.json" in (REPO / "lib" / "install-models.sh").read_text(),
           "install-models.sh consumes the generated artifact")
 
     print("\nSTALENESS AND CORRUPTION FAIL CLOSED")
@@ -547,10 +549,10 @@ def resolver_checks() -> None:
     _sh.rmtree(box, ignore_errors=True)
 
     print("\nNO RUNTIME YAML FALLBACK, NO REDUNDANT WRAPPER")
-    cli_src = (REPO / "scripts" / "profile-config").read_text()
+    cli_src = (REPO / "lib" / "profile-config").read_text()
     check("effective_role" in cli_src and "active_tier" in cli_src,
           "the CLI reads the artifact")
-    check(not (REPO / "scripts" / "profile-json").exists(),
+    check(not (REPO / "lib" / "profile-json").exists(),
           "scripts/profile-json is deleted (jq is already a dependency)")
     check("_legacy_load_models_yaml" not in sync,
           "the dead legacy parser is deleted")
@@ -573,7 +575,7 @@ def resolver_checks() -> None:
     )
     for entry in ("install.sh", "install-models.sh", "install-clients.sh",
                   "doctor.sh", "update.sh"):
-        path = REPO / "scripts" / entry
+        path = REPO / "lib" / entry
         if not path.exists():
             continue
         src = path.read_text()
@@ -582,7 +584,7 @@ def resolver_checks() -> None:
               f"{entry} does not read profile YAML fields itself (found {hit})")
 
     # And the plan it prints must use the CURRENT schema, from the resolver.
-    inst = (REPO / "scripts" / "install.sh").read_text()
+    inst = (REPO / "install.sh").read_text()
     check("context_input" in inst and "max_output" in inst,
           "install.sh reports context_input/max_output, not the removed fields")
     check("profile-config" in inst and "profile-summary" in inst,
@@ -613,7 +615,7 @@ def resolver_checks() -> None:
     # The point was never jq: it was that doctor must not extract profile fields
     # with a bespoke parser. It now reads them through policy itself,
     # which is the same guarantee one layer stronger.
-    _doc = (REPO / "scripts" / "doctor.sh").read_text()
+    _doc = (REPO / "lib" / "doctor.sh").read_text()
     check(not re.search(r"(sed|awk|grep)[^|\n]*profiles/", _doc),
           "doctor.sh extracts no profile field with a bespoke parser")
     check("checks/run.py" in _doc,
@@ -622,7 +624,7 @@ def resolver_checks() -> None:
     print("\nGENERATION IS ATOMIC AND INSTALL FAILS CLOSED")
     check("flush_stage" in sync and "os.replace" in sync,
           "outputs are staged and swapped atomically")
-    inst = (REPO / "scripts" / "install.sh").read_text()
+    inst = (REPO / "install.sh").read_text()
     check("sync-models.py\" || true" not in inst and "|| true" not in
           inst.split("Syncing model config")[1].split("step ")[0],
           "install.sh no longer swallows a generation failure")
@@ -743,7 +745,7 @@ def hardware_checks() -> None:
 
     # ── tier selection ──────────────────────────────────────────────────────────
     print("\nTIER SELECTION")
-    install = (REPO / "scripts" / "install.sh").read_text()
+    install = (REPO / "install.sh").read_text()
     for gb, expected in ((8, None), (16, "16gb"), (18, "16gb"), (24, "16gb"),
                          (32, "32gb"), (36, "32gb"), (48, "32gb"),
                          (64, "64gb"), (96, "64gb"), (128, "128gb"), (192, "128gb")):
@@ -906,7 +908,7 @@ def policy_checks() -> None:
         shutil.rmtree(d, ignore_errors=True)
 
     _suite.section("ONE OWNER")
-    policy_src = (REPO / "scripts" / "lib" / "policy.py").read_text()
+    policy_src = (REPO / "lib" / "policy.py").read_text()
     for fn in ("load_client_policy", "resolve_active_tier", "active_profile_path",
                "profile_path", "geometry", "required_models"):
         check(f"def {fn}(" in policy_src, f"policy.py owns {fn}()")
@@ -914,9 +916,9 @@ def policy_checks() -> None:
     # No production consumer may CONSTRUCT a policy path. Prose, prompts and
     # remediation text may name the file; only code that builds the path is a
     # second owner.
-    prod = [q for q in (REPO / "scripts").rglob("*.py")
+    prod = [q for q in (REPO / "lib").rglob("*.py")
             if "/tests/" not in str(q) and q.name != "policy.py"]
-    prod += [q for q in (REPO / "scripts").rglob("*.sh") if "/tests/" not in str(q)]
+    prod += [q for q in (REPO / "lib").rglob("*.sh") if "/tests/" not in str(q)]
     # Path CONSTRUCTION only: a quoted path that is the whole value, or a
     # pathlib join. Remediation sentences and prompts name the file in prose and
     # are not a second owner.
@@ -934,12 +936,12 @@ def policy_checks() -> None:
           ", ".join(sorted(set(offenders))))
 
     # The validator must not execute the generator to read policy.
-    cfg = (REPO / "scripts" / "lib" / "checks" / "config.py").read_text()
+    cfg = (REPO / "lib" / "checks" / "config.py").read_text()
     check("sync-models.py" not in cfg or "spec_from_file_location" not in cfg,
           "validation does not load the generator to read policy")
 
     _suite.section("GENERATOR CONSUMES POLICY")
-    gen = (REPO / "scripts" / "sync-models.py").read_text()
+    gen = (REPO / "lib" / "sync-models.py").read_text()
     check("_pc.load_client_policy()" in gen,
           "sync-models reads client policy through the owner")
     check(gen.count("def load_clients_yaml") == 1

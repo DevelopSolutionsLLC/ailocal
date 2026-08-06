@@ -4,7 +4,7 @@ name: ailocal
 #
 # This file is ONE HALF of the ailocal stack. It is never used alone — scripts
 # always merge it with deploy/searxng/compose.yaml into a single Compose
-# project named "ailocal" (see scripts/lib/compose.sh):
+# project named "ailocal" (see lib/compose.sh):
 #
 #   docker compose --project-directory <repo root> \
 #     -f deploy/litellm/compose.yaml \
@@ -28,7 +28,7 @@ services:
     # Docs: https://docs.litellm.ai/docs/proxy/docker_quick_start
     #
     # Pinned by digest, not tag: a moving tag would change proxy behaviour without
-    # a commit. scripts/check-litellm-version.sh gates the running build against
+    # a commit. lib/check-litellm-version.sh gates the running build against
     # the validated version.
     image: ghcr.io/berriai/litellm@sha256:a1745e629abfb17d434426ff48b115f54f4f4c4a0f5af241de569e93c63c411e
     container_name: ailocal-litellm
@@ -71,7 +71,7 @@ services:
       # tools it called. Empty = off. Paired with lib/diagnostics/verify-session.py.
       - AILOCAL_SESSION_LEDGER=${AILOCAL_SESSION_LEDGER:-}
       # request_trace.py — one JSONL record per request. Empty = off.
-      # The version this stack was VALIDATED against. scripts/doctor.sh compares
+      # The version this stack was VALIDATED against. lib/doctor.sh compares
       # it to the running library and fails loudly on drift, so a floating tag or
       # a manual pull can never again leave docs and runtime disagreeing.
       - AILOCAL_LITELLM_VERSION=1.93.0
@@ -101,7 +101,7 @@ services:
       - ${AILOCAL_STATE:-./data}/litellm:/app/generated:ro
       # Writable: the only path the proxy may write to. /app/config is ro, so
       # tool_gateway captures need their own mount.
-      # Absolute, from AILOCAL_STATE (scripts/lib/compose.sh). Runtime state
+      # Absolute, from AILOCAL_STATE (lib/compose.sh). Runtime state
       # must not accumulate inside the checkout.
       - ${AILOCAL_STATE:-./data}/captures:/app/captures
     ports:
