@@ -2,36 +2,23 @@
 # install-vscode.sh — configure VS Code for the local stack WITHOUT hand-editing
 # anything in the UI, the same way claude-local and codex-local are configured.
 #
-# WHAT WAS WRONG BEFORE (researched, not guessed)
-# The previous VS Code setup wrote settings that VS Code and the connector no
-# longer use. Three layers of deprecation:
-#
-#   litellm-connector.baseUrl / .backends   deprecated by the extension in favour
-#                                           of VS Code's Language Models provider
-#                                           groups + SecretStorage
-#   github.copilot.chat.customOAIModels     deprecated by VS Code
-#   "OpenAI Compatible" provider            deprecated, replaced by "Custom
-#                                           Endpoint" (Chat Completions /
-#                                           Responses / Messages API types)
-#
-# Sources:
+# DEPRECATED SETTINGS — do not reintroduce. The extension replaced
+# litellm-connector.baseUrl/.backends with VS Code's Language Models provider
+# groups plus SecretStorage; VS Code deprecated github.copilot.chat.customOAIModels
+# and replaced the "OpenAI Compatible" provider with "Custom Endpoint".
 #   https://github.com/gethnet/litellm-connector-copilot/
 #   https://code.visualstudio.com/docs/agent-customization/language-models
 #
-# THE AUTOMATABLE SURFACE
-# The provider group is a real file:
-#   ~/Library/Application Support/Code/User/chatLanguageModels.json
-# so it can be written from a script. Only the API key VALUE lives in
-# SecretStorage (Keychain-backed) and cannot be seeded from outside VS Code — but
-# the file holds a *reference* to it (${input:chat.lm.secret.<id>}), and an
-# existing reference is PRESERVED here, so a key entered once never has to be
-# entered again.
+# THE AUTOMATABLE SURFACE. The provider group is a real file
+# (~/Library/Application Support/Code/User/chatLanguageModels.json) and can be
+# written from a script. Only the API key VALUE lives in SecretStorage and
+# cannot be seeded from outside VS Code; the file holds a reference to it
+# (${input:chat.lm.secret.<id>}), and an existing reference is PRESERVED here so
+# a key entered once is never re-entered.
 #
-# Individual model entries are NOT written here. The connector discovers them
+# Individual model entries are NOT written here: the connector discovers them
 # from the proxy's /model/info at runtime, which is why that endpoint is probed
-# below. (An earlier draft of this header claimed the entries were generated from
-# capabilities.generated.json — they are not, and the claim is removed rather
-# than left to mislead.)
+# below.
 #
 # Usage: ailocal vscode [--dry-run]
 set -uo pipefail

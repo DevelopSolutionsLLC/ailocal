@@ -29,12 +29,6 @@ prompt_value() {
 }
 
 # Prompt for a secret (no echo); skips prompt if already set in env.
-prompt_secret() {
-  local varname="$1"
-  local prompt="$2"
-  read -r -s -p "  $prompt (leave blank to auto-generate): " REPLY
-  echo
-}
 
 # ── Preflight: what is missing, what it costs ──────────────────────────────
 #
@@ -465,13 +459,9 @@ PROFILE_STATUS=""
 # artifact, so generation has to have succeeded first -- and a generation
 # failure must stop the install before any model is pulled.
 #
-# This block used to be a Python regex heredoc parsing the profile YAML
-# directly: a SECOND parser, in a shell entry point, which is exactly what
-# policy.py exists to prevent. It read `context` and `num_predict`,
-# fields the geometry migration removed, so on the current schema it printed:
-#
-#     configured context:  None
-#     max output:          None
+# The plan is read through policy.py, never parsed here: a second profile
+# parser in a shell entry point is exactly what policy.py exists to prevent,
+# and it silently prints None once the schema moves.
 #
 # and would have kept printing plausible-looking stale numbers had the field
 # names survived. Shell entry points ask the resolver; they do not parse YAML.
@@ -504,7 +494,7 @@ if ! python3 "$ROOT_DIR/lib/profile-config" profile-summary >/dev/null 2>&1; the
   exit 1
 fi
 # jq, not an embedded parser: it is already a hard install dependency (checked
-# in the preflight above) and doctor.sh queries the same summary with it.
+# in the preflight above) and `ailocal doctor` queries the same summary with it.
 _jq() { printf '%s' "$_PLAN" | jq -r "$1"; }
 _SHARED_MODEL="$(_jq '[.roles[].model] | group_by(.) | max_by(length) | .[0]')"
 _SHARED_ROLES="$(_jq --arg m "$_SHARED_MODEL" '[.roles|to_entries[]|select(.value.model==$m)|.key]|sort|join(", ")' 2>/dev/null \
@@ -558,7 +548,7 @@ run_next_steps() {
 
   echo
   step "Starting Docker services"
-  bash "$ROOT_DIR/lib/start.sh" --no-wait
+  bash "$ROOT_DIR/lib/lifecycle.sh" start --no-wait
 
   # Always restart LiteLLM so it picks up any config or model changes.
   echo
@@ -576,7 +566,7 @@ run_next_steps() {
 
   echo
   step "Checking health"
-  bash "$ROOT_DIR/lib/doctor.sh" || true
+  python3 "$ROOT_DIR/lib/checks/run.py" doctor || true
 
   # Client configs are OPT-IN — installing them rewrites/merges existing
   # Claude Code / Codex / VS Code settings, which can disrupt a customized
@@ -659,10 +649,10 @@ SEARXNG_SECRET=${SEARXNG_SECRET}
 
 # ── Cloud fallbacks (disabled by default) ─────────────────────────────────
 # Set ENABLE_CLOUD=true and uncomment the relevant model block in
-# the generated config.yaml to enable cloud fallback for a specific model.
+# the generated litellm/config.yaml to enable cloud fallback for a specific model.
 ENABLE_CLOUD=false
 # To enable cloud fallback: add your key here, set ENABLE_CLOUD=true,
-# and uncomment the relevant model block in the generated config.yaml.
+# and uncomment the relevant model block in the generated litellm/config.yaml.
 # Then: ailocal start  (or: dc restart litellm)
 ANTHROPIC_API_KEY=
 OPENAI_API_KEY=

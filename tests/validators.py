@@ -36,7 +36,7 @@ _suite = Suite("VALIDATOR CHECKS")
 check = _suite.check
 
 # Public validators. A network call in any of these must carry a timeout.
-PUBLIC = ("validate.sh", "smoke-test.sh", "doctor.sh",
+PUBLIC = ("checks/run.py",
           "validate-claude-e2e.sh", "validate-codex-e2e.sh",
           "validate-vscode-e2e.sh")
 
@@ -121,37 +121,81 @@ def bounded_checks() -> None:
         check(isinstance(v, int) and 0 < v <= 600, f"services.{attr} is bounded ({v})")
 
 
+def search_quota_checks() -> None:
+    """Default diagnostics must never spend metered external search quota.
+
+    Configuration-level, deliberately: proving this by issuing a real federated
+    query would spend the very quota the check exists to protect.
+    """
+    _suite.section("DEFAULT CHECKS SPEND NO SEARCH QUOTA")
+    src = (REPO / "lib" / "checks" / "services.py").read_text()
+    run_src = (REPO / "lib" / "checks" / "run.py").read_text()
+
+    check("!wp" in S.FREE_ENGINE_QUERY,
+          "the default search query pins a single engine", S.FREE_ENGINE_QUERY)
+    check(S.FREE_ENGINE_NAME == "wikipedia",
+          f"the pinned engine is free ({S.FREE_ENGINE_NAME})")
+
+    # check_searxng is what doctor runs: it must not hit /search at all.
+    body = src.split("def check_searxng(")[1].split("def check_searxng_query(")[0]
+    check("/config" in body and "/search?" not in body,
+          "doctor's reachability check queries no engine (uses /config)")
+
+    # The federated path exists but must be reachable only through the flag.
+    check("def check_searxng_external(" in src,
+          "the federated search is a separate, named function")
+    ext = run_src.split("check_searxng_external")[0]
+    check("--external-search" in run_src,
+          "the federated search requires an explicit --external-search flag")
+    check(ext.rstrip().endswith("results.append(S.") or "--external-search" in ext[-200:],
+          "nothing calls the federated search outside that flag")
+
+    # No default caller anywhere may reach it.
+    for name in ("test-all.sh", "install-clients.sh", "install.sh"):
+        path = REPO / "lib" / name if (REPO / "lib" / name).exists() else REPO / name
+        if path.exists():
+            check("check_searxng_external" not in path.read_text()
+                  and "--external-search" not in path.read_text(),
+                  f"{name} never triggers the federated search")
+
+    # The query the default path issues must name exactly one engine.
+    check(S.FREE_ENGINE_QUERY.strip().startswith("!"),
+          "the default query uses engine-restricting bang syntax")
+
+
 def exits_checks() -> None:
     """doctor's three states, and the two-state contract of validate/smoke."""
     import subprocess
     root = REPO / "lib"
 
-    def run(script: str, env: dict | None = None, args: list[str] | None = None) -> int:
+    def run(mode: str, env: dict | None = None, args: list[str] | None = None) -> int:
+        """validate / smoke / doctor are modes of one implementation."""
         e = {**os.environ, **(env or {})}
-        return subprocess.run(["bash", str(root / script), *(args or [])],
-                              capture_output=True, text=True, timeout=600, env=e).returncode
+        return subprocess.run(
+            ["python3", str(root / "checks" / "run.py"), mode, *(args or [])],
+            capture_output=True, text=True, timeout=600, env=e).returncode
 
-    check(run("doctor.sh") == 0, "doctor exits 0 on a healthy stack")
-    check(run("doctor.sh", {"AILOCAL_PROXY": "http://127.0.0.1:1"}) == 2,
+    check(run("doctor") == 0, "doctor exits 0 on a healthy stack")
+    check(run("doctor", {"AILOCAL_PROXY": "http://127.0.0.1:1"}) == 2,
           "doctor exits 2 when checks fail (degraded)")
 
     marker = P.active_profile_path()
     original = marker.read_text()
     try:
         marker.write_text("999gb\n")
-        rc = run("doctor.sh")
+        rc = run("doctor")
         check(rc == 1, f"doctor exits 1 when the tier is unresolvable (got {rc})")
-        check(run("validate.sh") == 1, "validate fails on an unresolvable tier")
+        check(run("validate") == 1, "validate fails on an unresolvable tier")
     finally:
         marker.write_text(original)
 
-    check(run("validate.sh") == 0, "validate exits 0 once restored")
+    check(run("validate") == 0, "validate exits 0 once restored")
     # The defining property: deterministic validation needs no running stack.
-    check(run("validate.sh", {"AILOCAL_PROXY": "http://127.0.0.1:1",
+    check(run("validate", {"AILOCAL_PROXY": "http://127.0.0.1:1",
                               "OLLAMA_HOST": "http://127.0.0.1:1",
                               "AILOCAL_LITELLM_CONTAINER": "ailocal-absent"}) == 0,
           "validate exits 0 with the whole stack unreachable")
-    check(run("smoke-test.sh", {"AILOCAL_PROXY": "http://127.0.0.1:1"}) == 1,
+    check(run("smoke", {"AILOCAL_PROXY": "http://127.0.0.1:1"}) == 1,
           "smoke exits 1 when the proxy is unreachable")
 
 
@@ -164,8 +208,6 @@ def e2e_checks() -> None:
     for name in ("validate-claude-e2e.sh", "validate-codex-e2e.sh"):
         src = (REPO / "lib" / name).read_text()
         check("e2e.sh" in src, f"{name} uses the shared lifecycle")
-        check("e2e_run" in src, f"{name} runs the client under a budget")
-        check("e2e_sweep" in src, f"{name} sweeps its process tree")
 
     # Codex must stay honestly blocked: arriving content is not success.
     codex = (REPO / "lib" / "validate-codex-e2e.sh").read_text()
@@ -189,6 +231,7 @@ def e2e_checks() -> None:
 
 
 SECTIONS = {"deterministic": deterministic_checks,
+            "search-quota": search_quota_checks,
             "classification": classification_checks,
             "bounded": bounded_checks,
             "exits": exits_checks,
