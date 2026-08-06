@@ -24,12 +24,19 @@ DISPATCHED = {
     "profiles.py": ("resolver", "hardware", "policy"),
     "gateway.py": ("persona", "repair", "trace"),
     "benchmark.py": ("library", "planner", "command", "runtime"),
+    "clients.sh": ("roles", "codex"),
 }
+
+
+def _argv(path: Path, args: tuple[str, ...]) -> list[str]:
+    """Shell suites are run by bash, Python suites by this interpreter."""
+    launcher = ["bash"] if path.suffix == ".sh" else [sys.executable]
+    return launcher + [str(path), *args]
 
 
 def counts(path: Path, *args: str) -> tuple[int, int]:
     """Run a suite and return (exit status, number of reported checks)."""
-    r = run([sys.executable, str(path), *args], timeout=300)
+    r = run(_argv(path, args), timeout=300)
     n = sum(1 for line in r.stdout.splitlines()
             if line.startswith("  ") and ("PASS" in line or "FAIL" in line))
     return r.returncode, n
@@ -40,12 +47,18 @@ for name, sections in DISPATCHED.items():
     _suite.section(name)
 
     # Importing must not assert anything: that is what hid the gateway defect.
-    probe = (f"import runpy, sys; sys.argv=['x']; "
-             f"m=runpy.run_path({str(path)!r}, run_name='not_main'); "
-             f"print('CHECKS', m['_suite'].passed + len(m['_suite'].failures))")
-    r = run([sys.executable, "-c", probe], timeout=300)
-    emitted = next((int(l.split()[1]) for l in r.stdout.splitlines()
-                    if l.startswith("CHECKS")), -1)
+    # Sourcing is the shell equivalent, so the property is the same either way.
+    if path.suffix == ".sh":
+        r = run(["bash", "-c", f'. "{path}"'], timeout=300)
+        emitted = sum(1 for l in r.stdout.splitlines()
+                      if l.startswith("  ") and ("PASS" in l or "FAIL" in l))
+    else:
+        probe = (f"import runpy, sys; sys.argv=['x']; "
+                 f"m=runpy.run_path({str(path)!r}, run_name='not_main'); "
+                 f"print('CHECKS', m['_suite'].passed + len(m['_suite'].failures))")
+        r = run([sys.executable, "-c", probe], timeout=300)
+        emitted = next((int(l.split()[1]) for l in r.stdout.splitlines()
+                        if l.startswith("CHECKS")), -1)
     check(emitted == 0, f"{name} emits no checks at import (got {emitted})")
 
     rc_all, n_all = counts(path)
@@ -67,7 +80,8 @@ for name, sections in DISPATCHED.items():
 _suite.section("no module-level mutable state")
 for name in DISPATCHED:
     src = (REPO / "tests" / name).read_text()
-    n = sum(1 for line in src.splitlines() if line.strip().startswith("global "))
+    kw = "declare -g " if name.endswith(".sh") else "global "
+    n = sum(1 for line in src.splitlines() if line.strip().startswith(kw))
     check(n == 0, f"{name} declares no globals (found {n})")
 
 _suite.section("shell suites report failure")

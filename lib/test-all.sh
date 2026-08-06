@@ -154,10 +154,10 @@ if [ -n "$FULL" ]; then
 fi
 # Dry-run only (stub `claude` on PATH, no inference), so it stays on every run.
 run "client role alias overrides (defaults intact, fails closed)" \
-    bash tests/client-role-override.sh
+    bash tests/clients.sh roles
 
 run "codex MCP is withheld (no grepai/lsp/github, no re-sync)" \
-    bash tests/codex-mcp-withheld.sh
+    bash tests/clients.sh codex
 
 run "commit-msg hook (blocks attribution, allows product names)" \
     bash tests/commit-msg-hook.sh

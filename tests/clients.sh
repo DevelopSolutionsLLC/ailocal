@@ -1,31 +1,119 @@
 #!/usr/bin/env bash
-# codex-local has NO MCP servers, by policy — and ailocal must not restore them.
+# clients.sh — assertions over the GENERATED client configuration.
 #
-# THE REGRESSION THIS GUARDS. install-clients.sh used to run `cadence mcp sync`
-# immediately after rewriting codex/config.toml, explicitly to put Cadence's
-# [mcp_servers.*] blocks (grepai, lsp) BACK, and warned when Codex ended up with
-# none. That predates the settled client policy:
+#   clients.sh [roles|codex]     (default: all sections)
 #
-#   codex-local intentionally has no grepai MCP, no LSP MCP, no GitHub MCP and
-#   no namespace tools. Codex cannot dispatch namespaced tool names, so an MCP
-#   server there advertises a surface it cannot drive.
-#
-# So an empty MCP section is the CORRECT outcome, and a global `cadence mcp
-# sync` is doubly wrong: it re-adds what policy withholds, and it mutates other
-# clients as a side effect of installing this one.
-#
-# Cadence keeps MCP ownership. ailocal simply stops undoing and redoing its work.
-# claude-local is unaffected: its registrations live in .claude.json, which
-# install-clients.sh preserves rather than rewriting.
-#
-# Static + fixture based: it must not depend on Cadence actually being installed,
-# and it must never mutate the real deployed config.
+# Both sections read what sync-models.py generated under the state root. They
+# make no inference call, need no running proxy, and never mutate deployed
+# config. Nothing executes at source time: the sections are functions and the
+# dispatch is at the bottom.
 set -uo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/harness.sh"
 
+# One resolution of the generated-client root for both sections.
+_state_root() {
+  [ -n "${_STATE_ROOT:-}" ] || _STATE_ROOT="$(python3 "$ROOT_DIR/lib/profile-config" state-root)"
+  printf '%s' "$_STATE_ROOT"
+}
+
+roles_checks() {
+CONFIGURE="$(_state_root)/clients/configure.zsh"
+
+STUB="$(temp_dir)"   # harness owns cleanup; do not install a private EXIT trap
+cat > "$STUB/claude" <<'EOF'
+#!/bin/sh
+echo "OPUS=$ANTHROPIC_DEFAULT_OPUS_MODEL"
+echo "SONNET=$ANTHROPIC_DEFAULT_SONNET_MODEL"
+echo "HAIKU=$ANTHROPIC_DEFAULT_HAIKU_MODEL"
+echo "FABLE=$ANTHROPIC_DEFAULT_FABLE_MODEL"
+EOF
+chmod +x "$STUB/claude"
+
+# Runs claude-local with the stub first on PATH. Prints its output; returns rc.
+run() { env "$@" PATH="$STUB:$PATH" zsh -c "source '$CONFIGURE' >/dev/null 2>&1; claude-local --dry" 2>&1; }
+
+echo "client role alias overrides"
+
+out="$(run AILOCAL_UNUSED=1)"
+check $([ "$(grep -c '^OPUS=ailocal-architecture$' <<<"$out")" = 1 ] && echo 0 || echo 1) \
+  "no override: architecture slot keeps its production alias" "$out"
+check $([ "$(grep -c '^SONNET=ailocal-implementation$' <<<"$out")" = 1 ] && echo 0 || echo 1) \
+  "no override: implementation slot unchanged" "$out"
+check $([ "$(grep -c '^HAIKU=ailocal-fast$' <<<"$out")" = 1 ] && echo 0 || echo 1) \
+  "no override: fast slot unchanged" "$out"
+check $([ "$(grep -c '^FABLE=ailocal-review$' <<<"$out")" = 1 ] && echo 0 || echo 1) \
+  "no override: review slot unchanged" "$out"
+
+# A production alias is used as the "valid" target so the test needs no
+# temporary alias and no LiteLLM mutation.
+out="$(run AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE=ailocal-review)"
+check $([ "$(grep -c '^OPUS=ailocal-review$' <<<"$out")" = 1 ] && echo 0 || echo 1) \
+  "valid override reaches the client command environment" "$out"
+check $([ "$(grep -c '^SONNET=ailocal-implementation$' <<<"$out")" = 1 ] && echo 0 || echo 1) \
+  "overriding architecture leaves implementation untouched" "$out"
+check $([ "$(grep -c '^HAIKU=ailocal-fast$' <<<"$out")" = 1 ] && echo 0 || echo 1) \
+  "overriding architecture leaves fast untouched" "$out"
+check $([ "$(grep -c '^FABLE=ailocal-review$' <<<"$out")" = 1 ] && echo 0 || echo 1) \
+  "overriding architecture leaves review untouched" "$out"
+
+# Fail closed. Falling back to production here would silently measure the
+# production model while reporting the candidate's name.
+out="$(run AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE=bench-does-not-exist)"; rc=$?
+check $([ "$rc" != 0 ] && echo 0 || echo 1) \
+  "unknown override fails before launching the client" "rc=$rc"
+check $([ "$(grep -c '^OPUS=' <<<"$out")" = 0 ] && echo 0 || echo 1) \
+  "unknown override never reaches the client at all" "$out"
+check $(grep -q "not served by LiteLLM" <<<"$out" && echo 0 || echo 1) \
+  "unknown override explains itself on stderr" "$out"
+
+# OUTCOME, not configuration. The previous suite proved the slot variable reached
+# the client and passed while nine turns silently served the production model:
+# settings.json pins `model`, which OUTRANKS ANTHROPIC_DEFAULT_*. Verified
+# precedence (code.claude.com/docs/en/settings):
+#   --model > settings.json "model" > ANTHROPIC_DEFAULT_*_MODEL
+tpl="$ROOT_DIR/clients/configure.template.zsh"
+check $(grep -q -- '--model "$AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE"' "$tpl" && echo 0 || echo 1) \
+  "architecture override passes --model, the highest-precedence mechanism"
+check $(grep -q 'claude "${_model_args\[@\]}" "$@"' "$tpl" && echo 0 || echo 1) \
+  "--model args reach the claude invocation"
+check $([ -z "$(AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE= zsh -c "source '$CONFIGURE'; typeset -p _model_args" 2>/dev/null)" ] && echo 0 || echo 1) \
+  "no override adds no --model argument (defaults untouched)"
+# The proxy log is the only authority on which model actually ran. Asserted here
+# as a capability; the benchmark calls it live before every candidate.
+# Asserted through the IMPORT surface, not by grepping a file: these moved to
+# clients.py in the module split and the old grep asserted their
+# location rather than their existence. Callers reach them via `import
+# benchmark`, so that is what is checked.
+check $(python3 -c "
+import sys, inspect; sys.path.insert(0, '$ROOT_DIR/lib'); sys.path.insert(0, '$ROOT_DIR/benchmarks')
+import suite as B
+assert callable(B.served_models_since)
+" >/dev/null 2>&1 && echo 0 || echo 1) \
+  "harness can read served aliases from the proxy log"
+check $(python3 -c "
+import sys, inspect; sys.path.insert(0, '$ROOT_DIR/lib'); sys.path.insert(0, '$ROOT_DIR/benchmarks')
+import suite as B
+assert 'INVALID_ROUTING' in inspect.getsource(B.verify_routing)
+" >/dev/null 2>&1 && echo 0 || echo 1) \
+  "routing mismatch is classified INVALID_ROUTING, not warned about"
+
+# The override block is hand-maintained and MUST live outside the spliced region,
+# or sync-models.py would erase it on the next regeneration.
+tpl="$ROOT_DIR/clients/configure.template.zsh"
+gen_begin=$(grep -n "BEGIN GENERATED claude slots" "$tpl" | cut -d: -f1)
+gen_end=$(grep -n "END GENERATED claude slots" "$tpl" | cut -d: -f1)
+ovr=$(grep -n "_ailocal_ovr=(" "$tpl" | cut -d: -f1)
+check $([ -n "$ovr" ] && [ "$ovr" -gt "$gen_end" ] && echo 0 || echo 1) \
+  "override logic sits outside the generated region" "ovr=$ovr gen=$gen_begin-$gen_end"
+check $([ "$(grep -c 'AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE' "$CONFIGURE")" -ge 1 ] && echo 0 || echo 1) \
+  "override logic survives sync-models.py regeneration"
+}
+
+codex_checks() {
+GEN="$(_state_root)/clients/codex/config.toml"
+
 echo "CODEX MCP IS WITHHELD"
 
-GEN="$(python3 "$ROOT_DIR/lib/profile-config" state-root)/clients/codex/config.toml"
 check $([ -f "$GEN" ] && echo 0 || echo 1) "generated codex config exists"
 
 # 1. The generated artifact carries no MCP server blocks.
@@ -166,5 +254,16 @@ PY
 else
   printf '  \033[33mSKIP\033[0m  Cadence runtime not installed — consumer unverified\n'
 fi
+}
 
-report || exit 1
+# Executed, not sourced: sourcing this file defines the sections and runs
+# nothing, so a caller can source it to reuse a section without emitting checks.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  case "${1:-all}" in
+    roles) roles_checks ;;
+    codex) codex_checks ;;
+    all)   roles_checks; codex_checks ;;
+    *) echo "unknown section: $1 (expected roles|codex|all)" >&2; exit 2 ;;
+  esac
+  report || exit 1
+fi
