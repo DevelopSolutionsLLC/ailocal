@@ -23,7 +23,7 @@
 # (# ailocal-configure / # ailocal-finalize) are the ONLY footprint this
 # installer leaves in ~/.zshrc — everything else lives under
 # ~/.config/ailocal/, so uninstalling is just removing those two lines plus
-# that directory (see lib/teardown.sh --clients).
+# that directory (see `ailocal teardown --clients`).
 #
 # Safe to run multiple times — backs up before touching, skips if already installed.
 set -euo pipefail
