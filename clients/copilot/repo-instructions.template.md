@@ -150,12 +150,8 @@ ailocal sync > /tmp/sync.log 2>&1 & exit 0
 
 ---
 
-## General coding standards
+## Engineering standard
 
-- Match the existing style — indentation, naming, file structure
-- Shell scripts: `set -euo pipefail`, use the existing `info/warn/step` helpers
-- Python: stdlib only unless a dependency already exists in the repo
-- No comments that describe what the code does — only comments for non-obvious WHY
-- Prefer editing existing files over creating new ones
-- Never commit `.env`, secrets, or literal API keys
-- All ports bind to `127.0.0.1` only
+`AGENTS.md` in this repository owns the engineering standard, ownership
+boundaries, change workflow and validation requirements. Read it before
+changing anything here; it is not restated in this file.
