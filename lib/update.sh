@@ -72,7 +72,7 @@ dc restart litellm searxng
 step "Validating health post-update"
 # Wait for LiteLLM to accept requests, then run doctor (the single health script).
 ailocal_wait_ready 20 || true
-if bash "$ROOT_DIR/lib/doctor.sh"; then
+if python3 "$ROOT_DIR/lib/checks/run.py" doctor; then
   step "Update complete — LiteLLM healthy."
 else
   warn "Health check reported issues after update."
