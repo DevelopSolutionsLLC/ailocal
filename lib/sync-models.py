@@ -508,8 +508,8 @@ def write_integration_contract(models):
             "codex_mcp_lsp": {
                 # WITHHELD, so `configured` is false. codex-local ships with no
                 # MCP servers at all -- no grepai, no LSP, no GitHub -- and
-                # tests/codex-mcp-withheld.sh asserts the generated and
-                # deployed configs contain zero [mcp_servers.*] blocks.
+                # `tests/clients.sh codex` asserts the generated and deployed
+                # configs contain zero [mcp_servers.*] blocks.
                 "configured": False,
                 "schema_preserved": False,
                 "execution": "withheld_client_incompatible",
@@ -521,7 +521,7 @@ def write_integration_contract(models):
                 # drive, so none is registered.
                 "reason": "codex_cannot_dispatch_namespaced_tools",
                 "upstream": "openai/codex#20652",
-                "verified_by": "tests/codex-mcp-withheld.sh",
+                "verified_by": "tests/clients.sh codex",
             },
         },
     }
