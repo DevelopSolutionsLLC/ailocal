@@ -72,7 +72,7 @@ filtering.
 - Substring classification is crude. It reads topic, not intent, which is
   exactly why `mention_overrides` exists.
 - `registry.yaml` is read once at `gateway_init`; edits need a restart
-  (`start.sh` fingerprints it).
+  (`ailocal start` fingerprints it).
 
 ### OPEN: the conversational class does not hold across a multi-turn loop
 
