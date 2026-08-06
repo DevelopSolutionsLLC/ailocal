@@ -139,9 +139,8 @@ session residue.
 ## Instruction ownership
 
 - `AGENTS.md` owns repository-wide policy: this file is authoritative.
-- `CLAUDE.md` is a one-line `@AGENTS.md` import. Claude Code reads `CLAUDE.md`,
-  not `AGENTS.md` (code.claude.com/docs/en/memory), so the import is the bridge.
-  No rule may live only there.
+- `CLAUDE.md` is a one-line `@AGENTS.md` import, because Claude Code reads
+  `CLAUDE.md` rather than `AGENTS.md`. It carries no rules.
 - `clients/<client>/` owns local runtime and client compatibility facts only.
 - Task prompts, commands and agent definitions own workflow-specific behaviour.
 - Tests, schemas, hooks and permissions enforce what must not depend on model
@@ -159,10 +158,8 @@ reproducibility, and Git history otherwise.
 Never commit secrets. Ports bind `127.0.0.1`. Never push without approval. Keep
 commits scoped to one responsibility.
 
-`.githooks/commit-msg` rejects assistant attribution trailers, session
-identifiers and vendor noreply addresses. Product references are fine — it
-matches trailer shape, not words. Commits carry one identity: the configured
-human author.
+Commits carry one identity: the configured human author, with no assistant
+attribution trailers or session identifiers.
 
 Ownership is **DevelopSolutions, LLC** (Apache-2.0), maintained by
 **Victor T. Chevalier**. The root LICENSE is authoritative; no per-file
