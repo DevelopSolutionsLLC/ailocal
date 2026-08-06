@@ -18,6 +18,23 @@
 # Usage:  ./benchmarks/gateway.sh [task-prompt]
 set -euo pipefail
 
+case "${1:-}" in
+  -h|--help)
+    cat <<'USAGE'
+usage: ailocal benchmark gateway [task-prompt]
+
+A/B the tool gateway on the real client and model: one run in report mode
+(measures, changes nothing) and one in filter mode. Both go through the
+production path. Prints both outputs for a human to compare.
+
+  task-prompt   optional; a default task is used when omitted
+  RUNS=n        repetitions per arm (default 1)
+
+Flips a production setting for the duration and restores it on exit.
+USAGE
+    exit 0 ;;
+esac
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # benchmarks/ -> repo root
 cd "$ROOT"
 . lib/compose.sh

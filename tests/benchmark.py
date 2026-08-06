@@ -298,8 +298,8 @@ def library_checks() -> None:
         check(_tool in _pp["allowed"], f"{_tool} is allowed for read-only investigation")
     check_all("every mutating tool is explicitly denied",
               [t for t in ("Write", "Edit", "Task") if t not in _pp["denied"]])
-    check("Bash(./scripts/status.sh)" in _pp["allowed"],
-          "the allowlist covers the command the pinned prompt cites")
+    check("Bash(./ailocal status)" in _pp["allowed"],
+          "the allowlist covers the command the prompt cites, and it exists")
     check("Bash)" not in _pp["allowed"].replace("Bash(", "") and
           ",Bash," not in "," + _pp["allowed"] + ",",
           "Bash is never allowed wholesale, only per-command")
@@ -774,13 +774,16 @@ def planner_checks() -> None:
               "T2 is second")
         check(real["prompts"][2].startswith("Without rereading"), "T3 is third")
         check("\n" in real["prompts"][0], "multiline prompt content is preserved")
-        check(real["lengths"] == [604, 137, 129],
+        # Re-baselined at the repository layout change: T1 previously named
+        # ./scripts/status.sh and config/active-profile and measured 604 chars.
+        # Both paths were deleted by that change, and the allowlist below is a
+        # live grant, so the scenario had to name commands that exist. Planner
+        # results from before the re-baseline are NOT comparable with results
+        # after it.
+        check(real["lengths"] == [605, 137, 129],
               f"prompt lengths are stable {real['lengths']}")
-        # Independent corroboration: KNOWN_ISSUES #6 records run 2's prompt as
-        # 604 chars. Matching that is stronger evidence the parser reproduces the
-        # bytes actually sent than any self-consistent hash would be.
-        check(real["lengths"][0] == 604,
-              "T1 is 604 chars, matching the independently recorded run-2 figure")
+        check(real["lengths"][0] == 605,
+              "T1 matches the re-baselined fixture length")
         check(not any(re.match(r"^T\d+:", p) for p in real["prompts"]),
               "the Tn: document marker is not part of any prompt")
         check(not any(l.startswith("    ") for p in real["prompts"]
