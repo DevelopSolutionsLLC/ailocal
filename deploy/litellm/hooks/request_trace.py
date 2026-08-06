@@ -201,15 +201,12 @@ KEY = "_ailocal_trace"
 
 
 # ── E1: schema version, process generation, token components ─────────────────
-# Bumped whenever a FIELD'S MEANING changes, not when one is added. A consumer can
-# then trust older records instead of guessing which shape it is reading.
+# Bumped whenever a FIELD'S MEANING changes, not when one is added, so a consumer
+# can trust older records instead of guessing which shape it is reading.
 #
-# 2 -> 3 (2026-08-03): on `stream_end` records, completion_tokens / finish_reason
-# / stop_reason previously did not exist at all, so a consumer could only read
-# their absence as "unknown". They now exist and carry an explicit availability
-# reason, which means a null on a v3 stream_end record is a MEASUREMENT ("the
-# provider sent none") rather than a gap. That is a change of meaning, so it
-# takes a bump. v2 records remain readable and must still be read as "unknown".
+# Reading records below the current version: a null is "unknown", not a
+# measurement. From v3 on, a null on a stream_end record carries an explicit
+# availability reason and means the provider sent none.
 # 3 -> 4 (2026-08-03): `model` was OVERLOADED and is no longer emitted. On
 # pre-call and stream_end records it held the requested ALIAS; on completion
 # records LiteLLM has already resolved it, so the same field held the BACKEND
@@ -614,12 +611,10 @@ class RequestTrace(CustomLogger):
         first_text = None
         first_tool = None
         saw_text = False
-        # NOTE: completion evidence is deliberately NOT extracted here. On
-        # /v1/messages this hook receives RAW SSE `bytes` frames, not objects
-        # (measured 2026-08-03), so reading usage here would mean writing a
-        # second SSE parser alongside LiteLLM's own. LiteLLM already assembles
-        # the finished response and hands it to async_log_success_event, which
-        # is where the completion record is written. See that method.
+        # Completion evidence is deliberately NOT extracted here: on /v1/messages
+        # this hook receives RAW SSE `bytes` frames, so reading usage would mean a
+        # second SSE parser beside LiteLLM's own. LiteLLM assembles the finished
+        # response and hands it to async_log_success_event, which owns that record.
         # A stream that stopped early and one that ended normally are different
         # facts with different owners, and "stream_end" alone cannot tell them
         # apart. Anything that leaves the loop other than exhaustion -- client
@@ -863,8 +858,13 @@ class RequestTrace(CustomLogger):
                 "traceback": (traceback_str or "")[:1500],
             })
             self._write(rec)
-            emit({k: rec[k] for k in ("request_id", "phase", "error_type",
-                                      "total_ms", "model")})
+            # Keys must exist in _base()'s output. `model` was removed at
+            # event_version 4 (it was overloaded); asking for it here raised
+            # KeyError on EVERY failure, so the operator saw trace_failure_failed
+            # instead of the failure summary. Use .get so a future field removal
+            # degrades one value rather than the whole record.
+            emit({k: rec.get(k) for k in ("request_id", "phase", "error_type",
+                                          "total_ms", "requested_alias")})
         except Exception as exc:
             emit({"event": "trace_failure_failed", "error": str(exc)})
         return None

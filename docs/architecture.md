@@ -196,3 +196,29 @@ case to the `benchmark` dispatcher in `ailocal`.
 
 Durable decisions and their consequences are in [adr/](adr/). This document
 describes the system as it is; history belongs to Git.
+
+---
+
+## Instruction ownership
+
+Instruction files are configuration and have one owner.
+
+| Layer | Owner | Contains |
+|---|---|---|
+| Repository contract | `AGENTS.md` | project-specific architecture boundaries, canonical sources, change workflow, validation, and prohibitions |
+| Runtime/client preload | `clients/<client>/` | local endpoint, capability routing, context constraints, tool transport, and client-specific compatibility facts |
+| Task workflow | prompts, commands, skills, or agent definitions | repeatable task-specific procedure and output contracts |
+| Enforcement | tests, schemas, hooks, CI, and permissions | requirements that must not depend on model compliance |
+| Generated client state | `$AILOCAL_STATE/clients/` | rendered configuration; never edited or committed |
+
+Repository policy is not copied into runtime preloads. Runtime facts are not
+copied into a repository's `AGENTS.md`. Volatile capability names, model
+assignments, and token geometry are generated from the active profile rather
+than restated in prose.
+
+A client-specific instruction exists only when that client has a distinct
+runtime constraint. VS Code remains configuration-only unless a demonstrated
+Copilot behavior requires an additional adapter. Claude and Codex local
+preloads remain separate from repository instructions: the preload explains
+the local execution environment, while the repository `AGENTS.md` explains how
+to change the project.

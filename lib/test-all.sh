@@ -72,6 +72,30 @@ if [ "$health" != healthy ]; then
   exit 1
 fi
 
+# Container health is /health/liveliness — the proxy PROCESS is up. It does not
+# mean the router is serving /v1/models, which is what several checks actually
+# need: the client wrapper validates an alias override against that endpoint and
+# FAILS CLOSED after 5s, so a gate started while the proxy is still loading
+# reports a behaviour failure that is really a readiness race. Wait for the real
+# condition, bounded, and refuse rather than run against a half-ready proxy.
+# 401 counts as ready: it proves the router is answering THIS route, which is
+# the condition the dependent checks need. That keeps the probe independent of
+# whether a master key is readable here.
+_ready=""
+for _i in $(seq 1 60); do
+  _code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+             http://127.0.0.1:4000/v1/models 2>/dev/null || echo 000)"
+  case "$_code" in 200|401) _ready=1; break ;; esac
+  sleep 1
+done
+if [ -z "$_ready" ]; then
+  echo
+  echo "  $CONTAINER is healthy but /v1/models did not serve within 60s."
+  echo "  Checks that resolve aliases through the proxy would fail as behaviour"
+  echo "  regressions. Refusing to run: PRECONDITION NOT MET."
+  exit 1
+fi
+
 echo
 echo "UNIT / BEHAVIOUR"
 run "capability registry (+ no-hard-coded-literals assertion)" \
@@ -103,24 +127,21 @@ run "E1 trace schema, redaction and token reconciliation" \
 # and identity-stripped scoring copies -- with no inference.
 run "planner comparison (safe defaults, locking, blinding)" \
     python3 tests/benchmark.py planner
-# E3. Declared num_ctx vs what the backend actually serves. nomic-embed-text silently
-# CLIPS at 2048 rather than erroring, so an over-declaration yields successful-looking
-# embeddings of truncated text — no error to notice, just quietly worse vectors. The
-# 8192 over-declaration was corrected at its source in profiles/64gb.yaml
-# (db8c9e6) and regenerated, so this now guards the corrected state rather than
-# reporting a known failure.
+# E3. Declared num_ctx vs what the backend actually serves. nomic-embed-text
+# silently CLIPS at 2048 rather than erroring, so an over-declaration yields
+# successful-looking embeddings of truncated text — no error, just quietly worse
+# vectors.
 # The isolated claude-local root sets ENABLE_LSP_TOOL=1, but a plugin is what puts
-# a server behind that tool. Provisioning used to be delegated entirely to
-# Cadence, so an ailocal-only machine got the tool switched on with nothing behind
-# it. This drives pyright-langserver over stdio against a real repo file and
-# requires real symbols back — presence of a plugin is not capability.
+# a server behind that tool; delegating all plugin provisioning elsewhere leaves
+# the tool switched on with nothing behind it. This drives pyright-langserver over
+# stdio against a real repo file and requires real symbols back — presence of a
+# plugin is not capability.
 # profiles/*.yaml are the ONLY authoritative deployment config, and
 # config/active-profile has no implicit default. These prove there is one
 # parser and that every entry point fails closed rather than assuming 64gb.
 # The benchmark library owns alias construction, evidence capture, admission
-# geometry and restoration. It was NOT in the gate: a whole suite could fail
-# while the gate reported green, which is how a benchmark-only regression
-# reaches a planner run unnoticed.
+# geometry and restoration. It is gated here so a benchmark-only regression
+# cannot reach a planner run while the gate reports green.
 run "benchmark library (aliases, geometry, evidence, confinement)" \
     python3 tests/benchmark.py library
 run "benchmark command (models, planner, gateway dispatch)" \
@@ -154,17 +175,17 @@ if [ -n "$FULL" ]; then
 fi
 # Dry-run only (stub `claude` on PATH, no inference), so it stays on every run.
 run "client role alias overrides (defaults intact, fails closed)" \
-    bash tests/client-role-override.sh
+    bash tests/clients.sh roles
 
 run "codex MCP is withheld (no grepai/lsp/github, no re-sync)" \
-    bash tests/codex-mcp-withheld.sh
+    bash tests/clients.sh codex
 
 run "commit-msg hook (blocks attribution, allows product names)" \
     bash tests/commit-msg-hook.sh
 
 run "shell output helpers (streams, colour, one owner)" \
     bash tests/shell-output.sh
-run "validator checks (deterministic, classification, bounded)" \
+run "validator checks (deterministic, classification, bounded, search quota)" \
     python3 tests/validators.py
 run "consolidated suites stay section-isolated" \
     python3 tests/suite-structure.py

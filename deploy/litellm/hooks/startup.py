@@ -177,24 +177,15 @@ def register_local_models():
 #
 #     INFO: 172.18.0.1:58848 - "HEAD /api/hello HTTP/1.1" 404 Not Found
 #
-# The probe originates in the client. claude-cli has three `<base>/api/hello`
-# call sites:
+# The probe originates in the client. Only its HEAD call site reads
+# ANTHROPIC_BASE_URL and reaches this proxy; its two GET call sites read the
+# client's built-in base and do not. GET is served anyway — it costs nothing, and
+# a client build that redirects either onto ANTHROPIC_BASE_URL then gets a 200
+# rather than a fresh 404.
 #
-#   a. HEAD, base = `ANTHROPIC_BASE_URL || BASE_API_URL`. The one that arrives
-#      here. Skipped entirely when a proxy / unix socket / client cert /
-#      Bedrock-style env var is set, and its result is discarded
-#      (`.catch(()=>{})`, no status inspection).
-#   b. GET, base = BASE_API_URL — connectivity telemetry, classified `http_<status>`.
-#   c. GET, base = BASE_API_URL — `preflight_endpoint`, which treats any status
-#      != 200 as a connection failure.
-#
-# (b) and (c) read the BUILT-IN base, so they do not reach this proxy. GET is
-# served anyway: it costs nothing, and a future client build that redirects either
-# onto ANTHROPIC_BASE_URL gets a 200 rather than a fresh 404.
-#
-# HONEST SCOPE. This removes the 404 and makes the probe succeed. Call site (a)
-# discards its result, so this route is NOT proven to be what silences any
-# particular in-terminal API warning; treat that as a separate claim.
+# HONEST SCOPE. This removes the 404 and makes the probe succeed. The call site
+# that arrives here discards its result, so this route is NOT proven to be what
+# silences any particular in-terminal API warning.
 #
 # CONSTRAINTS. No model invocation, no router lookup, no backend call. No auth
 # dependency: it is a reachability probe sent before/without credentials, and it
@@ -277,28 +268,20 @@ def register_compat_routes():
 #       -> 3 x "LiteLLM.Success_Call Error: 1 validation error for AnthropicResponse"
 #     the same request with stream: false -> 0 errors
 #
-# The websearch interception hook flips `stream=True -> False`, then
-# `_maybe_wrap_in_fake_stream` wraps the result in a
-# `FakeAnthropicMessagesStreamIterator` so the client still receives SSE. Success
-# logging hands that iterator to
-# `LiteLLMLoggingObj._handle_anthropic_messages_response_logging`, which
-# early-returns for `ModelResponse`, `ResponsesAPIResponse` and the
-# `ResponseCompletedEvent` family, then falls through to
-# `AnthropicResponse.model_validate(result)`. The iterator is none of those, so
-# pydantic raises. Upstream patched this same method once before for unhandled
-# types (BerriAI/litellm#27091) and missed this one.
+# The websearch path converts the stream and hands a fake stream iterator to
+# _handle_anthropic_messages_response_logging, which validates it as an
+# AnthropicResponse and raises. Upstream patched that method once before for
+# unhandled types (BerriAI/litellm#27091) and missed this one.
 #
-# IMPACT: non-blocking. The client still receives the full stream — only
-# LiteLLM's success/spend logging is skipped. The cost is an ERROR-level
-# traceback per streamed web-search request, which buries real errors in a log
-# audit.
+# Non-blocking: the client still receives the full stream, only LiteLLM's own
+# success/spend logging is skipped. The cost is an ERROR traceback per streamed
+# web-search request, which buries real errors in a log audit.
 #
-# SELF-RETIRING. The patch checks whether the installed method already handles
-# the type and does nothing if so, so an upgrade that fixes this upstream
-# disables it — the boot line reports `skipped:`/`already patched`. Re-read the
-# installed method after any LiteLLM upgrade; do not assume a version bump fixed
-# it. Once the curl repro above is clean with this module removed from
-# `litellm_settings.callbacks`, delete this section.
+# SELF-RETIRING. The guard no-ops if the installed method already handles the
+# type, so an upstream fix disables it and the boot line reports
+# `skipped:`/`already patched`. Re-read the installed method after any upgrade.
+# Delete this section once the curl repro above is clean with the module removed
+# from `litellm_settings.callbacks`.
 
 PATCH_MARKER = "_ailocal_fake_stream_guard"
 

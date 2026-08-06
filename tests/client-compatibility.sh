@@ -44,7 +44,9 @@ restore() {
   done
   exit $rc
 }
-trap restore EXIT INT TERM
+# Chain the harness cleanup: replacing its EXIT trap outright would silently
+# leak any temp_dir() this suite later adopts (see harness.sh).
+trap '_harness_cleanup; restore' EXIT INT TERM
 
 set_mode() {
   AILOCAL_TOOL_GATEWAY="$1" dc up -d >/dev/null 2>&1

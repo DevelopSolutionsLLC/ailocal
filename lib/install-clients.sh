@@ -23,7 +23,7 @@
 # (# ailocal-configure / # ailocal-finalize) are the ONLY footprint this
 # installer leaves in ~/.zshrc — everything else lives under
 # ~/.config/ailocal/, so uninstalling is just removing those two lines plus
-# that directory (see lib/teardown.sh --clients).
+# that directory (see `ailocal teardown --clients`).
 #
 # Safe to run multiple times — backs up before touching, skips if already installed.
 set -euo pipefail
@@ -81,9 +81,9 @@ already_has() {
 #   1. a <!-- cadence:start -->…<!-- cadence:end --> block appended INTO our own agent files
 #   2. symlinks for agents that have no ailocal counterpart (e.g. repository-health.md)
 #
-# This directory used to be replaced wholesale with `rm -rf`, which destroyed both — silently,
-# and only in one install order (ailocal after cadence). We already reason this way about
-# .claude.json, which we preserve rather than clobber; the same applies here.
+# Never replace this directory wholesale: that destroys both, silently, and only in
+# one install order (ailocal after cadence). Same reasoning as .claude.json, which is
+# preserved rather than clobbered.
 #
 # ailocal remains the owner of the files it ships. It is not the owner of the directory.
 CADENCE_START='<!-- cadence:start -->'
@@ -384,12 +384,10 @@ PYEOF
   cp "$ROOT_DIR/clients/copilot/session-primer.md" "$COPILOT_INSTR/session-primer.md"
   info "Copilot instruction files deployed to ~/.copilot/instructions/"
 
-  # Repo-level Copilot instructions. GENERATED, not tracked: this file used to be
-  # hand-maintained in .github/ and drifted — four of six capability rows were
-  # wrong and it pointed at config/models.yaml, which has not existed for a long
-  # time. A VS Code agent following it was being sent to a nonexistent file.
-  # Source: the generated copilot instructions (its capability table is
-  # a sync-models.py generated region). .github/ is gitignored for this name.
+  # Repo-level Copilot instructions. GENERATED, not tracked: hand-maintaining
+  # this in .github/ lets its capability table drift from the profile, and a VS
+  # Code agent then follows stale rows and dead paths. Source is the generated
+  # copilot instructions. .github/ is gitignored for this name.
   mkdir -p "$ROOT_DIR/.github"
   cp "$AILOCAL_STATE/clients/copilot/repo-instructions.md" \
      "$ROOT_DIR/.github/copilot-instructions.md"
@@ -400,19 +398,12 @@ PYEOF
   # a managed ~/.continue/config.json: chat/edit through the proxy, autocomplete
   # DIRECT to Ollama (FIM through the proxy is unreliable — continuedev/continue#2907).
   # The user's existing file is backed up first.
-  # CONDITIONAL ON THE EXTENSION BEING INSTALLED (2026-08-03). This block used
-  # to run unconditionally: it created ~/.continue/, wrote a config carrying the
-  # LiteLLM key, and took a timestamped backup on EVERY install/repair. On this
-  # machine that produced four backups of a file no extension ever read --
-  # Continue is not installed, no VS Code request has ever reached LiteLLM (24
-  # captures on disk, zero from Continue or Copilot), and no README or support
-  # matrix claims Continue support. Writing a keyed config for absent software
-  # is both dead output and a needless place for a secret to sit.
-  #
-  # Continue stays SUPPORTED-IF-PRESENT rather than deleted: the generator and
-  # template are small, the FIM route it provides is real (Copilot cannot do
-  # local autocomplete), and `AILOCAL_CONTINUE=1` lets a user opt in before
-  # installing the extension. Never installs Continue on the user's behalf.
+  # CONDITIONAL ON THE EXTENSION BEING INSTALLED. Writing a keyed config for
+  # absent software is dead output and a needless place for a secret to sit, and
+  # it accumulates a timestamped backup on every repair of a file nothing reads.
+  # SUPPORTED-IF-PRESENT, not deleted: the FIM route is real (Copilot cannot do
+  # local autocomplete) and `AILOCAL_CONTINUE=1` opts in before installing the
+  # extension. Never installs Continue on the user's behalf.
   CONTINUE_CFG="$HOME/.continue/config.json"
   _continue_present=0
   if [ -n "${AILOCAL_CONTINUE:-}" ]; then
@@ -572,12 +563,10 @@ fi
 # the isolated profiles it creates. Cadence provides repository intelligence,
 # broader language tooling, cross-client integration, and policy.
 #
-# The generated settings.json for the isolated root sets
-# ENABLE_LSP_TOOL=1, but plugins are what put a language server behind that tool.
-# Delegating ALL plugin provisioning to Cadence meant an ailocal-only machine got
-# the LSP tool switched on with nothing behind it — the fail-quiet shape this
-# project avoids, and worse than leaving it off, because the tool advertises a
-# capability that cannot answer.
+# The generated settings.json sets ENABLE_LSP_TOOL=1, but a plugin is what puts a
+# language server behind that tool. Delegating all plugin provisioning elsewhere
+# leaves an ailocal-only machine advertising a capability that cannot answer,
+# which is worse than leaving the tool off.
 #
 # ONE LANGUAGE, DELIBERATELY. Python, because this repository is Python and its
 # own agents edit it. Everything else — TypeScript, Go, C — stays Cadence's, so
@@ -671,22 +660,15 @@ if has_target "claude"; then
 fi
 
 # ── Codex MCP: WITHHELD BY POLICY, not restored ────────────────────────────
-# This block used to run `cadence mcp sync` to put Cadence's [mcp_servers.*]
-# entries (grepai, lsp) BACK into codex-local's config.toml after the wholesale
-# rewrite above removed them, and to warn when Codex ended up with no MCP
-# servers. Both were wrong once the client policy was settled:
-#
 #   codex-local is intended to have NO grepai MCP, NO LSP MCP, NO GitHub MCP
 #   and no namespace tools. Codex cannot dispatch namespaced tool names, so an
 #   MCP server there advertises a surface it cannot drive.
 #
-# So an empty [mcp_servers.*] section in Codex is the CORRECT outcome, not a
-# failure to warn about — and ailocal must not run a GLOBAL Cadence MCP sync,
-# which would mutate other clients as a side effect of installing this one.
-#
-# Claude-local is unaffected and needs no restoration: its registrations live in
-# .claude.json, which this script preserves rather than rewriting. Cadence keeps
-# MCP ownership; ailocal simply stops undoing and redoing its work.
+# An empty [mcp_servers.*] section is therefore the CORRECT outcome, not a
+# condition to warn about or restore. Never run a GLOBAL `cadence mcp sync` here:
+# it re-adds what policy withholds and mutates other clients as a side effect of
+# installing this one. claude-local needs no restoration — its registrations live
+# in .claude.json, which this script preserves. Cadence keeps MCP ownership.
 if command -v cadence >/dev/null 2>&1; then
   info "Codex MCP intentionally withheld (Codex cannot dispatch namespaced tools)"
   info "  Cadence owns MCP policy; claude-local registrations in .claude.json are preserved."

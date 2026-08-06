@@ -5,48 +5,23 @@ profiles/<tier>.yaml is authoritative deployment configuration.
 The active-profile marker in $AILOCAL_STATE selects a tier and HAS NO
 IMPLICIT DEFAULT.
 
-WHY NOT PyYAML — decided 2026-08-03, measured, do not re-litigate casually.
-PyYAML is genuinely absent from every interpreter ailocal can reach:
-/usr/bin/python3 (3.9.6), python3 (3.14.6) and Homebrew's — all three import
-`yaml` and fail. Using it therefore means provisioning and owning a virtual
-environment, not adding an import.
-
-  Constrained parser (this file + sync-models):
-    144 LOC total  -- _strip_comment 17, _coerce 19, parse_profile_text 32,
-    flow_list 15, _flow_list_from_str 9, flow_dict 11, load_models_yaml 15,
-    load_clients_yaml 26. Six test assertions. ZERO parsing defects across the
-    whole 64gb geometry migration, the Brave work and the tier corrections.
-
-  Core venv + PyYAML:
-    deletes those 144 LOC, then adds a pinned requirements file plus venv
-    provisioning in install.sh, validation in doctor.sh, refresh in update.sh
-    and removal in teardown.sh -- FOUR lifecycle touchpoints, one runtime
-    dependency, one new failure class ("venv missing or broken"), and network
-    on first install. Net production LOC roughly -84.
-
-Ownership, not line count, is the criterion: 144 lines parsing a schema this
-repository itself writes are cheaper to own than a dependency lifecycle spread
-across four scripts. The parser handles exactly the subset profiles and
-profiles/clients.yaml use, and generation is validated end-to-end by the gate, so
-a parsing error cannot reach a client silently.
+WHY NOT PyYAML. It is absent from every interpreter ailocal can reach, so using
+it means provisioning and owning a virtual environment — venv setup in
+install.sh, validation in `ailocal doctor`, refresh in `ailocal update`, removal
+in teardown — plus a new failure class and network on first install. A
+constrained parser for a schema this repository itself writes is cheaper to own
+than that lifecycle, and generation is validated end to end by the gate, so a
+parsing error cannot reach a client silently.
 
 REVISIT only if: a profile needs YAML this subset cannot express (anchors,
 multi-line scalars, nested sequences of mappings), a parsing defect reaches
-generated output, or ailocal acquires a core venv for some OTHER reason -- at
+generated output, or ailocal acquires a core venv for some other reason — at
 which point PyYAML rides along for free and this decision flips.
 
-Profile parsing had grown four independent implementations --
-sync-models.py's load_models_yaml(), benchmark.py's parse_profile(), doctor.sh's
-sed extraction, and a `cat active-profile` in every shell entry point -- and they
-did not agree. Worse, the shell readers all shared one shape:
-
-    _TIER="$(cat "$AILOCAL_STATE/active-profile" 2>/dev/null || echo 64gb)"
-
-Eight occurrences across four scripts. Each one silently installs or runs the
-64 GB tier when the marker is missing, unreadable or empty. That is exactly the
-failure the planner benchmark was built around: a suppressed read falling through
-to a hardcoded 64gb default, with no error anywhere. On a 32 GB machine it pulls
-models that do not fit.
+ONE PARSER, NO FALLBACK. Every reader goes through here. A second implementation
+drifts, and the shape it drifts into is
+`cat active-profile 2>/dev/null || echo 64gb` — a suppressed read falling through
+to a hardcoded tier, which on a 32 GB machine pulls models that do not fit.
 
 So this module FAILS CLOSED. There is no default tier. A missing marker is an
 error, not a 64 GB installation.
@@ -261,11 +236,6 @@ def runtime_root(state_root=None) -> Path:
     return Path(xdg) / "ailocal"
 
 
-def generated_path(name: str, state_root=None) -> Path:
-    """A generated artifact under the runtime root."""
-    return runtime_root(state_root) / name
-
-
 def profiles_dir(repo_root=None) -> Path:
     return _root(repo_root) / "profiles"
 
@@ -351,14 +321,6 @@ def _client_value(v: str, line: int):
             out[k.strip()] = val.strip()
         return out
     return _strip_comment(v)
-
-
-def client_mapping(client: str, repo_root=None) -> dict:
-    """One client's mappings."""
-    policy = load_client_policy(repo_root)
-    if client not in policy:
-        raise ProfileError(CLIENT_POLICY_INVALID, f"no policy for client {client!r}")
-    return policy[client]
 
 
 def slot_problems(tier=None, repo_root=None) -> list:
@@ -543,10 +505,6 @@ def resolve_role(tier: str, role: str, repo_root=None, _data=None) -> dict:
     for f in OPTIONAL_ROLE_FIELDS:
         out[f] = cfg.get(f)
     return out
-
-
-def resolve_active_role(role: str, repo_root=None) -> dict:
-    return resolve_role(resolve_active_tier(repo_root), role, repo_root)
 
 
 def profile_summary(tier: str, repo_root=None) -> dict:

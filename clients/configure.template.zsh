@@ -37,12 +37,9 @@ claude-local() {
   # (Requires Claude Code v2.1.129+ for gateway discovery.)
   #
   # The slot block below is GENERATED from profiles/clients.yaml `claude.slots` by
-  # sync-models.py — do not hand-edit it. It used to be maintained by hand and
-  # drifted: HAIKU pointed at ailocal-completion (the 4096-token FIM tier), so
-  # every background call and every `model: haiku` subagent hard-400'd with
-  # "No models have context window large enough" (measured Got=10813, Max=4096).
-  # FABLE was missing entirely, so the `reviewer` subagent never reached the
-  # review tier. Generating it keeps the wrapper and clients.yaml in lockstep.
+  # sync-models.py — do not hand-edit it. Hand-maintained slots drift: pointing
+  # HAIKU at a small FIM tier hard-400s every background call, and a missing
+  # FABLE silently strands the `reviewer` subagent off the review tier.
   #
   # CLAUDE_CODE_DISABLE_1M_CONTEXT: local backends cap at num_ctx (64K here), not
   # 1M — so let Claude Code request the 1M-context beta and it just overflows.

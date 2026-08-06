@@ -1,8 +1,27 @@
 #!/usr/bin/env python3
-"""Entry point behind `ailocal validate` and `ailocal smoke`.
+"""Entry point behind `ailocal validate`, `ailocal smoke` and `ailocal doctor`.
 
-Both commands are the same shape: collect CheckResults, render them, exit on
-the outcome. They differ only in which checks they collect.
+All three are the same shape: collect CheckResults, render them, exit on the
+outcome. They differ only in which checks they collect.
+
+  validate  Deterministic consistency, from files on disk. Runs with LiteLLM
+            and Ollama stopped, makes no inference request and mutates
+            nothing, so a configuration check never depends on a service.
+            Optional `--profile <tier>`. Exit 0 clean, 1 if any check failed;
+            Docker being unavailable blocks the mounted-config comparison
+            rather than failing the run.
+  smoke     Bounded runtime verification of a running stack: containers, proxy
+            health, served aliases, advertised geometry, Ollama inventory, one
+            bounded model response, search. Every call carries a timeout.
+            Exit 0 clean, 1 if a required check failed; absent search degrades
+            the report without failing it.
+            Search is pinned to a free engine and spends NO external API quota.
+            `--external-search` additionally issues one federated query, which
+            DOES consume metered Brave allowance. Never use it in a loop.
+  doctor    validate + smoke plus host-machine guidance, with a remediation
+            attached to every finding. Exit 0 healthy, 1 when the active tier
+            cannot be resolved and diagnosis is REFUSED rather than reported
+            against an assumed configuration, 2 degraded.
 """
 
 from __future__ import annotations
@@ -75,7 +94,9 @@ def _smoke(argv: list[str]) -> int:
     results += S.check_aliases(token, aliases)
     results += S.check_geometry(token, geometry)
     results += [S.check_generation(token, alias), S.check_searxng(),
-                S.check_search_tool_registered()]
+                S.check_searxng_query(), S.check_search_tool_registered()]
+    if "--external-search" in argv:
+        results.append(S.check_searxng_external())
     if "--deep" in argv:
         results.append(S.check_context_window(token))
     render(results)
@@ -114,7 +135,8 @@ def _doctor(argv: list[str]) -> int:
     runtime = [S.check_docker(), S.check_container(), S.check_proxy_health(),
                S.check_ollama(), S.check_models_present(backends)]
     runtime += S.check_aliases(token, aliases)
-    runtime += [S.check_searxng(), S.check_search_tool_registered()]
+    runtime += [S.check_searxng(), S.check_brave_key_configured(),
+                S.check_search_tool_registered()]
     render(runtime, remediation=True)
 
     print(f"\n{BOLD}Host{RESET}")
