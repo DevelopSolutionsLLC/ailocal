@@ -48,6 +48,7 @@ case "$cmd" in
   preload)  exec bash "$LIB/preload-model.sh" "$@" ;;
   trace)    exec bash "$LIB/request-trace.sh" "$@" ;;
   metrics)  exec python3 "$LIB/gateway-metrics.py" "$@" ;;
+  verify-session) exec python3 "$LIB/diagnostics/verify-session.py" "$@" ;;
   # benchmark <suite> [...] — the one entry point to the benchmark subsystem.
   benchmark)
     suite="${1:-help}"; shift || true
@@ -84,7 +85,7 @@ ailocal — local model runtime
   start | stop | update | sync                    lifecycle
   clients | vscode | models-install               deploy
   audit | cleanup | teardown                      installation
-  trace | metrics | e2e <client>                  diagnostics
+  trace | metrics | verify-session | e2e <client>  diagnostics
   benchmark <models|planner|gateway>              developer benchmarks
   resolve <capability>                            print the active backend
 USAGE
