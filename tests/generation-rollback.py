@@ -47,7 +47,7 @@ check = _suite.check
 
 
 def load_sync():
-    return load_module("sync_models", ROOT / "scripts" / "sync-models.py")
+    return load_module("sync_models", ROOT / "lib" / "sync-models.py")
 
 
 def digest(p: pathlib.Path) -> str:

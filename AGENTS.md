@@ -31,8 +31,8 @@ deploy/litellm/       proxy hooks, capability registry, config template
 deploy/litellm/instructions/  per-capability personas, mounted into the proxy
 deploy/               compose definitions for LiteLLM and SearXNG
 scripts/              ailocal CLI, installers, lifecycle
-scripts/lib/          policy.py, checks/, benchmark modules, shared shell
-tests/        domain suites; ./scripts/test-all.sh is the gate
+lib/          policy.py, checks/, benchmark modules, shared shell
+tests/        domain suites; ailocal test is the gate
 ```
 
 ## Canonical sources
@@ -43,7 +43,7 @@ tests/        domain suites; ./scripts/test-all.sh is the gate
 | `profiles/clients.yaml` | which capability each client surface uses — no model tuning |
 | `deploy/litellm/registry.yaml` | intrinsic runtime capability: engine, context enforcement, tool support |
 
-`scripts/lib/policy.py` is the **one** reader for all of it. It fails closed:
+`lib/policy.py` is the **one** reader for all of it. It fails closed:
 no default tier, unknown fields rejected, duplicate keys and sections rejected.
 Nothing else parses YAML, builds a policy path, or resolves geometry.
 
@@ -75,7 +75,7 @@ recover.
 2. `ailocal sync` — regenerate.
 3. `ailocal validate` — deterministic consistency; works with the stack stopped.
 4. `ailocal clients` — deploy, if client output changed.
-5. `./scripts/test-all.sh` — the gate. Run it twice when timing-sensitive
+5. `ailocal test` — the gate. Run it twice when timing-sensitive
    suites are involved; a transient first failure is investigated, not waved
    through.
 6. Commit only after the gate is green.
@@ -95,7 +95,7 @@ recover.
 
 ## Testing
 
-`./scripts/test-all.sh` is the gate. Suites live in `tests/` and are
+`ailocal test` is the gate. Suites live in `tests/` and are
 addressable by section, for example `python3 tests/profiles.py resolver`.
 
 Tests assert behaviour, not implementation text. Source inspection is
@@ -113,7 +113,7 @@ otherwise. Keep the invariant, drop the story. No benchmark tables in
 configuration. No session narrative in source.
 
 Python follows PEP 8 and PEP 257; shell uses `set -euo pipefail` and the shared
-helpers in `scripts/lib/output.sh`. Python is standard library only.
+helpers in `lib/output.sh`. Python is standard library only.
 
 ## Security and Git
 

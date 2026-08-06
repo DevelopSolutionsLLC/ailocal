@@ -16,7 +16,7 @@
 # REJECTS rather than silently strips. Editing the message quietly would hide
 # that something tried to add attribution, and noticing is the point.
 #
-# Enabled by `git config core.hooksPath .githooks`, which scripts/install.sh
+# Enabled by `git config core.hooksPath .githooks`, which install.sh
 # sets repository-locally. Nothing in the ailocal runtime depends on this hook.
 #
 # $1 is the path to the pending commit message.

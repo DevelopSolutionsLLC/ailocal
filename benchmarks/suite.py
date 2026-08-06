@@ -29,7 +29,7 @@ from pathlib import Path
 # ── moved modules ───────────────────────────────────────────────────────────
 # The split below is BEHAVIOUR-PRESERVING. Every name these modules own is
 # re-exported here, so `import suite as B; B.run_client_turn(...)` keeps
-# working for benchmarks/models.py, scripts/lib/ruler.py,
+# working for benchmarks/models.py, lib/ruler.py,
 # tests/benchmark.py. (The A/B/C repro script that first
 # established this was deleted 2026-08-03: the hypothesis was FALSIFIED and
 # the contract is now enforced by that test, so the script only duplicated it.)

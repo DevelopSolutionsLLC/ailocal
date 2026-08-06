@@ -1,5 +1,5 @@
 # ── GENERATED — DO NOT EDIT ─────────────────────────────────────────────────
-# Owner:       ailocal (scripts/sync-models.py + scripts/install-clients.sh)
+# Owner:       ailocal (lib/sync-models.py + lib/install-clients.sh)
 # Source:      profiles/<active tier>.yaml  (role: implementation)
 # Deployed to: ~/.config/ailocal/codex/config.toml  (CODEX_HOME)
 #
@@ -14,7 +14,7 @@
 # that behaviour was removed. An empty MCP section is the correct state.
 model_auto_compact_token_limit = 0
 model_context_window = 0
-# ── ailocal provider — injected by scripts/install-clients.sh ───────────────
+# ── ailocal provider — injected by lib/install-clients.sh ───────────────
 #
 # Route ALL Codex requests through the local LiteLLM proxy.
 # Deployed to ~/.config/ailocal/codex/config.toml (CODEX_HOME for the
@@ -36,7 +36,7 @@ model_provider = "ailocal"
 
 # Optional manual model metadata — loaded from model_catalog.json when present.
 # ${CODEX_HOME} is substituted at install time by `envsubst '${CODEX_HOME}'`
-# in scripts/install-clients.sh, so this stays a template placeholder rather
+# in lib/install-clients.sh, so this stays a template placeholder rather
 # than a hardcoded ~/.codex path (Codex itself does not expand env vars here).
 model_catalog_json = "${CODEX_HOME}/model_catalog.json"
 

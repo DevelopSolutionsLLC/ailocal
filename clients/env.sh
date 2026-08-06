@@ -32,12 +32,12 @@ elif [ -f "$REPO_ENV_FILE" ]; then
   LITELLM_KEY=$(grep '^LITELLM_MASTER_KEY=' "$REPO_ENV_FILE" | cut -d= -f2-)
 else
   echo "⚠  No ailocal env found at $CFG_ENV or $REPO_ENV_FILE"
-  echo "   Run: ./scripts/install-clients.sh   (or ./scripts/install.sh first)"
+  echo "   Run: ailocal clients   (or ./install.sh first)"
   return 1 2>/dev/null || exit 1
 fi
 
 if [ -z "$LITELLM_KEY" ]; then
-  echo "⚠  No API key found — run ./scripts/install-clients.sh to generate one"
+  echo "⚠  No API key found — run ailocal clients to generate one"
   return 1 2>/dev/null || exit 1
 fi
 

@@ -25,8 +25,8 @@ Every directory owns one thing. Generated output never appears in any of them.
 | `benchmarks/benchmark.yaml`, `benchmarks/tasks/` | benchmark policy and task definitions | production model policy |
 | `deploy/litellm/`, `deploy/searxng/` | compose definitions and authored service files | rendered secrets, generated config |
 | `scripts/` | the `ailocal` CLI, installers, lifecycle | policy |
-| `scripts/lib/` | shared implementation: `policy.py`, `checks/`, benchmark modules, shell helpers | duplicate owners |
-| `tests/` | domain suites; `./scripts/test-all.sh` is the gate | production code |
+| `lib/` | shared implementation: `policy.py`, `checks/`, benchmark modules, shell helpers | duplicate owners |
+| `tests/` | domain suites; `ailocal test` is the gate | production code |
 | `docs/` | this document set | history |
 
 ---
@@ -177,7 +177,7 @@ config root — never the repository.
 then `ailocal sync && ailocal models-install`.
 
 **Add a profile** — create `profiles/<tier>.yaml` and add the tier to
-`policy.TIERS`. Selection thresholds live in `scripts/install.sh`.
+`policy.TIERS`. Selection thresholds live in `install.sh`.
 
 **Add a capability** — add the role to the profiles and to `policy.ROLES`, then
 map client surfaces to it in `profiles/clients.yaml`.
@@ -185,10 +185,10 @@ map client surfaces to it in `profiles/clients.yaml`.
 **Add a client template** — place the authored template under
 `clients/<client>/`, emit its rendered output to
 `$AILOCAL_STATE/clients/<client>/` from the generator, and deploy it from
-`scripts/install-clients.sh`. Never write generated output beside the template.
+`lib/install-clients.sh`. Never write generated output beside the template.
 
 **Add a benchmark suite** — implement it under `benchmarks/` and add a
-case to the `benchmark` dispatcher in `scripts/ailocal`.
+case to the `benchmark` dispatcher in `ailocal`.
 
 ---
 

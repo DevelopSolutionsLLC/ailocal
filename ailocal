@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# ailocal — the single public entry point. Implementations live in lib/.
+#
+#   ailocal status     live model status by capability, verbose (lib/status.sh)
+#   ailocal models     compact capability -> backend -> status table
+#   ailocal validate   end-to-end sanity: capabilities, backends, client mappings, aliases, sync
+#   ailocal validate --runtime   also probe the live proxy: /v1/models, advertised contexts, embeddings
+#   ailocal doctor     health check (lib/doctor.sh)
+#   ailocal benchmark  developer benchmark suites (models|planner|gateway)
+#   ailocal security   container pins, digest drift, reachability (--scan for CVEs)
+#   ailocal sync       regenerate derived configs
+#   ailocal start|stop|update|smoke    lifecycle
+#   ailocal resolve <capability>       print the active Ollama backend tag
+#
+# Put it on PATH once:  ln -sf "$(pwd)/ailocal" /usr/local/bin/ailocal
+set -euo pipefail
+ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LIB="$ROOT_DIR/lib"
+# No default action. A bare command name prints usage rather than doing work —
+# the same contract as `cadence`, and the reason is the same: a command that acts
+# when invoked with no arguments is a command you cannot safely explore.
+cmd="${1:-help}"; shift || true
+
+case "$cmd" in
+  status)   exec bash "$LIB/status.sh" "$@" ;;
+  models)   exec bash "$LIB/status.sh" --table ;;
+  validate) exec bash "$LIB/validate.sh" "$@" ;;
+  doctor)  exec bash "$LIB/doctor.sh" "$@" ;;
+  security) exec bash "$LIB/security.sh" "$@" ;;
+  test)     exec bash "$LIB/test-all.sh" "$@" ;;
+  profile)  exec python3 "$LIB/profile-config" "$@" ;;
+  sync)    exec python3 "$LIB/sync-models.py" "$@" ;;
+  start)   exec bash "$LIB/start.sh" "$@" ;;
+  stop)    exec bash "$LIB/stop.sh" "$@" ;;
+  update)  exec bash "$LIB/update.sh" "$@" ;;
+  smoke)   exec bash "$LIB/smoke-test.sh" "$@" ;;
+  resolve) exec python3 "$LIB/sync-models.py" --resolve "$@" ;;
+  # Client deployment and the lifecycle actions that used to be run as
+  # individual scripts. Those files are internal; this is the supported entry.
+  clients)  exec bash "$LIB/install-clients.sh" "$@" ;;
+  vscode)   exec bash "$LIB/install-vscode.sh" "$@" ;;
+  models-install) exec bash "$LIB/install-models.sh" "$@" ;;
+  audit)    exec bash "$LIB/audit-installation.sh" "$@" ;;
+  cleanup)  exec bash "$LIB/cleanup-installation.sh" "$@" ;;
+  teardown) exec bash "$LIB/teardown.sh" "$@" ;;
+  autostart) exec bash "$LIB/setup-startup.sh" "$@" ;;
+  ollama-env) exec bash "$LIB/setup-ollama-env.sh" "$@" ;;
+  preload)  exec bash "$LIB/preload-model.sh" "$@" ;;
+  trace)    exec bash "$LIB/request-trace.sh" "$@" ;;
+  metrics)  exec python3 "$LIB/gateway-metrics.py" "$@" ;;
+  # benchmark <suite> [...] — the one entry point to the benchmark subsystem.
+  benchmark)
+    suite="${1:-help}"; shift || true
+    case "$suite" in
+      models)  exec python3 "$ROOT_DIR/benchmarks/models.py" "$@" ;;
+      planner) exec python3 "$ROOT_DIR/benchmarks/planner.py" "$@" ;;
+      gateway) exec bash   "$ROOT_DIR/benchmarks/gateway.sh" "$@" ;;
+      *)
+        cat >&2 <<'BENCH'
+usage: ailocal benchmark <suite> [options]
+
+  models    evaluate candidate models (plan | run | probe | client |
+            setup | doctor | report)
+  planner   blinded A/B of planner candidates on a fixed scenario
+  gateway   A/B the tool gateway on a real client, report vs filter
+
+Benchmarks are a developer utility: they never modify a profile, and they are
+not part of install, update or the regression gate.
+BENCH
+        [ "$suite" = help ] && exit 0 || exit 2 ;;
+    esac ;;
+  e2e)      # e2e <claude|codex|vscode>
+            case "${1:-}" in
+              claude) shift; exec bash "$LIB/validate-claude-e2e.sh" "$@" ;;
+              codex)  shift; exec bash "$LIB/validate-codex-e2e.sh"  "$@" ;;
+              vscode) shift; exec bash "$LIB/validate-vscode-e2e.sh" "$@" ;;
+              *) echo "ailocal e2e {claude|codex|vscode}" >&2; exit 1 ;;
+            esac ;;
+  help|-h|--help) cat <<'USAGE'
+ailocal — local model runtime
+
+  status | models | doctor | validate | smoke     inspect
+  security [--scan|--check-updates]              container supply chain
+  start | stop | update | sync                    lifecycle
+  clients | vscode | models-install               deploy
+  audit | cleanup | teardown                      installation
+  trace | metrics | e2e <client>                  diagnostics
+  benchmark <models|planner|gateway>              developer benchmarks
+  resolve <capability>                            print the active backend
+USAGE
+     exit 0 ;;
+  *) echo "ailocal: unknown command '$cmd' — run 'ailocal help'" >&2; exit 1 ;;
+esac

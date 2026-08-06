@@ -18,9 +18,9 @@
 # Usage:  ./benchmarks/gateway.sh [task-prompt]
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"   # benchmarks/ -> repo root
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # benchmarks/ -> repo root
 cd "$ROOT"
-. scripts/lib/compose.sh
+. lib/compose.sh
 
 PROMPT="${1:-Read the file sample.py in the current directory and tell me exactly what it prints. Use your tools.}"
 RUNS="${RUNS:-1}"

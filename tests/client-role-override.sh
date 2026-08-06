@@ -7,7 +7,7 @@
 # `env "${slots[@]}" ... claude`, and env execs a binary.
 set -uo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/harness.sh"
-CONFIGURE="$("$ROOT_DIR/scripts/profile-config" state-root)/clients/configure.zsh"
+CONFIGURE="$(python3 "$ROOT_DIR/lib/profile-config" state-root)/clients/configure.zsh"
 
 STUB="$(mktemp -d)"; trap 'rm -rf "$STUB"' EXIT
 cat > "$STUB/claude" <<'EOF'
@@ -75,13 +75,13 @@ check $([ -z "$(AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE= zsh -c "source '$CONFIGURE'
 # location rather than their existence. Callers reach them via `import
 # benchmark`, so that is what is checked.
 check $(python3 -c "
-import sys, inspect; sys.path.insert(0, '$ROOT_DIR/scripts/lib'); sys.path.insert(0, '$ROOT_DIR/benchmarks')
+import sys, inspect; sys.path.insert(0, '$ROOT_DIR/lib'); sys.path.insert(0, '$ROOT_DIR/benchmarks')
 import suite as B
 assert callable(B.served_models_since)
 " >/dev/null 2>&1 && echo 0 || echo 1) \
   "harness can read served aliases from the proxy log"
 check $(python3 -c "
-import sys, inspect; sys.path.insert(0, '$ROOT_DIR/scripts/lib'); sys.path.insert(0, '$ROOT_DIR/benchmarks')
+import sys, inspect; sys.path.insert(0, '$ROOT_DIR/lib'); sys.path.insert(0, '$ROOT_DIR/benchmarks')
 import suite as B
 assert 'INVALID_ROUTING' in inspect.getsource(B.verify_routing)
 " >/dev/null 2>&1 && echo 0 || echo 1) \

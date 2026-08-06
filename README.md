@@ -43,7 +43,7 @@ ollama serve                         # or open Ollama.app
 
 git clone https://github.com/DevelopSolutionsLLC/ailocal.git
 cd ailocal
-./scripts/install.sh
+./install.sh
 ```
 
 The installer detects memory, selects a profile, pulls the models, starts the
@@ -51,7 +51,7 @@ services and deploys the client configurations. It refuses to select a profile
 the machine cannot hold.
 
 It can also install login agents that start Ollama and preload the resident
-model — answer `y` when prompted, or run `./scripts/setup-startup.sh` later.
+model — answer `y` when prompted, or run `ailocal autostart` later.
 
 ## Verify
 
