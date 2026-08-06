@@ -255,12 +255,9 @@ def gen_role_block(role, info):
         # "Unmapped LLM provider for this endpoint. You passed
         # model=nomic-embed-text, custom_llm_provider=ollama_chat".
         #
-        # Verified empirically in the 1.93.0 image, not inferred from docs:
-        #   litellm.embedding(model="ollama_chat/nomic-embed-text") -> BadRequest
-        #   litellm.embedding(model="ollama/nomic-embed-text")      -> OK, 768 dims
-        #
-        # This shipped broken: ailocal-embeddings was advertised in /v1/models and
-        # 400ed on every call. Cadence was unaffected because it talks to Ollama
+        # litellm.embedding(model="ollama/...") works; "ollama_chat/..." 400s.
+        # Getting this wrong advertises ailocal-embeddings in /v1/models and 400s
+        # on every call. Cadence is unaffected because it talks to Ollama
         # directly, which is why nobody noticed — a client configured to use the
         # proxy for embeddings (Continue) would have failed.
         lines = [
@@ -324,17 +321,11 @@ def gen_role_block(role, info):
     if merge:
         params.append("      merge_reasoning_content_in_choices: true")
     if not reasoning:
-        # Suppress reasoning ONLY for models that cannot do it.
-        #
-        # This was unconditionally correct when no installed model could think:
-        # Claude Code sends `thinking` on every request and a non-thinking
-        # backend 400s on it, and a backend defaulting to reasoning hung VS Code.
-        #
-        # It is now WRONG for qwen3.5, qwen3.6 and gpt-oss, which all report
-        # `thinking` in their Ollama capabilities. Emitting think:false for those
-        # would suppress the single biggest capability the migration buys. The
-        # `reasoning` flag in profiles/<tier>.yaml now drives this per
-        # capability rather than applying to everything.
+        # Suppress reasoning ONLY for models that cannot do it. Claude Code sends
+        # `thinking` on every request and a non-thinking backend 400s on it, but
+        # emitting think:false for a reasoning-capable model throws away its
+        # biggest capability. The `reasoning` flag in profiles/<tier>.yaml drives
+        # this per capability.
         params.append('      additional_drop_params: ["thinking", "reasoning_effort"]')
         params.append("      think: false")
     else:
