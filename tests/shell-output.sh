@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Contract of the shared shell status helpers (scripts/lib/output.sh).
+# Contract of the shared shell status helpers (lib/output.sh).
 #
 # Seventeen scripts render status through these, so a change here is a change
 # everywhere. The stream each helper writes to is part of the contract: callers
 # redirect stdout while expecting warnings and errors to remain visible.
 set -uo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/harness.sh"
-OUT="$ROOT_DIR/scripts/lib/output.sh"
+OUT="$ROOT_DIR/lib/output.sh"
 
 echo "SHELL OUTPUT HELPERS"
-check $([ -f "$OUT" ] && echo 0 || echo 1) "scripts/lib/output.sh exists"
+check $([ -f "$OUT" ] && echo 0 || echo 1) "lib/output.sh exists"
 
 # Sourcing must be inert and repeatable under every strict mode in use.
 bash -c "set -euo pipefail; . '$OUT'; . '$OUT'; info x" >/dev/null 2>&1

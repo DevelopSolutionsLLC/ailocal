@@ -1,5 +1,5 @@
 # ailocal configure.zsh — sourced at the TOP of ~/.zshrc (before p10k instant
-# prompt). Managed file — installed by scripts/install-clients.sh, always
+# prompt). Managed file — installed by lib/install-clients.sh, always
 # overwritten. Must produce ZERO stdout/stderr: this runs on every interactive
 # shell startup, and any output here corrupts p10k instant prompt / VS Code's
 # OSC 633 command markers.
@@ -24,7 +24,7 @@ claude-local() {
   base=$(grep '^AILOCAL_BASE_URL=' "$cfg/env" 2>/dev/null | cut -d= -f2-)
   key=$(grep '^AILOCAL_API_KEY=' "$cfg/env" 2>/dev/null | cut -d= -f2-)
   if [[ -z "$base" || -z "$key" ]]; then
-    echo "claude-local: ${cfg}/env missing or incomplete — run ./scripts/install-clients.sh claude" >&2
+    echo "claude-local: ${cfg}/env missing or incomplete — run ailocal clients claude" >&2
     return 1
   fi
   # CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: on launch, Claude Code GETs
@@ -145,7 +145,7 @@ codex-local() {
   base=$(grep '^AILOCAL_BASE_URL=' "$cfg/env" 2>/dev/null | cut -d= -f2-)
   key=$(grep '^AILOCAL_API_KEY=' "$cfg/env" 2>/dev/null | cut -d= -f2-)
   if [[ -z "$base" || -z "$key" ]]; then
-    echo "codex-local: ${cfg}/env missing or incomplete — run ./scripts/install-clients.sh codex" >&2
+    echo "codex-local: ${cfg}/env missing or incomplete — run ailocal clients codex" >&2
     return 1
   fi
   CODEX_HOME="$cfg/codex" OPENAI_API_KEY="$key" OPENAI_BASE_URL="$base/v1" command codex "$@"

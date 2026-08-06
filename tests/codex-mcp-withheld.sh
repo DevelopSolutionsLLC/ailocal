@@ -25,7 +25,7 @@ set -uo pipefail
 
 echo "CODEX MCP IS WITHHELD"
 
-GEN="$("$ROOT_DIR/scripts/profile-config" state-root)/clients/codex/config.toml"
+GEN="$(python3 "$ROOT_DIR/lib/profile-config" state-root)/clients/codex/config.toml"
 check $([ -f "$GEN" ] && echo 0 || echo 1) "generated codex config exists"
 
 # 1. The generated artifact carries no MCP server blocks.
@@ -53,7 +53,7 @@ fi
 # 3. ailocal does not invoke a global Cadence MCP sync. THE core assertion: with
 #    Cadence installed, the old code path ran unconditionally, so this is what
 #    actually keeps Codex clean rather than luck about what Cadence holds.
-IC="$ROOT_DIR/scripts/install-clients.sh"
+IC="$ROOT_DIR/lib/install-clients.sh"
 inv=$(grep -cE '^[^#]*cadence[[:space:]]+mcp[[:space:]]+sync' "$IC" 2>/dev/null || true)
 check $([ "${inv:-0}" -eq 0 ] && echo 0 || echo 1) \
   "install-clients.sh does not invoke 'cadence mcp sync' (found ${inv:-0})"
@@ -87,7 +87,7 @@ check $([ "${pres:-0}" -ge 1 ] && echo 0 || echo 1) \
 # is checked AGAINST the generated configuration rather than on its own.
 echo
 echo "INTEGRATION CONTRACT MATCHES GENERATED CLIENTS"
-CONTRACT="$("$ROOT_DIR/scripts/profile-config" state-root)/integration-contract.json"
+CONTRACT="$(python3 "$ROOT_DIR/lib/profile-config" state-root)/integration-contract.json"
 if [ -f "$CONTRACT" ] && command -v jq >/dev/null 2>&1; then
   cfg_codex=$(jq -r '.compatibility.codex_mcp_lsp.configured' "$CONTRACT")
   check $([ "$cfg_codex" = "false" ] && echo 0 || echo 1) \

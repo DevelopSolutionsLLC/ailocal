@@ -1,5 +1,5 @@
 # ailocal finalize.zsh — sourced at the BOTTOM of ~/.zshrc. Managed file —
-# installed by scripts/install-clients.sh, always overwritten. Must produce
+# installed by lib/install-clients.sh, always overwritten. Must produce
 # ZERO stdout/stderr.
 #
 # Only acts inside a VS Code terminal (_AILOCAL_VSCODE set by configure.zsh,
