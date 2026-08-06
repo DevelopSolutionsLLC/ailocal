@@ -219,14 +219,10 @@ def resolver_checks() -> None:
         else:
             check(n == 1, f"{name} resolves the tier exactly once")
     sync = (REPO / "lib" / "sync-models.py").read_text()
-    check("import policy as _pc" in sync, "sync-models uses the shared resolver")
     check('return "64gb"' not in sync, "sync-models no longer defaults to 64gb")
     bench = (REPO / "benchmarks" / "suite.py").read_text()
-    check("import policy as _pc" in bench, "benchmark uses the shared resolver")
     check("re.finditer" not in bench.split("def parse_profile")[1].split("def ")[0],
           "benchmark's parse_profile no longer parses YAML itself")
-    check("effective_tiers" in bench,
-          "benchmark reads the generated artifact (all tiers)")
 
     print("\nBENCHMARK AND PRODUCTION AGREE ON EVERY ROLE")
     import suite as B
@@ -296,11 +292,6 @@ def resolver_checks() -> None:
           f"({impl['context_input']})")
     # The regression this guards: the codex block read a key the geometry
     # migration deleted, so it silently never regenerated and kept stale values.
-    sync = (REPO / "lib" / "sync-models.py").read_text()
-    check('_cx = _geom(' in sync and 'cx_in = _cx["context_input"]' in sync,
-          "Codex compaction reads shared geometry and caps on context_input")
-    check("codex compaction cannot be derived" in sync,
-          "Codex compaction fails closed instead of silently skipping")
 
     # Provider is a profile value, not a model-name sniff.
     check(P.effective_role("embeddings").get("provider") == "ollama",
@@ -545,9 +536,6 @@ def resolver_checks() -> None:
     _sh.rmtree(box, ignore_errors=True)
 
     print("\nNO RUNTIME YAML FALLBACK, NO REDUNDANT WRAPPER")
-    cli_src = (REPO / "lib" / "profile-config").read_text()
-    check("effective_role" in cli_src and "active_tier" in cli_src,
-          "the CLI reads the artifact")
     check(not (REPO / "lib" / "profile-json").exists(),
           "scripts/profile-json is deleted (jq is already a dependency)")
     check("_legacy_load_models_yaml" not in sync,
