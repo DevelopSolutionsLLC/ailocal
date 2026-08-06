@@ -96,38 +96,63 @@ recover.
 - Subsystems consume public APIs, never another subsystem's files.
 - No fallback paths, no compatibility shims, no second implementation.
 
-## Testing
+## Engineering standard
 
-`ailocal test` is the gate. Suites live in `tests/` and are
-addressable by section, for example `python3 tests/profiles.py resolver`.
+**Simplicity.** Prefer the smallest complete change. One concept has one owner.
+Reuse existing functions and explicit parameters. No compatibility fallback
+without an external contract. Add an abstraction only when it removes
+measurable duplication, branching, readers, writers or entry points — not to
+split cohesive code, and never for a LOC target.
 
-Tests assert behaviour, not implementation text. Source inspection is
-acceptable only for a security property that cannot be observed through a
-public interface — proving an absence, for instance.
+**Ownership.** Authored source and generated state are separate; generated
+artifacts live only under `$AILOCAL_STATE`. Subsystems consume public APIs,
+never another subsystem's files. Policy has one reader; generation has one
+writer and one public entry point.
 
-## Comments and documentation
+**Code.** Clear names, cohesive functions, explicit parameters over mutable
+globals. Tables only where behaviour differs solely by data. Comments explain
+contracts, invariants, security and destructive boundaries, or an active
+external compatibility constraint — never investigation history, measurement
+diaries or prior layouts. Python is standard library only and follows PEP 8
+and PEP 257; shell uses `set -euo pipefail`, the shared helpers in
+`lib/output.sh`, and fails closed. No generic managers, factories, registries
+or utility layers without concrete consumers.
 
-Comments explain **why**: constraints, invariants, ownership, surprising
-behaviour. Code explains what.
+**Tests.** `ailocal test` is the gate; suites live in `tests/` and are
+addressable by section, for example `python3 tests/profiles.py resolver`. Test
+behaviour at the strongest useful boundary, one owner per invariant, and keep a
+regression for every real defect. Source inspection is acceptable only to prove
+an absence behaviour cannot — a forbidden MCP block, an attribution trailer, a
+secret-shaped value. Default tests and diagnostics must not consume paid
+external API quota; anything long, destructive, GUI-bound or metered is opt-in.
+
+**Validation.** Focused checks first, the full gate proportionally when shared
+behaviour changes. Never claim success without evidence. Generation stays a
+fixed point and leaves the tracked tree clean. Distinguish a product defect
+from an environment failure, an upstream limitation and an unmeasured surface.
+
+**Public quality.** Optimise for a cold reader. Documentation describes the
+current system; Git history owns investigations and discarded theories. Never
+commit secrets, personal paths, generated state, assistant attribution or
+session residue.
+
+## Instruction ownership
+
+- `AGENTS.md` owns repository-wide policy: this file is authoritative.
+- `CLAUDE.md` is a one-line `@AGENTS.md` import. Claude Code reads `CLAUDE.md`,
+  not `AGENTS.md` (code.claude.com/docs/en/memory), so the import is the bridge.
+  No rule may live only there.
+- `clients/<client>/` owns local runtime and client compatibility facts only.
+- Task prompts, commands and agent definitions own workflow-specific behaviour.
+- Tests, schemas, hooks and permissions enforce what must not depend on model
+  compliance.
+
+Do not duplicate repository policy into a client preload, or copy volatile
+profile values into prose when generation can supply them.
 
 Investigation history belongs in an ADR if it explains a durable decision,
 `docs/troubleshooting.md` if operational, `benchmarks/README.md` if about
-reproducibility, and Git history otherwise. Keep the invariant, drop the
-story. No benchmark tables in configuration. No session narrative in source.
-
-Instruction ownership is strict:
-
-- `AGENTS.md` owns repository-specific change and validation rules.
-- `clients/<client>/` owns local runtime and client compatibility facts only.
-- task prompts, commands, and agent definitions own workflow-specific behavior.
-- tests, schemas, hooks, CI, and permissions enforce requirements that must not
-  depend on model compliance.
-
-Do not duplicate repository policy in client preloads or copy volatile profile
-values into prose when they can be generated from the active profile.
-
-Python follows PEP 8 and PEP 257; shell uses `set -euo pipefail` and the shared
-helpers in `lib/output.sh`. Python is standard library only.
+reproducibility, and Git history otherwise.
 
 ## Security and Git
 
