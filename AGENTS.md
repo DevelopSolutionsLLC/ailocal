@@ -24,26 +24,29 @@ dependency.
 ## Repository map
 
 ```
-config/profiles/      hardware policy: capability -> model, geometry, sampling
-config/clients.yaml   which capability each client surface uses
-config/clients/       client templates (authored; never generated output)
-config/litellm/       proxy hooks, capability registry, config template
-config/instructions/  per-capability personas, mounted into the proxy
-deploy/               compose definitions for LiteLLM and SearXNG
-scripts/              ailocal CLI, installers, lifecycle
-scripts/lib/          policy.py, checks/, benchmark modules, shared shell
-scripts/tests/        domain suites; ./scripts/test-all.sh is the gate
+./ailocal          the only public command
+./install.sh       bootstrap, before ailocal is on PATH
+
+profiles/          hardware policy: capability -> model, geometry, sampling
+profiles/clients.yaml  which capability each client surface uses
+clients/           authored client templates (never generated output)
+deploy/litellm/    proxy hooks/, capability registry, config template, personas
+deploy/searxng/    search service definition
+benchmarks/        benchmark policy, tasks and suite implementations
+lib/               shared implementation and lifecycle; not executable
+tests/             domain suites; `ailocal test` is the gate
+docs/              architecture, security, troubleshooting
 ```
 
 ## Canonical sources
 
 | Path | Owns |
 |---|---|
-| `config/profiles/<tier>.yaml` | capability → model, `context_input`, `max_output`, sampling, reasoning, keep-alive, persona, compaction |
-| `config/clients.yaml` | which capability each client surface uses — no model tuning |
-| `config/litellm/registry.yaml` | intrinsic runtime capability: engine, context enforcement, tool support |
+| `profiles/<tier>.yaml` | capability → model, `context_input`, `max_output`, sampling, reasoning, keep-alive, persona, compaction |
+| `profiles/clients.yaml` | which capability each client surface uses — no model tuning |
+| `deploy/litellm/registry.yaml` | intrinsic runtime capability: engine, context enforcement, tool support |
 
-`scripts/lib/policy.py` is the **one** reader for all of it. It fails closed:
+`lib/policy.py` is the **one** reader for all of it. It fails closed:
 no default tier, unknown fields rejected, duplicate keys and sections rejected.
 Nothing else parses YAML, builds a policy path, or resolves geometry.
 
@@ -75,7 +78,7 @@ recover.
 2. `ailocal sync` — regenerate.
 3. `ailocal validate` — deterministic consistency; works with the stack stopped.
 4. `ailocal clients` — deploy, if client output changed.
-5. `./scripts/test-all.sh` — the gate. Run it twice when timing-sensitive
+5. `ailocal test` — the gate. Run it twice when timing-sensitive
    suites are involved; a transient first failure is investigated, not waved
    through.
 6. Commit only after the gate is green.
@@ -95,8 +98,8 @@ recover.
 
 ## Testing
 
-`./scripts/test-all.sh` is the gate. Suites live in `scripts/tests/` and are
-addressable by section, for example `python3 scripts/tests/profiles.py resolver`.
+`ailocal test` is the gate. Suites live in `tests/` and are
+addressable by section, for example `python3 tests/profiles.py resolver`.
 
 Tests assert behaviour, not implementation text. Source inspection is
 acceptable only for a security property that cannot be observed through a
@@ -113,7 +116,7 @@ otherwise. Keep the invariant, drop the story. No benchmark tables in
 configuration. No session narrative in source.
 
 Python follows PEP 8 and PEP 257; shell uses `set -euo pipefail` and the shared
-helpers in `scripts/lib/output.sh`. Python is standard library only.
+helpers in `lib/output.sh`. Python is standard library only.
 
 ## Security and Git
 
