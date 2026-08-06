@@ -177,24 +177,15 @@ def register_local_models():
 #
 #     INFO: 172.18.0.1:58848 - "HEAD /api/hello HTTP/1.1" 404 Not Found
 #
-# The probe originates in the client. claude-cli has three `<base>/api/hello`
-# call sites:
+# The probe originates in the client. Only its HEAD call site reads
+# ANTHROPIC_BASE_URL and reaches this proxy; its two GET call sites read the
+# client's built-in base and do not. GET is served anyway — it costs nothing, and
+# a client build that redirects either onto ANTHROPIC_BASE_URL then gets a 200
+# rather than a fresh 404.
 #
-#   a. HEAD, base = `ANTHROPIC_BASE_URL || BASE_API_URL`. The one that arrives
-#      here. Skipped entirely when a proxy / unix socket / client cert /
-#      Bedrock-style env var is set, and its result is discarded
-#      (`.catch(()=>{})`, no status inspection).
-#   b. GET, base = BASE_API_URL — connectivity telemetry, classified `http_<status>`.
-#   c. GET, base = BASE_API_URL — `preflight_endpoint`, which treats any status
-#      != 200 as a connection failure.
-#
-# (b) and (c) read the BUILT-IN base, so they do not reach this proxy. GET is
-# served anyway: it costs nothing, and a future client build that redirects either
-# onto ANTHROPIC_BASE_URL gets a 200 rather than a fresh 404.
-#
-# HONEST SCOPE. This removes the 404 and makes the probe succeed. Call site (a)
-# discards its result, so this route is NOT proven to be what silences any
-# particular in-terminal API warning; treat that as a separate claim.
+# HONEST SCOPE. This removes the 404 and makes the probe succeed. The call site
+# that arrives here discards its result, so this route is NOT proven to be what
+# silences any particular in-terminal API warning.
 #
 # CONSTRAINTS. No model invocation, no router lookup, no backend call. No auth
 # dependency: it is a reachability probe sent before/without credentials, and it
