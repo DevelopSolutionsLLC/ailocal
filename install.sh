@@ -655,10 +655,10 @@ SEARXNG_SECRET=${SEARXNG_SECRET}
 
 # ── Cloud fallbacks (disabled by default) ─────────────────────────────────
 # Set ENABLE_CLOUD=true and uncomment the relevant model block in
-# the generated config.yaml to enable cloud fallback for a specific model.
+# the generated litellm/config.yaml to enable cloud fallback for a specific model.
 ENABLE_CLOUD=false
 # To enable cloud fallback: add your key here, set ENABLE_CLOUD=true,
-# and uncomment the relevant model block in the generated config.yaml.
+# and uncomment the relevant model block in the generated litellm/config.yaml.
 # Then: ailocal start  (or: dc restart litellm)
 ANTHROPIC_API_KEY=
 OPENAI_API_KEY=
