@@ -133,7 +133,8 @@ from an environment failure, an upstream limitation and an unmeasured surface.
 **Public quality.** Optimise for a cold reader. Documentation describes the
 current system; Git history owns investigations and discarded theories. Never
 commit secrets, personal paths, generated state, assistant attribution or
-session residue.
+session residue. Product installation configures the product — never the
+developer's Git, editor or shell policy.
 
 ## Instruction ownership
 
@@ -142,8 +143,8 @@ session residue.
   `CLAUDE.md` rather than `AGENTS.md`. It carries no rules.
 - `clients/<client>/` owns local runtime and client compatibility facts only.
 - Task prompts, commands and agent definitions own workflow-specific behaviour.
-- Tests, schemas, hooks and permissions enforce what must not depend on model
-  compliance.
+- Tests, schemas and permissions enforce what must not depend on model
+  compliance. This repository installs no Git hooks.
 
 Do not duplicate repository policy into a client preload, or copy volatile
 profile values into prose when generation can supply them.
