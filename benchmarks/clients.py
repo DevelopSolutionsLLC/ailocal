@@ -609,16 +609,10 @@ def verify_routing(alias: str, model: str, cwd, key: str = None,
 
 
 # ── worktree confinement ────────────────────────────────────────────────────
-# A planner candidate read an unrelated repository and the
-# ground-truth answer key. Permissions were never the gap: they control WHICH
-# TOOLS may run, not WHICH PATHS an allowed tool may touch. With Read allowed,
-# an absolute path anywhere on the machine was readable.
-#
-# Same prompt, same permission contract, one cheap turn each:
-#   without confinement   INSIDE=OK PARENT=OK AILOCAL_CFG=OK CADENCE=OK
-#                         GROUNDTRUTH=OK      <- the answer key was readable
-#   with confinement      INSIDE=OK PARENT=DENIED AILOCAL_CFG=DENIED
-#                         CADENCE=DENIED GROUNDTRUTH=DENIED
+# Permissions are not confinement: they control WHICH TOOLS may run, not WHICH
+# PATHS an allowed tool may touch. With Read allowed, any absolute path on the
+# machine is readable — including an unrelated repository and the ground-truth
+# answer key. Confinement is what makes everything outside the worktree DENIED.
 #
 # The mechanism is Claude Code's OWN filesystem sandbox (2.1.220), configured
 # per run through --settings. It is a process-level boundary, not a prompt

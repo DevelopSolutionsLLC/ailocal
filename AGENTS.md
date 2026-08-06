@@ -1,8 +1,8 @@
 # AGENTS.md — ailocal
 
-The operating contract for changing this repository. Design lives in
-`docs/architecture.md`, operations in `docs/operations.md`, symptoms in
-`docs/troubleshooting.md`, secrets in `docs/security.md`.
+The operating contract for changing this repository. Architecture lives in
+`docs/architecture.md`, symptoms in `docs/troubleshooting.md`, secrets in
+`docs/security.md`, and benchmark methodology in `benchmarks/README.md`.
 
 ## Mission
 
@@ -110,10 +110,21 @@ public interface — proving an absence, for instance.
 Comments explain **why**: constraints, invariants, ownership, surprising
 behaviour. Code explains what.
 
-Investigation history belongs in an ADR if durable, `docs/troubleshooting.md`
-if operational, `docs/BENCHMARK.md` if about reproducibility, and Git history
-otherwise. Keep the invariant, drop the story. No benchmark tables in
-configuration. No session narrative in source.
+Investigation history belongs in an ADR if it explains a durable decision,
+`docs/troubleshooting.md` if operational, `benchmarks/README.md` if about
+reproducibility, and Git history otherwise. Keep the invariant, drop the
+story. No benchmark tables in configuration. No session narrative in source.
+
+Instruction ownership is strict:
+
+- `AGENTS.md` owns repository-specific change and validation rules.
+- `clients/<client>/` owns local runtime and client compatibility facts only.
+- task prompts, commands, and agent definitions own workflow-specific behavior.
+- tests, schemas, hooks, CI, and permissions enforce requirements that must not
+  depend on model compliance.
+
+Do not duplicate repository policy in client preloads or copy volatile profile
+values into prose when they can be generated from the active profile.
 
 Python follows PEP 8 and PEP 257; shell uses `set -euo pipefail` and the shared
 helpers in `lib/output.sh`. Python is standard library only.
@@ -143,13 +154,9 @@ copyright banners.
 - Change the LiteLLM pin, model roles, or profile geometry as a side effect of
   another task.
 
-## Known external limitations
+## External compatibility boundary
 
-- **Codex interactive streaming never completes** — BerriAI/litellm#27442.
-  Configuration, routing, geometry and tool transport are validated; the
-  streamed turn is not.
-- **Claude Code shows "0 searches"** even when retrieval worked; the result
-  block is dropped during upstream response serialisation.
-- **LiteLLM maps `reasoning_effort` unreliably for Ollama** — BerriAI/litellm#15059.
-  Per-role defaults are the control that works.
-- **The 128 GB profile is unvalidated** and mirrors the 64 GB policy.
+Codex receives no MCP configuration unless namespaced-tool dispatch is
+revalidated and the corresponding architecture decision is explicitly
+superseded. Current symptoms, upstream defects, and validation status belong in
+`docs/troubleshooting.md`, not in this always-loaded contract.

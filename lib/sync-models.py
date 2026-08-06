@@ -11,7 +11,7 @@ Single source of truth (both TRACKED — no gitignored intermediate):
                         profiles, Continue entries, compat aliases).
 
 Running `ailocal sync` regenerates, deterministically:
-  the generated config.yaml         model_list + model_group_alias (between markers)
+  $AILOCAL_STATE/litellm/config.yaml   model_list + model_group_alias (between markers)
   config/capabilities.generated.json resolved capabilities (for `ailocal status`)
   clients/model_catalog.json  Codex picker (capability slugs)
   clients/claude/settings.json launch default + valid-capability note
@@ -255,12 +255,9 @@ def gen_role_block(role, info):
         # "Unmapped LLM provider for this endpoint. You passed
         # model=nomic-embed-text, custom_llm_provider=ollama_chat".
         #
-        # Verified empirically in the 1.93.0 image, not inferred from docs:
-        #   litellm.embedding(model="ollama_chat/nomic-embed-text") -> BadRequest
-        #   litellm.embedding(model="ollama/nomic-embed-text")      -> OK, 768 dims
-        #
-        # This shipped broken: ailocal-embeddings was advertised in /v1/models and
-        # 400ed on every call. Cadence was unaffected because it talks to Ollama
+        # litellm.embedding(model="ollama/...") works; "ollama_chat/..." 400s.
+        # Getting this wrong advertises ailocal-embeddings in /v1/models and 400s
+        # on every call. Cadence is unaffected because it talks to Ollama
         # directly, which is why nobody noticed — a client configured to use the
         # proxy for embeddings (Continue) would have failed.
         lines = [
@@ -324,17 +321,11 @@ def gen_role_block(role, info):
     if merge:
         params.append("      merge_reasoning_content_in_choices: true")
     if not reasoning:
-        # Suppress reasoning ONLY for models that cannot do it.
-        #
-        # This was unconditionally correct when no installed model could think:
-        # Claude Code sends `thinking` on every request and a non-thinking
-        # backend 400s on it, and a backend defaulting to reasoning hung VS Code.
-        #
-        # It is now WRONG for qwen3.5, qwen3.6 and gpt-oss, which all report
-        # `thinking` in their Ollama capabilities. Emitting think:false for those
-        # would suppress the single biggest capability the migration buys. The
-        # `reasoning` flag in profiles/<tier>.yaml now drives this per
-        # capability rather than applying to everything.
+        # Suppress reasoning ONLY for models that cannot do it. Claude Code sends
+        # `thinking` on every request and a non-thinking backend 400s on it, but
+        # emitting think:false for a reasoning-capable model throws away its
+        # biggest capability. The `reasoning` flag in profiles/<tier>.yaml drives
+        # this per capability.
         params.append('      additional_drop_params: ["thinking", "reasoning_effort"]')
         params.append("      think: false")
     else:
@@ -508,8 +499,8 @@ def write_integration_contract(models):
             "codex_mcp_lsp": {
                 # WITHHELD, so `configured` is false. codex-local ships with no
                 # MCP servers at all -- no grepai, no LSP, no GitHub -- and
-                # tests/codex-mcp-withheld.sh asserts the generated and
-                # deployed configs contain zero [mcp_servers.*] blocks.
+                # `tests/clients.sh codex` asserts the generated and deployed
+                # configs contain zero [mcp_servers.*] blocks.
                 "configured": False,
                 "schema_preserved": False,
                 "execution": "withheld_client_incompatible",
@@ -521,7 +512,7 @@ def write_integration_contract(models):
                 # drive, so none is registered.
                 "reason": "codex_cannot_dispatch_namespaced_tools",
                 "upstream": "openai/codex#20652",
-                "verified_by": "tests/codex-mcp-withheld.sh",
+                "verified_by": "tests/clients.sh codex",
             },
         },
     }
@@ -975,7 +966,7 @@ def flush_stage():
     WHY ROLLBACK AND NOT JUST AN ORDERED COMMIT MARKER. Writing
     effective-profile.json last does make marker-aware readers fail closed, but
     it does not protect the deployed system: LiteLLM reads
-    the generated config.yaml directly and the clients read their own generated
+    litellm/config.yaml directly and the clients read their own generated
     files directly -- none of them consult the marker. Proven by fault
     injection (tests/generation-rollback.py): failing after three
     replaces left config/capabilities.generated.json new while the marker and
@@ -1073,7 +1064,7 @@ def main():
             sys.exit(f"error: {message}")
         warn(message)
 
-    step("Regenerating the generated config.yaml (model_list + aliases)")
+    step("Regenerating litellm/config.yaml (model_list + aliases)")
     ok("litellm config regenerated" if regen_litellm(models, clients) else "litellm config unchanged/skipped")
 
     step("Writing derived files")

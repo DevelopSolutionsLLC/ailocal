@@ -5,7 +5,7 @@ description: >
   debugging strategy before any code is touched. Use when a request spans
   more than one file, needs an ordered plan, or the fix approach is unclear.
   <example>
-  user: "Add retry logic to the LiteLLM health check and wire it into doctor.sh"
+  user: "Add retry logic to the LiteLLM health check and wire it into `ailocal doctor`"
   assistant: "Delegating to planner: identify files, ordered steps, risks."
   </example>
 # Use a documented tier alias, not a raw gateway name: Claude Code only reliably

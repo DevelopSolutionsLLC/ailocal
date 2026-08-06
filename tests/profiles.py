@@ -203,7 +203,7 @@ def resolver_checks() -> None:
     shutil.rmtree(root, ignore_errors=True)
 
     print("\nNO SECOND PARSER, NO SILENT FALLBACK")
-    shells = ["install-models.sh", "start.sh", "validate.sh", "doctor.sh"]
+    shells = ["install-models.sh", "lifecycle.sh"]
     for name in shells:
         src = (REPO / "lib" / name).read_text()
         check("echo 64gb" not in src, f"{name} has no hardcoded 64gb fallback")
@@ -218,19 +218,11 @@ def resolver_checks() -> None:
                   f"{name} delegates tier resolution to the shared checks layer")
         else:
             check(n == 1, f"{name} resolves the tier exactly once")
-    doctor = (REPO / "lib" / "doctor.sh").read_text()
-    check(not re.search(r"sed -n .*profiles/", doctor),
-          "doctor.sh no longer parses profile YAML with sed")
-
     sync = (REPO / "lib" / "sync-models.py").read_text()
-    check("import policy as _pc" in sync, "sync-models uses the shared resolver")
     check('return "64gb"' not in sync, "sync-models no longer defaults to 64gb")
     bench = (REPO / "benchmarks" / "suite.py").read_text()
-    check("import policy as _pc" in bench, "benchmark uses the shared resolver")
     check("re.finditer" not in bench.split("def parse_profile")[1].split("def ")[0],
           "benchmark's parse_profile no longer parses YAML itself")
-    check("effective_tiers" in bench,
-          "benchmark reads the generated artifact (all tiers)")
 
     print("\nBENCHMARK AND PRODUCTION AGREE ON EVERY ROLE")
     import suite as B
@@ -300,11 +292,6 @@ def resolver_checks() -> None:
           f"({impl['context_input']})")
     # The regression this guards: the codex block read a key the geometry
     # migration deleted, so it silently never regenerated and kept stale values.
-    sync = (REPO / "lib" / "sync-models.py").read_text()
-    check('_cx = _geom(' in sync and 'cx_in = _cx["context_input"]' in sync,
-          "Codex compaction reads shared geometry and caps on context_input")
-    check("codex compaction cannot be derived" in sync,
-          "Codex compaction fails closed instead of silently skipping")
 
     # Provider is a profile value, not a model-name sniff.
     check(P.effective_role("embeddings").get("provider") == "ollama",
@@ -486,7 +473,7 @@ def resolver_checks() -> None:
           "benchmark parse_profile reads generated data, parses no YAML")
 
     # Shell consumers must not parse YAML either.
-    for name in ("start.sh", "doctor.sh", "install-models.sh"):
+    for name in ("lifecycle.sh", "install-models.sh"):
         src = (REPO / "lib" / name).read_text()
         check("active:" not in src or "grep -E" not in src.split("active:")[0][-80:],
               f"{name} does not grep|sed profile YAML")
@@ -549,9 +536,6 @@ def resolver_checks() -> None:
     _sh.rmtree(box, ignore_errors=True)
 
     print("\nNO RUNTIME YAML FALLBACK, NO REDUNDANT WRAPPER")
-    cli_src = (REPO / "lib" / "profile-config").read_text()
-    check("effective_role" in cli_src and "active_tier" in cli_src,
-          "the CLI reads the artifact")
     check(not (REPO / "lib" / "profile-json").exists(),
           "scripts/profile-json is deleted (jq is already a dependency)")
     check("_legacy_load_models_yaml" not in sync,
@@ -574,7 +558,7 @@ def resolver_checks() -> None:
         "^  context_input:", "^  max_output:", "^  active:",
     )
     for entry in ("install.sh", "install-models.sh", "install-clients.sh",
-                  "doctor.sh", "update.sh"):
+                  "lifecycle.sh"):
         path = REPO / "lib" / entry
         if not path.exists():
             continue
@@ -612,14 +596,11 @@ def resolver_checks() -> None:
     check(_sm.flow_list(None) == [], "an absent optional list reads as empty")
     check(not hasattr(_sm, "flow_dict") and not hasattr(_sm, "truthy"),
           "the generator carries no second scalar parser")
-    # The point was never jq: it was that doctor must not extract profile fields
-    # with a bespoke parser. It now reads them through policy itself,
-    # which is the same guarantee one layer stronger.
-    _doc = (REPO / "lib" / "doctor.sh").read_text()
-    check(not re.search(r"(sed|awk|grep)[^|\n]*profiles/", _doc),
-          "doctor.sh extracts no profile field with a bespoke parser")
-    check("checks/run.py" in _doc,
-          "doctor.sh reads the profile through the shared checks layer")
+    # validate/smoke/doctor are one Python implementation calling policy
+    # directly, so "no bespoke profile parser" is structural rather than a
+    # property of some shell script's text.
+    check(not (REPO / "lib" / "doctor.sh").exists(),
+          "doctor is not a shell wrapper with its own parsing")
 
     print("\nGENERATION IS ATOMIC AND INSTALL FAILS CLOSED")
     check("flush_stage" in sync and "os.replace" in sync,

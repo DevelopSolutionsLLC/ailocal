@@ -2,7 +2,7 @@
 """benchmarks/models — optional developer utility.
 
 Not part of install, update or the regression gate. Never modifies a profile.
-See docs/BENCHMARK.md.
+See benchmarks/README.md.
 """
 import argparse
 import json
