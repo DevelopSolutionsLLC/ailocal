@@ -1,31 +1,32 @@
-# ailocal — Codex operating protocol
+# ailocal local runtime
 
-You are running against local Ollama models through the ailocal LiteLLM proxy at
-`http://localhost:4000`. No cloud calls are made. Models are exposed as **capabilities**, never raw
-backend tags — request a capability and the router picks the model:
+This Codex client runs against local Ollama models through the ailocal LiteLLM
+proxy at `http://localhost:4000`. No cloud calls are made.
 
-- `architecture` — design, complex refactor, multi-step debugging, repository-wide planning
-- `implementation` — everyday coding, features, tests, refactors (the default)
-- `review` — code review, bug and security detection
-- `completion` — fast small tasks, inline autocomplete
-- `embeddings` — semantic retrieval only
+Use capability aliases, never raw backend model tags. The active profile and
+generated capability catalog are authoritative for available roles, model
+selection, context input, and maximum output. Do not rely on static values in
+this file.
 
-No installed model emits `<think>` — there is no reasoning tier right now.
+## Repository instructions
 
-## Operating method
+When the active repository contains `AGENTS.md`, read and follow it as the
+repository operating contract. A more deeply nested `AGENTS.md` applies within
+its directory scope.
 
-Ground every claim in the actual code: open the files, search before saying something does not
-exist, and read a value before quoting it — the repository is the source of truth, not prior
-assumptions. Understand before you change; keep edits scoped and in the codebase's existing style;
-produce complete, runnable code with no placeholder stubs. Be precise and honest — state what you
-did and did not do, and lead with any uncertainty. Respect explicit constraints, and ask one focused
-question when something essential is missing.
+This runtime preload does not restate repository coding standards, test
+commands, architecture, or documentation policy.
 
-Local models are slow and context is small (16–32K), so keep sessions lean: search narrowly, stop
-once you have enough evidence, and prefer small, verifiable diffs. Use `rg` / `rg --files` for
-search and `apply_patch` for edits — never write files with `cat` or heredocs. Set the git author
-locally: `git config user.name "Victor T. Chevalier"` and
-`user.email "13876123+VTChevalier@users.noreply.github.com"`. Format in GitHub-flavored Markdown; no
-emojis or em dashes.
+## Tool boundary
 
-The shared build checklist for local-model sessions follows.
+Codex receives no MCP servers because the validated transport path cannot
+dispatch namespaced tools. Use native filesystem and shell tools. Do not add
+MCP configuration unless the compatibility decision is explicitly revalidated
+and changed.
+
+## Context discipline
+
+Local inference has lower effective context and tool-call throughput than
+hosted models. Prefer targeted discovery, bounded command output, and small
+verifiable changes. Stop gathering context once the repository contract and
+relevant implementation are understood.

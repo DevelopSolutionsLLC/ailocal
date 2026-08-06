@@ -300,8 +300,16 @@ def check_generation(token: str, alias: str = "ailocal-fast") -> CheckResult:
     return CheckResult("generation", PASS, f"{alias} answered ({content.strip()[:40]})")
 
 
-def check_searxng() -> CheckResult:
-    """Search is optional: unavailable search degrades, it does not fail."""
+#: The one SearXNG query any DEFAULT check may issue. `!wp` restricts dispatch
+#: to Wikipedia, which costs nothing. A bare query fans out to every enabled
+#: engine — including braveapi, which spends a metered Brave allowance on each
+#: call. A local health check must never consume an external quota.
+FREE_ENGINE_QUERY = "!wp test"
+FREE_ENGINE_NAME = "wikipedia"
+
+
+def _searxng_state() -> CheckResult | None:
+    """Container-state guard shared by the search checks. None means running."""
     state, _ = container_state("ailocal-searxng")
     if state == "absent":
         return CheckResult("searxng", WARN, "SearXNG container not present",
@@ -309,16 +317,126 @@ def check_searxng() -> CheckResult:
     if state != "running":
         return CheckResult("searxng", WARN, f"SearXNG is {state}",
                            remediation="ailocal start")
+    return None
+
+
+def check_searxng() -> CheckResult:
+    """Reachability and JSON-API health, WITHOUT dispatching any engine.
+
+    /config is served by SearXNG itself and queries nothing, so this costs no
+    external request. Search is optional: unavailable search degrades, it does
+    not fail.
+    """
+    guard = _searxng_state()
+    if guard is not None:
+        return guard
     r = _run(["docker", "exec", CONTAINER, "python", "-c",
               "import urllib.request,json;"
-              "print(len(json.loads(urllib.request.urlopen("
-              "'http://searxng:8080/search?q=test&format=json', timeout=5)"
-              ".read()).get('results',[])))"])
+              "d=json.loads(urllib.request.urlopen("
+              "'http://searxng:8080/config', timeout=5).read());"
+              "print(len(d.get('engines') or []))"])
     if r.returncode != 0:
         return CheckResult("searxng", WARN, "LiteLLM cannot reach the SearXNG JSON API",
                            r.stderr.strip()[:200], "ailocal start")
     return CheckResult("searxng", PASS,
-                       f"SearXNG JSON API reachable from LiteLLM ({r.stdout.strip()} results)")
+                       f"SearXNG JSON API reachable from LiteLLM "
+                       f"({r.stdout.strip()} engines configured, no query issued)")
+
+
+def check_searxng_query() -> CheckResult:
+    """One real search, pinned to a free engine, and PROVE only that engine ran.
+
+    Asserting on the returned engine names is the point: a configuration change
+    that re-enables federation would otherwise silently start spending Brave
+    quota on every smoke run.
+    """
+    guard = _searxng_state()
+    if guard is not None:
+        return guard
+    probe = (
+        "import urllib.request,json,urllib.parse;"
+        f"q=urllib.parse.quote({FREE_ENGINE_QUERY!r});"
+        "d=json.loads(urllib.request.urlopen("
+        "f'http://searxng:8080/search?q={q}&format=json', timeout=15).read());"
+        "res=d.get('results') or [];"
+        "eng=sorted({e for r in res for e in (r.get('engines') or [r.get('engine')]) if e});"
+        "print(len(res));print(','.join(eng))"
+    )
+    r = _run(["docker", "exec", CONTAINER, "python", "-c", probe])
+    if r.returncode != 0:
+        return CheckResult("searxng-query", WARN, "free-engine search did not complete",
+                           r.stderr.strip()[:200], "ailocal start")
+    lines = r.stdout.strip().splitlines()
+    count = lines[0] if lines else "0"
+    engines = [e for e in (lines[1].split(",") if len(lines) > 1 and lines[1] else []) if e]
+    unexpected = [e for e in engines if e != FREE_ENGINE_NAME]
+    if unexpected:
+        return CheckResult("searxng-query", FAIL,
+                           "a default search dispatched engines beyond "
+                           f"{FREE_ENGINE_NAME}: {', '.join(unexpected)}",
+                           "default checks must not spend external API quota",
+                           "restrict the query to a free engine")
+    return CheckResult("searxng-query", PASS,
+                       f"free-engine search returned {count} result(s) "
+                       f"from {FREE_ENGINE_NAME} only (no external quota used)")
+
+
+def check_brave_key_configured() -> CheckResult:
+    """Report whether a Brave key is present WITHOUT spending a query."""
+    import os
+    import pathlib as _pl
+    import sys as _sys
+    override = os.environ.get("AILOCAL_SEARXNG_SETTINGS")
+    if override:
+        settings = _pl.Path(override)
+    else:
+        # The state root has one owner; do not re-derive it here.
+        _sys.path.insert(0, str(_pl.Path(__file__).resolve().parent.parent))
+        import policy as _pc
+        settings = _pc.runtime_root() / "searxng" / "settings.yml"
+    if not settings.is_file():
+        return CheckResult("brave-key", BLOCKED, "rendered SearXNG settings not readable")
+    text = settings.read_text(errors="replace")
+    import re as _re
+    m = _re.search(r"- name:\s*braveapi(.*?)(?=\n  - name:|\Z)", text, _re.S)
+    if not m:
+        return CheckResult("brave-key", PASS, "braveapi engine not configured")
+    body = m.group(1)
+    km = _re.search(r"api_key:\s*(\S+)", body)
+    configured = bool(km) and km.group(1) not in ('""', "''", "null", "~")
+    inactive = bool(_re.search(r"(inactive|disabled):\s*true", body))
+    if not configured:
+        return CheckResult("brave-key", PASS, "braveapi present, no key configured")
+    return CheckResult("brave-key", PASS,
+                       f"braveapi key configured (engine {'inactive' if inactive else 'ACTIVE'}); "
+                       "default checks never query it")
+
+
+def check_searxng_external() -> CheckResult:
+    """OPT-IN ONLY. A federated search that reaches paid engines.
+
+    Reached exclusively through `ailocal smoke --external-search`. Never call
+    this from doctor, smoke's default path, the gate, install validation or any
+    stress loop: each call spends a metered Brave query.
+    """
+    guard = _searxng_state()
+    if guard is not None:
+        return guard
+    r = _run(["docker", "exec", CONTAINER, "python", "-c",
+              "import urllib.request,json;"
+              "d=json.loads(urllib.request.urlopen("
+              "'http://searxng:8080/search?q=test&format=json', timeout=20).read());"
+              "res=d.get('results') or [];"
+              "eng=sorted({e for r in res for e in (r.get('engines') or [r.get('engine')]) if e});"
+              "print(len(res));print(','.join(eng))"])
+    if r.returncode != 0:
+        return CheckResult("searxng-external", WARN, "federated search did not complete",
+                           r.stderr.strip()[:200])
+    lines = r.stdout.strip().splitlines()
+    return CheckResult("searxng-external", PASS,
+                       f"federated search returned {lines[0] if lines else 0} result(s) "
+                       f"from {lines[1] if len(lines) > 1 else 'no engines'} "
+                       "(external API quota consumed)")
 
 
 def check_search_tool_registered() -> CheckResult:
