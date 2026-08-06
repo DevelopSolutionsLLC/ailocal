@@ -19,7 +19,8 @@ environment, not adding an import.
 
   Core venv + PyYAML:
     deletes those 144 LOC, then adds a pinned requirements file plus venv
-    provisioning in install.sh, validation in doctor.sh, refresh in update.sh
+    provisioning in install.sh, validation in `ailocal doctor`, refresh in
+    `ailocal update`
     and removal in teardown.sh -- FOUR lifecycle touchpoints, one runtime
     dependency, one new failure class ("venv missing or broken"), and network
     on first install. Net production LOC roughly -84.
@@ -36,7 +37,7 @@ generated output, or ailocal acquires a core venv for some OTHER reason -- at
 which point PyYAML rides along for free and this decision flips.
 
 Profile parsing had grown four independent implementations --
-sync-models.py's load_models_yaml(), benchmark.py's parse_profile(), doctor.sh's
+sync-models.py's load_models_yaml(), benchmark.py's parse_profile(), doctor's
 sed extraction, and a `cat active-profile` in every shell entry point -- and they
 did not agree. Worse, the shell readers all shared one shape:
 
