@@ -43,7 +43,7 @@ ollama serve                         # or open Ollama.app
 
 git clone https://github.com/DevelopSolutionsLLC/ailocal.git
 cd ailocal
-./install.sh
+./ailocal install
 ```
 
 The installer detects memory, selects a profile, pulls the models, starts the

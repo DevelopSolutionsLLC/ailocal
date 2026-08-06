@@ -22,6 +22,7 @@ LIB="$ROOT_DIR/lib"
 cmd="${1:-help}"; shift || true
 
 case "$cmd" in
+  install)  exec bash "$LIB/install.sh" "$@" ;;
   status)   exec bash "$LIB/status.sh" "$@" ;;
   models)   exec bash "$LIB/status.sh" --table ;;
   validate) exec python3 "$LIB/checks/run.py" validate "$@" ;;

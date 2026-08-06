@@ -43,7 +43,7 @@ cat /tmp/cmd-label.log
 ailocal start > /tmp/compose-up.log 2>&1 & exit 0
 
 # Running install scripts
-./install.sh > /tmp/install.log 2>&1 & exit 0
+./ailocal install > /tmp/install.log 2>&1 & exit 0
 
 # Building a project
 npm run build > /tmp/build.log 2>&1 & exit 0
@@ -95,7 +95,7 @@ When a workflow has multiple steps (install → build → test), fire them as a 
 rather than waiting between steps:
 
 ```bash
-./install.sh > /tmp/step1.log 2>&1 && \
+./ailocal install > /tmp/step1.log 2>&1 && \
 npm run build >> /tmp/step1.log 2>&1 && \
 npm test >> /tmp/step1.log 2>&1 & exit 0
 ```

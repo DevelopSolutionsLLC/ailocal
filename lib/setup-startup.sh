@@ -88,7 +88,7 @@ fi
 mkdir -p "$LA_DIR" "$LOG_DIR" "$APP_SUPPORT" /Users/Shared/ollama/models
 
 # The README's own Install section says to start Ollama (`ollama serve` or open
-# Ollama.app) BEFORE running install.sh, so by the time this script installs the
+# Ollama.app) BEFORE running `ailocal install`, so by the time this script installs the
 # launchd-managed 'ollama serve' with OLLAMA_MODELS baked in, an env-less instance
 # is usually already bound to :11434 and every model pull silently lands in
 # ~/.ollama instead of the shared store. Three things hold the port hostage and

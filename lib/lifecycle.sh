@@ -33,7 +33,7 @@ NO_WAIT=false
 step "Pre-flight checks"
 
 if [ ! -f ".env" ]; then
-  error ".env not found. Run ./install.sh first."
+  error ".env not found. Run ./ailocal install first."
   exit 1
 fi
 info ".env present"
@@ -83,7 +83,7 @@ fi
 
 # No `docker compose pull` here by design: start (incl. the boot LaunchAgent) must be
 # reproducible and offline-safe, so it runs whatever image is on disk. main-stable is a
-# moving tag — refresh deliberately via install.sh (initial) or update.sh, not on every boot.
+# moving tag — refresh deliberately via lib/install.sh (initial) or update.sh, not on every boot.
 step "Starting ailocal services"
 
 # Was LiteLLM already up BEFORE this run? `dc up -d` is a no-op for an
@@ -280,7 +280,7 @@ if [ "$REMOVE_CLIENTS" = true ]; then
 fi
 echo ""
 echo "  Your .env and repo config files will NOT be touched."
-echo "  Re-run ./install.sh + ailocal start to rebuild."
+echo "  Re-run ./ailocal install + ailocal start to rebuild."
 echo ""
 read -r -p "  Proceed? [y/N]: " confirm
 [[ "${confirm:-}" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 0; }
@@ -357,7 +357,7 @@ fi
 step "Teardown complete."
 echo ""
 echo "  To fully reset and start fresh:"
-echo "    ./install.sh     # re-generate .env if needed"
+echo "    ./ailocal install     # re-generate .env if needed"
 echo "    ailocal start       # rebuild and start"
 }
 

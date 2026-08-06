@@ -350,10 +350,10 @@ def library_checks() -> None:
           _d / "z.log", name="ailocal-nonexistent-container")["path"] or True,
           "capturing a missing container does not raise")
     check((_d / "z.log").exists(), "a failed capture still writes a file")
-    install = (REPO / "install.sh").read_text()
+    install = (REPO / "lib/install.sh").read_text()
     for gb in ("128", "64", "32", "16"):
         check(f"-ge {gb}" in install,
-              f"install.sh still uses the {gb} GB threshold this ladder mirrors")
+              f"lib/install.sh still uses the {gb} GB threshold this ladder mirrors")
     print("\ncontext admission")
     for ctx, ceil in ((32768, 8192), (24576, 4096), (8192, 2048), (98304, 16384)):
         e = B.build_alias("qwen3.5:2b", "off", ctx, ceil, {})

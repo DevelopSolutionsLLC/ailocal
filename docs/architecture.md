@@ -24,7 +24,7 @@ Every directory owns one thing. Generated output never appears in any of them.
 | `deploy/litellm/instructions/` | per-capability personas, mounted into the proxy | anything client-specific |
 | `benchmarks/` | benchmark policy, tasks, and suite implementations | production model policy |
 | `deploy/litellm/`, `deploy/searxng/` | compose definitions and authored service files | rendered secrets, generated config |
-| `./ailocal`, `./install.sh` | the only public entry points | implementation |
+| `./ailocal`, `./ailocal install` | the only public entry points | implementation |
 | `lib/` | shared implementation and lifecycle: `policy.py`, `checks/`, `diagnostics/`, shell helpers | duplicate owners, public entry points |
 | `tests/` | domain suites; `ailocal test` is the gate | production code |
 | `docs/` | this document set | history |
@@ -177,7 +177,7 @@ config root — never the repository.
 then `ailocal sync && ailocal models-install`.
 
 **Add a profile** — create `profiles/<tier>.yaml` and add the tier to
-`policy.TIERS`. Selection thresholds live in `install.sh`.
+`policy.TIERS`. Selection thresholds live in `lib/install.sh`.
 
 **Add a capability** — add the role to the profiles and to `policy.ROLES`, then
 map client surfaces to it in `profiles/clients.yaml`.

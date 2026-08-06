@@ -17,7 +17,7 @@ OLLAMA="${OLLAMA_CLI:-ollama}"
 # smaller machine. Resolve once, here, and reuse.
 _TIER="$(python3 "$ROOT_DIR/lib/profile-config" active-tier)" || {
   echo "  ✗ cannot resolve the active profile (see error above)" >&2; exit 1; }
-# The GENERATED artifact, not the profile. install.sh runs sync-models before
+# The GENERATED artifact, not the profile. `ailocal install` runs sync-models before
 # this script, so generated state exists by now — and reading it removes the
 # fourth hand-rolled YAML parser in this repository.
 EFFECTIVE_JSON="$AILOCAL_STATE/litellm/effective-profile.json"
