@@ -1,9 +1,8 @@
 # AGENTS.md — ailocal
 
 The operating contract for changing this repository. Architecture lives in
-`docs/architecture.md`, operations in `docs/operations.md`, symptoms in
-`docs/troubleshooting.md`, secrets in `docs/security.md`, and benchmark
-methodology in `benchmarks/README.md`.
+`docs/architecture.md`, symptoms in `docs/troubleshooting.md`, secrets in
+`docs/security.md`, and benchmark methodology in `benchmarks/README.md`.
 
 ## Mission
 
