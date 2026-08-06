@@ -500,7 +500,7 @@ if ! python3 "$ROOT_DIR/lib/profile-config" profile-summary >/dev/null 2>&1; the
   exit 1
 fi
 # jq, not an embedded parser: it is already a hard install dependency (checked
-# in the preflight above) and doctor.sh queries the same summary with it.
+# in the preflight above) and `ailocal doctor` queries the same summary with it.
 _jq() { printf '%s' "$_PLAN" | jq -r "$1"; }
 _SHARED_MODEL="$(_jq '[.roles[].model] | group_by(.) | max_by(length) | .[0]')"
 _SHARED_ROLES="$(_jq --arg m "$_SHARED_MODEL" '[.roles|to_entries[]|select(.value.model==$m)|.key]|sort|join(", ")' 2>/dev/null \

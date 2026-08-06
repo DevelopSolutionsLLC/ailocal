@@ -31,7 +31,7 @@ services:
       - ailocal_net
     ports:
       # Localhost-only, matching LiteLLM. Publishing to the host is NOT required
-      # for LiteLLM (that traffic stays on ailocal_net); it exists so doctor.sh
+      # for LiteLLM (that traffic stays on ailocal_net); it exists so `ailocal doctor`
       # and a human can probe the UI/JSON API directly. Was 0.0.0.0 — that
       # exposed the instance to the whole LAN for no benefit.
       - "127.0.0.1:8080:8080"
