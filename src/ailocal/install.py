@@ -1,6 +1,6 @@
 """install.py — getting a machine into a state where the runtime can run.
 
-Host prerequisites, asset provisioning, the active tier, .env, the Ollama model
+Prerequisite verification, asset provisioning, the active tier, .env, the Ollama model
 set, the login agents, and the read-only audit of an installation that
 `ailocal check` reports.
 
@@ -19,7 +19,6 @@ import plistlib
 import shutil
 import subprocess
 import sys
-import urllib.request
 from pathlib import Path
 
 from . import policy, runtime
@@ -236,118 +235,29 @@ def provision(source: Path, config: Path, data: Path, state: Path) -> dict:
 
 # ── host prerequisites ──────────────────────────────────────────────────────
 
-def _preflight(assume_yes: bool) -> bool:
-    """Report everything missing, take one consent and one sudo authorisation.
-
-    Verified administrator requirements: the Command Line Tools (`softwareupdate
-    -i` runs as root), Homebrew (creates /opt/homebrew) and Docker Desktop
-    (privileged helpers) need it; jq and the Ollama cask do not.
-    """
-    missing, admin = [], False
-    for cmd, label, needs_admin in (
-            ("git", "git (Xcode Command Line Tools)", True),
-            ("brew", "Homebrew", True),
-            ("jq", "jq", False),
-            ("docker", "Docker Desktop", True),
-            ("ollama", "Ollama", False)):
-        if not _has(cmd):
-            missing.append(f"{label}{' [admin]' if needs_admin else ''}")
-            admin = admin or needs_admin
-
-    step("Preflight")
-    if not missing:
-        ok("all prerequisites present (git, brew, jq, docker, ollama)")
-        return False
-    print("  This machine is missing:")
-    for m in missing:
-        print(f"    - {m}")
-    # A standard account cannot install these at all: it cannot sudo, and
-    # /Applications is only group-writable by admin.
-    if admin and "admin" not in _out("id", "-Gn").split():
-        raise SystemExit(f"  {_out('id', '-un')} is not an administrator, and some of "
-                         "these need administrator rights. Install them from an "
-                         "admin account, then re-run.")
-    if admin:
-        print("\n  The [admin] items install system-wide; sudo is asked for once, "
-              "now, rather than surprising you mid-run.\n")
-    if not assume_yes and not _yes("Install them?"):
-        raise SystemExit("  Declined. Install the tools above, then re-run.")
-    if admin and _run("sudo", "-v").returncode:
-        raise SystemExit("  Administrator authorisation declined.")
-    return admin
+#: command -> how to get it. ailocal does not install other people's software:
+#: a package manager it did not choose, running as root, is not a thing this
+#: project should own. It states exactly what is missing and stops.
+PREREQUISITES = (
+    ("docker", "Docker Desktop", "brew install --cask docker-desktop"),
+    ("ollama", "Ollama", "brew install --cask ollama-app"),
+    ("jq", "jq", "brew install jq"),
+)
 
 
-def _install_prerequisites(assume_yes: bool) -> None:
-    admin = _preflight(assume_yes)
-
-    # Homebrew's installer provisions the Command Line Tools silently, so with
-    # both missing, brew first gets git too with no GUI dialog.
-    if not _has("brew"):
-        step("Installing Homebrew")
-        script = urllib.request.urlopen(
-            "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh",
-            timeout=60).read()
-        if _run("/bin/bash", "-c", script.decode(),
-                env={**os.environ, "NONINTERACTIVE": "1"}).returncode:
-            raise SystemExit("  Homebrew install failed. See https://brew.sh")
-        for prefix in ("/opt/homebrew", "/usr/local"):
-            if (Path(prefix) / "bin" / "brew").is_file():
-                os.environ["PATH"] = f"{prefix}/bin:{os.environ['PATH']}"
-                break
-    if not _has("git"):
-        step("Installing the Command Line Tools")
-        _run("xcode-select", "--install")
-        raise SystemExit("  Accept the macOS dialog, then re-run.")
-
-    formulas = [f for f in ("jq", "cosign") if not _has(f)]
-    casks = ([] if _has("docker") else ["docker-desktop"]) + \
-            ([] if _has("ollama") else ["ollama-app"])
-    if formulas or casks:
-        step("Installing Homebrew packages")
-        if formulas and _run("brew", "install", *formulas).returncode:
-            raise SystemExit(f"  Could not install: {' '.join(formulas)}")
-        # Never fall back from the cask to the formula: that yields a CLI with
-        # no app, a different install shape reached by accident.
-        if casks and _run("brew", "install", "--cask", *casks).returncode:
-            raise SystemExit(f"  Could not install: {' '.join(casks)}")
-    else:
-        ok("jq, cosign, Docker and Ollama already present")
-
-    # /usr/local/bin is on the minimal PATH launchd jobs get; /opt/homebrew/bin
-    # is not. Never adopt or overwrite a path we did not create.
-    if admin and not Path("/usr/local/bin/ollama").exists():
-        target = next((c for c in ("/Applications/Ollama.app/Contents/Resources/ollama",
-                                   shutil.which("ollama")) if c and Path(c).is_file()), None)
-        if target:
-            _run("sudo", "mkdir", "-p", "/usr/local/bin")
-            _run("sudo", "ln", "-sfn", target, "/usr/local/bin/ollama")
-
-    step("Checking Docker")
-    _accept_docker_license()
+def require_prerequisites() -> None:
+    """Refuse to install onto a machine that cannot run the result."""
+    step("Prerequisites")
+    missing = [(label, how) for cmd, label, how in PREREQUISITES if not _has(cmd)]
+    if missing:
+        print("  This machine is missing:")
+        for label, how in missing:
+            print(f"    - {label:16} {how}")
+        raise SystemExit("\n  Install those, then re-run ailocal install.")
     if _run("docker", "ps", capture=True).returncode:
-        _run("open", "-a", "Docker")
-        if not _wait(lambda: _run("docker", "ps", capture=True).returncode == 0, 60, 5):
-            raise SystemExit("  Docker daemon did not start. Open Docker Desktop, "
-                             "finish first-run setup, then re-run.")
-    ok("Docker present and running")
-
-
-def _accept_docker_license() -> None:
-    """Pre-seed the key Docker writes when you click Accept: user-owned, so no
-    sudo, and it is what keeps the install non-interactive. Two spellings cover
-    current and legacy versions."""
-    d = Path.home() / "Library" / "Group Containers" / "group.com.docker"
-    d.mkdir(parents=True, exist_ok=True)
-    for name, key in (("settings-store.json", "LicenseTermsVersion"),
-                      ("settings.json", "licenseTermsVersion")):
-        p = d / name
-        try:
-            cfg = json.loads(p.read_text()) if p.is_file() else {}
-        except (OSError, ValueError):
-            cfg = {}
-        if not cfg.get(key):
-            cfg[key] = 2
-            p.write_text(json.dumps(cfg, indent=2))
+        raise SystemExit("  Docker is installed but the daemon is not responding.\n"
+                         "    open -a Docker      # then re-run ailocal install")
+    ok(f"{', '.join(label for _, label, _ in PREREQUISITES)} present, Docker running")
 
 
 def _wait(predicate, attempts: int, delay: float) -> bool:
@@ -594,7 +504,8 @@ def tier_for_memory(gb: int) -> str | None:
                  if gb >= int(t[:-2])), None)
 
 
-def _select_tier(override: str, assume_yes: bool) -> str:
+def select_tier(override: str, assume_yes: bool) -> str:
+    """The one writer of the active-profile marker."""
     gb = _memory_gb()
     tier = tier_for_memory(gb)
     if tier is None:
@@ -703,7 +614,7 @@ def audit() -> list:
     def note(summary):
         results.append(CheckResult("install", SKIP, summary))
 
-    cfg = policy.deployed_client_root()
+    cfg = policy.config_root()
     for name, probe, fix in (("claude", cfg / "claude" / ".claude.json", "claude"),
                              ("codex", cfg / "codex" / "config.toml", "codex")):
         if probe.is_file():
@@ -784,7 +695,7 @@ def cmd_install(argv: list[str]) -> int:
         return 0
     assume_yes = "--yes" in argv
 
-    _install_prerequisites(assume_yes)
+    require_prerequisites()
 
     step("Installing assets")
     source = distribution_source()
@@ -808,7 +719,7 @@ def cmd_install(argv: list[str]) -> int:
 
     step("Detecting hardware profile")
     ram = _memory_gb()
-    tier = _select_tier(_opt(argv, "--profile", ""), assume_yes)
+    tier = select_tier(_opt(argv, "--profile", ""), assume_yes)
 
     step("Configuring environment (.env)")
     _write_env(assume_yes)

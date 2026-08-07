@@ -35,24 +35,35 @@ Disk depends on the profile: roughly 25 GB at 16 GB RAM, 40 GB at 64 GB.
 
 ## Install
 
-```bash
-brew install git jq
-brew install --cask docker ollama    # open Docker Desktop once to finish setup
-ollama serve                         # or open Ollama.app
+ailocal does not install other people's software. Get the prerequisites
+yourself, then install ailocal:
 
-git clone https://github.com/DevelopSolutionsLLC/ailocal.git
-cd ailocal
-pipx install .
+```bash
+brew install jq
+brew install --cask docker-desktop ollama-app   # open Docker Desktop once
+ollama serve                                    # or open Ollama.app
+
+pipx install git+https://github.com/DevelopSolutionsLLC/ailocal.git
 ailocal install
 ```
 
-`pipx install .` provides the `ailocal` command. To work on ailocal itself,
-`pip install -e .` in a virtualenv gives the same command backed by the
-checkout; the regression gate runs against whichever `ailocal` is on PATH.
+`ailocal install` refuses to run if a prerequisite is missing, and names it.
 
 The installer detects memory, selects a profile, pulls the models, starts the
 services and deploys the client configurations. It refuses to select a profile
 the machine cannot hold.
+
+That is the whole lifecycle:
+
+```bash
+pipx install ...           # once
+ailocal profile use 64gb   # only to override what memory selected
+ailocal start              # regenerates configuration, then brings the stack up
+ailocal check              # is it working?
+```
+
+Configuration is derived, never a state to remember to refresh: `start`
+regenerates it from the active profile every time.
 
 It can also install login agents that start Ollama and preload the resident
 model — answer `y` when prompted. Re-running `ailocal install` is
@@ -91,8 +102,9 @@ Any OpenAI- or Anthropic-compatible client works directly: base URL
 
 Capabilities are `architecture`, `implementation`, `review`, `fast`,
 `completion` and `embeddings`. The small tiers use `qwen2.5-coder:1.5b` for
-inline completion; the 64 GB tier uses `qwen2.5-coder:3b`. Profiles live in `profiles/` — edit the
-profile, never a generated file, then run `ailocal sync`.
+inline completion; the 64 GB tier uses `qwen2.5-coder:3b`. Profiles are installed to
+`~/.config/ailocal/profiles/` — edit the profile there, never a generated file,
+then `ailocal start`.
 
 ## Commands
 
