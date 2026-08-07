@@ -740,15 +740,16 @@ def cmd_update(argv: list[str]) -> int:
 
     if "--skip-models" not in argv:
         step("Updating Ollama models")
-        if subprocess.run(
-                [sys.executable, "-m", "ailocal.install", "models"],
-                check=False).returncode:
+        from . import install
+        if install.cmd_models([]):
             warn("Model update had warnings — services will still restart.")
 
     # Client configs are NOT redeployed here: that would rewrite the user's
     # client homes on every update. Redeploy explicitly with ailocal clients.
     step("Regenerating model config")
-    subprocess.run([sys.executable, "-m", "ailocal.generation"], check=True)
+    from . import generation
+    if generation.main([]):
+        raise _fail("generation failed — services were not restarted")
 
     step("Restarting services")
     compose("up", "-d", "--remove-orphans")
@@ -756,8 +757,8 @@ def cmd_update(argv: list[str]) -> int:
 
     step("Validating health post-update")
     wait_ready(20)
-    if subprocess.run([sys.executable, "-m", "ailocal.checks.run", "doctor"],
-                      check=False).returncode:
+    from .checks import run as checks_run
+    if checks_run.main(["doctor"]):
         warn("Health check reported issues after update.")
         print("  Check logs: docker logs ailocal-litellm --tail=50")
         return 1

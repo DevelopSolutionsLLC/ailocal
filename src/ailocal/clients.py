@@ -671,7 +671,9 @@ def main(argv: list[str]) -> int:
 
     # Every derived artifact first: deploying from stale generated state is how
     # a client ends up configured for a profile that is no longer active.
-    subprocess.run([sys.executable, "-m", "ailocal.generation"], check=True)
+    from . import generation
+    if generation.main([]):
+        return 1
 
     key = _master_key()
     ensure_shell_sourcing(key)

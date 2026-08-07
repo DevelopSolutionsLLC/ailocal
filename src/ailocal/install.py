@@ -925,7 +925,9 @@ def cmd_install(argv: list[str]) -> int:
     # Generation must succeed before anything is pulled, and the plan below is
     # rendered from the generated artifact so it cannot report stale numbers.
     step("Generating configuration")
-    _run(sys.executable, "-m", "ailocal.generation", check=True)
+    from . import generation
+    if generation.main([]):
+        raise SystemExit("  generation failed — nothing was pulled")
     print()
     _print_plan(tier, f"physical memory:     {ram} GB")
 
@@ -940,7 +942,8 @@ def cmd_install(argv: list[str]) -> int:
         warn("LiteLLM did not become ready — check: docker logs ailocal-litellm")
 
     cmd_models([])
-    _run(sys.executable, "-m", "ailocal.checks.run", "doctor")
+    from .checks import run as checks_run
+    checks_run.main(["doctor"])
 
     # Deploying into a user's client roots is never implied by --yes.
     step("Client configs (optional)")
