@@ -21,6 +21,25 @@ import types
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 
+# ── the one test environment owner ──────────────────────────────────────────
+# A suite under test runs against the WORKING TREE, and policy.py resolves the
+# config and data roots to XDG locations unless told otherwise. Declaring that
+# belongs here, once, rather than in an exported variable every contributor has
+# to remember: importing this module IS the declaration. Production code keeps
+# no checkout fallback -- this is test machinery, and only test machinery.
+#
+# Set, not overwritten: an isolated run (tests/installed-runtime.py) points these
+# somewhere else on purpose.
+os.environ.setdefault("AILOCAL_CONFIG", str(REPO))
+os.environ.setdefault("AILOCAL_DATA", str(REPO))
+if str(REPO / "src") not in sys.path:
+    sys.path.insert(0, str(REPO / "src"))
+# Subprocesses launched by a suite need the same declaration.
+_pp = os.environ.get("PYTHONPATH", "")
+if str(REPO / "src") not in _pp.split(os.pathsep):
+    os.environ["PYTHONPATH"] = (f"{REPO / 'src'}{os.pathsep}{_pp}" if _pp
+                                else str(REPO / "src"))
+
 _GREEN, _RED, _YELLOW, _RESET = "\033[32m", "\033[31m", "\033[33m", "\033[0m"
 
 
