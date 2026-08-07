@@ -454,6 +454,13 @@ def cmd_start(argv: list[str]) -> int:
     no_wait = "--no-wait" in argv
     _preflight()
 
+    # Configuration is DERIVED, never a state the user has to remember to
+    # refresh: editing a profile and starting is the whole loop.
+    step("Generating configuration from the active profile")
+    from . import generation
+    if generation.main([]):
+        raise _fail("generation failed — nothing was started")
+
     # No `docker compose pull` here by design: start (including the boot
     # LaunchAgent) must be reproducible and offline-safe, so it runs whatever
     # image is on disk. Images are refreshed deliberately, by update.
@@ -482,7 +489,6 @@ def cmd_start(argv: list[str]) -> int:
     step("ailocal is running")
     print(f"\n  LiteLLM API  →  {proxy_url()}\n")
     print("  Clients:  ailocal clients     (Claude Code, Codex, VS Code)")
-    print("            ailocal clients vscode   (Copilot Chat connector)")
     print("  Inspect:  ailocal status")
     return 0
 
@@ -636,7 +642,7 @@ def _dashboard() -> None:
     _gateway_summary(litellm)
 
     hdr("Clients")
-    client_root = policy.deployed_client_root()
+    client_root = policy.config_root()
     (ok if (client_root / "claude" / ".claude.json").is_file() else bad)(
         "Claude Code   configured, isolated from ~/.claude"
         if (client_root / "claude" / ".claude.json").is_file()

@@ -17,6 +17,7 @@ COMMANDS: dict[str, tuple[str, tuple]] = {
     "check":          ("ailocal.checks.run", ("check",)),
 
     "sync":           ("ailocal.generation", ()),
+
     "start":          ("ailocal.runtime", ("start",)),
     "stop":           ("ailocal.runtime", ("stop",)),
     "update":         ("ailocal.runtime", ("update",)),
@@ -63,6 +64,14 @@ def _profile(argv: list[str]) -> int:
         return rest[rest.index(name) + 1] if name in rest else None
 
     try:
+        if query == "use":
+            from . import install
+            if not rest:
+                print("usage: ailocal profile use <tier>", file=sys.stderr)
+                return 2
+            install.select_tier(rest[0], assume_yes=False)
+            from . import generation
+            return generation.main([])
         if query == "state-root":
             print(P.state_root())
         elif query == "config-root":
@@ -94,8 +103,9 @@ def _profile(argv: list[str]) -> int:
             P.load_effective()
             print(f"ok: {P.active_tier()} active; generated profile state is valid")
         else:
-            print("usage: ailocal profile <active-tier|state-root|config-root|"
-                  "data-root|active-profile-path|role NAME [--field F] [--tier T]|"
+            print("usage: ailocal profile <use TIER|active-tier|state-root|"
+                  "config-root|data-root|active-profile-path|"
+                  "role NAME [--field F] [--tier T]|"
                   "profile-summary [--tier T]|validate>", file=sys.stderr)
             return 2
     except P.ProfileError as e:
