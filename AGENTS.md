@@ -14,8 +14,8 @@ agent definitions — and must stay usable on its own.
 |---|---|
 | `pyproject.toml` | packaging, dependencies, the `ailocal` console script |
 | `src/ailocal/` | implementation |
-| `profiles/<tier>.toml` | capability → model, context and output geometry, sampling |
-| `profiles/clients.toml` | which capability each client surface uses |
+| `src/ailocal/resources/profiles/<tier>.toml` | capability → model, context and output geometry, sampling |
+| `src/ailocal/resources/profiles/clients.toml` | which capability each client surface uses |
 | `src/ailocal/resources/` | shipped assets — deploy/ and clients/ are read IN PLACE from the package; only `profiles/` is copied out |
 | `src/ailocal/policy.py` | the only reader of any of the above |
 
@@ -26,7 +26,7 @@ python3 -m venv .venv && . .venv/bin/activate
 pip install -e .
 ```
 
-`pipx install -e .` also works and is what a developer running the gate uses.
+`pipx install -e .` also works, and gives you the `ailocal` command on PATH.
 
 ## Validate
 
@@ -34,6 +34,22 @@ pip install -e .
 ailocal check           # the whole installation, one report
 python3 tests/gate.py   # the regression gate
 ```
+
+The gate imports `ailocal`, so it runs under the interpreter the package is
+installed into — the activated `.venv` above. A pipx installation puts the
+command on PATH but not the module on the host interpreter's import path, so
+run the gate from the venv.
+
+```sh
+python3 tests/installed-runtime.py           # no Docker: path proof only
+python3 tests/installed-runtime.py --stack   # also start/status/stop
+```
+
+DELIBERATELY OUT OF THE GATE. It builds a venv, installs the package and
+(with `--stack`) starts containers, which is minutes rather than the seconds
+the gate is held to. Run it whenever packaging, resources or provisioning
+change — it is the only check that proves the wheel needs no checkout, and it
+rotted unnoticed once precisely because nothing named it.
 
 `src/ailocal/resources/deploy` and `.../clients` are read straight from the
 package, so editing them takes effect on the next `ailocal start` — there is no
@@ -72,8 +88,8 @@ containers start and nothing mutates a mounted asset while the stack runs.
 
 ## The repository root
 
-Only project-level concepts belong there: `src/`, `tests/`, `docs/`,
-`profiles/`, and project metadata. No generated artifact is ever tracked. A
+Only project-level concepts belong there: `src/`, `tests/`, `docs/`, and
+project metadata. No generated artifact is ever tracked. A
 generated file appearing at the root is not a tidiness problem — it is evidence
 that a root has lost its owner, and the fix is the resolver, not `.gitignore`
 (the ignore entries are a backstop, not the boundary).

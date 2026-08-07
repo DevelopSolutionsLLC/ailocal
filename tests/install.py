@@ -18,7 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-from harness import RESOURCES, REPO, Suite  # noqa: E402
+from harness import RESOURCES, Suite  # noqa: E402
 from ailocal import install as I  # noqa: E402
 
 _suite = Suite()
@@ -53,7 +53,7 @@ def main() -> None:
     check("profiles/64gb.toml" in report["preserved"],
           "an edited profile is reported as preserved")
     check(edited.read_text() == keep, "an edited profile is NOT overwritten")
-    check(untouched.read_text() == (REPO / "profiles" / "32gb.toml").read_text(),
+    check(untouched.read_text() == (RESOURCES / "profiles" / "32gb.toml").read_text(),
           "an unedited profile still matches what was shipped")
 
     report = I.provision(RESOURCES, cfg, state)
@@ -91,10 +91,10 @@ def main() -> None:
           and (I.distribution_source() / "deploy").is_dir()
           and (I.distribution_source() / "clients").is_dir(),
           "every shipped component is reachable from the package alone")
-    # The checkout reaches the same profiles by two paths (root and resource
-    # tree). Copying one onto the other would truncate the file it is reading.
+    # A config root pointed at the package's own resources would copy profiles/
+    # onto itself, truncating the files it is reading.
     try:
-        I.provision(RESOURCES, REPO, state)
+        I.provision(RESOURCES, RESOURCES, state)
         refused = False
     except SystemExit:
         refused = True

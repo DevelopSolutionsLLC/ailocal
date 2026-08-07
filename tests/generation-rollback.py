@@ -73,7 +73,7 @@ def run(fail_after: int | None) -> tuple[dict, dict, int]:
 
 
 def main() -> int:
-    profile = REPO / "profiles" / "64gb.toml"
+    profile = RESOURCES / "profiles" / "64gb.toml"
     original = profile.read_text()
 
     print("A DRIFTED TEMPLATE STOPS GENERATION")

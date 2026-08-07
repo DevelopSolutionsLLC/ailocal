@@ -302,6 +302,26 @@ final step is manual.
 
 ---
 
+## The VS Code chat reply area is cramped
+
+**Likely cause** — not ailocal. VS Code 1.132 added an agent-sessions panel
+inside the chat view, which takes space from the conversation. Its settings are
+`chat.viewSessions.enabled` and `chat.viewSessions.orientation`
+(`stacked` puts the panel above the chat input; `sideBySide` puts it beside the
+chat when the view is wide enough). ailocal writes neither.
+
+**Fix** — in VS Code settings:
+
+```json
+"chat.viewSessions.enabled": false
+```
+
+**Status** — upstream behaviour, not a defect. Responses through the proxy are
+unaffected: reasoning arrives in `reasoning_content` and the answer in
+`content`, which is what the connector expects.
+
+---
+
 ## A cosmetic warning appears at startup
 
 SearXNG logs a bot-detection line during boot. It is expected on a
