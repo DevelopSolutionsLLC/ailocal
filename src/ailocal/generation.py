@@ -508,7 +508,7 @@ def gen_copilot_capabilities(models):
     lines += ["",
               "`ailocal-completion` is FIM autocomplete **only** — it hard-400s on a chat",
               "turn. Cold-loading a model costs a few seconds; the dominant latency is",
-              "prompt evaluation, not loading (docs/adr/013-latency-profile.md).",
+              "prompt evaluation, not loading.",
               CP_END]
     return "\n".join(lines) + "\n"
 

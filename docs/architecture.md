@@ -24,9 +24,8 @@ Every directory owns one thing. Generated output never appears in any of them.
 | `deploy/litellm/instructions/` | per-capability personas, mounted into the proxy | anything client-specific |
 | `deploy/searxng/` | the search service definition and authored settings | the rendered `settings.yml` carrying the Brave key |
 | `benchmarks/` | benchmark policy, tasks, and suite implementations | production model policy |
-| `src/ailocal/` | the installed package; `cli.py` owns the command surface | implementation of any command |
+| `src/ailocal/` | the installed package — the whole product: `cli.py` (command table), `policy.py` (the one reader), `generation.py` (the one generator), `runtime.py`, `install.py`, `clients.py`, `checks/` | duplicate owners, a second command list |
 | `./ailocal` | development shim for running from a checkout | a second command list |
-| `lib/` | shared implementation and lifecycle: `policy.py`, `checks/`, `diagnostics/`, shell helpers | duplicate owners, public entry points |
 | `tests/` | domain suites; `ailocal test` is the gate | production code |
 | `docs/` | this document set | history |
 
@@ -103,9 +102,10 @@ $AILOCAL_STATE/
 
 ## Public commands
 
-`ailocal` is the only supported entry point. Modules under `lib/` implement
-these commands and are not a public interface. `ailocal help` owns the command
-list; it is not restated here.
+`ailocal` is the only supported entry point. Every command is implemented by a
+module in `src/ailocal/`, which the CLI imports and calls in-process; those
+modules are not a public interface. `ailocal help` owns the command list; it is
+not restated here.
 
 Exit codes: `validate` and `smoke` return `0` or `1`. `doctor` returns `0`
 healthy, `1` when it cannot resolve a trustworthy profile and refuses to
