@@ -38,34 +38,40 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PROFILES_DIR   = ROOT / "profiles"
 # Interactive-compaction thresholds, read from the profile's `compaction:` block.
 COMPACTION = {}
 
 sys.path.insert(0, str(ROOT / "lib"))
 import policy as _pc  # noqa: E402
 
-ACTIVE_PROFILE = _pc.active_profile_path(ROOT)   # machine-selected tier
-CLIENTS_YAML   = ROOT / "profiles/clients.yaml"
-LITELLM_TEMPLATE = ROOT / "deploy/litellm/config.template.yaml"
+# Every path comes from policy (ADR 009): authored policy from the config root,
+# templates and assets from the data root, generated output from the state root.
+# Deriving them from this file's location instead put the tier marker inside the
+# checkout, where it does not exist -- so its staleness hash was the empty
+# string, and policy.py's guard, which skips a falsy hash, never ran.
+PROFILES_DIR   = _pc.profiles_dir()
+ACTIVE_PROFILE = _pc.active_profile_path()       # machine-selected tier
+CLIENTS_YAML   = _pc.client_policy_path()
+_DATA          = _pc.data_root()
+LITELLM_TEMPLATE = _DATA / "deploy/litellm/config.template.yaml"
 _CLIENTS_OUT   = _pc.state_root() / "clients"
 _LITELLM_OUT   = _pc.state_root() / "litellm"
 LITELLM_CONFIG   = _LITELLM_OUT / "config.yaml"
 CAPS_JSON      = _LITELLM_OUT / "capabilities.json"
 CODEX_CATALOG  = _CLIENTS_OUT / "model_catalog.json"
-CLAUDE_SETTINGS_TPL = ROOT / "clients/claude/settings.template.json"
+CLAUDE_SETTINGS_TPL = _DATA / "clients/claude/settings.template.json"
 CLAUDE_SETTINGS = _CLIENTS_OUT / "claude/settings.json"
-CODEX_TPL        = ROOT / "clients/codex/config.template.toml"
-CODEX_PLAN_TPL   = ROOT / "clients/codex/plan.config.template.toml"
-CODEX_REVIEW_TPL = ROOT / "clients/codex/review.config.template.toml"
+CODEX_TPL        = _DATA / "clients/codex/config.template.toml"
+CODEX_PLAN_TPL   = _DATA / "clients/codex/plan.config.template.toml"
+CODEX_REVIEW_TPL = _DATA / "clients/codex/review.config.template.toml"
 CODEX_CONFIG   = _CLIENTS_OUT / "codex/config.toml"
 CODEX_PLAN     = _CLIENTS_OUT / "codex/plan.config.toml"
 CODEX_REVIEW   = _CLIENTS_OUT / "codex/review.config.toml"
-CONTINUE_CONFIG_TPL = ROOT / "clients/continue/config.template.json"
+CONTINUE_CONFIG_TPL = _DATA / "clients/continue/config.template.json"
 CONTINUE_CONFIG = _CLIENTS_OUT / "continue/config.json"
-CONFIGURE_ZSH_TPL = ROOT / "clients/configure.template.zsh"
+CONFIGURE_ZSH_TPL = _DATA / "clients/configure.template.zsh"
 CONFIGURE_ZSH  = _CLIENTS_OUT / "configure.zsh"
-COPILOT_REPO_TPL = ROOT / "clients/copilot/repo-instructions.template.md"
+COPILOT_REPO_TPL = _DATA / "clients/copilot/repo-instructions.template.md"
 COPILOT_REPO_MD  = _CLIENTS_OUT / "copilot/repo-instructions.md"
 
 # The machine-readable seam with Cadence. Cadence reads THIS and nothing else to
@@ -118,7 +124,7 @@ def resolve_tier(explicit=None):
     regenerated every client and the proxy for the wrong hardware."""
     if explicit:
         return explicit
-    return _pc.resolve_active_tier(ROOT)
+    return _pc.resolve_active_tier()
 
 
 def profile_path(tier=None, explicit=None):
@@ -880,7 +886,7 @@ def build_effective_profile(active_tier, path):
         roles = {}
         for role in _pc.ROLES:
             try:
-                c = _pc.resolve_role(t, role, ROOT)
+                c = _pc.resolve_role(t, role)
             except _pc.ProfileError:
                 continue
             roles[role] = {k: c[k] for k in (
@@ -889,8 +895,8 @@ def build_effective_profile(active_tier, path):
                 "reasoning", "temperature",
                 "top_p", "top_k", "repeat_penalty", "keep_alive", "persona",
                 "enabled", "name", "preferred")}
-        data = _pc.load_profile(t, ROOT)
-        return {"source_profile": str(prof_path.relative_to(ROOT)),
+        data = _pc.load_profile(t)
+        return {"source_profile": str(prof_path.relative_to(_pc.config_root())),
                 "source_profile_sha256": _sha_file(prof_path),
                 "compaction": data.get("compaction", {}),
                 "roles": roles}
@@ -1052,7 +1058,7 @@ def main():
 
     tier = resolve_tier(tier)          # fail-closed; never an implicit default
     path = profile_path(tier=tier)
-    step(f"Reading {path.relative_to(ROOT)} + profiles/clients.yaml")
+    step(f"Reading {path.relative_to(_pc.config_root())} + profiles/clients.yaml")
     models = load_models_yaml(path)
     clients = load_clients_yaml()
     for role, info in models.items():
@@ -1088,7 +1094,7 @@ def main():
             return re.sub(r'"generated_at":\s*"[^"]*"', '"generated_at": ""', t)
 
         def _label(d):
-            for base in (_pc.state_root(), ROOT):
+            for base in (_pc.state_root(), _pc.config_root(), _pc.data_root(), ROOT):
                 try:
                     return str(d.relative_to(base))
                 except ValueError:

@@ -164,6 +164,10 @@ run "consolidated suites stay section-isolated" \
     python3 tests/suite-structure.py
 run "generation rolls back on partial failure (never mixed on disk)" \
     python3 tests/generation-rollback.py
+# Provisioning writes OUTSIDE the checkout, so the rule that an edited profile
+# is never overwritten is the one that protects an operator's policy.
+run "provisioning preserves edited policy and replaces data wholesale" \
+    python3 tests/provision.py
 # Claude Code sends auxiliary Anthropic-shaped probes derived from
 # ANTHROPIC_BASE_URL; LiteLLM implements none of them, so HEAD /api/hello 404'd.
 # Asserts the probe answers 200 AND that nothing else moved to make that true —
