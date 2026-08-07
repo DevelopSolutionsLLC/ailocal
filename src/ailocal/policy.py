@@ -40,7 +40,6 @@ import re
 import os
 from pathlib import Path
 
-REPO_DEFAULT = Path(__file__).resolve().parent.parent
 TIERS = ("16gb", "32gb", "64gb", "128gb")
 
 #: Capability roles. `compaction` is a CLIENT tuning knob, not a capability: it
@@ -250,7 +249,7 @@ def config_root(repo_root=None) -> Path:
     if repo_root is not None:
         return Path(repo_root)
     override = os.environ.get("AILOCAL_CONFIG")
-    return Path(override) if override else REPO_DEFAULT
+    return Path(override) if override else _xdg("XDG_CONFIG_HOME", ".config") / "ailocal"
 
 
 def data_root(repo_root=None) -> Path:
@@ -259,7 +258,7 @@ def data_root(repo_root=None) -> Path:
     if repo_root is not None:
         return Path(repo_root)
     override = os.environ.get("AILOCAL_DATA")
-    return Path(override) if override else REPO_DEFAULT
+    return Path(override) if override else _xdg("XDG_DATA_HOME", ".local", "share") / "ailocal"
 
 
 def deployed_client_root() -> Path:

@@ -218,7 +218,7 @@ if [ "$WITH_LITELLM" = 1 ]; then
 set -euo pipefail
 # Wait for Ollama, then run LiteLLM natively (no Docker). Env from .env.
 cd "$ROOT_DIR"
-set -a; . "$ROOT_DIR/.env"; set +a
+set -a; . "$(python3 "$ROOT_DIR/lib/profile-config" config-root)/.env"; set +a
 export OLLAMA_URL="http://127.0.0.1:11434"
 for _ in \$(seq 1 60); do curl -fsS -m 3 http://127.0.0.1:11434/api/version >/dev/null 2>&1 && break; sleep 2; done
 exec "${LITELLM_BIN:-litellm}" --config "$AILOCAL_STATE/litellm/config.yaml" --port 4000 --host 127.0.0.1

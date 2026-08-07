@@ -4,7 +4,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-ENV_FILE="$ROOT_DIR/.env"
+ENV_FILE="$(python3 "$ROOT_DIR/lib/profile-config" config-root)/.env"
 
 # Single source of truth for how this stack is composed (deploy/litellm + deploy/searxng).
 AILOCAL_ROOT="$ROOT_DIR"
@@ -540,7 +540,7 @@ run_next_steps() {
 
   echo
   step "Checking health"
-  python3 "$ROOT_DIR/lib/checks/run.py" doctor || true
+  python3 -m ailocal.checks.run doctor || true
 
   # Client configs are OPT-IN — installing them rewrites/merges existing
   # Claude Code / Codex / VS Code settings, which can disrupt a customized

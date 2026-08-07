@@ -24,7 +24,7 @@ services:
     # depend on it. Scout: no vulnerable package detected at this digest.
     # To upgrade: pull, scan, run lib/test-all.sh, then update this line.
     image: searxng/searxng@sha256:79c2be18a18367484474bae9b18a8cd9085114ab3dcd49cac091cad8c548a0a9
-    container_name: ailocal-searxng
+    container_name: ${AILOCAL_SEARXNG_CONTAINER:-ailocal-searxng}
     restart: unless-stopped
     mem_limit: 512m
     networks:
@@ -34,7 +34,7 @@ services:
       # for LiteLLM (that traffic stays on ailocal_net); it exists so `ailocal doctor`
       # and a human can probe the UI/JSON API directly. Was 0.0.0.0 — that
       # exposed the instance to the whole LAN for no benefit.
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${AILOCAL_SEARXNG_PORT:-8080}:8080"
     environment:
       # This 0.0.0.0 IS required and is not a security hole: it is the bind
       # address INSIDE the container. Binding container-loopback instead would

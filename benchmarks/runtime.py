@@ -20,7 +20,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from checks.services import (  # noqa: E402  service access has one owner
+from ailocal.checks.services import (  # noqa: E402  service access has one owner
     OLLAMA, PROXY as LITELLM, _key_from, master_key as api_key,
     proxy_healthy as litellm_healthy,
 )
@@ -148,7 +148,7 @@ def build_alias(model: str, mode: str, context: int, ceiling: int,
     keep_alive defaults to the caller's choice rather than a hardcoded literal;
     benchmarks that want production behaviour pass the profile's value.
     """
-    import policy as _pc
+    from ailocal import policy as _pc
     g = _pc.geometry(context, ceiling)
     think = THINK_MODES.get(mode)
     params = {"model": f"ollama_chat/{model}",
@@ -189,7 +189,7 @@ def generated_dir() -> Path:
     """The generated LiteLLM config directory, via the one state-root owner."""
     import sys as _sys
     _sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import policy
+    from ailocal import policy
     return policy.state_root() / "litellm"
 
 
@@ -258,7 +258,7 @@ def _compose(args: list, extra=None):
              "-f", str(REPO / "deploy/searxng/compose.yaml")]
     for f in (extra or []):
         files += ["-f", str(f)]
-    import policy
+    from ailocal import policy
     env = {**os.environ, "AILOCAL_STATE": str(policy.state_root())}
     return subprocess.run(["docker", "compose", "--project-directory", str(REPO),
                            *files, *args], capture_output=True, text=True,

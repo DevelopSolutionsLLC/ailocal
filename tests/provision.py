@@ -87,7 +87,7 @@ def main() -> None:
     stray.write_text("# left behind by an older version\n")
     prov.provision(REPO, cfg, data, state)
     check(not stray.exists(), "a file no longer shipped is gone after an upgrade")
-    check((data / "lib" / "policy.py").is_file(), "shipped data is present again")
+    check((data / "lib" / "sync-models.py").is_file(), "shipped data is present again")
 
     shutil.rmtree(box, ignore_errors=True)
     sys.exit(_suite.report())

@@ -29,12 +29,11 @@ from __future__ import annotations
 import pathlib
 import sys
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
-from checks import FAIL, WARN, exit_code, render  # noqa: E402
-from checks import config as C  # noqa: E402
-from checks import host as H  # noqa: E402
-from checks import services as S  # noqa: E402
+from ailocal.checks import FAIL, WARN, exit_code, render  # noqa: E402
+from ailocal.checks import config as C  # noqa: E402
+from ailocal.checks import host as H  # noqa: E402
+from ailocal.checks import services as S  # noqa: E402
 
 BOLD, RESET = "\033[1;36m", "\033[0m"
 
@@ -62,8 +61,7 @@ def _validate(argv: list[str]) -> int:
 
 def _expected() -> tuple[list[str], dict[str, int], list[str]]:
     """Aliases, advertised geometry and required backends for the active tier."""
-    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-    import policy as P
+    from ailocal import policy as P
 
     tier = P.resolve_active_tier()
     profile = P.load_profile(tier)
@@ -112,8 +110,7 @@ def _doctor(argv: list[str]) -> int:
     Exit 1 is a refusal, not a failure count: diagnosing against an assumed
     tier would report on a configuration the machine is not running.
     """
-    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-    import policy as P
+    from ailocal import policy as P
 
     try:
         tier = P.resolve_active_tier()

@@ -28,10 +28,9 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "benchmarks"))
 from harness import REPO, Suite, load_module  # noqa: E402
-import policy as P  # noqa: E402
+from ailocal import policy as P
 
 PROFILES = ("16gb", "32gb", "64gb", "128gb")
 CAPABILITIES = ("architecture", "implementation", "review",
@@ -229,11 +228,17 @@ def resolver_checks() -> None:
     for env, fn in (("AILOCAL_CONFIG", P.config_root),
                     ("AILOCAL_DATA", P.data_root),
                     ("AILOCAL_STATE", P.state_root)):
+        # Restore, never delete: a checkout run DECLARES these, so dropping one
+        # silently repoints every later check at the XDG location instead.
+        prior = os.environ.get(env)
         os.environ[env] = "/tmp/ailocal-root-probe"
         try:
             check(str(fn()) == "/tmp/ailocal-root-probe", f"{env} overrides its root")
         finally:
-            del os.environ[env]
+            if prior is None:
+                os.environ.pop(env, None)
+            else:
+                os.environ[env] = prior
     check(P.state_root() != P.config_root(),
           "state root is never the config root (generated state stays out of the tree)")
     # A scheduled job outlives the shell that created it. If it embeds a path
@@ -932,7 +937,7 @@ def policy_checks() -> None:
         shutil.rmtree(d, ignore_errors=True)
 
     _suite.section("ONE OWNER")
-    policy_src = (REPO / "lib" / "policy.py").read_text()
+    policy_src = (REPO / "src" / "ailocal" / "policy.py").read_text()
     for fn in ("load_client_policy", "resolve_active_tier", "active_profile_path",
                "profile_path", "geometry", "required_models"):
         check(f"def {fn}(" in policy_src, f"policy.py owns {fn}()")
@@ -960,7 +965,7 @@ def policy_checks() -> None:
           ", ".join(sorted(set(offenders))))
 
     # The validator must not execute the generator to read policy.
-    cfg = (REPO / "lib" / "checks" / "config.py").read_text()
+    cfg = (REPO / "src" / "ailocal" / "checks" / "config.py").read_text()
     check("sync-models.py" not in cfg or "spec_from_file_location" not in cfg,
           "validation does not load the generator to read policy")
 
@@ -983,10 +988,17 @@ def policy_checks() -> None:
     # An internal command must still dispatch: it is undiscoverable, not gone.
     check(cli.INTERNAL <= dispatchable, "every internal command still dispatches",
           ", ".join(sorted(cli.INTERNAL - dispatchable)))
-    missing = [f"{n} -> {rel}" for n, (_, rel, _, _) in cli.COMMANDS.items()
-               if not (REPO / rel).exists()]
+    import importlib.util as _ilu
+
+    def _resolves(kind, rel):
+        # A module target is importable; a file target is a path under the tree.
+        return (_ilu.find_spec(rel) is not None if kind == cli.MOD
+                else (REPO / rel).exists())
+
+    missing = [f"{n} -> {rel}" for n, (k, rel, _, _) in cli.COMMANDS.items()
+               if not _resolves(k, rel)]
     missing += [f"{c} {t} -> {rel}" for c, ts in cli.NESTED.items()
-                for t, (_, rel) in ts.items() if not (REPO / rel).exists()]
+                for t, (k, rel) in ts.items() if not _resolves(k, rel)]
     check(not missing, "every command resolves to a real implementation",
           "; ".join(missing))
 

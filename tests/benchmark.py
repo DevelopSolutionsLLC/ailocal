@@ -29,7 +29,6 @@ from pathlib import Path
 import pathlib
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(REPO / "benchmarks" / "tasks"))
-sys.path.insert(0, str(REPO / "lib"))
 sys.path.insert(0, str(REPO / "benchmarks"))
 import utils  # noqa: E402
 import ast as _ast
@@ -41,7 +40,7 @@ import json as _js, shutil, tempfile, pathlib as _pl
 import inspect as _insp
 import clients as _bc
 import clients as _bc2
-import policy as _pc
+from ailocal import policy as _pc
 import importlib.util
 import json
 import re
@@ -51,7 +50,6 @@ import sys
 import tempfile
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(REPO / "lib"))
 sys.path.insert(0, str(REPO / "benchmarks"))
 import suite as B  # noqa: E402
 

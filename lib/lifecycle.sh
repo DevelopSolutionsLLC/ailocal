@@ -32,8 +32,8 @@ NO_WAIT=false
 
 step "Pre-flight checks"
 
-if [ ! -f ".env" ]; then
-  error ".env not found. Run ./ailocal install first."
+if [ ! -f "$AILOCAL_ENV_FILE" ]; then
+  error "$AILOCAL_ENV_FILE not found. Run ailocal install first."
   exit 1
 fi
 info ".env present"
@@ -136,7 +136,7 @@ fi
 
 # ── Service URLs and client setup ──────────────────────────────────────────
 
-KEY="$(grep '^LITELLM_MASTER_KEY=' .env | cut -d= -f2-)"
+KEY="$(grep '^LITELLM_MASTER_KEY=' "$AILOCAL_ENV_FILE" | cut -d= -f2-)"
 
 step "ailocal is running"
 echo ""
@@ -199,10 +199,10 @@ SKIP_MODELS=false
 # in git and Ollama models re-pull, so a one-line snapshot is the whole backup.
 
 step "Snapshotting .env before update"
-if [ -f "$ROOT_DIR/.env" ]; then
+if [ -f "$AILOCAL_ENV_FILE" ]; then
   mkdir -p "$AILOCAL_STATE/backups"
   SNAP="$AILOCAL_STATE/backups/.env.$(date -u +%Y%m%dT%H%M%SZ)"
-  cp "$ROOT_DIR/.env" "$SNAP" && chmod 600 "$SNAP"
+  cp "$AILOCAL_ENV_FILE" "$SNAP" && chmod 600 "$SNAP"
   info "Saved $SNAP"
 else
   warn "No .env found — nothing to snapshot."
@@ -247,7 +247,7 @@ dc restart litellm searxng
 step "Validating health post-update"
 # Wait for LiteLLM to accept requests, then run doctor (the single health script).
 ailocal_wait_ready 20 || true
-if python3 "$ROOT_DIR/lib/checks/run.py" doctor; then
+if python3 -m ailocal.checks.run doctor; then
   step "Update complete — LiteLLM healthy."
 else
   warn "Health check reported issues after update."

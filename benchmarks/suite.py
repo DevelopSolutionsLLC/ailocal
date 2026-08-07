@@ -271,7 +271,7 @@ def parse_profile(tier: str) -> dict:
     kept a second parser reachable from live code. Cross-tier benchmark planning
     now reads the normalized all-tier artifact, and a stale or missing tier
     fails closed instead of silently parsing whatever is on disk."""
-    import policy as _pc
+    from ailocal import policy as _pc
     roles = _pc.effective_tiers()[tier]["roles"] if tier in _pc.effective_tiers() \
         else None
     if roles is None:
