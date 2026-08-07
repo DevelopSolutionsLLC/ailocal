@@ -4,7 +4,7 @@ name: ${COMPOSE_PROJECT_NAME:-ailocal}
 #
 # This file is ONE HALF of the ailocal stack. It is never used alone — scripts
 # always merge it with deploy/searxng/compose.yaml into a single Compose
-# project named "ailocal" (see lib/compose.sh):
+# project named "ailocal" (see src/ailocal/runtime.py):
 #
 #   docker compose --project-directory <repo root> \
 #     -f deploy/litellm/compose.yaml \
@@ -101,7 +101,7 @@ services:
       - ${AILOCAL_STATE:-./data}/litellm:/app/generated:ro
       # Writable: the only path the proxy may write to. /app/config is ro, so
       # tool_gateway captures need their own mount.
-      # Absolute, from AILOCAL_STATE (lib/compose.sh). Runtime state
+      # Absolute, from AILOCAL_STATE (src/ailocal/runtime.py). Runtime state
       # must not accumulate inside the checkout.
       - ${AILOCAL_STATE:-./data}/captures:/app/captures
     ports:

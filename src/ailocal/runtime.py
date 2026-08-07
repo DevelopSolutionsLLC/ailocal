@@ -1,20 +1,22 @@
-"""runtime.py — the running stack: what is up, and what it is doing.
+"""runtime.py — the running stack: how it is composed, driven and inspected.
 
-Absorbs status.sh, status_gateway.py and status_traces.py. The two Python
-helpers existed only because nested heredoc quoting had broken this repository's
-shell twice; with Python owning the workflow that failure mode is gone and they
-are ordinary functions.
+One owner for the Docker Compose invocation, the lifecycle (start, stop,
+update, teardown) and the status renderings, because all three need the same
+roots, the same rendered SearXNG settings and the same readiness signal.
 
-Three renderings of one query -- dashboard, table, verbose -- so they share the
-resolution and differ only in output.
+Three renderings of one status query -- dashboard, table, verbose -- so they
+share the resolution and differ only in output.
 """
 from __future__ import annotations
 
 import glob
+import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -39,6 +41,154 @@ def bad(m):  print(f"  {_c('✗', RED)} {m}")
 def warn(m): print(f"  {_c('⚠', YELLOW)} {m}")
 def dim(m):  print(f"  {_c('—', DIM)} {m}")
 def hdr(m):  print(f"\n{BOLD}{m}{RESET}")
+def step(m): print(f"\n▶ {m}")
+
+
+def _fail(message: str) -> "SystemExit":
+    return SystemExit(f"  {_c('✗', RED)} {message}")
+
+
+def _confirm(prompt: str) -> bool:
+    """Destructive operations ask, in one place, and default to no."""
+    try:
+        return input(f"  {prompt} [y/N]: ").strip().lower().startswith("y")
+    except EOFError:
+        return False
+
+
+# ── composition ─────────────────────────────────────────────────────────────
+#
+# The stack is split across two files under deploy/ so LiteLLM and SearXNG are
+# configured in their own locations, but they must come up as ONE Compose
+# project sharing ONE network, so LiteLLM can reach SearXNG at
+# http://searxng:8080.
+#
+# --project-directory pins relative-path resolution inside both compose files;
+# --env-file names the environment explicitly, because Compose would otherwise
+# auto-discover .env from the project directory and silently couple the secrets
+# file to wherever the compose assets happen to live. ADR 009 separates those.
+# Do not drop either flag.
+
+BRAVE_PLACEHOLDER = "__BRAVE_API_KEY__"
+
+
+def env_file() -> Path:
+    return policy.config_root() / ".env"
+
+
+def searxng_settings() -> Path:
+    return policy.state_root() / "searxng" / "settings.yml"
+
+
+def proxy_url() -> str:
+    port = os.environ.get("AILOCAL_LITELLM_PORT", "4000")
+    return os.environ.get("AILOCAL_PROXY", f"http://127.0.0.1:{port}")
+
+
+def _env_value(name: str) -> str:
+    """Read one key out of .env. Values may carry one layer of quotes."""
+    path = env_file()
+    if not path.is_file():
+        return ""
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith(f"{name}="):
+            v = line.split("=", 1)[1].strip()
+            if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+                v = v[1:-1]
+            return v
+    return ""
+
+
+def render_searxng_settings() -> None:
+    """Render deploy/searxng/settings.yml with the Brave key, atomically.
+
+    SearXNG has no environment interpolation for an engine's api_key, so the key
+    cannot be passed the way SEARXNG_SECRET is and the tracked settings.yml must
+    stay secret-free. The rendered copy lives under the state root, OUTSIDE the
+    checkout, which is what makes committing it impossible rather than merely
+    discouraged. Fails closed; never prints the key.
+    """
+    src = policy.data_root() / "deploy" / "searxng" / "settings.yml"
+    out = searxng_settings()
+    if not src.is_file():
+        raise _fail(f"BRAVE_SETTINGS_GENERATION_FAILED: missing {src}")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.parent.chmod(0o700)
+    text = src.read_text(encoding="utf-8")
+
+    # No placeholder => Brave is intentionally not configured. Disabling Brave
+    # must not break the deployment.
+    if BRAVE_PLACEHOLDER in text:
+        key = _env_value("BRAVE_API")
+        if not key:
+            raise _fail(
+                "BRAVE_KEY_MISSING: braveapi is configured in "
+                "deploy/searxng/settings.yml but BRAVE_API is unset or empty in "
+                ".env. Set it, or remove braveapi from keep_only to disable Brave.")
+        if key in text:
+            raise _fail(f"BRAVE_SETTINGS_SECRET_LEAK: key present in TRACKED {src}")
+        text = text.replace(BRAVE_PLACEHOLDER, key)
+
+    tmp = out.with_suffix(out.suffix + f".tmp.{os.getpid()}")
+    try:
+        with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600),
+                  "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.replace(tmp, out)
+    except OSError as e:
+        tmp.unlink(missing_ok=True)
+        raise _fail(f"BRAVE_SETTINGS_GENERATION_FAILED: {e}") from None
+
+
+def compose_argv(args) -> list[str]:
+    data = policy.data_root()
+    argv = ["docker", "compose", "--project-directory", str(data)]
+    if env_file().is_file():
+        argv += ["--env-file", str(env_file())]
+    argv += ["-f", str(data / "deploy" / "litellm" / "compose.yaml"),
+             "-f", str(data / "deploy" / "searxng" / "compose.yaml")]
+    return argv + [str(a) for a in args]
+
+
+def compose_env() -> dict:
+    env = dict(os.environ)
+    env.setdefault("DOCKER_CLI_HINTS", "false")
+    env["AILOCAL_STATE"] = str(policy.state_root())
+    env["AILOCAL_SEARXNG_SETTINGS"] = str(searxng_settings())
+    env["AILOCAL_PROXY"] = proxy_url()
+    return env
+
+
+#: Subcommands that start or recreate containers: the SearXNG service mounts
+#: the rendered settings by absolute path, so it must exist first.
+_NEEDS_SETTINGS = frozenset({"up", "start", "restart", "create", "run"})
+
+
+def compose(*args, check: bool = True, capture: bool = False):
+    if args and args[0] in _NEEDS_SETTINGS:
+        render_searxng_settings()
+    policy.state_root().mkdir(parents=True, exist_ok=True)
+    return subprocess.run(compose_argv(args), env=compose_env(),
+                          check=check, capture_output=capture, text=capture)
+
+
+def wait_ready(max_attempts: int = 30, progress: bool = False) -> bool:
+    """Wait until the proxy accepts requests.
+
+    /health/liveliness returns 200 as soon as LiteLLM is listening; the full
+    /health endpoint blocks on every model and fails when Ollama is down, so it
+    is the wrong signal here.
+    """
+    url = f"{proxy_url()}/health/liveliness"
+    for attempt in range(max_attempts):
+        if _get(url) is not None:
+            if progress:
+                print(" " * 20, end="\r")
+            return True
+        if progress:
+            print(f"  Waiting... ({attempt * 3}s)", end="\r")
+        time.sleep(3)
+    return _get(url) is not None
 
 
 def _get(url: str, timeout: int = 3) -> str | None:
@@ -191,6 +341,206 @@ def _traces(directory: Path) -> None:
         print("  -> ailocal trace --failures")
 
 
+# ── lifecycle ───────────────────────────────────────────────────────────────
+
+#: Files LiteLLM reads ONCE at boot and that are bind-mounted, so editing them
+#: changes no Compose spec and `up -d` will not restart anything. The proxy then
+#: keeps serving the OLD routing, personas and tool policy while the files on
+#: disk say something else, with nothing in the logs to say so. Fingerprinting
+#: them is how a restart becomes deliberate rather than remembered.
+def _config_fingerprint() -> str:
+    data, state = policy.data_root(), policy.state_root()
+    paths = [state / "litellm" / "config.yaml",
+             data / "deploy" / "litellm" / "registry.yaml"]
+    paths += sorted((data / "deploy" / "litellm" / "hooks").glob("*.py"))
+    paths += sorted((data / "deploy" / "litellm" / "instructions").glob("*.md"))
+    h = hashlib.sha256()
+    for p in paths:
+        try:
+            h.update(p.read_bytes())
+        except OSError:
+            pass
+    return h.hexdigest()
+
+
+def _running() -> list[str]:
+    return _docker("ps", "--format", "{{.Names}}").splitlines()
+
+
+def _preflight() -> None:
+    step("Pre-flight checks")
+    if not env_file().is_file():
+        raise _fail(f"{env_file()} not found. Run ailocal install first.")
+    ok(".env present")
+    if subprocess.run(["docker", "ps"], capture_output=True).returncode != 0:
+        raise _fail("Docker daemon is not running. Start Docker Desktop and retry.")
+    ok("Docker daemon running")
+
+    if not shutil.which("ollama"):
+        warn("Ollama CLI not found. Install it from https://ollama.ai")
+        return
+    tags = _get(f"{OLLAMA}/api/tags")
+    if tags is None:
+        warn("Ollama is not running.")
+        print("  Start the MANAGED service (not the GUI app, which competes "
+              "for :11434):")
+        print(f"    launchctl kickstart -k gui/{os.getuid()}/com.ailocal.ollama")
+        print("  LiteLLM will start but model requests will fail until Ollama is up.")
+        return
+    ok("Ollama daemon responding")
+
+    # The model set comes from the GENERATED artifact. Resolving it here, once,
+    # is what keeps a second reader of the profile from appearing.
+    present = {m.get("name", "") for m in json.loads(tags).get("models", [])}
+    stems = {n.split(":", 1)[0] for n in present}
+    required = {r["model"] for r in policy.effective_summary()["roles"].values()}
+    missing = sorted(m for m in required
+                     if m not in present and m.split(":", 1)[0] not in stems)
+    if missing:
+        warn(f"Missing Ollama models: {' '.join(missing)}")
+        print("  Run ailocal models-install to pull the full model set.")
+    else:
+        ok("Required Ollama models present")
+
+
+def cmd_start(argv: list[str]) -> int:
+    no_wait = "--no-wait" in argv
+    _preflight()
+
+    # No `docker compose pull` here by design: start (including the boot
+    # LaunchAgent) must be reproducible and offline-safe, so it runs whatever
+    # image is on disk. Images are refreshed deliberately, by update.
+    step("Starting ailocal services")
+    was_running = "ailocal-litellm" in _running()
+    compose("up", "-d", "--remove-orphans")
+
+    stamp = policy.state_root() / "litellm-config.sha"
+    current = _config_fingerprint()
+    previous = stamp.read_text() if stamp.is_file() else ""
+    if was_running and previous and previous != current:
+        step("LiteLLM config changed since last start — restarting to load it")
+        _docker("restart", "ailocal-litellm", timeout=60)
+        ok("ailocal-litellm restarted (routing/persona/hook changes are now live)")
+    stamp.parent.mkdir(parents=True, exist_ok=True)
+    stamp.write_text(current)
+
+    if no_wait:
+        ok("Services launched (skipping health wait)")
+    else:
+        step("Waiting for LiteLLM to become ready")
+        if not wait_ready(30, progress=True):
+            warn("LiteLLM did not become ready after 90s")
+            print("  Check logs: docker logs ailocal-litellm")
+
+    step("ailocal is running")
+    print(f"\n  LiteLLM API  →  {proxy_url()}\n")
+    print("  Clients:  ailocal clients     (Claude Code, Codex, VS Code)")
+    print("            ailocal vscode      (Copilot Chat connector)")
+    print("  Inspect:  ailocal status")
+    return 0
+
+
+def cmd_stop(argv: list[str]) -> int:
+    remove_volumes = "--volumes" in argv
+    if remove_volumes:
+        warn("--volumes flag set: all Docker volumes will be removed.")
+        if not _confirm("This destroys all database and cache data. Are you sure?"):
+            print("Aborted.")
+            return 0
+    step("Stopping ailocal services")
+    if remove_volumes:
+        compose("down", "--volumes", "--remove-orphans")
+        ok("Services stopped and volumes removed.")
+    else:
+        compose("down", "--remove-orphans")
+        ok("Services stopped. Data volumes preserved.")
+        print("  To also remove volumes: ailocal stop --volumes")
+    return 0
+
+
+def cmd_update(argv: list[str]) -> int:
+    # The only non-regenerable state is .env (the master key): config is in git
+    # and Ollama models re-pull, so a one-file snapshot is the whole backup.
+    step("Snapshotting .env before update")
+    if env_file().is_file():
+        backups = policy.state_root() / "backups"
+        backups.mkdir(parents=True, exist_ok=True)
+        snap = backups / f".env.{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}"
+        shutil.copyfile(env_file(), snap)
+        snap.chmod(0o600)
+        ok(f"Saved {snap}")
+    else:
+        warn("No .env found — nothing to snapshot.")
+
+    # NOT an image upgrade. Every image is digest-pinned, so this re-fetches the
+    # SAME digests and exists only to repair a locally deleted layer. Replacing
+    # an image is a validated, human-approved change: ailocal security.
+    step("Pulling pinned Docker images (digests unchanged by design)")
+    compose("pull")
+
+    if "--skip-models" not in argv:
+        step("Updating Ollama models")
+        if subprocess.run(
+                ["/bin/bash", str(policy.data_root() / "lib" / "install-models.sh")],
+                check=False).returncode:
+            warn("Model update had warnings — services will still restart.")
+
+    # Client configs are NOT redeployed here: that would rewrite the user's
+    # client homes on every update. Redeploy explicitly with ailocal clients.
+    step("Regenerating model config")
+    subprocess.run([sys.executable,
+                    str(policy.data_root() / "lib" / "sync-models.py")], check=True)
+
+    step("Restarting services")
+    compose("up", "-d", "--remove-orphans")
+    compose("restart", "litellm", "searxng")
+
+    step("Validating health post-update")
+    wait_ready(20)
+    if subprocess.run([sys.executable, "-m", "ailocal.checks.run", "doctor"],
+                      check=False).returncode:
+        warn("Health check reported issues after update.")
+        print("  Check logs: docker logs ailocal-litellm --tail=50")
+        return 1
+    step("Update complete — LiteLLM healthy.")
+    return 0
+
+
+def cmd_teardown(argv: list[str]) -> int:
+    remove_images = "--images" in argv
+    step("ailocal teardown")
+    print("\n  This will permanently remove:")
+    print("    • All ailocal containers and volumes")
+    print("    • The ailocal Docker network")
+    if remove_images:
+        print("    • All pulled Docker images")
+    print(f"\n  Your configuration in {policy.config_root()} is NOT touched.")
+    print("  Re-run ailocal install + ailocal start to rebuild.\n")
+    if not _confirm("Proceed?"):
+        print("Aborted.")
+        return 0
+
+    step("Stopping containers and removing volumes")
+    compose("down", "--volumes", "--remove-orphans", check=False)
+
+    if "ailocal_net" in _docker("network", "ls", "--format", "{{.Name}}").splitlines():
+        step("Removing Docker network")
+        _docker("network", "rm", "ailocal_net")
+
+    if remove_images:
+        # Compose reports the composition's own image references; grepping the
+        # compose files for `image:` was a second parser of the same fact.
+        step("Removing Docker images")
+        r = compose("config", "--images", check=False, capture=True)
+        for img in filter(None, (l.strip() for l in r.stdout.splitlines())):
+            if _docker("image", "inspect", img):
+                _docker("rmi", img, timeout=60)
+                ok(f"removed {img}")
+
+    step("Teardown complete.")
+    return 0
+
+
 # ── renderings ──────────────────────────────────────────────────────────────
 
 def _dashboard() -> None:
@@ -295,7 +645,7 @@ def _verbose() -> None:
         print()
 
 
-def main(argv: list[str]) -> int:
+def cmd_status(argv: list[str]) -> int:
     mode = argv[0] if argv else ""
     if mode in ("", "--dashboard"):
         _dashboard()
@@ -304,11 +654,37 @@ def main(argv: list[str]) -> int:
     elif mode == "--models":
         _verbose()
     else:
-        print("usage: ailocal status [--models|--table]", file=__import__("sys").stderr)
+        print("usage: ailocal status [--models|--table]", file=sys.stderr)
         return 1
     return 0
 
 
+def cmd_compose(argv: list[str]) -> int:
+    """Run one Compose subcommand against this composition.
+
+    The single entry point for anything outside this module that must drive the
+    stack directly -- test suites and benchmarks that flip a service setting.
+    """
+    return compose(*argv, check=False).returncode
+
+
+def cmd_ready(argv: list[str]) -> int:
+    """Block until the proxy answers. Exit status is the answer."""
+    return 0 if wait_ready(int(argv[0]) if argv else 30, progress=True) else 1
+
+
+COMMANDS = {"status": cmd_status, "start": cmd_start, "stop": cmd_stop,
+            "update": cmd_update, "teardown": cmd_teardown,
+            "compose": cmd_compose, "ready": cmd_ready}
+
+
+def main(argv: list[str]) -> int:
+    if not argv or argv[0] not in COMMANDS:
+        print(f"usage: python -m ailocal.runtime <{'|'.join(COMMANDS)}> [options]",
+              file=sys.stderr)
+        return 2
+    return COMMANDS[argv[0]](argv[1:])
+
+
 if __name__ == "__main__":
-    import sys
     sys.exit(main(sys.argv[1:]))

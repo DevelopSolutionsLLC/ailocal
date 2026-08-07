@@ -20,7 +20,8 @@ set -uo pipefail
 . "$(cd "$(dirname "$0")" && pwd)/e2e.sh"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
-. lib/compose.sh
+dc() { "$ROOT/ailocal" compose "$@"; }
+AILOCAL_STATE="${AILOCAL_STATE:-$("$ROOT/ailocal" profile state-root)}"
 
 WORK="${CODEX_E2E_WORKDIR:-/tmp/ailocal-codex-e2e}"
 LEDGERS="$AILOCAL_STATE/captures/sessions"

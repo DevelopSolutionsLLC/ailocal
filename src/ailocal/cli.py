@@ -36,8 +36,8 @@ def _root() -> Path:
 PY, SH, MOD = "py", "sh", "mod"
 COMMANDS: dict[str, tuple] = {
     "install":        (SH, "lib/install.sh", (), True),
-    "status":         (MOD, "ailocal.runtime", (), True),
-    "models":         (MOD, "ailocal.runtime", ("--table",), False),
+    "status":         (MOD, "ailocal.runtime", ("status",), True),
+    "models":         (MOD, "ailocal.runtime", ("status", "--table"), False),
     "doctor":         (MOD, "ailocal.checks.run", ("doctor",), True),
     "validate":       (MOD, "ailocal.checks.run", ("validate",), True),
     "smoke":          (MOD, "ailocal.checks.run", ("smoke",), True),
@@ -46,10 +46,12 @@ COMMANDS: dict[str, tuple] = {
     "profile":        (PY, "lib/profile-config", (), True),
     "sync":           (PY, "lib/sync-models.py", (), True),
     "resolve":        (PY, "lib/sync-models.py", ("--resolve",), True),
-    "start":          (SH, "lib/lifecycle.sh", ("start",), True),
-    "stop":           (SH, "lib/lifecycle.sh", ("stop",), True),
-    "update":         (SH, "lib/lifecycle.sh", ("update",), True),
-    "teardown":       (SH, "lib/lifecycle.sh", ("teardown",), True),
+    "start":          (MOD, "ailocal.runtime", ("start",), True),
+    "stop":           (MOD, "ailocal.runtime", ("stop",), True),
+    "update":         (MOD, "ailocal.runtime", ("update",), True),
+    "teardown":       (MOD, "ailocal.runtime", ("teardown",), True),
+    "compose":        (MOD, "ailocal.runtime", ("compose",), True),
+    "ready":          (MOD, "ailocal.runtime", ("ready",), True),
     "clients":        (SH, "lib/install-clients.sh", (), True),
     "vscode":         (SH, "lib/install-vscode.sh", (), True),
     "models-install": (SH, "lib/install-models.sh", (), True),
@@ -83,7 +85,7 @@ NESTED: dict[str, dict[str, tuple]] = {
 #: is the documented consumer of session_observer traces -- see
 #: deploy/litellm/hooks/session_observer.py -- and is undiscoverable, not dead.
 INTERNAL = frozenset({
-    "resolve", "verify-session", "trace", "metrics", "ollama-env",
+    "resolve", "verify-session", "trace", "metrics", "ollama-env", "compose", "ready",
 })
 
 #: Help layout: (heading, [command...]). Every non-internal command appears
