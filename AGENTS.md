@@ -24,7 +24,9 @@ dependency.
 ## Repository map
 
 ```
-./ailocal          the only public command; `ailocal install` bootstraps
+src/ailocal/       the installed package; cli.py owns the command surface
+./ailocal          development shim for running from a checkout (ADR 009)
+pyproject.toml     packaging; `[project.scripts]` declares the command
 
 profiles/          hardware policy: capability -> model, geometry, sampling
 profiles/clients.yaml  which capability each client surface uses

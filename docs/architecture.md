@@ -24,7 +24,8 @@ Every directory owns one thing. Generated output never appears in any of them.
 | `deploy/litellm/instructions/` | per-capability personas, mounted into the proxy | anything client-specific |
 | `deploy/searxng/` | the search service definition and authored settings | the rendered `settings.yml` carrying the Brave key |
 | `benchmarks/` | benchmark policy, tasks, and suite implementations | production model policy |
-| `./ailocal` | the only public entry point | implementation |
+| `src/ailocal/` | the installed package; `cli.py` owns the command surface | implementation of any command |
+| `./ailocal` | development shim for running from a checkout | a second command list |
 | `lib/` | shared implementation and lifecycle: `policy.py`, `checks/`, `diagnostics/`, shell helpers | duplicate owners, public entry points |
 | `tests/` | domain suites; `ailocal test` is the gate | production code |
 | `docs/` | this document set | history |
