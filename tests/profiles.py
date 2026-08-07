@@ -225,12 +225,11 @@ def resolver_checks() -> None:
     # inside the checkout, moving the checkout breaks it silently and weeks
     # later. Source inspection, because asserting this behaviourally would mean
     # installing a real LaunchAgent.
-    sec = (REPO / "lib" / "security.sh").read_text()
-    # The heredoc body: between the opening marker and its terminator.
-    runner = sec.split("RUNNER_EOF")[1]
-    check("$REPO/lib" not in runner and "$ROOT/lib" not in runner,
+    src = (REPO / "src" / "ailocal" / "install.py").read_text()
+    runner = src.split("def cmd_update_check")[1].split("\ndef ")[0]
+    check("/lib" not in runner and "REPO" not in runner,
           "the generated update-check runner embeds no checkout path")
-    check("command -v ailocal" in sec,
+    check('shutil.which("ailocal")' in runner,
           "the update-check runner resolves the installed ailocal command")
 
     # Only policy.py may derive a root from XDG or ~/.local. Anything else is a

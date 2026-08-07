@@ -137,7 +137,7 @@ cat <<'TXT'
   3. Send: "Reply with OK."
   4. Then run, to see whether the proxy actually served it:
 
-       python3 lib/gateway-metrics.py --since 5m
+       ailocal metrics --since 5m
 
      A TOOL NEGOTIATION SUMMARY with client=vscode is proof. Nothing else is.
 TXT

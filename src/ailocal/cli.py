@@ -41,7 +41,7 @@ COMMANDS: dict[str, tuple] = {
     "doctor":         (MOD, "ailocal.checks.run", ("doctor",), True),
     "validate":       (MOD, "ailocal.checks.run", ("validate",), True),
     "smoke":          (MOD, "ailocal.checks.run", ("smoke",), True),
-    "security":       (SH, "lib/security.sh", (), True),
+    "security":       (MOD, "ailocal.checks.run", ("security",), True),
     "test":           (SH, "lib/test-all.sh", (), True),
     "profile":        (PY, "lib/profile-config", (), True),
     "sync":           (PY, "lib/sync-models.py", (), True),
@@ -58,9 +58,10 @@ COMMANDS: dict[str, tuple] = {
     "audit":          (MOD, "ailocal.install", ("audit",), True),
     "cleanup":        (MOD, "ailocal.install", ("cleanup",), True),
     "autostart":      (MOD, "ailocal.install", ("autostart",), True),
+    "update-check":   (MOD, "ailocal.install", ("update-check",), True),
     "trace":          (MOD, "ailocal.runtime", ("trace",), True),
-    "metrics":        (PY, "lib/gateway-metrics.py", (), True),
-    "verify-session": (PY, "lib/diagnostics/verify-session.py", (), True),
+    "metrics":        (MOD, "ailocal.runtime", ("metrics",), True),
+    "verify-session": (MOD, "ailocal.checks.run", ("verify-session",), True),
 }
 
 #: Nested surfaces: `ailocal <command> <target> [args]`.
@@ -85,6 +86,7 @@ NESTED: dict[str, dict[str, tuple]] = {
 #: deploy/litellm/hooks/session_observer.py -- and is undiscoverable, not dead.
 INTERNAL = frozenset({
     "resolve", "verify-session", "trace", "metrics", "compose", "ready",
+    "update-check",
 })
 
 #: Help layout: (heading, [command...]). Every non-internal command appears

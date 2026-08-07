@@ -20,7 +20,9 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from collections import Counter
 from datetime import datetime, timezone
+from statistics import median
 from pathlib import Path
 
 from . import policy
@@ -281,18 +283,39 @@ def _capabilities() -> list:
 
 # ── gateway and traces ──────────────────────────────────────────────────────
 
-def _gateway_summary(container: str) -> None:
-    logs = _docker("logs", "--since", "2h", container, timeout=30)
-    rows = []
-    for line in logs.splitlines():
-        if "tool_gateway_metric " not in line:
+METRIC_PREFIX = "tool_gateway_metric "
+
+
+def metric_records(container: str, since: str | None = "2h",
+                   path: Path | None = None) -> tuple[list, list, int]:
+    """(request measurements, operational events, malformed count).
+
+    Event records (gateway_init, bad_mode, …) are separated because averaging an
+    operational signal into a request statistic corrupts every figure derived
+    from it.
+    """
+    if path:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    else:
+        args = ["logs"] + (["--since", since] if since else []) + [container]
+        lines = _docker(*args, timeout=120).splitlines()
+    records, events, malformed = [], [], 0
+    for line in lines:
+        idx = line.find(METRIC_PREFIX)
+        if idx < 0:
             continue
         try:
-            d = json.loads(line.split("tool_gateway_metric ", 1)[1])
+            record = json.loads(line[idx + len(METRIC_PREFIX):])
         except ValueError:
+            malformed += 1
             continue
-        if not d.get("event"):
-            rows.append(d)
+        (events if record.get("event") else records).append(record)
+    return records, events, malformed
+
+
+def _gateway_summary(container: str) -> None:
+    """The most recent request, for the dashboard."""
+    rows, _, _ = metric_records(container)
     if not rows:
         dim("no gateway activity in this window (not evidence of a problem)")
         return
@@ -308,6 +331,153 @@ def _gateway_summary(container: str) -> None:
     if dropped:
         print(f"                 removed: {', '.join(dropped)}")
     print(f"  {len(rows)} request(s) seen; ailocal metrics for detail")
+
+
+def _summarize(records: list) -> dict:
+    """Aggregate the gateway's metric stream.
+
+    Every ratio uses bytes_kept_reachable over bytes_reachable — what the model
+    received over what the route would have forwarded. Using bytes_kept or
+    bytes_in produces nonsense on /v1/responses, where LiteLLM discards
+    namespace tools itself: that calculation once reported a -133.7% reduction.
+
+    `off`-mode records carry no negotiation decision and are counted separately
+    rather than averaged in as zeros, and a passthrough request has a reduction
+    of zero by design. Token figures are the cl100k proxy, calibrated
+    1.009-1.021 against Ollama's prompt_eval_count. Latency is deliberately
+    absent: these records hold the hook's own overhead, and printing hook
+    microseconds beside a model's seconds invites the wrong conclusion.
+    """
+    negotiated = [r for r in records if r.get("mode") in ("report", "filter")]
+    acting = [r for r in negotiated
+              if not r.get("passthrough") and r.get("bytes_reachable")]
+    out = {
+        "requests_total": len(records),
+        "by_mode": dict(Counter(r.get("mode") or "unknown" for r in records)),
+        "negotiated": len(negotiated),
+        "filter_applied": len([r for r in negotiated if r.get("applied")]),
+        "passthrough": len([r for r in negotiated if r.get("passthrough")]),
+        "acting_requests": len(acting),
+        "tokenizer": "cl100k-proxy (calibrated 1.009-1.021 vs prompt_eval_count)",
+        "clients": dict(Counter(r.get("client") or "unknown" for r in records)),
+        "model_classes": dict(Counter(r.get("model_class") or "unmatched"
+                                      for r in records)),
+        "routes": dict(Counter(r.get("route") or "unknown" for r in records)),
+        "task_classes": dict(Counter(str(r.get("task_class")) for r in negotiated)),
+        "registry_states": dict(Counter(r.get("registry") or "unknown"
+                                        for r in records)),
+    }
+    if acting:
+        ratios = [100.0 * (r["bytes_reachable"] - r.get("bytes_kept_reachable", 0))
+                  / r["bytes_reachable"] for r in acting]
+        out["reduction_pct"] = {"min": round(min(ratios), 1),
+                                "median": round(median(ratios), 1),
+                                "max": round(max(ratios), 1)}
+        for key, field in (("bytes_reachable_total", "bytes_reachable"),
+                           ("bytes_delivered_total", "bytes_kept_reachable"),
+                           ("bytes_saved_by_drop", "bytes_dropped"),
+                           ("bytes_saved_by_rewrite", "bytes_saved_by_rewrite"),
+                           ("bytes_moot_litellm_already_dropped",
+                            "bytes_prefiltered_by_litellm")):
+            out[key] = sum(r.get(field, 0) for r in acting)
+        toks_in = [r["tokens_est_in"] for r in acting
+                   if isinstance(r.get("tokens_est_in"), int)]
+        toks_kept = [r["tokens_est_kept"] for r in acting
+                     if isinstance(r.get("tokens_est_kept"), int)]
+        if toks_in and toks_kept:
+            out["tokens_est_total_in"] = sum(toks_in)
+            out["tokens_est_total_kept"] = sum(toks_kept)
+    else:
+        out["reduction_note"] = ("no request was both negotiated and "
+                                 "non-passthrough — nothing to report over")
+    overheads = sorted(r["overhead_ms"] for r in records
+                       if isinstance(r.get("overhead_ms"), (int, float)))
+    if overheads:
+        out["hook_overhead_ms"] = {
+            "median": round(median(overheads), 3),
+            "p95": round(overheads[min(len(overheads) - 1,
+                                       int(len(overheads) * 0.95))], 3),
+            "max": round(max(overheads), 3)}
+    dropped = Counter()
+    groups = Counter()
+    for r in acting:
+        dropped.update(r.get("dropped_names") or [])
+        groups.update(r.get("dropped_groups") or [])
+    out["most_dropped_tools"] = dropped.most_common(15)
+    out["dropped_group_frequency"] = groups.most_common()
+    return out
+
+
+def cmd_metrics(argv: list[str]) -> int:
+    """Report what the gateway actually did, never an improvement it cannot
+    substantiate."""
+    container = _container("AILOCAL_LITELLM_CONTAINER", "ailocal-litellm")
+    since = argv[argv.index("--since") + 1] if "--since" in argv else None
+    path = Path(argv[argv.index("--file") + 1]) if "--file" in argv else None
+    records, events, malformed = metric_records(container, since, path)
+    if not records:
+        print("No gateway metric records found.\nThe gateway is silent when "
+              "AILOCAL_TOOL_GATEWAY=off, so this is NOT evidence\nthat no "
+              "requests were served. Set it to report or filter first.")
+        return 1
+
+    s = _summarize(records)
+    if "--json" in argv:
+        print(json.dumps(s, indent=2))
+        return 0
+
+    W = 42
+    print("=" * 70 + "\nGATEWAY METRICS\n" + "=" * 70)
+    for label, key in (("requests with a metric record", "requests_total"),
+                       ("  by mode", "by_mode"),
+                       ("  negotiated (report/filter)", "negotiated"),
+                       ("  filter actually applied", "filter_applied"),
+                       ("  passthrough (forwarded intact)", "passthrough")):
+        print(f"{label:{W}} {s[key]}")
+    if malformed:
+        print(f"{'  MALFORMED records skipped':{W}} {malformed}")
+    if events:
+        print(f"{'  operational events (not requests)':{W}} "
+              f"{dict(Counter(e.get('event') for e in events))}")
+
+    print()
+    if not s["acting_requests"]:
+        print(s["reduction_note"])
+    else:
+        print(f"PAYLOAD, over {s['acting_requests']} negotiated "
+              "non-passthrough request(s)")
+        for label, key in (("  bytes the route would forward", "bytes_reachable_total"),
+                           ("  bytes the model received", "bytes_delivered_total"),
+                           ("  saved by dropping tools", "bytes_saved_by_drop"),
+                           ("  saved by rewriting schemas", "bytes_saved_by_rewrite"),
+                           ("  (moot: LiteLLM dropped anyway)",
+                            "bytes_moot_litellm_already_dropped")):
+            print(f"{label:{W}} {s[key]}")
+        r = s["reduction_pct"]
+        print(f"{'  reduction min/median/max':{W}} "
+              f"{r['min']}% / {r['median']}% / {r['max']}%")
+        if "tokens_est_total_in" in s:
+            print(f"{'  tokens_est in -> delivered':{W}} "
+                  f"{s['tokens_est_total_in']} -> {s['tokens_est_total_kept']}")
+        print(f"{'  tokenizer':{W}} {s['tokenizer']}")
+
+    if "hook_overhead_ms" in s:
+        o = s["hook_overhead_ms"]
+        print(f"\nHOOK OVERHEAD  median {o['median']} ms | p95 {o['p95']} ms | "
+              f"max {o['max']} ms\n  hook only; end-to-end latency is "
+              "ailocal benchmark gateway")
+
+    print()
+    for label, key in (("clients", "clients"), ("model classes", "model_classes"),
+                       ("routes", "routes"), ("task classes", "task_classes"),
+                       ("registry state", "registry_states")):
+        print(f"{label:22} {s[key]}")
+    if s["most_dropped_tools"]:
+        print("\nMOST-DROPPED TOOLS")
+        for name, n in s["most_dropped_tools"]:
+            print(f"    {name:44} x{n}")
+        print(f"  by group: {dict(s['dropped_group_frequency'])}")
+    return 0
 
 
 #: How to read a trace record, literally:
@@ -765,7 +935,8 @@ def cmd_ready(argv: list[str]) -> int:
 
 COMMANDS = {"status": cmd_status, "start": cmd_start, "stop": cmd_stop,
             "update": cmd_update, "teardown": cmd_teardown,
-            "compose": cmd_compose, "ready": cmd_ready, "trace": cmd_trace}
+            "compose": cmd_compose, "ready": cmd_ready, "trace": cmd_trace,
+            "metrics": cmd_metrics}
 
 
 def main(argv: list[str]) -> int:

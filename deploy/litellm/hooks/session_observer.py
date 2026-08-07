@@ -17,7 +17,7 @@ is only detectable by comparing three things that live in three places:
   what was executed    the tool calls in the history   (the proxy sees this)
   what changed         the filesystem and git          (only the HOST sees this)
 
-This module owns the first two. lib/diagnostics/verify-session.py owns the third and
+This module owns the first two. `ailocal verify-session` owns the third and
 does the comparison. The split is not incidental: the proxy runs in a container
 with no access to the repository, so a verification layer that lived entirely
 here could only ever check the model against its own claims.
@@ -230,10 +230,10 @@ class SessionObserver(CustomLogger):
             "tool_results_unknown_status": unknown,
             # Deliberately absent: any verdict on whether the work was done.
             # That requires the filesystem, which this process cannot see.
-            # lib/diagnostics/verify-session.py supplies it.
+            # `ailocal verify-session` supplies it.
             "verdict": None,
             "verdict_note": "requires host-side filesystem/git comparison — "
-                            "see lib/diagnostics/verify-session.py",
+                            "see `ailocal verify-session`",
         }
 
     def write(self, ledger):
