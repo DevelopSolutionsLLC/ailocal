@@ -58,7 +58,6 @@ COMMANDS: dict[str, tuple] = {
     "cleanup":        (SH, "lib/cleanup-installation.sh", (), True),
     "autostart":      (SH, "lib/setup-startup.sh", (), True),
     "ollama-env":     (SH, "lib/setup-ollama-env.sh", (), True),
-    "preload":        (SH, "lib/preload-model.sh", (), True),
     "trace":          (SH, "lib/request-trace.sh", (), True),
     "metrics":        (PY, "lib/gateway-metrics.py", (), True),
     "verify-session": (PY, "lib/diagnostics/verify-session.py", (), True),
@@ -85,7 +84,7 @@ NESTED: dict[str, dict[str, tuple]] = {
 #: is the documented consumer of session_observer traces -- see
 #: deploy/litellm/hooks/session_observer.py -- and is undiscoverable, not dead.
 INTERNAL = frozenset({
-    "resolve", "verify-session", "trace", "metrics", "preload", "ollama-env",
+    "resolve", "verify-session", "trace", "metrics", "ollama-env",
 })
 
 #: Help layout: (heading, [command...]). Every non-internal command appears
