@@ -527,6 +527,7 @@ def lsp_baseline(root: Path, label: str) -> None:
     configuration, so cloud client CONFIG is still never touched.
     """
     plugin = "pyright-lsp@claude-plugins-official"
+    marketplace, source = "claude-plugins-official", "anthropics/claude-plugins-official"
     if not shutil.which("claude"):
         return skip(f"claude not on PATH — no LSP baseline ({label})")
     if not root.is_dir():
@@ -549,7 +550,15 @@ def lsp_baseline(root: Path, label: str) -> None:
     # disabled plugin would report "already present" forever.
     listing = claude("plugin", "list")[1]
     if plugin in listing:
-        after = listing.split(plugin, 1)[1].splitlines()[:3]
+        # The plugin's whole block, up to the next entry — NOT a fixed number of
+        # lines. `claude plugin list` gained a `Version:` line, which pushed
+        # `Status: enabled` out of a hard-coded three-line window, so an enabled
+        # plugin read as disabled and was "repaired" on every run.
+        after = []
+        for line in listing.split(plugin, 1)[1].splitlines()[1:]:
+            if line.strip().startswith("❯") or (line and not line[0].isspace()):
+                break
+            after.append(line)
         if any("enabled" in l for l in after):
             return info(f"Python LSP baseline already present and enabled ({label})")
         warn(f"pyright-lsp plugin present but disabled ({label}) — enabling")
@@ -563,7 +572,15 @@ def lsp_baseline(root: Path, label: str) -> None:
         warn(f"pyright-lsp enable failed — {label} has no working Python LSP")
         return warn(f"  If a live 'claude' session has {root} open, close it.")
 
-    claude("plugin", "marketplace", "update", "claude-plugins-official")
+    # A FRESH config root knows no marketplaces at all, so `marketplace update`
+    # fails with "not found" and the install can never succeed. Registering it
+    # first is what makes this work on a machine that has never run Claude Code;
+    # `add` on a root that already has it is a no-op, and it takes the OWNER/REPO
+    # source form, not the bare marketplace name.
+    if marketplace not in claude("plugin", "marketplace", "list")[1]:
+        if claude("plugin", "marketplace", "add", source)[0] != 0:
+            return warn(f"could not register {source} — {label} has no Python LSP")
+    claude("plugin", "marketplace", "update", marketplace)
     if claude("plugin", "install", plugin)[0] == 0 and \
             claude("plugin", "enable", plugin)[0] == 0:
         info(f"Python LSP baseline installed and enabled ({label})")
