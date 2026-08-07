@@ -1,16 +1,7 @@
 #!/usr/bin/env bash
 # ailocal — the single public entry point. Implementations live in lib/.
-#
-#   ailocal status     live model status by capability, verbose (lib/status.sh)
-#   ailocal models     compact capability -> backend -> status table
-#   ailocal validate   end-to-end sanity: capabilities, backends, client mappings, aliases, sync
-#   ailocal validate --runtime   also probe the live proxy: /v1/models, advertised contexts, embeddings
-#   ailocal doctor     health check
-#   ailocal benchmark  developer benchmark suites (models|planner|gateway)
-#   ailocal security   container pins, digest drift, reachability (--scan for CVEs)
-#   ailocal sync       regenerate derived configs
-#   ailocal start|stop|update|smoke    lifecycle
-#   ailocal resolve <capability>       print the active Ollama backend tag
+# The `help` heredoc at the foot of this file is the only command list; do not
+# restate it here, or the two drift apart.
 #
 # Put it on PATH once:  ln -sf "$(pwd)/ailocal" /usr/local/bin/ailocal
 set -euo pipefail
@@ -82,13 +73,17 @@ BENCH
   help|-h|--help) cat <<'USAGE'
 ailocal — local model runtime
 
+  install                                         bootstrap the stack
   status | models | doctor | validate | smoke     inspect
-  security [--scan|--check-updates]              container supply chain
+  security [--scan|--check-updates]               container supply chain
   start | stop | update | sync                    lifecycle
   clients | vscode | models-install               deploy
   audit | cleanup | teardown                      installation
-  trace | metrics | verify-session | e2e <client>  diagnostics
+  autostart | ollama-env | preload                host setup
+  trace | metrics | verify-session | e2e <client> diagnostics
+  test [--full]                                   the regression gate
   benchmark <models|planner|gateway>              developer benchmarks
+  profile <subcommand>                            query the active profile
   resolve <capability>                            print the active backend
 USAGE
      exit 0 ;;

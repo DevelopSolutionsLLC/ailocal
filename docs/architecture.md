@@ -20,11 +20,11 @@ Every directory owns one thing. Generated output never appears in any of them.
 | `profiles/` | hardware-tier policy: capability → model, geometry, sampling, keep-alive, compaction | generated state |
 | `profiles/clients.yaml` | which capability each client surface uses | model tuning |
 | `clients/` | client templates and deployment assets | rendered client configuration |
-| `deploy/litellm/` | authored proxy assets: hooks, capability registry, config template | the generated `config.yaml` |
+| `deploy/litellm/` | authored proxy assets: hooks, capability registry, config template, compose definition | the generated `config.yaml`, rendered secrets |
 | `deploy/litellm/instructions/` | per-capability personas, mounted into the proxy | anything client-specific |
+| `deploy/searxng/` | the search service definition and authored settings | the rendered `settings.yml` carrying the Brave key |
 | `benchmarks/` | benchmark policy, tasks, and suite implementations | production model policy |
-| `deploy/litellm/`, `deploy/searxng/` | compose definitions and authored service files | rendered secrets, generated config |
-| `./ailocal`, `./ailocal install` | the only public entry points | implementation |
+| `./ailocal` | the only public entry point | implementation |
 | `lib/` | shared implementation and lifecycle: `policy.py`, `checks/`, `diagnostics/`, shell helpers | duplicate owners, public entry points |
 | `tests/` | domain suites; `ailocal test` is the gate | production code |
 | `docs/` | this document set | history |
@@ -102,17 +102,9 @@ $AILOCAL_STATE/
 
 ## Public commands
 
-```
-ailocal status | doctor | validate | smoke      inspect
-ailocal start | stop | update | sync            lifecycle
-ailocal clients | vscode | models-install       deploy
-ailocal trace | metrics | e2e <client>          diagnostics
-ailocal benchmark <models|planner|gateway>      developer benchmarks
-ailocal teardown                                remove everything
-```
-
 `ailocal` is the only supported entry point. Modules under `lib/` implement
-these commands and are not a public interface.
+these commands and are not a public interface. `ailocal help` owns the command
+list; it is not restated here.
 
 Exit codes: `validate` and `smoke` return `0` or `1`. `doctor` returns `0`
 healthy, `1` when it cannot resolve a trustworthy profile and refuses to
