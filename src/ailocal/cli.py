@@ -78,8 +78,18 @@ NESTED: dict[str, dict[str, tuple]] = {
     },
 }
 
-#: Help layout: (heading, [command...]). Every command in COMMANDS or NESTED
-#: appears exactly once; the gate asserts it.
+#: Dispatched but NOT advertised. These are single-purpose developer and
+#: host-setup tools with no documented user workflow: they stay reachable
+#: because deleting a working diagnostic is not a simplification, but they do
+#: not belong in the surface a new user reads. `verify-session` in particular
+#: is the documented consumer of session_observer traces -- see
+#: deploy/litellm/hooks/session_observer.py -- and is undiscoverable, not dead.
+INTERNAL = frozenset({
+    "resolve", "verify-session", "trace", "metrics", "preload", "ollama-env",
+})
+
+#: Help layout: (heading, [command...]). Every non-internal command appears
+#: exactly once; the gate asserts it.
 GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("bootstrap the stack",        ("install",)),
     ("inspect",                    ("status", "models", "doctor", "validate", "smoke")),
@@ -87,11 +97,11 @@ GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("lifecycle",                  ("start", "stop", "update", "sync")),
     ("deploy",                     ("clients", "vscode", "models-install")),
     ("installation",               ("audit", "cleanup", "teardown")),
-    ("host setup",                 ("autostart", "ollama-env", "preload")),
-    ("diagnostics",                ("trace", "metrics", "verify-session", "e2e")),
+    ("host setup",                 ("autostart",)),
+    ("diagnostics",                ("e2e",)),
     ("the regression gate",        ("test",)),
     ("developer benchmarks",       ("benchmark",)),
-    ("profile and capabilities",   ("profile", "resolve")),
+    ("the active profile",         ("profile",)),
 )
 
 

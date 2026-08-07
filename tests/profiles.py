@@ -970,10 +970,13 @@ def policy_checks() -> None:
     check(len(listed) == len(set(listed)), "no command is listed twice in help",
           ", ".join(sorted({n for n in listed if listed.count(n) > 1})))
     dispatchable = set(cli.COMMANDS) | set(cli.NESTED)
-    check(set(listed) == dispatchable,
-          "every dispatched command appears in help, and vice versa",
+    check(set(listed) == dispatchable - cli.INTERNAL,
+          "help lists every public command, and nothing it cannot dispatch",
           f"help-only={sorted(set(listed) - dispatchable)} "
-          f"dispatch-only={sorted(dispatchable - set(listed))}")
+          f"unlisted={sorted(dispatchable - cli.INTERNAL - set(listed))}")
+    # An internal command must still dispatch: it is undiscoverable, not gone.
+    check(cli.INTERNAL <= dispatchable, "every internal command still dispatches",
+          ", ".join(sorted(cli.INTERNAL - dispatchable)))
     missing = [f"{n} -> {rel}" for n, (_, rel, _, _) in cli.COMMANDS.items()
                if not (REPO / rel).exists()]
     missing += [f"{c} {t} -> {rel}" for c, ts in cli.NESTED.items()
