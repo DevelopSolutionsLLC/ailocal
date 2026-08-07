@@ -515,6 +515,11 @@ LITELLM_MASTER_KEY={key}
 # SearXNG refuses to start without a real secret.
 SEARXNG_SECRET={secret}
 
+# Optional. Brave's API-backed search engine (api.search.brave.com). Left empty,
+# ailocal renders SearXNG with that engine disabled and search falls back to the
+# keyless engines; it is not an error.
+BRAVE_API=
+
 # Cloud fallback: set ENABLE_CLOUD=true, add a key, and uncomment the matching
 # model block in the generated litellm/config.yaml.
 ENABLE_CLOUD=false
