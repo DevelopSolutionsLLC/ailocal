@@ -28,7 +28,6 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent / "benchmarks"))
 from harness import RESOURCES, REPO, Suite, load_module  # noqa: E402
 from ailocal import policy as P
 
@@ -231,29 +230,6 @@ def resolver_checks() -> None:
           "the generated update-check runner embeds no checkout path")
     check('shutil.which("ailocal")' in runner,
           "the update-check runner resolves the installed ailocal command")
-
-    # Only policy.py may derive a root from XDG or ~/.local. Anything else is a
-    # second owner that drifts the moment one of them moves.
-    for path in sorted(REPO.glob("tests/benchmarks/*.py")):
-        if path.name == "policy.py":
-            continue
-        body = path.read_text()
-        check("XDG_STATE_HOME" not in body and "XDG_CONFIG_HOME" not in body
-              and "XDG_DATA_HOME" not in body,
-              f"{path.name} does not resolve an XDG root itself")
-    bench = (REPO / "tests" / "benchmarks" / "suite.py").read_text()
-    check("re.finditer" not in bench.split("def parse_profile")[1].split("def ")[0],
-          "benchmark's parse_profile no longer parses YAML itself")
-
-    print("\nBENCHMARK AND PRODUCTION AGREE ON EVERY ROLE")
-    import suite as B
-    for t in P.TIERS:
-        a = B.parse_profile(t)
-        b = {r: {"active": P.resolve_role(t, r)["active"],
-                 "context": P.resolve_role(t, r)["context"],
-                 "enabled": P.resolve_role(t, r)["enabled"]}
-             for r in P.ROLES if r in P.load_profile(t)}
-        check(a == b, f"{t}: benchmark and resolver return identical role values")
 
     print("\nCLI IS USABLE FROM A SHELL AND FAILS NON-ZERO")
     cli = [str(REPO / "ailocal"), "profile"]
@@ -461,17 +437,6 @@ def resolver_checks() -> None:
     except P.ProfileError as e:
         got = e.code
     check(got == P.EFFECTIVE_PROFILE_SCHEMA_INVALID, "unknown tier fails closed")
-
-    import suite as _B
-    for t in P.TIERS:
-        a = _B.parse_profile(t)
-        b = {r: {"active": c["model"], "context": c["context"], "enabled": c["enabled"]}
-             for r, c in tiers[t]["roles"].items()}
-        check(a == b, f"{t}: benchmark cross-tier == generated data")
-    bsrc = (REPO / "tests" / "benchmarks" / "suite.py").read_text()
-    check("effective_tiers" in bsrc and "re.finditer" not in
-          bsrc.split("def parse_profile")[1].split("def ")[0],
-          "benchmark parse_profile reads generated data, parses no YAML")
 
     print("\nSTALENESS AND CORRUPTION FAIL CLOSED")
     import shutil as _sh

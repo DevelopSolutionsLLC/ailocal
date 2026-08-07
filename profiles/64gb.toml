@@ -4,8 +4,8 @@
 # only in context, output ceiling and reasoning. Ollama keeps a single copy in
 # memory, so the three roles cost one model's VRAM rather than three.
 #
-# Model selection evidence lives in benchmarks/README.md. Engine behaviour
-# (context enforcement, truncation) is owned by deploy/litellm/registry.yaml.
+# Engine behaviour (context enforcement, truncation) is owned by
+# deploy/litellm/registry.yaml.
 disk_gb = 40
 
 # ── architecture — shared large-context coding/reasoning tier ─────────────────

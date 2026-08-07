@@ -232,63 +232,49 @@ def _gate_preconditions(repo: pathlib.Path) -> None:
              "\n  Refusing to run: PRECONDITION NOT MET.")
 
 
-def _suite(*argv) -> list:
-    return list(argv)
-
-
 def _gate_suites(repo: pathlib.Path, full: bool) -> list:
     py = sys.executable
     suites = [
         ("UNIT / BEHAVIOUR", [
             ("capability registry (+ no-hard-coded-literals assertion)",
-             _suite("/bin/bash", "tests/in-container.sh",
+             ["/bin/bash", "tests/in-container.sh",
                     "tests/capability-registry-impl.py",
-                    "AILOCAL_GATEWAY_SOURCE=/app/config/hooks/tool_gateway.py")),
+                    "AILOCAL_GATEWAY_SOURCE=/app/config/hooks/tool_gateway.py"]),
             ("capability negotiator (byte accounting, modes, passthrough)",
-             _suite("/bin/bash", "tests/in-container.sh",
+             ["/bin/bash", "tests/in-container.sh",
                     "tests/tool-gateway-impl.py",
-                    "AILOCAL_GATEWAY_MODULE=/app/config/hooks/tool_gateway.py")),
-            ("persona injection", _suite(py, "tests/gateway.py", "persona")),
+                    "AILOCAL_GATEWAY_MODULE=/app/config/hooks/tool_gateway.py"]),
+            ("persona injection", [py, "tests/gateway.py", "persona"]),
             ("tool-call repair (repairs real calls, refuses examples)",
-             _suite(py, "tests/gateway.py", "repair")),
+             [py, "tests/gateway.py", "repair"]),
             ("E1 trace schema, redaction and token reconciliation",
-             _suite(py, "tests/gateway.py", "trace")),
-            ("planner comparison (safe defaults, locking, blinding)",
-             _suite(py, "tests/benchmark.py", "planner")),
-            ("benchmark library (aliases, geometry, evidence, confinement)",
-             _suite(py, "tests/benchmark.py", "library")),
-            ("benchmark command (models, planner, gateway dispatch)",
-             _suite(py, "tests/benchmark.py", "command")),
-            ("benchmark runtime stages the generated config",
-             _suite(py, "tests/benchmark.py", "runtime")),
-            ("benchmark leaks no git worktree",
-             _suite(py, "tests/benchmark.py", "worktree")),
+             [py, "tests/gateway.py", "trace"]),
             ("profile resolver (single reader, fail-closed, no 64gb default)",
-             _suite(py, "tests/profiles.py", "resolver")),
+             [py, "tests/profiles.py", "resolver"]),
             ("policy ownership (one reader, client policy fails closed)",
-             _suite(py, "tests/profiles.py", "policy")),
+             [py, "tests/profiles.py", "policy"]),
             ("hardware profiles (schema, tiers, dedup)",
-             _suite(py, "tests/profiles.py", "hardware")),
+             [py, "tests/profiles.py", "hardware"]),
             ("Python LSP baseline for claude-local (real documentSymbol)",
-             _suite(py, "tests/lsp-baseline.py")),
+             [py, "tests/lsp-baseline.py"]),
         ]),
         ("INTEGRATION", [
             ("client role alias overrides (defaults intact, fails closed)",
-             _suite("/bin/bash", "tests/clients.sh", "roles")),
+             ["/bin/bash", "tests/clients.sh", "roles"]),
             ("codex MCP is withheld (no grepai/lsp/github, no re-sync)",
-             _suite("/bin/bash", "tests/clients.sh", "codex")),
+             ["/bin/bash", "tests/clients.sh", "codex"]),
             ("shell output helpers (streams, colour, one owner)",
-             _suite("/bin/bash", "tests/shell-output.sh")),
+             ["/bin/bash", "tests/shell-output.sh"]),
             ("validator checks (deterministic, bounded, search quota)",
-             _suite(py, "tests/validators.py")),
+             [py, "tests/validators.py"]),
             ("consolidated suites stay section-isolated",
-             _suite(py, "tests/suite-structure.py")),
+             [py, "tests/suite-structure.py"]),
             ("generation rolls back on partial failure (never mixed on disk)",
-             _suite(py, "tests/generation-rollback.py")),
+             [py, "tests/generation-rollback.py"]),
             ("install: provisioning, provenance and tier selection",
-             _suite(py, "tests/install.py")),
+             [py, "tests/install.py"]),
             ("client compatibility probes (/api/hello, no side effects)",
-             _suite("/bin/bash", "tests/compat-routes.sh")),
+             ["/bin/bash", "tests/compat-routes.sh"]),
         ]),
         ("INVARIANTS", [
             ("ailocal sync is a fixed point", _fixed_point),
@@ -298,16 +284,13 @@ def _gate_suites(repo: pathlib.Path, full: bool) -> list:
             ("client timeout is not below the proxy timeout", _timeouts_aligned),
             ("every registered hook imports inside the proxy image", _hooks_import),
             ("installers are idempotent",
-             _suite("/bin/bash", "tests/idempotent-install.sh")),
+             ["/bin/bash", "tests/idempotent-install.sh"]),
             ("installation audit runs cleanly", _audit_runs),
         ]),
     ]
     if full:
         suites[1][1].insert(0, ("client compatibility (3 dialects x 3 modes)",
-                                _suite("/bin/bash", "tests/client-compatibility.sh")))
-        suites.append(("END TO END (slow: drives a real client)", [
-            ("benchmark, 2 interleaved rounds",
-             _suite("/bin/bash", "tests/benchmarks/gateway.sh"))]))
+                                ["/bin/bash", "tests/client-compatibility.sh"]))
     return suites
 
 
@@ -449,7 +432,7 @@ def _gate(argv: list[str]) -> int:
         for label in slow:
             print(f"   {label}")
     if not full:
-        print(" (add --full for the compatibility matrix and the end-to-end benchmark)")
+        print(" (add --full for the client compatibility matrix)")
     return 0
 
 

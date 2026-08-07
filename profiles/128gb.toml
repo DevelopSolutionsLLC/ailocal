@@ -5,8 +5,7 @@
 # taken on 128 GB hardware: MLX allocates KV lazily, so a model that loads
 # proves nothing, and a 64 GB machine would measure memory pressure instead.
 #
-# Model selection evidence lives in benchmarks/README.md. Engine behaviour is
-# owned by deploy/litellm/registry.yaml.
+# Engine behaviour is owned by deploy/litellm/registry.yaml.
 status = "pending-hardware-validation"
 
 disk_gb = 40

@@ -76,7 +76,7 @@ The proxy starts with `--config /app/generated/config.yaml`. Callback modules
 are named by absolute path because LiteLLM resolves them relative to the config
 file, which lives on a different mount from the hooks.
 
-Profiles, benchmark files and client templates are not visible to the container.
+Profiles and client templates are not visible to the container.
 
 **SearXNG**
 
@@ -128,9 +128,6 @@ map client surfaces to it in `profiles/clients.toml`.
 `resources/clients/<client>/`, emit its rendered output to
 `$AILOCAL_STATE/clients/<client>/` from the generator, and deploy it from
 `src/ailocal/clients.py`. Never write generated output beside the template.
-
-**Add a benchmark suite** — implement it under `tests/benchmarks/` and add a
-case to the `benchmark` dispatcher in `ailocal`.
 
 ---
 

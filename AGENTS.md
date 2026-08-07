@@ -2,7 +2,7 @@
 
 The operating contract for changing this repository. Architecture lives in
 `docs/architecture.md`, symptoms in `docs/troubleshooting.md`, secrets in
-`docs/security.md`, and benchmark methodology in `tests/benchmarks/README.md`.
+and `docs/security.md`.
 
 ## Mission
 
@@ -42,7 +42,7 @@ src/ailocal/           the installed package — the whole product
 
 profiles/              hardware policy: capability -> model, geometry, sampling
                        authored, dev-editable, and the shipped default
-tests/                 domain suites (`ailocal test` is the gate) + benchmarks
+tests/                 domain suites (`ailocal test` is the gate)
 docs/                  runtime flow, security, troubleshooting, ADRs
 ./ailocal              development shim for running from a checkout (ADR 009)
 pyproject.toml         packaging; `[project.scripts]` declares the command
@@ -57,10 +57,6 @@ needs no checkout.
 **A package command is a function, not a program.** `cli.py` imports the owning
 module and calls `main(argv)`. There is one dispatch mechanism and no second
 interpreter.
-
-**Benchmarks are developer tooling** (ADR 009), run from a checkout as
-`python3 tests/benchmarks/<suite>.py`. They are not a product command and are
-not installed.
 
 ## Canonical sources
 
@@ -175,8 +171,7 @@ Do not duplicate repository policy into a client preload, or copy volatile
 profile values into prose when generation can supply them.
 
 Investigation history belongs in an ADR if it explains a durable decision,
-`docs/troubleshooting.md` if operational, `tests/benchmarks/README.md` if about
-reproducibility, and Git history otherwise.
+`docs/troubleshooting.md` if operational, and Git history otherwise.
 
 ## Security and Git
 
