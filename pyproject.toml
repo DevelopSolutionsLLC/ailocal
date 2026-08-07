@@ -29,6 +29,12 @@ ailocal = "ailocal.cli:main"
 [tool.setuptools.package-data]
 ailocal = ["resources/**"]
 
+# The proxy hooks are executed inside the container, so running the stack from a
+# checkout leaves __pycache__ under resources/. Without this, a wheel built from
+# a working tree ships stale bytecode for a different interpreter.
+[tool.setuptools.exclude-package-data]
+ailocal = ["resources/**/__pycache__/*", "resources/**/*.pyc"]
+
 # resources/ holds data, not importable modules. Without this, setuptools finds
 # the hook directories (they contain .py files) and installs them as top-level
 # packages named `deploy`, `litellm`, `hooks`.
