@@ -58,7 +58,7 @@ COMMANDS: dict[str, tuple] = {
     "audit":          (MOD, "ailocal.install", ("audit",), True),
     "cleanup":        (MOD, "ailocal.install", ("cleanup",), True),
     "autostart":      (MOD, "ailocal.install", ("autostart",), True),
-    "trace":          (SH, "lib/request-trace.sh", (), True),
+    "trace":          (MOD, "ailocal.runtime", ("trace",), True),
     "metrics":        (PY, "lib/gateway-metrics.py", (), True),
     "verify-session": (PY, "lib/diagnostics/verify-session.py", (), True),
 }

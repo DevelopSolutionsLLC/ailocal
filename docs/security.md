@@ -99,7 +99,7 @@ what runs without a commit:
 - `ghcr.io/berriai/litellm@sha256:a1745e62…`
 - `searxng/searxng@sha256:79c2be18…`
 
-`lib/check-litellm-version.sh` gates the running build against the
+`ailocal doctor` gates the running build against the
 validated version, and the regression gate fails if they diverge.
 
 `ailocal security` scans the pinned images and reports known findings. It exits

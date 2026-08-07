@@ -310,21 +310,46 @@ def _gateway_summary(container: str) -> None:
     print(f"  {len(rows)} request(s) seen; ailocal metrics for detail")
 
 
-def _traces(directory: Path) -> None:
+#: How to read a trace record, literally:
+#:   ttfb_ms  time to the FIRST STREAMED CHUNK. A proxy for prompt-eval time,
+#:            not a measurement of it — Ollama's prompt_eval_duration does not
+#:            survive into the LiteLLM response.
+#:   outcome  what the PROXY saw. A client that timed out at 60s while the proxy
+#:            streamed happily still shows `streamed`; the client's disconnect
+#:            is not observable from inside the proxy and is never recorded as
+#:            though it were.
+SILENT_MS = 60000
+
+
+def trace_dir() -> Path:
+    return Path(os.environ.get("AILOCAL_TRACE_HOST_DIR")
+                or policy.state_root() / "captures" / "traces")
+
+
+def trace_rows(directory: Path | None = None) -> list:
     rows = []
-    for f in glob.glob(str(directory / "*.jsonl")):
+    for f in sorted(glob.glob(str((directory or trace_dir()) / "*.jsonl"))):
         with open(f, encoding="utf-8", errors="replace") as fh:
             for line in fh:
                 try:
                     rows.append(json.loads(line))
                 except ValueError:
                     pass
+    return rows
+
+
+def _silent(rows) -> list:
+    return [r for r in rows if isinstance(r.get("ttfb_ms"), (int, float))
+            and r["ttfb_ms"] > SILENT_MS]
+
+
+def _traces(directory: Path) -> None:
+    """The three most recent, for the dashboard."""
+    rows = trace_rows(directory)
     if not rows:
-        dim("no traces yet")
-        return
+        return dim("no traces yet")
     fails = [r for r in rows if r.get("outcome") == "failure"]
-    slow = [r for r in rows if isinstance(r.get("ttfb_ms"), (int, float))
-            and r["ttfb_ms"] > 60000]
+    slow = _silent(rows)
     for r in rows[-3:]:
         when = time.strftime("%H:%M:%S", time.localtime(r.get("ts") or 0))
         t = r.get("ttfb_ms")
@@ -339,6 +364,71 @@ def _traces(directory: Path) -> None:
     print(msg)
     if fails or slow:
         print("  -> ailocal trace --failures")
+
+
+def cmd_trace(argv: list[str]) -> int:
+    """The per-request timeline: which component, and when."""
+    directory = trace_dir()
+    rows = trace_rows(directory)
+    if not rows:
+        print(f"No traces in {directory}.\n\n"
+              "Tracing is OFF unless AILOCAL_TRACE_DIR is set in .env. That is "
+              "not evidence\nthat no requests were served — check with:\n"
+              "    docker exec ailocal-litellm printenv AILOCAL_TRACE_DIR")
+        return 1
+
+    if "--failures" in argv:
+        rows = [r for r in rows if r.get("outcome") in ("failure", "empty_stream")]
+    elif "--slow" in argv:
+        limit = float(argv[argv.index("--slow") + 1])
+        rows = [r for r in rows if (r.get("total_ms") or 0) >= limit]
+    elif "--id" in argv:
+        wanted = argv[argv.index("--id") + 1]
+        for r in (r for r in rows
+                  if str(r.get("request_id", "")).startswith(wanted)):
+            print("=" * 66)
+            for k in sorted(r):
+                if k == "traceback" and r[k]:
+                    print(f"  {k}:")
+                    for line in str(r[k]).splitlines()[-12:]:
+                        print(f"      {line}")
+                else:
+                    print(f"  {k:18} {r[k]}")
+        return 0
+
+    if not rows:
+        # NO REQUEST MATCHED — not that the system is healthy, and not that
+        # nothing was served.
+        print("No trace record matched that filter.")
+        return 0
+
+    print("─" * 96)
+    print(f"{'when':9} {'id':17} {'model':24} {'ttfb':>8} {'total':>9} "
+          f"{'tools':>5} {'msgs':>5}  outcome")
+    print("─" * 96)
+    for r in rows[-40:]:
+        ts, ttfb, total = r.get("ts"), r.get("ttfb_ms"), r.get("total_ms")
+        outcome = str(r.get("outcome"))
+        if r.get("error_type"):
+            outcome += f": {r['error_type']}"
+        if isinstance(ttfb, (int, float)) and ttfb > SILENT_MS:
+            outcome += ("  <-- >60s SILENCE before first byte; a client timeout "
+                        "here looks like an 'API error' with no failing component")
+        when = time.strftime("%H:%M:%S", time.localtime(ts)) if ts else "-"
+        ttfb_s = f"{ttfb:.0f}ms" if isinstance(ttfb, (int, float)) else "-"
+        total_s = f"{total:.0f}ms" if isinstance(total, (int, float)) else "-"
+        print(f"{when:9} {str(r.get('request_id'))[:16]:17} "
+              f"{str(r.get('model'))[:23]:24} {ttfb_s:>8} {total_s:>9} "
+              f"{str(r.get('tools_declared') or '-'):>5} "
+              f"{str(r.get('messages') or '-'):>5}  {outcome}")
+    fails = [r for r in rows if r.get("outcome") == "failure"]
+    print("─" * 96)
+    print(f"{len(rows)} trace record(s), {len(fails)} failure(s), "
+          f"{len(_silent(rows))} with >60s time-to-first-byte")
+    if fails:
+        print("\nInspect one in full:  ailocal trace --id "
+              f"{str(fails[-1].get('request_id'))[:8]}")
+    return 0
 
 
 # ── lifecycle ───────────────────────────────────────────────────────────────
@@ -604,7 +694,7 @@ def _dashboard() -> None:
         dim("VS Code       connector not installed")
 
     hdr("Recent requests")
-    traces = state / "captures" / "traces"
+    traces = trace_dir()
     if traces.is_dir():
         _traces(traces)
     else:
@@ -675,7 +765,7 @@ def cmd_ready(argv: list[str]) -> int:
 
 COMMANDS = {"status": cmd_status, "start": cmd_start, "stop": cmd_stop,
             "update": cmd_update, "teardown": cmd_teardown,
-            "compose": cmd_compose, "ready": cmd_ready}
+            "compose": cmd_compose, "ready": cmd_ready, "trace": cmd_trace}
 
 
 def main(argv: list[str]) -> int:
