@@ -1,39 +1,22 @@
-# Secrets — never commit
+# Secrets
 .env
-.env.local
-*.env.local
 *.pem
 *.key
-*.p12
-*.pfx
-*.crt
-*.cer
-
-# Guard only: runtime state belongs in $AILOCAL_STATE. These stay so a script
-# that regresses to a repo-relative path cannot commit runtime state.
-/data/
-/logs/
-/backups/
-/captures/
 
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
 .venv/
-
-# Packaging build artifacts
 build/
 dist/
 *.egg-info/
 
-# Editor, OS and local tool state
+# Guard only: runtime state belongs in $AILOCAL_STATE. These stay so a path
+# that regresses to a repo-relative default cannot commit runtime state.
+/captures/
+/logs/
+
+# Local tool state
 .DS_Store
-*.swp
-*.swo
-*~
-.vscode/
-.idea/
-*.iml
 .claude/
 .grepai/
