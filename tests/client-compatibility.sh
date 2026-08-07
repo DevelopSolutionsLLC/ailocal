@@ -29,8 +29,9 @@ cd "$ROOT"
 dc() { "$ROOT/ailocal" compose "$@"; }
 
 PROXY="${AILOCAL_PROXY:-http://127.0.0.1:4000}"
-KEY="$(grep -E '^LITELLM_MASTER_KEY=' .env 2>/dev/null | cut -d= -f2-)"
-[ -n "$KEY" ] || { echo "No LITELLM_MASTER_KEY in .env"; exit 1; }
+ENV_FILE="$(ailocal profile config-root)/.env"
+KEY="$(grep -E '^LITELLM_MASTER_KEY=' "$ENV_FILE" 2>/dev/null | cut -d= -f2-)"
+[ -n "$KEY" ] || { echo "No LITELLM_MASTER_KEY in $ENV_FILE"; exit 1; }
 
 ORIGINAL_MODE="$(docker exec ailocal-litellm printenv AILOCAL_TOOL_GATEWAY 2>/dev/null || echo off)"
 

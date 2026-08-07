@@ -184,26 +184,14 @@ def ensure_shell_sourcing(key: str) -> None:
     env_path.chmod(0o600)
     info(f"{env_path} written (chmod 600)")
 
-    state, data = policy.state_root(), policy.data_root()
-    shutil.copyfile(state / "clients" / "configure.zsh", cfg / "configure.zsh")
+    data = policy.data_root()
     shutil.copyfile(data / "clients" / "finalize.zsh", cfg / "finalize.zsh")
     # Client-invoked hooks: the client execs these, so the deployed copy must be
     # executable regardless of the mode the source carries.
     for hook in ("scratchpad-hook.sh", "compact-hook.sh"):
         shutil.copyfile(data / "clients" / hook, cfg / hook)
         (cfg / hook).chmod(0o755)
-    info("configure.zsh / finalize.zsh / scratchpad-hook.sh / compact-hook.sh "
-         f"deployed to {cfg}")
-
-    # The published description of this runtime, at a stable path, so an
-    # external consumer never has to know where ailocal lives and never parses
-    # generated Markdown for a fact.
-    contract = state / "integration-contract.json"
-    if contract.is_file():
-        shutil.copyfile(contract, cfg / "integration-contract.json")
-        info(f"{cfg / 'integration-contract.json'} published (runtime schema)")
-    else:
-        warn("integration-contract.json missing — run ailocal start")
+    info(f"finalize.zsh / scratchpad-hook.sh / compact-hook.sh deployed to {cfg}")
 
     rc = Path(os.environ.get("ZDOTDIR") or Path.home()) / ".zshrc"
     if not rc.exists():
@@ -427,7 +415,7 @@ def install_vscode(argv: list[str]) -> int:
 
 
 def _copilot_instructions() -> None:
-    data, state = policy.data_root(), policy.state_root()
+    data = policy.data_root()
     dest = Path.home() / ".copilot" / "instructions"
     dest.mkdir(parents=True, exist_ok=True)
     _concat_shared(data / "clients/copilot/ailocal.instructions.md",
@@ -439,39 +427,10 @@ def _copilot_instructions() -> None:
 
 
 
-def _continue_config(key: str) -> None:
-    """Continue gives VS Code local tab-autocomplete (FIM) that Copilot cannot.
-
-    Chat/edit go through the proxy; autocomplete goes DIRECT to Ollama, because
-    FIM through the proxy is unreliable (continuedev/continue#2907).
-
-    Conditional on the extension being present: a keyed config for absent
-    software is a needless place for a secret to sit. AILOCAL_CONTINUE=1 opts
-    in; Continue is never installed on the user's behalf."""
-    cfg = Path.home() / ".continue" / "config.json"
-    present = (os.environ.get("AILOCAL_CONTINUE")
-               or "continue.continue" in _extensions()
-               # Already managed here previously: keep it current rather than
-               # stranding a stale key in a file we wrote.
-               or cfg.is_file())
-    if not present:
-        info("Continue extension not installed — skipping ~/.continue/config.json")
-        info("  install 'continue.continue' then re-run, or set AILOCAL_CONTINUE=1")
-        return
-    cfg.parent.mkdir(parents=True, exist_ok=True)
-    backup(cfg)
-    template = (policy.state_root() / "clients/continue/config.json"
-                ).read_text(encoding="utf-8")
-    cfg.write_text(template.replace("__LITELLM_KEY__", key), encoding="utf-8")
-    cfg.chmod(0o600)
-    info("Continue config deployed to ~/.continue/config.json")
-
-
-def target_vscode(key: str) -> None:
+def target_vscode() -> None:
     step("Configuring VS Code Copilot Chat")
     install_vscode([])
     _copilot_instructions()
-    _continue_config(key)
     print("\n  Final step — enter the key ONCE (encrypted SecretStorage):")
     print("    Copilot Chat → model picker → \"Manage Models…\" → "
           "\"LiteLLM Connector\"")
@@ -483,25 +442,15 @@ def target_vscode(key: str) -> None:
 
 # ── Codex CLI ───────────────────────────────────────────────────────────────
 
-def target_codex(key: str) -> None:
+def target_codex() -> None:
     """CODEX_HOME for the codex-local wrapper. ~/.codex is NEVER touched."""
     home = policy.deployed_client_root() / "codex"
     home.mkdir(parents=True, exist_ok=True)
     step(f"Installing Codex config ({home})")
-    data, gen = policy.data_root(), policy.state_root() / "clients" / "codex"
+    data = policy.data_root()
 
-    # Managed files: always overwritten, so the latest generated routing,
-    # wire_api and sandbox settings actually land.
-    config = home / "config.toml"
-    config.write_text(
-        (gen / "config.toml").read_text(encoding="utf-8")
-        .replace("${CODEX_HOME}", str(home)), encoding="utf-8")
-    info(f"{config} written")
-
-    catalog = home / "model_catalog.json"
-    backup(catalog)
-    shutil.copyfile(policy.state_root() / "clients" / "model_catalog.json", catalog)
-    info(f"{catalog} written")
+    # config.toml, model_catalog.json and the plan/review profiles are written
+    # here by generation, not copied here by this function.
 
     # The template carries a .template extension so the /AGENTS.md gitignore
     # rule cannot swallow the tracked source.
@@ -514,9 +463,7 @@ def target_codex(key: str) -> None:
     prompts.mkdir(exist_ok=True)
     for src in sorted((data / "clients/codex/prompts").glob("*.md")):
         shutil.copyfile(src, prompts / src.name)
-    for name in ("plan.config.toml", "review.config.toml"):
-        shutil.copyfile(gen / name, home / name)
-    info("prompts/ + plan/review profiles written")
+    info("prompts/ written")
 
     if (Path.home() / ".codex" / "config.toml").is_file():
         warn("~/.codex/config.toml still exists — plain 'codex' keeps using it "
@@ -528,7 +475,7 @@ def target_codex(key: str) -> None:
 
 # ── Claude Code ─────────────────────────────────────────────────────────────
 
-def target_claude(key: str) -> None:
+def target_claude() -> None:
     """CLAUDE_CONFIG_DIR for the claude-local wrapper. ~/.claude is NEVER touched.
 
     No instruction-policy file is written into this root: ailocal publishes the
@@ -540,13 +487,9 @@ def target_claude(key: str) -> None:
     home.mkdir(parents=True, exist_ok=True)
     step(f"Installing Claude Code config ({home})")
 
-    # settings.json carries no secret: the key reaches Claude through the
-    # claude-local wrapper's process-scoped env, never through a file.
-    settings = home / "settings.json"
-    backup(settings)
-    shutil.copyfile(policy.state_root() / "clients/claude/settings.json", settings)
-    info(f"{settings} written")
-
+    # settings.json is written here by generation; it carries no secret, because
+    # the key reaches Claude through the claude-local wrapper's process-scoped
+    # env, never through a file.
     for name in ("agents", "commands", "references"):
         install_managed_dir(policy.data_root() / "clients/claude" / name,
                             home / name)
@@ -652,7 +595,7 @@ def main(argv: list[str]) -> int:
     key = _master_key()
     ensure_shell_sourcing(key)
     for name in selected:
-        _TARGETS[name](key)
+        _TARGETS[name]()
 
     # Codex MCP is WITHHELD BY POLICY, not missing: an empty [mcp_servers.*]
     # section is the correct outcome, and nothing here may invoke another

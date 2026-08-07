@@ -86,46 +86,21 @@ def check_client_mappings() -> list[CheckResult]:
 # ── generated state ─────────────────────────────────────────────────────────
 
 def check_generated_present() -> list[CheckResult]:
-    """Every generated artefact exists, under the one runtime root."""
-    root = P.state_root()
-    expected = [P.effective_profile_path(),
-                root / "litellm" / "capabilities.json",
-                root / "litellm" / "config.yaml",
-                root / "integration-contract.json",
-                root / "clients" / "model_catalog.json",
-                root / "clients" / "configure.zsh",
-                root / "clients" / "claude" / "settings.json",
-                root / "clients" / "codex" / "config.toml"]
-    missing = [str(p.relative_to(root)) for p in expected if not p.is_file()]
+    """Every generated artefact exists, in the home its consumer reads it from."""
+    state, cfg = P.state_root(), P.deployed_client_root()
+    expected = [state / "litellm" / "capabilities.json",
+                state / "litellm" / "config.yaml",
+                cfg / "integration-contract.json",
+                cfg / "configure.zsh",
+                cfg / "claude" / "settings.json",
+                cfg / "codex" / "config.toml",
+                cfg / "codex" / "model_catalog.json"]
+    missing = [str(p) for p in expected if not p.is_file()]
     return [CheckResult(
         "generated", PASS if not missing else FAIL,
-        f"all {len(expected)} generated artefacts present under {root}"
+        f"all {len(expected)} generated artefacts present"
         if not missing else f"missing: {', '.join(missing)}",
         remediation=None if not missing else "ailocal start")]
-
-
-def check_effective_profile() -> CheckResult:
-    p = P.effective_profile_path()
-    if not p.is_file():
-        return CheckResult("effective-profile", FAIL, "effective-profile.json is missing",
-                           remediation="ailocal start")
-    try:
-        doc = json.loads(p.read_text())
-    except ValueError as exc:
-        return CheckResult("effective-profile", FAIL,
-                           "effective-profile.json is not valid JSON", str(exc),
-                           "ailocal start")
-    tier = doc.get("tier") or doc.get("profile")
-    try:
-        active = P.resolve_active_tier()
-    except Exception:
-        return CheckResult("effective-profile", BLOCKED,
-                           "cannot compare: the active tier is unresolvable")
-    ok = tier == active
-    return CheckResult("effective-profile", PASS if ok else FAIL,
-                       f"effective profile is {tier}" if ok
-                       else f"effective profile is {tier}, active tier is {active}",
-                       remediation=None if ok else "ailocal start")
 
 
 def _model_names(cfg: pathlib.Path) -> list[str]:
@@ -173,15 +148,12 @@ def check_no_raw_backend_tags() -> CheckResult:
 def check_codex_no_mcp() -> CheckResult:
     """Codex cannot dispatch namespaced tools, so an empty MCP section is correct."""
     out = []
-    for label, path in (("generated", P.state_root() / "clients/codex/config.toml"),
-                        ("deployed", P.deployed_client_root()
-                            / "codex" / "config.toml")):
-        if not path.is_file():
-            continue
+    path = P.deployed_client_root() / "codex" / "config.toml"
+    if path.is_file():
         n = sum(1 for ln in path.read_text().splitlines()
                 if ln.startswith("[mcp_servers"))
         if n:
-            out.append(f"{label}: {n} block(s)")
+            out.append(f"{n} block(s)")
     return CheckResult("codex-mcp", FAIL if out else PASS,
                        "codex declares zero [mcp_servers.*] blocks" if not out
                        else f"codex declares MCP blocks — {'; '.join(out)}",
@@ -359,7 +331,7 @@ def deterministic_checks(tier: str | None = None) -> list[CheckResult]:
     results += check_compose_config()
     results += check_generated_present()
     results += check_client_slots()
-    results += [check_effective_profile(), check_alias_uniqueness(),
+    results += [check_alias_uniqueness(),
                 check_no_raw_backend_tags(), check_codex_no_mcp(),
                 check_mount_drift()]
     # Generated-file drift only makes sense against the active tier.

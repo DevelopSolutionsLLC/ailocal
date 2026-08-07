@@ -77,8 +77,6 @@ def _gate_suites(repo: pathlib.Path, full: bool) -> list:
             ("persona injection", [py, "tests/gateway.py", "persona"]),
             ("tool-call repair (repairs real calls, refuses examples)",
              [py, "tests/gateway.py", "repair"]),
-            ("E1 trace schema, redaction and token reconciliation",
-             [py, "tests/gateway.py", "trace"]),
             ("profile resolver (single reader, fail-closed, no 64gb default)",
              [py, "tests/profiles.py", "resolver"]),
             ("policy ownership (one reader, client policy fails closed)",
@@ -113,6 +111,7 @@ def _gate_suites(repo: pathlib.Path, full: bool) -> list:
             ("every registered hook imports inside the proxy image", _hooks_import),
             ("installers are idempotent",
              ["/bin/bash", "tests/idempotent-install.sh"]),
+            ("the repository root holds only project concepts", _root_is_clean),
             ("installation audit runs cleanly", _audit_runs),
             ("every read-only command actually runs", _readonly_commands_run),
         ]),
@@ -134,6 +133,41 @@ def _fixed_point(repo: pathlib.Path) -> tuple[int, str]:
     if r.returncode:
         return 1, r.stdout + r.stderr
     return (0, "") if generated.read_bytes() == before else         (1, "generation is not a fixed point")
+
+
+#: Everything the repository root is allowed to track. A generated artifact
+#: here means a root lost its owner — see policy.deployed_client_root().
+ROOT_ALLOWED = {".gitignore", "AGENTS.md", "LICENSE", "README.md",
+                "pyproject.toml", "docs", "profiles", "src", "tests"}
+
+
+def _root_is_clean(repo: pathlib.Path) -> tuple[int, str]:
+    """No generated artifact is tracked, and running the suites creates none.
+
+    Both halves matter. The allowlist catches a generated file that was
+    committed; the untracked check catches the mechanism that put it there,
+    which is a root resolving to the checkout. .gitignore cannot be the test:
+    it would hide exactly the failure this is looking for.
+    """
+    tracked = subprocess.run(["git", "ls-tree", "--name-only", "HEAD"],
+                             cwd=repo, capture_output=True, text=True)
+    if tracked.returncode:
+        return 1, "could not list the tracked root"
+    extra = sorted(set(tracked.stdout.split()) - ROOT_ALLOWED)
+    if extra:
+        return 1, ("tracked at the repository root but not a project concept: "
+                   + ", ".join(extra))
+    # --no-standard-filter would be ideal; instead ask git for ignored entries
+    # too and subtract the ones a developer legitimately has.
+    dirty = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=all"],
+        cwd=repo, capture_output=True, text=True)
+    created = sorted(l[3:] for l in dirty.stdout.splitlines()
+                     if l.startswith("?? "))
+    if created:
+        return 1, "the suites left untracked files in the checkout: " + \
+                  ", ".join(created[:10])
+    return 0, ""
 
 
 def _version_current(repo: pathlib.Path) -> tuple[int, str]:

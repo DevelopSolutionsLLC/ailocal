@@ -118,17 +118,22 @@ ailocal install     bootstrap the stack
 ailocal start       bring the proxy and models up
 ailocal status      live model status by capability
 ailocal check       is everything ready and working?
-ailocal trace       per-request timeline: which component, and when
 ailocal stop        bring it down
 ```
 
-`ailocal trace` answers the one question logs cannot: every component reported
-success but the first byte took a minute — where did it go? It is off until
-`AILOCAL_TRACE_DIR` is set in `.env`.
+`.env` lives at `~/.config/ailocal/.env`, never in a checkout. `ailocal install`
+writes it with a random master key and will not overwrite it unattended; it is
+the one piece of state that does not regenerate.
 
-Configuration is generated from the profile into
-`${AILOCAL_STATE:-~/.local/state/ailocal}`, outside the repository. Deleting
-that directory and re-running `ailocal start` is a supported repair.
+Configuration is generated from the profile straight into the place each
+consumer reads it: the two files LiteLLM mounts under
+`${AILOCAL_STATE:-~/.local/state/ailocal}`, and the client config under
+`~/.config/ailocal`. Every generated file says so in its own header. Deleting
+them and re-running `ailocal start` is a supported repair.
+
+To upgrade ailocal itself, upgrade the package (`pipx upgrade ailocal`) and run
+`ailocal start`. Docker images are digest-pinned, so there is nothing else to
+refresh.
 
 ## Supported clients
 

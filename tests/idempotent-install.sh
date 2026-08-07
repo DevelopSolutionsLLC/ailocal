@@ -32,8 +32,13 @@ INCLUDE_VSCODE=""
 
 
 
+# Stale fingerprints from an earlier run must not survive into this one.
+rm -f /tmp/ailocal-fp-*.txt
+
+FINAL_FP=""
 fingerprint() { # $1=label -> writes /tmp/ailocal-fp-$1.txt
   local out="/tmp/ailocal-fp-$1.txt"
+  FINAL_FP="$out"
   : > "$out"
   python3 - "$out" <<'PY'
 import hashlib, json, os, re, sys
@@ -51,9 +56,9 @@ def sha(path):
 
 # ── byte-stable files: a hash is the right comparison ──────────────────────
 for p in (os.path.expanduser("~/.local/state/ailocal/litellm/config.yaml"),
-          os.path.expanduser("~/.local/state/ailocal/clients/model_catalog.json"),
-          os.path.expanduser("~/.local/state/ailocal/clients/claude/settings.json"),
-          os.path.expanduser("~/.local/state/ailocal/clients/codex/config.toml")):
+          os.path.expanduser("~/.config/ailocal/codex/model_catalog.json"),
+          os.path.expanduser("~/.config/ailocal/claude/settings.json"),
+          os.path.expanduser("~/.config/ailocal/codex/config.toml")):
     emit("hash:" + p, sha(p))
 
 # ── capabilities.generated.json carries generated_at, so compare STRUCTURE ──
@@ -150,15 +155,11 @@ echo "════════════════════════�
 banner "fingerprint: baseline"
 fingerprint baseline >/dev/null
 
-# ── generation ─────────────────────────────────────────────────────────────
-banner "generation x2"
-python3 -m ailocal.generation >/dev/null 2>&1 || bad "generation #1 failed"
-fingerprint sync1 >/dev/null
-python3 -m ailocal.generation >/dev/null 2>&1 || bad "generation #2 failed"
-fingerprint sync2 >/dev/null
-compare sync1 sync2 "generation"
-
 # ── ailocal clients ────────────────────────────────────────────────────────
+# This covers generation too: `ailocal clients` regenerates every artifact
+# before deploying, so running it twice exercises both. Invoking the generator
+# directly would test it through an interpreter no user runs it under.
+#
 # claude + codex only by default: the vscode target touches the user's editor
 # config, which is opt-in here.
 banner "ailocal clients claude codex x2"
@@ -188,7 +189,7 @@ fi
 
 # ── the specific counts that must not grow ─────────────────────────────────
 banner "duplication-sensitive counts"
-python3 - <<'PY'
+python3 - "$FINAL_FP" <<'PY'
 import sys
 def load(p):
     d = {}
@@ -196,8 +197,12 @@ def load(p):
         k, _, v = line.rstrip("\n").partition("\t")
         d[k] = v
     return d
+# The final fingerprint is NAMED, never globbed. Globbing and taking the
+# alphabetically-last match picked up whichever stale /tmp file happened to sort
+# highest — a fingerprint from an unrelated earlier run, compared against this
+# run's baseline, reporting duplication that never happened.
 base = load("/tmp/ailocal-fp-baseline.txt")
-last = load(sorted(__import__("glob").glob("/tmp/ailocal-fp-*.txt"))[-1])
+last = load(sys.argv[1])
 bad = 0
 for key in ("count:codex_mcp_stanzas", "count:vscode_provider_groups",
             "count:zshrc_ailocal_markers", "count:codex_total_lines"):

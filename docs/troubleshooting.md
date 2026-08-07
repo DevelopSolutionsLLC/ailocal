@@ -177,7 +177,7 @@ ailocal start && ailocal clients
 
 **Likely cause** — a streamed Responses turn never emits its terminal event.
 
-**Verify** — open a session and watch `ailocal trace` for the request.
+**Verify** — open a session and watch `docker logs -f ailocal-litellm`.
 
 **Fix** — none available locally. Configuration, routing, geometry and tool
 transport are validated; only interactive streaming is affected.
@@ -287,7 +287,7 @@ chmod 600 "${AILOCAL_STATE:-$HOME/.local/state/ailocal}/searxng/settings.yml"
 refreshed, or the extension is absent.
 
 **Verify** — open a Copilot chat and confirm the request appears in
-`ailocal trace`.
+`docker logs ailocal-litellm`.
 
 **Fix**
 

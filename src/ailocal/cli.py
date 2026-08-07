@@ -15,11 +15,9 @@ COMMANDS: dict[str, tuple[str, tuple]] = {
     "install":        ("ailocal.install", ("install",)),
     "status":         ("ailocal.runtime", ("status",)),
     "check":          ("ailocal.checks.run", ("check",)),
-    "trace":          ("ailocal.runtime", ("trace",)),
 
     "start":          ("ailocal.runtime", ("start",)),
     "stop":           ("ailocal.runtime", ("stop",)),
-    "update":         ("ailocal.runtime", ("update",)),
     "teardown":       ("ailocal.runtime", ("teardown",)),
     "clients":        ("ailocal.clients", ()),
 }
@@ -29,8 +27,8 @@ COMMANDS: dict[str, tuple[str, tuple]] = {
 #: that dispatches what it does not advertise is a surface nobody can trust.
 GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("bootstrap the stack",        ("install",)),
-    ("inspect",                    ("status", "check", "trace")),
-    ("lifecycle",                  ("start", "stop", "update")),
+    ("inspect",                    ("status", "check")),
+    ("lifecycle",                  ("start", "stop")),
     ("point a client at it",       ("clients",)),
     ("remove it",                  ("teardown",)),
     ("the active profile",         ("profile",)),
@@ -94,8 +92,8 @@ def _profile(argv: list[str]) -> int:
             print(json.dumps(P.profile_summary(tier) if tier
                              else P.effective_summary(), indent=1, sort_keys=True))
         elif query == "validate":
-            P.load_effective()
-            print(f"ok: {P.active_tier()} active; generated profile state is valid")
+            P.effective_summary()
+            print(f"ok: {P.active_tier()} active; profile policy is valid")
         else:
             print("usage: ailocal profile <use TIER|active-tier|state-root|"
                   "config-root|data-root|active-profile-path|"

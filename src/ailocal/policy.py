@@ -11,8 +11,6 @@ ONE READER, NO FALLBACK: this module fails closed, because a tier guessed on a
 """
 from __future__ import annotations
 
-import hashlib
-import json
 import os
 import tomllib
 from pathlib import Path
@@ -71,10 +69,10 @@ class ProfileError(Exception):
 
 
 # ── public interface ────────────────────────────────────────────────────────
-CLIENTS = ("claude", "codex", "continue", "compat")
+CLIENTS = ("claude", "codex", "compat")
 
 
-# ── the three roots (ADR 009) ───────────────────────────────────────────────
+# ── the three roots ─────────────────────────────────────────────────────────
 # User-editable configuration, installed data assets and generated state have
 # separate homes, XDG throughout with an AILOCAL_* override per root. These
 # functions are the ONLY implementations of that resolution; nothing else may
@@ -112,20 +110,42 @@ def config_root(repo_root=None) -> Path:
 
 
 def data_root(repo_root=None) -> Path:
-    """Installed static assets: deploy/, clients/. Replaced wholesale on
-    upgrade, so nothing user-authored may live here."""
+    """Shipped assets: deploy/, clients/. THE PACKAGE'S OWN RESOURCES.
+
+    Not a copy under ~/.local/share. Compose bind-mounts deploy/ and LiteLLM
+    reads its hooks from it, so a copy meant a live container could be mounted
+    on a directory ailocal itself was replacing — the copy was the only reason
+    that race existed. Reading straight from the wheel makes the shipped tree
+    immutable to ailocal: it changes when pip/pipx changes it, and never while
+    the stack is being provisioned.
+    """
     if repo_root is not None:
         return Path(repo_root)
     override = os.environ.get("AILOCAL_DATA")
-    return Path(override) if override else _xdg("XDG_DATA_HOME", ".local", "share") / "ailocal"
+    if override:
+        return Path(override)
+    import importlib.resources
+    return Path(str(importlib.resources.files("ailocal"))) / "resources"
 
 
 def deployed_client_root() -> Path:
-    """Where generated client configuration is installed for clients to read.
+    """Where GENERATED client configuration is written for its client to read.
 
-    The shell surfaces spell this path themselves, so changing it means changing
-    them together."""
-    return _xdg("XDG_CONFIG_HOME", ".config") / "ailocal"
+    Deliberately NOT config_root(), even though both land in ~/.config/ailocal
+    by default. They hold different things with different owners and different
+    lifecycles: authored policy is the operator's and survives upgrades under a
+    digest promise, generated client config is disposable and rewritten on every
+    start.
+
+    Resolving both through one function collapsed that boundary, and the
+    collapse was not theoretical: the test harness points AILOCAL_CONFIG at the
+    checkout to read the shipped profiles, so generated client config was
+    written into the repository and committed. An override of the POLICY root
+    must not relocate GENERATED output.
+    """
+    override = os.environ.get("AILOCAL_CLIENTS")
+    return Path(override) if override else _xdg(
+        "XDG_CONFIG_HOME", ".config") / "ailocal"
 
 
 def profiles_dir(repo_root=None) -> Path:
@@ -379,101 +399,20 @@ def profile_summary(tier: str, repo_root=None) -> dict:
     }
 
 
-# ── runtime: read the GENERATED artifact, never the profile ─────────────────
-# Everything after generation reads this. No consumer falls back to parsing a
-# profile: that would resurrect a second parser and mask a stale generation
-# instead of reporting it.
-EFFECTIVE_PROFILE_MISSING = "EFFECTIVE_PROFILE_MISSING"
-EFFECTIVE_PROFILE_STALE_TIER = "EFFECTIVE_PROFILE_STALE_TIER"
-EFFECTIVE_PROFILE_STALE_SOURCE = "EFFECTIVE_PROFILE_STALE_SOURCE"
-EFFECTIVE_PROFILE_HASH_INVALID = "EFFECTIVE_PROFILE_HASH_INVALID"
-EFFECTIVE_PROFILE_SCHEMA_INVALID = "EFFECTIVE_PROFILE_SCHEMA_INVALID"
-
-SUPPORTED_SCHEMA_VERSIONS = (2,)
-
-
-def _sha(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else ""
-
-
-def load_effective(repo_root=None, state=None) -> dict:
-    """The generated effective profile, validated against its own inputs.
-
-    Staleness is DETECTED: the artifact records the hashes of the profile and
-    the marker it came from, so editing either without re-running sync is an
-    error rather than a silently wrong runtime."""
-    root = config_root(repo_root)
-    path = effective_profile_path(state)
-    if not path.exists():
-        raise ProfileError(EFFECTIVE_PROFILE_MISSING, str(path))
-    try:
-        data = json.loads(path.read_text())
-    except Exception:  # noqa: BLE001
-        raise ProfileError(EFFECTIVE_PROFILE_SCHEMA_INVALID, str(path))
-    if data.get("schema_version") not in SUPPORTED_SCHEMA_VERSIONS:
-        raise ProfileError(EFFECTIVE_PROFILE_SCHEMA_INVALID,
-                           f"schema_version {data.get('schema_version')!r}")
-    for key in ("tier", "roles", "source_profile", "config_sha256"):
-        if key not in data:
-            raise ProfileError(EFFECTIVE_PROFILE_SCHEMA_INVALID, f"missing {key}")
-
-    body = {k: v for k, v in data.items()
-            if k not in ("config_sha256", "generated_at")}
-    if hashlib.sha256(json.dumps(body, sort_keys=True,
-                                 separators=(",", ":")).encode()).hexdigest() \
-            != data["config_sha256"]:
-        raise ProfileError(EFFECTIVE_PROFILE_HASH_INVALID, "config_sha256")
-
-    marker = active_profile_path(state)
-    if not marker.exists():
-        raise ProfileError(ACTIVE_PROFILE_MISSING, str(marker))
-    if marker.read_text().strip() != data["tier"]:
-        raise ProfileError(EFFECTIVE_PROFILE_STALE_TIER,
-                           "active-profile no longer names the generated tier")
-    if data.get("active_profile_sha256") and \
-            _sha(marker) != data["active_profile_sha256"]:
-        raise ProfileError(EFFECTIVE_PROFILE_STALE_TIER, "marker changed")
-    # EVERY normalized tier is checked, not just the active one: cross-tier
-    # planning reads them all.
-    for t, blk in (data.get("tiers") or {}).items():
-        src = root / blk["source_profile"]
-        if blk.get("source_profile_sha256") and _sha(src) != blk["source_profile_sha256"]:
-            raise ProfileError(EFFECTIVE_PROFILE_STALE_SOURCE,
-                               f"{t} profile edited since generation — run `ailocal start`")
-    return data
-
-
-def effective_tiers(repo_root=None) -> dict:
-    """Every normalized tier. The only cross-tier source at runtime."""
-    return load_effective(repo_root)["tiers"]
-
-
-def effective_role_for_tier(tier: str, role: str, repo_root=None) -> dict:
-    """One role from ANY tier, from generated data. No YAML, no fallback."""
-    tiers = effective_tiers(repo_root)
-    if tier not in tiers:
-        raise ProfileError(EFFECTIVE_PROFILE_SCHEMA_INVALID,
-                           f"tier {tier!r} not in generated data")
-    roles = tiers[tier]["roles"]
-    if role not in roles:
-        raise ProfileError(ROLE_MISSING, f"{tier}.{role}")
-    return roles[role]
-
+# ── runtime views ───────────────────────────────────────────────────────────
+# Derived in memory from profiles/<tier>.toml on every call. There is no
+# generated "effective profile" artifact: a file that only ailocal reads, whose
+# content is a pure function of the profile beside it, can only ever go stale —
+# and every mechanism that used to detect that staleness (schema version,
+# input hashes, a drift check) existed solely because the file existed.
 
 def active_tier(repo_root=None) -> str:
-    """Runtime tier. Comes from the validated artifact, not the raw marker."""
-    return load_effective(repo_root)["tier"]
+    return resolve_active_tier(repo_root)
 
 
 def effective_role(role: str, repo_root=None) -> dict:
-    data = load_effective(repo_root)
-    if role not in data["roles"]:
-        raise ProfileError(ROLE_MISSING, role)
-    return data["roles"][role]
+    return resolve_role(resolve_active_tier(repo_root), role, repo_root)
 
 
 def effective_summary(repo_root=None) -> dict:
-    d = load_effective(repo_root)
-    return {"tier": d["tier"], "compaction": d.get("compaction", {}),
-            "roles": d["roles"], "generated_at": d.get("generated_at"),
-            "config_sha256": d["config_sha256"]}
+    return profile_summary(resolve_active_tier(repo_root), repo_root)

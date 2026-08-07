@@ -10,14 +10,15 @@
 set -uo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/harness.sh"
 
-# One resolution of the generated-client root for both sections.
-_state_root() {
-  [ -n "${_STATE_ROOT:-}" ] || _STATE_ROOT="$(ailocal profile state-root)"
-  printf '%s' "$_STATE_ROOT"
+# One resolution of the generated-client root for both sections. Generated
+# client config is written straight into the config root its client reads.
+_config_root() {
+  [ -n "${_CONFIG_ROOT:-}" ] || _CONFIG_ROOT="$(ailocal profile config-root)"
+  printf '%s' "$_CONFIG_ROOT"
 }
 
 roles_checks() {
-CONFIGURE="$(_state_root)/clients/configure.zsh"
+CONFIGURE="$(_config_root)/configure.zsh"
 
 STUB="$(temp_dir)"   # harness owns cleanup; do not install a private EXIT trap
 cat > "$STUB/claude" <<'EOF'
@@ -91,7 +92,7 @@ check $([ "$(grep -c 'AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE' "$CONFIGURE")" -ge 1 
 }
 
 codex_checks() {
-GEN="$(_state_root)/clients/codex/config.toml"
+GEN="$(_config_root)/codex/config.toml"
 
 echo "CODEX MCP IS WITHHELD"
 
@@ -156,7 +157,7 @@ check $([ "${pres:-0}" -ge 1 ] && echo 0 || echo 1) \
 # is checked AGAINST the generated configuration rather than on its own.
 echo
 echo "INTEGRATION CONTRACT MATCHES GENERATED CLIENTS"
-CONTRACT="$(ailocal profile state-root)/integration-contract.json"
+CONTRACT="$(_config_root)/integration-contract.json"
 if [ -f "$CONTRACT" ] && command -v jq >/dev/null 2>&1; then
   cfg_codex=$(jq -r '.compatibility.codex_mcp_lsp.configured' "$CONTRACT")
   check $([ "$cfg_codex" = "false" ] && echo 0 || echo 1) \

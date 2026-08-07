@@ -43,12 +43,6 @@ default = "implementation"
   # named profiles (codex --profile plan / review)
 profiles = {plan = "architecture", review = "review"}
 
-# Continue (VS Code) — chat picker entries, the direct-Ollama FIM model, embeddings
-[continue]
-chat = ["architecture", "implementation", "review"]
-autocomplete = "completion"
-embeddings = "embeddings"
-
 # External client compatibility names -> capability. These are NOT ailocal roles — they are model
 # IDs that Claude Code and the OpenAI SDK hard-code and cannot be told to stop sending (e.g.
 # claude-local background calls send claude-haiku-4-5). Without them those clients 404. The old
@@ -62,8 +56,7 @@ embeddings = "embeddings"
 "claude-sonnet-4-6-20250219" = "implementation"
 "gpt-5.5" = "implementation"
   # See the note on claude.slots above: these are conversational model IDs, so they
-  # must not resolve to the 4096-token FIM tier. Only `continue.autocomplete` should
-  # ever point at `completion`.
+  # must not resolve to the 4096-token FIM tier.
 "claude-haiku-4-5" = "fast"
 "claude-haiku-4-5-20251001" = "fast"
 "gpt-4o" = "implementation"
