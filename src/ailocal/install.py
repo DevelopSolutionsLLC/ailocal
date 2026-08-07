@@ -908,7 +908,7 @@ def cmd_install(argv: list[str]) -> int:
     # Generation must succeed before anything is pulled, and the plan below is
     # rendered from the generated artifact so it cannot report stale numbers.
     step("Generating configuration")
-    _run(sys.executable, policy.data_root() / "lib" / "sync-models.py", check=True)
+    _run(sys.executable, "-m", "ailocal.generation", check=True)
     print()
     _print_plan(tier, f"physical memory:     {ram} GB")
 

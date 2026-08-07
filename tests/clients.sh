@@ -3,7 +3,7 @@
 #
 #   clients.sh [roles|codex]     (default: all sections)
 #
-# Both sections read what sync-models.py generated under the state root. They
+# Both sections read what generation.py generated under the state root. They
 # make no inference call, need no running proxy, and never mutate deployed
 # config. Nothing executes at source time: the sections are functions and the
 # dispatch is at the bottom.
@@ -12,7 +12,7 @@ set -uo pipefail
 
 # One resolution of the generated-client root for both sections.
 _state_root() {
-  [ -n "${_STATE_ROOT:-}" ] || _STATE_ROOT="$(python3 "$ROOT_DIR/lib/profile-config" state-root)"
+  [ -n "${_STATE_ROOT:-}" ] || _STATE_ROOT="$("$ROOT_DIR/ailocal" profile state-root)"
   printf '%s' "$_STATE_ROOT"
 }
 
@@ -98,7 +98,7 @@ assert 'INVALID_ROUTING' in inspect.getsource(B.verify_routing)
   "routing mismatch is classified INVALID_ROUTING, not warned about"
 
 # The override block is hand-maintained and MUST live outside the spliced region,
-# or sync-models.py would erase it on the next regeneration.
+# or generation.py would erase it on the next regeneration.
 tpl="$ROOT_DIR/clients/configure.template.zsh"
 gen_begin=$(grep -n "BEGIN GENERATED claude slots" "$tpl" | cut -d: -f1)
 gen_end=$(grep -n "END GENERATED claude slots" "$tpl" | cut -d: -f1)
@@ -106,7 +106,7 @@ ovr=$(grep -n "_ailocal_ovr=(" "$tpl" | cut -d: -f1)
 check $([ -n "$ovr" ] && [ "$ovr" -gt "$gen_end" ] && echo 0 || echo 1) \
   "override logic sits outside the generated region" "ovr=$ovr gen=$gen_begin-$gen_end"
 check $([ "$(grep -c 'AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE' "$CONFIGURE")" -ge 1 ] && echo 0 || echo 1) \
-  "override logic survives sync-models.py regeneration"
+  "override logic survives generation.py regeneration"
 }
 
 codex_checks() {
@@ -175,7 +175,7 @@ check $([ "${pres:-0}" -ge 1 ] && echo 0 || echo 1) \
 # is checked AGAINST the generated configuration rather than on its own.
 echo
 echo "INTEGRATION CONTRACT MATCHES GENERATED CLIENTS"
-CONTRACT="$(python3 "$ROOT_DIR/lib/profile-config" state-root)/integration-contract.json"
+CONTRACT="$("$ROOT_DIR/ailocal" profile state-root)/integration-contract.json"
 if [ -f "$CONTRACT" ] && command -v jq >/dev/null 2>&1; then
   cfg_codex=$(jq -r '.compatibility.codex_mcp_lsp.configured' "$CONTRACT")
   check $([ "$cfg_codex" = "false" ] && echo 0 || echo 1) \

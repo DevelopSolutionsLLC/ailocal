@@ -92,7 +92,8 @@ def main() -> None:
     stray.write_text("# left behind by an older version\n")
     I.provision(REPO, cfg, data, state)
     check(not stray.exists(), "a file no longer shipped is gone after an upgrade")
-    check((data / "lib" / "sync-models.py").is_file(), "shipped data is present again")
+    check((data / "deploy" / "litellm" / "registry.yaml").is_file(),
+          "shipped data is present again")
 
     _suite.section("THE SOURCE IS NEVER GUESSED")
     check(I.distribution_source() == REPO,

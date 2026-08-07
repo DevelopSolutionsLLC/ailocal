@@ -24,7 +24,7 @@
 set -uo pipefail
 . "$(cd "$(dirname "$0")" && pwd)/e2e.sh"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-AILOCAL_STATE="${AILOCAL_STATE:-$(python3 "$ROOT/lib/profile-config" state-root)}"
+AILOCAL_STATE="${AILOCAL_STATE:-$("$ROOT/ailocal" profile state-root)}"
 cd "$ROOT"
 
 KEEP=""

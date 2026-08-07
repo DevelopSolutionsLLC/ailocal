@@ -152,9 +152,9 @@ fingerprint baseline >/dev/null
 
 # ── ailocal sync ───────────────────────────────────────────────────────────
 banner "ailocal sync x2"
-python3 lib/sync-models.py >/dev/null 2>&1 || bad "ailocal sync #1 failed"
+./ailocal sync >/dev/null 2>&1 || bad "ailocal sync #1 failed"
 fingerprint sync1 >/dev/null
-python3 lib/sync-models.py >/dev/null 2>&1 || bad "ailocal sync #2 failed"
+./ailocal sync >/dev/null 2>&1 || bad "ailocal sync #2 failed"
 fingerprint sync2 >/dev/null
 compare sync1 sync2 "ailocal sync"
 

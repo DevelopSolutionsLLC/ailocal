@@ -48,7 +48,7 @@ claude-local() {
   # region can carry its own marker comments — a `#` line inside a `\`
   # continuation would comment out the rest of the command.
   local -a slots
-  # >>> BEGIN GENERATED claude slots (sync-models.py) — do not edit <<<
+  # >>> BEGIN GENERATED claude slots (ailocal sync) — do not edit <<<
   slots=(
     ANTHROPIC_DEFAULT_OPUS_MODEL="ailocal-architecture"
     ANTHROPIC_DEFAULT_SONNET_MODEL="ailocal-implementation"

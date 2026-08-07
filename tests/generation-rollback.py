@@ -47,7 +47,7 @@ check = _suite.check
 
 
 def load_sync():
-    return load_module("sync_models", ROOT / "lib" / "sync-models.py")
+    return load_module("generation", ROOT / "src" / "ailocal" / "generation.py")
 
 
 def digest(p: pathlib.Path) -> str:
@@ -81,7 +81,7 @@ def run(fail_after: int | None) -> tuple[dict, dict, int]:
 
     sm.os.replace = flaky
     argv = sys.argv[:]
-    sys.argv = ["sync-models.py"]
+    sys.argv = ["generation"]
     try:
         sm.main()
     except (SystemExit, OSError):
@@ -96,6 +96,18 @@ def run(fail_after: int | None) -> tuple[dict, dict, int]:
 def main() -> int:
     profile = ROOT / "profiles" / "64gb.toml"
     original = profile.read_text()
+
+    print("A DRIFTED TEMPLATE STOPS GENERATION")
+    # Skipping a missing marker emitted a config.yaml with NO model_list at all,
+    # and every consumer read it as a valid empty stack.
+    sm = load_sync()
+    try:
+        sm.splice("no markers here\n", "<<BEGIN>>", "<<END>>", "x", "model_list")
+        got = "RETURNED"
+    except SystemExit as exc:
+        got = str(exc)
+    check("markers not found" in got, "a template with no markers exits non-zero",
+          f"got {got!r}")
 
     print("GENERATION ROLLBACK")
     try:
@@ -132,7 +144,7 @@ def main() -> int:
         profile.write_text(original)
         # Leave the tree on the real configuration, not the fixture's.
         sm = load_sync()
-        sys.argv = ["sync-models.py"]
+        sys.argv = ["generation"]
         try:
             sm.main()
         except SystemExit:

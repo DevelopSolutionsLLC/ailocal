@@ -329,7 +329,7 @@ def check_generated_in_sync() -> CheckResult:
     """Regeneration is a fixed point; drift means a hand edit. Active tier only."""
     import subprocess
     try:
-        r = subprocess.run([sys.executable, str(P.data_root() / "lib" / "sync-models.py"), "--check"],
+        r = subprocess.run([sys.executable, "-m", "ailocal.generation", "--check"],
                            capture_output=True, text=True, timeout=180)
     except (OSError, subprocess.TimeoutExpired) as exc:
         return CheckResult("generated-sync", BLOCKED,

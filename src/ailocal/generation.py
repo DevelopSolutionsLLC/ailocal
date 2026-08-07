@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""sync-models.py — propagate the capability registry to every derived file.
+"""generation.py — propagate the capability registry to every derived file.
 
 Single source of truth (both TRACKED — no gitignored intermediate):
   profiles/<tier>.toml  WHAT each capability is (backend `active`, context, sampling,
@@ -10,7 +10,7 @@ Single source of truth (both TRACKED — no gitignored intermediate):
   profiles/clients.toml   WHICH capability each client surface uses (launch defaults, Codex
                         profiles, Continue entries, compat aliases).
 
-Running `ailocal sync` regenerates, deterministically:
+`ailocal sync` regenerates, deterministically:
   $AILOCAL_STATE/litellm/config.yaml   model_list + model_group_alias (between markers)
   config/capabilities.generated.json resolved capabilities (for `ailocal status`)
   clients/model_catalog.json  Codex picker (capability slugs)
@@ -19,8 +19,8 @@ Running `ailocal sync` regenerates, deterministically:
   clients/codex/{plan,review}.config.toml  profile models
   clients/continue/config.json chat models, FIM autocomplete, embeddings
 
-Also: `sync-models.py --resolve <capability>` prints the active Ollama backend tag, so shell
-the login agents resolve without parsing YAML themselves.
+`ailocal profile role <capability> --field model` resolves a backend at run time, so a
+login agent never parses policy itself.
 
 Capabilities are TOP-LEVEL keys in the profile; lists are flow-style [a, b, c]. keep_alive
 accepts durations, -1, or the words forever/persistent (both -> -1). Never hand-edit a generated
@@ -37,7 +37,6 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
 # Interactive-compaction thresholds, read from the profile's `compaction:` block.
 COMPACTION = {}
 
@@ -80,13 +79,13 @@ CONTRACT_JSON  = _pc.state_root() / "integration-contract.json"
 BASE_URL       = "http://localhost:4000"
 
 
-ML_BEGIN = "  # >>> BEGIN GENERATED model_list (sync-models.py) — do not edit <<<"
+ML_BEGIN = "  # >>> BEGIN GENERATED model_list (ailocal sync) — do not edit <<<"
 ML_END   = "  # >>> END GENERATED model_list <<<"
-AL_BEGIN = "  # >>> BEGIN GENERATED model_group_alias (sync-models.py) — do not edit <<<"
+AL_BEGIN = "  # >>> BEGIN GENERATED model_group_alias (ailocal sync) — do not edit <<<"
 AL_END   = "  # >>> END GENERATED model_group_alias <<<"
-CP_BEGIN = "<!-- >>> BEGIN GENERATED capabilities (sync-models.py) — do not edit <<< -->"
+CP_BEGIN = "<!-- >>> BEGIN GENERATED capabilities (ailocal sync) — do not edit <<< -->"
 CP_END   = "<!-- >>> END GENERATED capabilities <<< -->"
-CS_BEGIN = "  # >>> BEGIN GENERATED claude slots (sync-models.py) — do not edit <<<"
+CS_BEGIN = "  # >>> BEGIN GENERATED claude slots (ailocal sync) — do not edit <<<"
 CS_END   = "  # >>> END GENERATED claude slots <<<"
 
 # Capabilities are short keys in the source (profiles/<tier>.toml + profiles/clients.toml);
@@ -185,7 +184,7 @@ def _int_or_none(v):
 def _geom(info):
     """Derived geometry for a role, from the ONE implementation.
 
-    sync-models must not re-derive num_ctx / num_predict / admission. It reads
+    generation must not re-derive num_ctx / num_predict / admission. It reads
     context_input + max_output straight from the profile and hands them to
     policy.geometry(), which is the same function every other consumer
     calls. There is deliberately no default: a role missing context_input is a
@@ -387,11 +386,16 @@ def gen_alias_block(models, clients):
 
 
 def splice(text, begin, end, generated, label):
+    """Replace a marked region. A missing marker is fatal.
+
+    Skipping produced a config.yaml with no model_list at all — a template whose
+    markers have drifted must stop generation, not silently emit an empty stack.
+    """
     pat = re.compile(re.escape(begin) + r".*?" + re.escape(end) + r"\n?", re.DOTALL)
     if not pat.search(text):
-        warn(f"markers not found for {label}; skipping")
-        return text, False
-    return pat.sub(lambda _m: generated, text, count=1), True
+        sys.exit(f"  \u2717 markers not found for {label}; the template has drifted "
+                 f"from generation.py. Expected:\n      {begin}")
+    return pat.sub(lambda _m: generated, text, count=1)
 
 
 def regen_litellm(models, clients):
@@ -399,10 +403,11 @@ def regen_litellm(models, clients):
     # would let a hand-edit to the generated file survive, which is the drift the
     # template exists to prevent.
     text = LITELLM_TEMPLATE.read_text()
-    text, s1 = splice(text, ML_BEGIN, ML_END, gen_model_list(models), "model_list")
-    text, s2 = splice(text, AL_BEGIN, AL_END, gen_alias_block(models, clients), "model_group_alias")
+    text = splice(text, ML_BEGIN, ML_END, gen_model_list(models), "model_list")
+    text = splice(text, AL_BEGIN, AL_END, gen_alias_block(models, clients),
+                  "model_group_alias")
     stage(LITELLM_CONFIG, text)
-    return s1 and s2
+    return True
 
 
 # ── capabilities.generated.json (for `ailocal status`) ─────────────────────────
@@ -426,7 +431,7 @@ def write_caps_json(models):
     # other generated artifact states its owner and how to regenerate it, and a
     # timestamp alone does not tell a reader not to hand-edit this.
     stage(CAPS_JSON, json.dumps(
-        {"//": ["GENERATED by lib/sync-models.py — DO NOT EDIT.",
+        {"//": ["GENERATED by ailocal sync — DO NOT EDIT.",
                 "Source of truth: profiles/<active tier>.toml.",
                 "Regenerate: ailocal sync"],
          "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -658,19 +663,19 @@ def regen_copilot_repo_md(models):
     if not COPILOT_REPO_TPL.exists():
         return False
     text = COPILOT_REPO_TPL.read_text()
-    text, spliced = splice(text, CP_BEGIN, CP_END, gen_copilot_capabilities(models),
-                           "copilot capabilities")
-    stage(COPILOT_REPO_MD, text)
-    return spliced
+    stage(COPILOT_REPO_MD, splice(text, CP_BEGIN, CP_END,
+                                  gen_copilot_capabilities(models),
+                                  "copilot capabilities"))
+    return True
 
 
 def regen_configure_zsh(clients):
     if not CONFIGURE_ZSH_TPL.exists():
         return False
     text = CONFIGURE_ZSH_TPL.read_text()
-    text, spliced = splice(text, CS_BEGIN, CS_END, gen_slot_block(clients), "claude slots")
-    stage(CONFIGURE_ZSH, text)
-    return spliced
+    stage(CONFIGURE_ZSH, splice(text, CS_BEGIN, CS_END, gen_slot_block(clients),
+                                "claude slots"))
+    return True
 
 
 def regen_claude_settings(models, clients):
@@ -908,7 +913,7 @@ def build_effective_profile(active_tier, path):
              if (PROFILES_DIR / f"{t}.toml").exists()}
     body = {
         "schema_version": EFFECTIVE_SCHEMA_VERSION,
-        "generator": "sync-models.py",
+        "generator": "ailocal.generation",
         "active_tier": active_tier,
         "active_profile_sha256": _sha_file(ACTIVE_PROFILE),
         "tiers": tiers,
@@ -1092,7 +1097,7 @@ def main():
             return re.sub(r'"generated_at":\s*"[^"]*"', '"generated_at": ""', t)
 
         def _label(d):
-            for base in (_pc.state_root(), _pc.config_root(), _pc.data_root(), ROOT):
+            for base in (_pc.state_root(), _pc.config_root(), _pc.data_root()):
                 try:
                     return str(d.relative_to(base))
                 except ValueError:

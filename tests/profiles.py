@@ -50,8 +50,8 @@ PARSED = {t: parse(t) for t in PROFILES}
 
 
 def load_sync():
-    """Fresh sync-models module: each sandbox needs unshared state."""
-    return load_module("sync_models", REPO / "lib" / "sync-models.py")
+    """Fresh generation module: each sandbox needs unshared state."""
+    return load_module("generation", REPO / "src" / "ailocal" / "generation.py")
 
 
 def sandbox(marker=None, profile_text=None) -> Path:
@@ -197,7 +197,7 @@ def resolver_checks() -> None:
     shutil.rmtree(root, ignore_errors=True)
 
     print("\nNO SECOND PARSER, NO SILENT FALLBACK")
-    sync = (REPO / "lib" / "sync-models.py").read_text()
+    sync = (REPO / "src" / "ailocal" / "generation.py").read_text()
     check('return "64gb"' not in sync, "sync-models no longer defaults to 64gb")
 
     # ADR 009. Config, data and state have separate homes, and policy.py owns
@@ -256,8 +256,6 @@ def resolver_checks() -> None:
         check(a == b, f"{t}: benchmark and resolver return identical role values")
 
     print("\nCLI IS USABLE FROM A SHELL AND FAILS NON-ZERO")
-    # The public surface is `ailocal profile <...>`; lib/profile-config is an
-    # internal implementation and is deliberately not executable.
     cli = [str(REPO / "ailocal"), "profile"]
     r = subprocess.run(cli + ["active-tier"], capture_output=True, text=True)
     check(r.returncode == 0 and r.stdout.strip() in P.TIERS,
@@ -387,7 +385,7 @@ def resolver_checks() -> None:
     check(g["total_context"] == 1200 and g["num_ctx"] == 1200
           and g["num_predict"] == 200 and g["max_input_tokens"] == 1000,
           "geometry() derives all four values from the two declared ones")
-    sync_src = (REPO / "lib" / "sync-models.py").read_text()
+    sync_src = (REPO / "src" / "ailocal" / "generation.py").read_text()
     check("_pc.geometry(" in sync_src,
           "sync-models calls the shared geometry, does not re-derive it")
     # BEHAVIOURAL, not textual: the previous form matched one exact expression
@@ -907,7 +905,7 @@ def policy_checks() -> None:
     listed = [n for _, names in cli.GROUPS for n in names]
     check(len(listed) == len(set(listed)), "no command is listed twice in help",
           ", ".join(sorted({n for n in listed if listed.count(n) > 1})))
-    dispatchable = set(cli.COMMANDS) | set(cli.NESTED)
+    dispatchable = set(cli.COMMANDS) | set(cli.NESTED) | set(cli.HANDLERS)
     check(set(listed) == dispatchable - cli.INTERNAL,
           "help lists every public command, and nothing it cannot dispatch",
           f"help-only={sorted(set(listed) - dispatchable)} "
@@ -930,7 +928,7 @@ def policy_checks() -> None:
           "; ".join(missing))
 
     _suite.section("GENERATOR CONSUMES POLICY")
-    gen = (REPO / "lib" / "sync-models.py").read_text()
+    gen = (REPO / "src" / "ailocal" / "generation.py").read_text()
     check("_pc.load_client_policy()" in gen,
           "sync-models reads client policy through the owner")
     check(gen.count("def load_clients_yaml") == 1
