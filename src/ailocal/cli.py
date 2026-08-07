@@ -36,8 +36,8 @@ def _root() -> Path:
 PY, SH, MOD = "py", "sh", "mod"
 COMMANDS: dict[str, tuple] = {
     "install":        (SH, "lib/install.sh", (), True),
-    "status":         (SH, "lib/status.sh", (), True),
-    "models":         (SH, "lib/status.sh", ("--table",), False),
+    "status":         (MOD, "ailocal.runtime", (), True),
+    "models":         (MOD, "ailocal.runtime", ("--table",), False),
     "doctor":         (MOD, "ailocal.checks.run", ("doctor",), True),
     "validate":       (MOD, "ailocal.checks.run", ("validate",), True),
     "smoke":          (MOD, "ailocal.checks.run", ("smoke",), True),
