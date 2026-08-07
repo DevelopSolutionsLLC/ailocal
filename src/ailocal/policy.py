@@ -7,7 +7,7 @@ IMPLICIT DEFAULT.
 
 WHY NOT PyYAML. It is absent from every interpreter ailocal can reach, so using
 it means provisioning and owning a virtual environment — venv setup in
-lib/install.sh, validation in `ailocal doctor`, refresh in `ailocal update`, removal
+`ailocal install`, validation in `ailocal doctor`, refresh in `ailocal update`, removal
 in teardown — plus a new failure class and network on first install. A
 constrained parser for a schema this repository itself writes is cheaper to own
 than that lifecycle, and generation is validated end to end by the gate, so a

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""provision.py — installing authored assets into the config and data roots.
+"""install.py — bootstrapping a machine: provisioning, tier selection, audit.
 
 The invariants that make ADR 009's split safe: a data root is replaced
-wholesale, a config root is never replaced once the operator has edited it, and
-an interrupted upgrade leaves either the old tree or the new one.
+wholesale, a config root is never replaced once the operator has edited it, a
+default the operator deleted is not resurrected, and an interrupted upgrade
+leaves either the old tree or the new one.
 """
 from __future__ import annotations
 
@@ -15,36 +16,33 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from harness import REPO, Suite  # noqa: E402
-from ailocal import provision as prov  # noqa: E402
+from ailocal import install as I  # noqa: E402
 
 _suite = Suite()
 check = _suite.check
 
 
 def _roots():
-    box = Path(tempfile.mkdtemp(prefix="prov-"))
+    box = Path(tempfile.mkdtemp(prefix="install-"))
     return box, box / "config", box / "data", box / "state"
 
 
 def main() -> None:
     _suite.section("A FRESH INSTALL POPULATES BOTH ROOTS")
     box, cfg, data, state = _roots()
-    report = prov.provision(REPO, cfg, data, state)
+    I.provision(REPO, cfg, data, state)
 
-    for c in prov.DATA_COMPONENTS:
+    for c in I.DATA_COMPONENTS:
         check((data / c).is_dir(), f"data root receives {c}/")
     check((cfg / "profiles" / "64gb.yaml").is_file(),
           "config root receives the authored profiles")
     check((cfg / "profiles" / "clients.yaml").is_file(),
           "config root receives client policy")
-    check((state / prov.MANIFEST_NAME).is_file(), "a manifest is recorded")
-    # Benchmarks are a developer utility, not part of install or update.
+    check((state / I.MANIFEST_NAME).is_file(), "a manifest is recorded")
     check(not (data / "benchmarks").exists(),
           "benchmarks are not installed into the data root")
     check(not list(data.glob(".staging-*")), "no staging tree survives a success")
     check(not list(data.glob(".rollback-*")), "no rollback tree survives a success")
-    # Authored policy must not also be shipped as replaceable data, or an
-    # upgrade would overwrite the operator's profiles through the back door.
     check(not (data / "profiles").exists(),
           "profiles are config, never shipped into the data root")
 
@@ -53,41 +51,57 @@ def main() -> None:
     edited.write_text(edited.read_text() + "\n# operator edit\n")
     keep = edited.read_text()
     untouched = cfg / "profiles" / "32gb.yaml"
-    untouched.write_text("# shipped\n")          # diverges, then is restored below
-    shutil.copy(REPO / "profiles" / "32gb.yaml", untouched)   # back to shipped bytes
 
-    report = prov.provision(REPO, cfg, data, state)
+    report = I.provision(REPO, cfg, data, state)
     check("profiles/64gb.yaml" in report["preserved"],
           "an edited profile is reported as preserved")
     check(edited.read_text() == keep, "an edited profile is NOT overwritten")
     check(untouched.read_text() == (REPO / "profiles" / "32gb.yaml").read_text(),
           "an unedited profile still matches what was shipped")
 
-    _suite.section("PROVENANCE, NOT LOCATION, DECIDES")
-    manifest = prov.load_manifest(state)
-    check(manifest.get("config", {}).get("profiles/64gb.yaml"),
-          "the manifest keeps the digest of a preserved file")
-    check("profiles/64gb.yaml" in prov.user_edited(cfg, manifest),
-          "an edited file is detected by digest")
-    check("profiles/32gb.yaml" not in prov.user_edited(cfg, manifest),
-          "an unedited file is not reported as edited")
-    # A corrupt manifest must not license overwriting policy.
-    (state / prov.MANIFEST_NAME).write_text("{ not json")
-    check(prov.load_manifest(state) == {},
-          "a corrupt manifest reads as empty rather than raising")
+    report = I.provision(REPO, cfg, data, state)
+    check("profiles/64gb.yaml" in report["preserved"],
+          "an edit survives a SECOND upgrade (the manifest records what was "
+          "shipped, not what is on disk)")
+    check(edited.read_text() == keep, "and is still not overwritten")
 
-    _suite.section("A NEW SHIPPED DEFAULT IS REPORTED, NEVER INJECTED")
+    _suite.section("A DELETED DEFAULT IS REPORTED, NEVER RESURRECTED")
     (cfg / "profiles" / "16gb.yaml").unlink()
-    absent = prov.missing_defaults(REPO, cfg)
-    check("profiles/16gb.yaml" in absent,
-          "a shipped file absent from config is reported")
+    report = I.provision(REPO, cfg, data, state)
+    check("profiles/16gb.yaml" in report["absent"],
+          "a default the operator removed is reported")
+    check(not (cfg / "profiles" / "16gb.yaml").exists(),
+          "and it is not written back")
+
+    _suite.section("A CORRUPT MANIFEST NEVER LICENSES AN OVERWRITE")
+    (state / I.MANIFEST_NAME).write_text("{ not json")
+    report = I.provision(REPO, cfg, data, state)
+    check(edited.read_text() == keep,
+          "with no provenance, an edited file is still preserved")
 
     _suite.section("DATA IS REPLACED WHOLESALE")
     stray = data / "lib" / "not-shipped.sh"
     stray.write_text("# left behind by an older version\n")
-    prov.provision(REPO, cfg, data, state)
+    I.provision(REPO, cfg, data, state)
     check(not stray.exists(), "a file no longer shipped is gone after an upgrade")
     check((data / "lib" / "sync-models.py").is_file(), "shipped data is present again")
+
+    _suite.section("THE SOURCE IS NEVER GUESSED")
+    check(I.distribution_source() == REPO,
+          "a checkout above the package is the distribution")
+    try:
+        I.provision(REPO, REPO, data, state)
+        refused = False
+    except SystemExit:
+        refused = True
+    check(refused, "installing a checkout over itself is refused")
+
+    _suite.section("TIER SELECTION NEVER ROUNDS UP")
+    for gb, expected in ((8, None), (16, "16gb"), (31, "16gb"), (32, "32gb"),
+                         (63, "32gb"), (64, "64gb"), (127, "64gb"),
+                         (128, "128gb"), (192, "128gb")):
+        got = I.tier_for_memory(gb)
+        check(got == expected, f"{gb} GB selects {expected or 'nothing'}", f"got {got}")
 
     shutil.rmtree(box, ignore_errors=True)
     sys.exit(_suite.report())

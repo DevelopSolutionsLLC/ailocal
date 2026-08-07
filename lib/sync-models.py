@@ -20,7 +20,7 @@ Running `ailocal sync` regenerates, deterministically:
   clients/continue/config.json chat models, FIM autocomplete, embeddings
 
 Also: `sync-models.py --resolve <capability>` prints the active Ollama backend tag, so shell
-scripts (setup-startup.sh) resolve without parsing YAML themselves.
+the login agents resolve without parsing YAML themselves.
 
 Capabilities are TOP-LEVEL keys in the profile; lists are flow-style [a, b, c]. keep_alive
 accepts durations, -1, or the words forever/persistent (both -> -1). Never hand-edit a generated

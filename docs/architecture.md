@@ -170,7 +170,7 @@ config root — never the repository.
 then `ailocal sync && ailocal models-install`.
 
 **Add a profile** — create `profiles/<tier>.yaml` and add the tier to
-`policy.TIERS`. Selection thresholds live in `lib/install.sh`.
+`policy.TIERS`. Selection thresholds live in `src/ailocal/install.py`.
 
 **Add a capability** — add the role to the profiles and to `policy.ROLES`, then
 map client surfaces to it in `profiles/clients.yaml`.
