@@ -10,8 +10,8 @@ half-migrated setup where `claude` sometimes means local is worse than either.
 
 ## Alternatives considered
 
-1. **Replace hosted entirely.** Rejected: local models cannot yet carry all work
-   (see ADR 005 — `implementation` is measured non-agentic).
+1. **Replace hosted entirely.** Rejected: local models cannot yet carry all
+   work; `implementation` is measured non-agentic.
 2. **Env vars in `.zshrc` to switch modes.** Rejected: a shell-global mode is
    invisible state; you find out which model you were talking to afterwards.
 3. **XDG-isolated wrappers.** Chosen.
@@ -33,8 +33,7 @@ forget you are in: the command name *is* the mode.
 
 ## Tradeoffs
 
-- Two config roots to install into (hence the generation pipelines in ADR 002
-  and 007).
+- Two config roots to install into, so generation writes both.
 - Cadence must install into both roots, and ailocal's installer must not clobber
   what Cadence wrote there.
 

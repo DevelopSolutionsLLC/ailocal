@@ -408,7 +408,7 @@ def install_vscode(argv: list[str]) -> int:
         # ms-python/golang.go are VS Code's own way of having language
         # intelligence. Copilot Chat's agent mode consumes their language
         # features directly, so the mcpls bridge is not handed to VS Code and
-        # there is no second symbol path (ADR 007/008). No shell entry: there is
+        # there is no second symbol path (ADR 008). No shell entry: there is
         # no first-party shell language server. Not claimed, not faked.
         for ext in (CONNECTOR_EXT, "ms-python.python", "golang.go"):
             _install_extension(ext, installed)
