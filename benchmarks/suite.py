@@ -131,8 +131,8 @@ from engines import (  # noqa: E402,F401
     venv_bin,
 )
 
-#: The memory-tier ladder. lib/install.sh owns the canonical thresholds;
-#: tests/benchmark.py parses lib/install.sh and asserts these match, so
+#: The memory-tier ladder. install.tier_for_memory owns the canonical
+#: thresholds; tests/benchmark.py asserts these match, so
 #: there is one source of truth enforced by a test rather than by convention.
 #:
 #: NEVER ROUND UP. Selecting at 75% of a tier's name gave a 24 GB machine the

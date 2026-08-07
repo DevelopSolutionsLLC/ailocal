@@ -35,7 +35,7 @@ def _root() -> Path:
 #: accepting arguments it then ignores would be worse than refusing them.
 PY, SH, MOD = "py", "sh", "mod"
 COMMANDS: dict[str, tuple] = {
-    "install":        (SH, "lib/install.sh", (), True),
+    "install":        (MOD, "ailocal.install", ("install",), True),
     "status":         (MOD, "ailocal.runtime", ("status",), True),
     "models":         (MOD, "ailocal.runtime", ("status", "--table"), False),
     "doctor":         (MOD, "ailocal.checks.run", ("doctor",), True),
@@ -54,11 +54,10 @@ COMMANDS: dict[str, tuple] = {
     "ready":          (MOD, "ailocal.runtime", ("ready",), True),
     "clients":        (MOD, "ailocal.clients", (), True),
     "vscode":         (MOD, "ailocal.clients", ("--vscode-only",), True),
-    "models-install": (SH, "lib/install-models.sh", (), True),
-    "audit":          (SH, "lib/audit-installation.sh", (), True),
-    "cleanup":        (SH, "lib/cleanup-installation.sh", (), True),
-    "autostart":      (SH, "lib/setup-startup.sh", (), True),
-    "ollama-env":     (SH, "lib/setup-ollama-env.sh", (), True),
+    "models-install": (MOD, "ailocal.install", ("models",), True),
+    "audit":          (MOD, "ailocal.install", ("audit",), True),
+    "cleanup":        (MOD, "ailocal.install", ("cleanup",), True),
+    "autostart":      (MOD, "ailocal.install", ("autostart",), True),
     "trace":          (SH, "lib/request-trace.sh", (), True),
     "metrics":        (PY, "lib/gateway-metrics.py", (), True),
     "verify-session": (PY, "lib/diagnostics/verify-session.py", (), True),
@@ -85,7 +84,7 @@ NESTED: dict[str, dict[str, tuple]] = {
 #: is the documented consumer of session_observer traces -- see
 #: deploy/litellm/hooks/session_observer.py -- and is undiscoverable, not dead.
 INTERNAL = frozenset({
-    "resolve", "verify-session", "trace", "metrics", "ollama-env", "compose", "ready",
+    "resolve", "verify-session", "trace", "metrics", "compose", "ready",
 })
 
 #: Help layout: (heading, [command...]). Every non-internal command appears
@@ -138,37 +137,6 @@ def _exec(kind: str, target, args) -> None:
     os.execv(argv[0], argv)
 
 
-def _opt(argv: list[str], name: str):
-    return argv[argv.index(name) + 1] if name in argv else None
-
-
-def _provision(argv: list[str]) -> int:
-    """Install authored assets into the config and data roots.
-
-    The source is the distribution being installed FROM -- a checkout, or an
-    unpacked release. It is deliberately not the data root: that is the
-    destination, and conflating them is how an install overwrites itself.
-    """
-    from . import policy as P, provision as prov
-    source = Path(_opt(argv, "--from") or Path(__file__).resolve().parents[2])
-    config = Path(_opt(argv, "--config") or P.config_root())
-    data = Path(_opt(argv, "--data") or P.data_root())
-    state = Path(_opt(argv, "--state") or P.state_root())
-    if config == source or data == source:
-        print("provision: refusing to install a checkout over itself.\n"
-              "Pass --config/--data, or set AILOCAL_CONFIG/AILOCAL_DATA.",
-              file=sys.stderr)
-        return 2
-    report = prov.provision(source, config, data, state)
-    print(f"data     {data}: {', '.join(report['data_components'])}")
-    print(f"config   {config}: {len(report['installed'])} file(s) installed")
-    for rel in report["preserved"]:
-        print(f"  kept   {rel} (edited since install)")
-    for rel in prov.missing_defaults(source, config):
-        print(f"  absent {rel} (shipped default not present)")
-    return 0
-
-
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     cmd = argv.pop(0) if argv else "help"
@@ -176,9 +144,6 @@ def main(argv: list[str] | None = None) -> int:
     if cmd in ("help", "-h", "--help"):
         print(_usage())
         return 0
-
-    if cmd == "provision":
-        return _provision(argv)
 
     if cmd in NESTED:
         targets = NESTED[cmd]

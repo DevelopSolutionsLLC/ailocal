@@ -481,7 +481,7 @@ def cmd_update(argv: list[str]) -> int:
     if "--skip-models" not in argv:
         step("Updating Ollama models")
         if subprocess.run(
-                ["/bin/bash", str(policy.data_root() / "lib" / "install-models.sh")],
+                [sys.executable, "-m", "ailocal.install", "models"],
                 check=False).returncode:
             warn("Model update had warnings — services will still restart.")
 

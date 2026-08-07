@@ -169,8 +169,8 @@ run "generation rolls back on partial failure (never mixed on disk)" \
     python3 tests/generation-rollback.py
 # Provisioning writes OUTSIDE the checkout, so the rule that an edited profile
 # is never overwritten is the one that protects an operator's policy.
-run "provisioning preserves edited policy and replaces data wholesale" \
-    python3 tests/provision.py
+run "install: provisioning, provenance and tier selection" \
+    python3 tests/install.py
 # Claude Code sends auxiliary Anthropic-shaped probes derived from
 # ANTHROPIC_BASE_URL; LiteLLM implements none of them, so HEAD /api/hello 404'd.
 # Asserts the probe answers 200 AND that nothing else moved to make that true —
@@ -285,7 +285,7 @@ run "installers are idempotent" bash tests/idempotent-install.sh
 # The audit exits 3 when it finds actionable items. That is informational here,
 # not a gate failure: untracked notes are a normal working state. Only a hard
 # failure (exit 1 = the audit itself broke) fails the gate.
-audit_runs() { bash lib/audit-installation.sh >/dev/null 2>&1; [ $? -ne 1 ]; }
+audit_runs() { ./ailocal audit >/dev/null 2>&1; [ $? -ne 1 ]; }
 run "installation audit runs cleanly" audit_runs
 
 if [ -n "$FULL" ]; then
