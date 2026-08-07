@@ -10,32 +10,32 @@ import json
 import sys
 
 
-#: command -> (implementing module, fixed args, forwards argv)
-COMMANDS: dict[str, tuple[str, tuple, bool]] = {
-    "install":        ("ailocal.install", ("install",), True),
-    "status":         ("ailocal.runtime", ("status",), True),
-    "doctor":         ("ailocal.checks.run", ("doctor",), True),
-    "validate":       ("ailocal.checks.run", ("validate",), True),
-    "smoke":          ("ailocal.checks.run", ("smoke",), True),
-    "security":       ("ailocal.checks.run", ("security",), True),
-    "test":           ("ailocal.checks.run", ("test",), True),
+#: command -> (implementing module, fixed args prepended to argv)
+COMMANDS: dict[str, tuple[str, tuple]] = {
+    "install":        ("ailocal.install", ("install",)),
+    "status":         ("ailocal.runtime", ("status",)),
+    "doctor":         ("ailocal.checks.run", ("doctor",)),
+    "validate":       ("ailocal.checks.run", ("validate",)),
+    "smoke":          ("ailocal.checks.run", ("smoke",)),
+    "security":       ("ailocal.checks.run", ("security",)),
+    "test":           ("ailocal.checks.run", ("test",)),
 
-    "sync":           ("ailocal.generation", (), True),
-    "start":          ("ailocal.runtime", ("start",), True),
-    "stop":           ("ailocal.runtime", ("stop",), True),
-    "update":         ("ailocal.runtime", ("update",), True),
-    "teardown":       ("ailocal.runtime", ("teardown",), True),
-    "compose":        ("ailocal.runtime", ("compose",), True),
-    "clients":        ("ailocal.clients", (), True),
-    "vscode":         ("ailocal.clients", ("--vscode-only",), True),
-    "models-install": ("ailocal.install", ("models",), True),
-    "audit":          ("ailocal.install", ("audit",), True),
-    "cleanup":        ("ailocal.install", ("cleanup",), True),
-    "autostart":      ("ailocal.install", ("autostart",), True),
-    "update-check":   ("ailocal.install", ("update-check",), True),
-    "trace":          ("ailocal.runtime", ("trace",), True),
-    "metrics":        ("ailocal.runtime", ("metrics",), True),
-    "verify-session": ("ailocal.checks.run", ("verify-session",), True),
+    "sync":           ("ailocal.generation", ()),
+    "start":          ("ailocal.runtime", ("start",)),
+    "stop":           ("ailocal.runtime", ("stop",)),
+    "update":         ("ailocal.runtime", ("update",)),
+    "teardown":       ("ailocal.runtime", ("teardown",)),
+    "compose":        ("ailocal.runtime", ("compose",)),
+    "clients":        ("ailocal.clients", ()),
+    "vscode":         ("ailocal.clients", ("--vscode-only",)),
+    "models-install": ("ailocal.install", ("models",)),
+    "audit":          ("ailocal.install", ("audit",)),
+    "cleanup":        ("ailocal.install", ("cleanup",)),
+    "autostart":      ("ailocal.install", ("autostart",)),
+    "update-check":   ("ailocal.install", ("update-check",)),
+    "trace":          ("ailocal.runtime", ("trace",)),
+    "metrics":        ("ailocal.runtime", ("metrics",)),
+    "verify-session": ("ailocal.checks.run", ("verify-session",)),
 }
 
 #: Dispatched but NOT advertised. These are single-purpose developer and
@@ -70,16 +70,6 @@ def _usage() -> str:
     width = max(len(left) for left, _ in rows) + 2
     return "\n".join(["ailocal — local model runtime", ""]
                      + [f"  {left:<{width}}{heading}" for left, heading in rows])
-
-
-def _call(module: str, args) -> int:
-    """A package command runs in THIS process: it is a function, not a program.
-
-    Every command is a module of this package, so there is one dispatch
-    mechanism and no second interpreter to choose.
-    """
-    import importlib
-    return importlib.import_module(module).main([str(a) for a in args])
 
 
 #: `ailocal profile <query>`. Scalars print bare so `$(...)` captures them
@@ -135,12 +125,6 @@ def _profile(argv: list[str]) -> int:
     return 0
 
 
-#: Commands answered in this process rather than by exec: they are a few lines
-#: over policy, and a subprocess for them would be the only reason to keep a
-#: separate script.
-HANDLERS = {"profile": _profile}
-
-
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     cmd = argv.pop(0) if argv else "help"
@@ -149,16 +133,21 @@ def main(argv: list[str] | None = None) -> int:
         print(_usage())
         return 0
 
-    if cmd in HANDLERS:
-        return HANDLERS[cmd](argv)
+    # `profile` is a few lines over policy, answered here rather than given a
+    # module of its own.
+    if cmd == "profile":
+        return _profile(argv)
 
     if cmd not in COMMANDS:
         print(f"ailocal: unknown command '{cmd}' — run 'ailocal help'",
               file=sys.stderr)
         return 1
 
-    module, fixed, forwards = COMMANDS[cmd]
-    return _call(module, list(fixed) + (argv if forwards else []))
+    # A package command runs in THIS process: it is a function, not a program,
+    # so there is one dispatch mechanism and no second interpreter to choose.
+    import importlib
+    module, fixed = COMMANDS[cmd]
+    return importlib.import_module(module).main([str(a) for a in [*fixed, *argv]])
 
 
 if __name__ == "__main__":
