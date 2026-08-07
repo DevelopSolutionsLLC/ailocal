@@ -202,7 +202,7 @@ def resolver_checks() -> None:
     shutil.rmtree(root, ignore_errors=True)
 
     print("\nNO SECOND PARSER, NO SILENT FALLBACK")
-    shells = ["install-models.sh", "lifecycle.sh"]
+    shells = ["install-models.sh"]
     for name in shells:
         src = (REPO / "lib" / name).read_text()
         check("echo 64gb" not in src, f"{name} has no hardcoded 64gb fallback")
@@ -515,7 +515,7 @@ def resolver_checks() -> None:
           "benchmark parse_profile reads generated data, parses no YAML")
 
     # Shell consumers must not parse YAML either.
-    for name in ("lifecycle.sh", "install-models.sh"):
+    for name in ("install-models.sh",):
         src = (REPO / "lib" / name).read_text()
         check("active:" not in src or "grep -E" not in src.split("active:")[0][-80:],
               f"{name} does not grep|sed profile YAML")
@@ -605,8 +605,7 @@ def resolver_checks() -> None:
         "grep -m1 '^status:",                 # the last single-field grep
         "^  context_input:", "^  max_output:", "^  active:",
     )
-    for entry in ("lib/install.sh", "install-models.sh", "install-clients.sh",
-                  "lifecycle.sh"):
+    for entry in ("lib/install.sh", "install-models.sh", "install-clients.sh"):
         path = REPO / "lib" / entry
         if not path.exists():
             continue

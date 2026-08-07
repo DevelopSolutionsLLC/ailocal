@@ -6,9 +6,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ENV_FILE="$(python3 "$ROOT_DIR/lib/profile-config" config-root)/.env"
 
-# Single source of truth for how this stack is composed (deploy/litellm + deploy/searxng).
-AILOCAL_ROOT="$ROOT_DIR"
-. "$ROOT_DIR/lib/compose.sh"
+# The composition and the lifecycle have one owner: the command.
+dc() { "$ROOT_DIR/ailocal" compose "$@"; }
+AILOCAL_STATE="$(python3 "$ROOT_DIR/lib/profile-config" state-root)"
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -495,9 +495,9 @@ esac
 
 # ── Directory structure ────────────────────────────────────────────────────
 step "Creating directory structure"
-# Runtime state lives outside the checkout (see lib/compose.sh). Only the
-# backup directory needs pre-creating, because it holds .env snapshots from
-# update.sh and must be locked down before anything writes one.
+# Runtime state lives outside the checkout. Only the backup directory needs
+# pre-creating, because it holds the .env snapshots `ailocal update` writes and
+# must be locked down before anything writes one.
 mkdir -p "$AILOCAL_STATE/backups"
 chmod 700 "$AILOCAL_STATE/backups"
 info "Directories ready"
@@ -522,13 +522,13 @@ run_next_steps() {
 
   echo
   step "Starting Docker services"
-  bash "$ROOT_DIR/lib/lifecycle.sh" start --no-wait
+  "$ROOT_DIR/ailocal" start --no-wait
 
   # Always restart LiteLLM so it picks up any config or model changes.
   echo
   step "Reloading LiteLLM"
   dc restart litellm searxng
-  if ! ailocal_wait_ready 30 progress; then
+  if ! "$ROOT_DIR/ailocal" ready 30; then
     warn "LiteLLM did not become ready — check: docker logs ailocal-litellm"
   fi
   echo ""
@@ -627,7 +627,7 @@ SEARXNG_SECRET=${SEARXNG_SECRET}
 ENABLE_CLOUD=false
 # To enable cloud fallback: add your key here, set ENABLE_CLOUD=true,
 # and uncomment the relevant model block in the generated litellm/config.yaml.
-# Then: ailocal start  (or: dc restart litellm)
+# Then: ailocal start
 ANTHROPIC_API_KEY=
 OPENAI_API_KEY=
 EOF

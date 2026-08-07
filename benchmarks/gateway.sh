@@ -37,7 +37,8 @@ esac
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # benchmarks/ -> repo root
 cd "$ROOT"
-. lib/compose.sh
+dc() { "$ROOT/ailocal" compose "$@"; }
+AILOCAL_STATE="${AILOCAL_STATE:-$("$ROOT/ailocal" profile state-root)}"
 
 PROMPT="${1:-Read the file sample.py in the current directory and tell me exactly what it prints. Use your tools.}"
 RUNS="${RUNS:-1}"

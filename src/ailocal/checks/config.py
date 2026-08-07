@@ -243,7 +243,7 @@ def check_compose_layout() -> list[CheckResult]:
 
 
 def _compose_env() -> dict:
-    """Compose interpolates AILOCAL_SEARXNG_SETTINGS, which compose.sh exports
+    """Compose interpolates AILOCAL_SEARXNG_SETTINGS, which runtime.py exports
     after rendering. Point at the same rendered file so `config` can resolve.
     """
     return {**os.environ, "DOCKER_CLI_HINTS": "false",
