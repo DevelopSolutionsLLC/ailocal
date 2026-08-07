@@ -36,7 +36,7 @@ cause of the agent getting stuck.
 **Long-running commands only** (installs, servers, watchers) should be detached with a
 trailing `&` and a log — but never with `exit`:
 ```bash
-./ailocal install > /tmp/install.log 2>&1 &
+ailocal install > /tmp/install.log 2>&1 &
 ailocal start > /tmp/compose.log 2>&1 &
 npm install > /tmp/npm.log 2>&1 &
 ```

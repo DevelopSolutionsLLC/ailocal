@@ -43,13 +43,13 @@ ollama serve                         # or open Ollama.app
 
 git clone https://github.com/DevelopSolutionsLLC/ailocal.git
 cd ailocal
-pipx install .          # or: ./ailocal install, to run straight from the checkout
+pipx install .
 ailocal install
 ```
 
-`pipx install .` provides the `ailocal` command. The `./ailocal` script in the
-checkout does the same thing without installing, and is what the test suite
-uses.
+`pipx install .` provides the `ailocal` command. To work on ailocal itself,
+`pip install -e .` in a virtualenv gives the same command backed by the
+checkout; the regression gate runs against whichever `ailocal` is on PATH.
 
 The installer detects memory, selects a profile, pulls the models, starts the
 services and deploys the client configurations. It refuses to select a profile

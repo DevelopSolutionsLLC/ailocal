@@ -30,7 +30,7 @@ def check_env_file() -> CheckResult:
     env = P.config_root() / ".env"
     if not env.is_file():
         return CheckResult("env", WARN, ".env not found",
-                           remediation="./ailocal install")
+                           remediation="ailocal install")
     mode = env.stat().st_mode & 0o077
     if mode:
         return CheckResult("env", WARN, ".env is readable by other users",

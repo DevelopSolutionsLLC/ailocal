@@ -12,7 +12,7 @@ set -uo pipefail
 
 # One resolution of the generated-client root for both sections.
 _state_root() {
-  [ -n "${_STATE_ROOT:-}" ] || _STATE_ROOT="$("$ROOT_DIR/ailocal" profile state-root)"
+  [ -n "${_STATE_ROOT:-}" ] || _STATE_ROOT="$(ailocal profile state-root)"
   printf '%s' "$_STATE_ROOT"
 }
 
@@ -156,7 +156,7 @@ check $([ "${pres:-0}" -ge 1 ] && echo 0 || echo 1) \
 # is checked AGAINST the generated configuration rather than on its own.
 echo
 echo "INTEGRATION CONTRACT MATCHES GENERATED CLIENTS"
-CONTRACT="$("$ROOT_DIR/ailocal" profile state-root)/integration-contract.json"
+CONTRACT="$(ailocal profile state-root)/integration-contract.json"
 if [ -f "$CONTRACT" ] && command -v jq >/dev/null 2>&1; then
   cfg_codex=$(jq -r '.compatibility.codex_mcp_lsp.configured' "$CONTRACT")
   check $([ "$cfg_codex" = "false" ] && echo 0 || echo 1) \
