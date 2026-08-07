@@ -22,7 +22,7 @@ services:
     # PINNED BY DIGEST (2026-07-30). `latest` is a FLOATING tag -- it moved
     # under us mid-audit, which is precisely why no production service may
     # depend on it. Scout: no vulnerable package detected at this digest.
-    # To upgrade: pull, scan, run `ailocal test`, then update this line.
+    # To upgrade: pull, scan, run the gate, then update this line.
     image: searxng/searxng@sha256:79c2be18a18367484474bae9b18a8cd9085114ab3dcd49cac091cad8c548a0a9
     container_name: ${AILOCAL_SEARXNG_CONTAINER:-ailocal-searxng}
     restart: unless-stopped

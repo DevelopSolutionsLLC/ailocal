@@ -1,8 +1,8 @@
 """install.py — getting a machine into a state where the runtime can run.
 
 Host prerequisites, asset provisioning, the active tier, .env, the Ollama model
-set, the login agents, and the audit/cleanup pair that reports and repairs an
-installation.
+set, the login agents, and the read-only audit of an installation that
+`ailocal check` reports.
 
 Provenance rule (ADR 009): the data root holds shipped assets with no supported
 edit surface and is replaced wholesale; the config root holds user-editable
@@ -20,7 +20,6 @@ import shutil
 import subprocess
 import sys
 import urllib.request
-from datetime import datetime, timezone
 from pathlib import Path
 
 from . import policy, runtime
@@ -30,7 +29,7 @@ LA_DIR = Path.home() / "Library" / "LaunchAgents"
 LOG_DIR = Path.home() / "Library" / "Logs" / "ailocal"
 MODEL_STORE = "/Users/Shared/ollama/models"
 AGENTS = ("com.ailocal.ollama", "com.ailocal.preload", "com.ailocal.litellm",
-          "com.ailocal.ollama-env", "com.ailocal.update-check")
+          "com.ailocal.ollama-env")
 
 #: Ollama's runtime environment, in one place. KEEP_ALIVE is the GLOBAL DEFAULT
 #: and governs only direct callers that send no per-request keep_alive — in
@@ -433,25 +432,26 @@ def _prepare_model_store() -> None:
         warn(f"{store} is not writable by {_out('id', '-un')} — models will not pull here.")
 
 
-def cmd_autostart(argv: list[str]) -> int:
-    """Login agents for Ollama, and optionally a native LiteLLM.
+def remove_login_agents() -> None:
+    """The uninstall half, reached from `ailocal teardown`."""
+    step("Removing ailocal startup LaunchAgents")
+    for label in AGENTS:
+        _bootout(label)
+        (LA_DIR / f"{label}.plist").unlink(missing_ok=True)
+        ok(f"removed {label}")
+
+
+def configure_ollama_services(env_only: bool, role: str = "architecture") -> int:
+    """Login agents for Ollama — a step of `ailocal install`.
 
     Two servers must not fight over :11434, so the Ollama.app GUI, its embedded
     watchdog agent and its login item are all stopped before launchd takes the
     port.
     """
-    if "--uninstall" in argv:
-        step("Removing ailocal startup LaunchAgents")
-        for label in AGENTS:
-            _bootout(label)
-            (LA_DIR / f"{label}.plist").unlink(missing_ok=True)
-            ok(f"removed {label}")
-        return 0
-
     _prepare_model_store()
     _migrate_model_store()
 
-    if "--env-only" in argv:
+    if env_only:
         # Ollama.app is a launchd process and never reads a shell rc file, so
         # its environment has to be set where it actually looks.
         step("Setting Ollama env for this login session and every future one")
@@ -488,7 +488,6 @@ def cmd_autostart(argv: list[str]) -> int:
 
     # The agent must never carry a baked model tag, or it warms a model the
     # profile has since replaced. Resolve through the command at run time.
-    role = argv[argv.index("--model") + 1] if "--model" in argv else "architecture"
     agents_dir = policy.state_root() / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
     preload = agents_dir / "preload.sh"
@@ -511,49 +510,6 @@ curl -fsS -m 300 "$O/api/generate" -d "{{\\"model\\":\\"$M\\",\\"keep_alive\\":$
     return 0
 
 
-def cmd_update_check(argv: list[str]) -> int:
-    """A weekly supply-chain check. Reports; never upgrades anything.
-
-    One scheduler for the machine, invoking each product's own check. A
-    generated job must never embed a checkout path (ADR 009), so the installed
-    command is resolved absolutely or the install is refused."""
-    label = "com.ailocal.update-check"
-    if "--uninstall" in argv:
-        _bootout(label)
-        (LA_DIR / f"{label}.plist").unlink(missing_ok=True)
-        ok(f"weekly update check removed ({label})")
-        return 0
-
-    command = shutil.which("ailocal")
-    if not command:
-        raise SystemExit("  ailocal is not on PATH, so a scheduled job could only "
-                         "reference this checkout. Install the command first.")
-    state = policy.state_root()
-    state.mkdir(parents=True, exist_ok=True)
-    runner = state / "update-check.sh"
-    other = shutil.which("cadence") or ""
-    runner.write_text(f"""#!/bin/bash
-exec >"{state}/update-check.log" 2>&1
-echo "=== $(date -u +%FT%TZ) ==="
-rc=0
-"{command}" security --check-updates || rc=$?
-[ -x "{other}" ] && {{ "{other}" security --check-updates || rc=$?; }}
-echo "$(date -u +%FT%TZ) rc=$rc" > "{state}/update-check.status"
-# Notify ONLY when action is required. A quiet check stays quiet.
-[ "$rc" = 1 ] && /usr/bin/osascript -e 'display notification "A container update \
-is available for review. Run: ailocal check --updates" with title \
-"ailocal"' 2>/dev/null
-exit 0
-""")
-    runner.chmod(0o755)
-    _write_agent(label, ["/bin/bash", str(runner)],
-                 calendar={"Weekday": 1, "Hour": 10, "Minute": 0})
-    ok("weekly update check installed (Mondays 10:00, reports only)")
-    print(f"  state:  {state}/update-check.status")
-    print("  remove: ailocal update-check --uninstall")
-    return 0
-
-
 # ── the model set ───────────────────────────────────────────────────────────
 
 SERVICES_GB, HEADROOM_GB = 3, 5
@@ -572,8 +528,8 @@ def _installed_models() -> dict:
     return sizes
 
 
-def cmd_models(argv: list[str]) -> int:
-    """Pull the model set for the active tier.
+def pull_models() -> int:
+    """Pull the model set for the active tier — a step of `ailocal install`.
 
     Enabled capabilities only, deduplicated by tag, sized from what Ollama
     reports and reduced by what is already on disk."""
@@ -763,7 +719,8 @@ def audit() -> list:
     if "gethnet.litellm-connector-copilot" in _out("code", "--list-extensions").lower():
         fine("vscode   connector extension installed")
     elif _has("code"):
-        flag("MISSING", "VS Code connector extension", "VS Code", "run ailocal vscode")
+        flag("MISSING", "VS Code connector extension", "VS Code",
+                 "run ailocal clients vscode")
 
     backups = policy.state_root() / "backups"
     count = len(list(backups.iterdir())) if backups.is_dir() else 0
@@ -803,68 +760,6 @@ def audit() -> list:
         fine(f"port 11434 owned by the managed LaunchAgent (pid {holder})")
 
     return results
-
-
-def cmd_cleanup(argv: list[str]) -> int:
-    """Act on the audit's findings. A dry run is the default: a cleanup tool
-    whose default is destructive is a trap. Nothing is removed without a backup.
-    """
-    from .checks import WARN, render
-
-    apply = "--apply" in argv
-    include_notes = "--include-notes" in argv
-    results = audit()
-    render(results)
-    findings = [r for r in results if r.status is WARN]
-    if not findings:
-        return 0
-    stamp = f"{datetime.now(timezone.utc):%Y%m%d-%H%M%S}"
-    backup_root = policy.state_root() / "backups" / f"cleanup-{stamp}"
-    did = held = 0
-
-    step(f"Cleanup — {'applying' if apply else 'DRY RUN, nothing will be modified'}")
-    for r in findings:
-        klass, item, path = r.name.upper(), r.summary, Path(r.detail or "")
-        action = r.remediation or ""
-        if klass != "STALE":
-            # Duplicates, missing pieces and unmanaged ports need a human: picking
-            # a winner automatically is the guess that breaks a working setup.
-            print(f"  HOLD   {item}\n         {action}")
-            held += 1
-            continue
-        if not path.exists():
-            dim(f"already gone: {item}")
-            continue
-        if path.suffix in (".md", ".json", ".txt", ".log") and not include_notes:
-            print(f"  HOLD   looks like notes — needs your decision: {item}")
-            print("         re-run with --include-notes to move it to backups/")
-            held += 1
-            continue
-        print(f"  {'DONE  ' if apply else 'WOULD '} back up + remove: {item}")
-        if apply:
-            dest = backup_root / path.name
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(path, dest) if path.is_dir() else shutil.copyfile(path, dest)
-            shutil.rmtree(path) if path.is_dir() else path.unlink()
-        did += 1
-
-    dead = _out("docker", "ps", "-a", "--filter", "name=ailocal-",
-                "--filter", "status=exited", "--format", "{{.Names}}").split()
-    for container in dead:
-        print(f"  {'DONE  ' if apply else 'WOULD '} remove exited container {container}")
-        if apply:
-            _run("docker", "rm", container, capture=True)
-        did += 1
-
-    print()
-    if apply:
-        print(f" {did} action(s) taken, {held} held.")
-        if did:
-            print(f" Backup: {backup_root}")
-    else:
-        print(f" DRY RUN. {did} action(s) would be taken, {held} held for your decision.")
-        print(" Re-run with --apply to act.")
-    return 0
 
 
 # ── install ─────────────────────────────────────────────────────────────────
@@ -907,9 +802,9 @@ def cmd_install(argv: list[str]) -> int:
     step("Configuring Ollama")
     if assume_yes or _yes("Set up production autostart (launchd runs ollama serve "
                           "at login)?"):
-        cmd_autostart(["--model", "architecture"])
+        configure_ollama_services(env_only=False)
     else:
-        cmd_autostart(["--env-only"])
+        configure_ollama_services(env_only=True)
 
     step("Detecting hardware profile")
     ram = _memory_gb()
@@ -937,7 +832,7 @@ def cmd_install(argv: list[str]) -> int:
     if not runtime.wait_ready(30, progress=True):
         warn("LiteLLM did not become ready — check: docker logs ailocal-litellm")
 
-    cmd_models([])
+    pull_models()
     from .checks import run as checks_run
     checks_run.main(["check"])
 
@@ -959,9 +854,7 @@ def cmd_install(argv: list[str]) -> int:
     return 0
 
 
-COMMANDS = {"install": cmd_install, "models": cmd_models,
-            "cleanup": cmd_cleanup, "autostart": cmd_autostart,
-            "update-check": cmd_update_check}
+COMMANDS = {"install": cmd_install}
 
 
 def main(argv: list[str]) -> int:

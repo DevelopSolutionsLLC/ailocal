@@ -31,8 +31,8 @@ pip install -e .
 ## Validate
 
 ```sh
-ailocal check       # the whole installation, one report
-ailocal test        # the regression gate
+ailocal check           # the whole installation, one report
+python3 tests/gate.py   # the regression gate
 ```
 
 After editing anything under `profiles/` or `src/ailocal/resources/`, provision
@@ -61,7 +61,7 @@ ailocal start       # remount, if the stack is already up
 ## Change discipline
 
 Edit the canonical source, never a derived file. Run the smallest relevant
-check, then `ailocal test` before committing. Update `README.md` only when
+check, then `python3 tests/gate.py` before committing. Update `README.md` only when
 public behaviour changes.
 
 Commits carry one identity — the configured human author — with no assistant

@@ -171,19 +171,19 @@ else
   bad "ailocal clients failed on the first run — idempotency untested"
 fi
 
-# ── ailocal vscode (opt-in) ────────────────────────────────────────────────
+# ── ailocal clients vscode (opt-in) ─────────────────────────────────────────
 if [ -n "$INCLUDE_VSCODE" ]; then
-  banner "ailocal vscode x2"
-  if ailocal vscode >/dev/null 2>&1; then
+  banner "ailocal clients vscode x2"
+  if ailocal clients vscode >/dev/null 2>&1; then
     fingerprint vsc1 >/dev/null
-    ailocal vscode >/dev/null 2>&1
+    ailocal clients vscode >/dev/null 2>&1
     fingerprint vsc2 >/dev/null
-    compare vsc1 vsc2 "ailocal vscode"
+    compare vsc1 vsc2 "ailocal clients vscode"
   else
-    bad "ailocal vscode failed on the first run"
+    bad "ailocal clients vscode failed on the first run"
   fi
 else
-  printf '  \033[2m—\033[0m ailocal vscode skipped (--include-vscode to test it)\n'
+  printf '  \033[2m—\033[0m ailocal clients vscode skipped (--include-vscode to test it)\n'
 fi
 
 # ── the specific counts that must not grow ─────────────────────────────────

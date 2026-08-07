@@ -631,11 +631,6 @@ _TARGETS = {"vscode": target_vscode, "codex": target_codex, "claude": target_cla
 
 
 def main(argv: list[str]) -> int:
-    # `ailocal vscode` is the VS Code surface on its own: extensions, provider
-    # group and deprecated-settings pruning, without touching the other clients.
-    if argv and argv[0] == "--vscode-only":
-        return install_vscode(argv[1:])
-
     selected = [a for a in argv if not a.startswith("-")]
     for name in selected:
         if name not in _TARGETS:

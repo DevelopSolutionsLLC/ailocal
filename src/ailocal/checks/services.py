@@ -292,7 +292,7 @@ def check_models_present(required: list[str]) -> CheckResult:
     if not missing:
         return CheckResult("models", PASS, f"all {len(required)} required models present")
     return CheckResult("models", FAIL, f"missing models: {', '.join(missing)}",
-                       remediation="ailocal models-install")
+                       remediation="ailocal install")
 
 
 def check_generation(token: str, alias: str = "ailocal-fast") -> CheckResult:
@@ -661,7 +661,7 @@ def check_updates(images: list[str]) -> list[CheckResult]:
                                    f"{repo}: {newest} available for review",
                                    remediation="edit the digest in "
                                                "deploy/*/compose.yaml, then "
-                                               "ailocal start && ailocal test"))
+                                               "ailocal start, then run the gate"))
     return out
 
 
