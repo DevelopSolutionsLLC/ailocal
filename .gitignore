@@ -26,6 +26,11 @@ __pycache__/
 *$py.class
 .venv/
 
+# Packaging build artifacts
+build/
+dist/
+*.egg-info/
+
 # Editor, OS and local tool state
 .DS_Store
 *.swp

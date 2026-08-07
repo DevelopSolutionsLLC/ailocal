@@ -958,6 +958,29 @@ def policy_checks() -> None:
     check("sync-models.py" not in cfg or "spec_from_file_location" not in cfg,
           "validation does not load the generator to read policy")
 
+    # The command surface has ONE owner: cli.py's tables. Help used to be a
+    # hand-maintained heredoc plus two copies in docs, and all three went stale
+    # -- `test` and `install` were dispatched but undocumented. Rendering help
+    # from the dispatch table makes that class of drift unrepresentable, and
+    # this asserts the tables stay in agreement.
+    sys.path.insert(0, str(REPO / "src"))
+    from ailocal import cli  # noqa: E402
+
+    listed = [n for _, names in cli.GROUPS for n in names]
+    check(len(listed) == len(set(listed)), "no command is listed twice in help",
+          ", ".join(sorted({n for n in listed if listed.count(n) > 1})))
+    dispatchable = set(cli.COMMANDS) | set(cli.NESTED)
+    check(set(listed) == dispatchable,
+          "every dispatched command appears in help, and vice versa",
+          f"help-only={sorted(set(listed) - dispatchable)} "
+          f"dispatch-only={sorted(dispatchable - set(listed))}")
+    missing = [f"{n} -> {rel}" for n, (_, rel, _, _) in cli.COMMANDS.items()
+               if not (REPO / rel).exists()]
+    missing += [f"{c} {t} -> {rel}" for c, ts in cli.NESTED.items()
+                for t, (_, rel) in ts.items() if not (REPO / rel).exists()]
+    check(not missing, "every command resolves to a real implementation",
+          "; ".join(missing))
+
     _suite.section("GENERATOR CONSUMES POLICY")
     gen = (REPO / "lib" / "sync-models.py").read_text()
     check("_pc.load_client_policy()" in gen,
