@@ -2,7 +2,6 @@
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-lightgrey.svg)]()
-[![Status](https://img.shields.io/badge/status-release%20candidate-orange.svg)]()
 
 Run Claude Code, Codex CLI and VS Code Copilot Chat against local models on
 Apple Silicon. No cloud costs, no data leaving the machine, no changes to the
@@ -102,13 +101,13 @@ The ones you need first:
 ailocal install     bootstrap the stack
 ailocal start       bring the proxy and models up
 ailocal status      live model status by capability
-ailocal test        the regression gate; run before every commit
+ailocal doctor      is everything ready and working?
+ailocal stop        bring it down
 ```
 
-`ailocal sync` regenerates every derived file from the profile and client
-policy. Generated output lives outside the repository, under
-`${AILOCAL_STATE:-~/.local/state/ailocal}`. Deleting that directory and
-re-running `ailocal sync` is a supported repair.
+Configuration is generated from the profile into
+`${AILOCAL_STATE:-~/.local/state/ailocal}`, outside the repository. Deleting
+that directory and re-running `ailocal sync` is a supported repair.
 
 ## Supported clients
 
@@ -138,7 +137,7 @@ re-running `ailocal sync` is a supported repair.
 | [docs/architecture.md](docs/architecture.md) | how the pieces fit together |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | symptoms and fixes |
 | [docs/security.md](docs/security.md) | secrets, permissions, exposure |
-| [AGENTS.md](AGENTS.md) | contributing and agent operating rules |
+| [AGENTS.md](AGENTS.md) | developing and validating ailocal |
 
 ## License
 
