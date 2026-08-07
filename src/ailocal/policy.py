@@ -1,43 +1,22 @@
 #!/usr/bin/env python3
-"""policy.py — the ONE profile parser and resolver.
+"""policy.py — the ONE policy reader and resolver.
 
-profiles/<tier>.yaml is authoritative deployment configuration.
-The active-profile marker in $AILOCAL_STATE selects a tier and HAS NO
-IMPLICIT DEFAULT.
+profiles/<tier>.toml is authoritative deployment configuration; the
+active-profile marker in $AILOCAL_STATE selects a tier and HAS NO IMPLICIT
+DEFAULT. Policy is TOML because tomllib is in the standard library and rejects
+duplicate keys and duplicate tables outright (ADR 010).
 
-WHY NOT PyYAML. It is absent from every interpreter ailocal can reach, so using
-it means provisioning and owning a virtual environment — venv setup in
-`ailocal install`, validation in `ailocal doctor`, refresh in `ailocal update`, removal
-in teardown — plus a new failure class and network on first install. A
-constrained parser for a schema this repository itself writes is cheaper to own
-than that lifecycle, and generation is validated end to end by the gate, so a
-parsing error cannot reach a client silently.
-
-REVISIT only if: a profile needs YAML this subset cannot express (anchors,
-multi-line scalars, nested sequences of mappings), a parsing defect reaches
-generated output, or ailocal acquires a core venv for some other reason — at
-which point PyYAML rides along for free and this decision flips.
-
-ONE PARSER, NO FALLBACK. Every reader goes through here. A second implementation
-drifts, and the shape it drifts into is
-`cat active-profile 2>/dev/null || echo 64gb` — a suppressed read falling through
-to a hardcoded tier, which on a 32 GB machine pulls models that do not fit.
-
-So this module FAILS CLOSED. There is no default tier. A missing marker is an
-error, not a 64 GB installation.
-
-WHY A HAND-ROLLED PARSER. PyYAML is not installed on the host interpreter (only
-inside the proxy image), and the shell entry points must work before any venv
-exists. The profile format is deliberately small -- two levels, scalars and flow
-lists -- so this parses that subset exactly and rejects anything else, rather
-than pretending to be a YAML implementation.
+ONE READER, NO FALLBACK. A second implementation drifts, and the shape it drifts
+into is `cat active-profile 2>/dev/null || echo 64gb` — a suppressed read
+falling through to a hardcoded tier, which on a 32 GB machine pulls models that
+do not fit. So this module fails closed: a missing marker is an error.
 """
 from __future__ import annotations
 
 import hashlib
 import json
-import re
 import os
+import tomllib
 from pathlib import Path
 
 TIERS = ("16gb", "32gb", "64gb", "128gb")
@@ -79,7 +58,7 @@ ACTIVE_PROFILE_MISSING = "ACTIVE_PROFILE_MISSING"
 ACTIVE_PROFILE_EMPTY = "ACTIVE_PROFILE_EMPTY"
 ACTIVE_PROFILE_INVALID = "ACTIVE_PROFILE_INVALID"
 PROFILE_FILE_MISSING = "PROFILE_FILE_MISSING"
-PROFILE_YAML_INVALID = "PROFILE_YAML_INVALID"
+PROFILE_INVALID = "PROFILE_INVALID"
 PROFILE_SCHEMA_INVALID = "PROFILE_SCHEMA_INVALID"
 ROLE_MISSING = "ROLE_MISSING"
 ROLE_CONFIG_INVALID = "ROLE_CONFIG_INVALID"
@@ -96,114 +75,6 @@ class ProfileError(Exception):
         self.code = code
         self.detail = detail
         super().__init__(f"{code}: {detail}" if detail else code)
-
-
-# ── GENERATION-TIME ONLY: constrained profile-schema parser ─────────────────
-# This is NOT a YAML implementation and must not be used as one. It supports
-# exactly the constructs the four profiles use -- two levels, scalars, flow
-# lists, comments -- and REJECTS anything else rather than guessing.
-#
-# It exists here rather than as PyYAML because core ailocal has no managed
-# Python dependency environment (no requirements.txt, pyproject.toml or venv);
-# introducing one solely to read four small files at generation time was judged
-# disproportionate. That trade-off is documented in AGENTS.md and should be
-# revisited if core ailocal ever gains other Python dependencies.
-#
-# Only sync-models.py calls this. Runtime consumers read the generated JSON.
-_SECTION = re.compile(r"^([a-z_]+):\s*$")
-_FIELD = re.compile(r"^\s+([a-z_]+):[ \t]*(.*)$")
-
-
-def _strip_comment(v: str) -> str:
-    """Drop a trailing comment. A '#' inside brackets or quotes is content."""
-    out, depth, quote = [], 0, None
-    for ch in v:
-        if quote:
-            if ch == quote:
-                quote = None
-        elif ch in "\"'":
-            quote = ch
-        elif ch == "[":
-            depth += 1
-        elif ch == "]":
-            depth = max(0, depth - 1)
-        elif ch == "#" and depth == 0:
-            break
-        out.append(ch)
-    return "".join(out).strip()
-
-
-def _coerce(v: str):
-    """Scalar or flow list. Deliberately narrow: anything else is a schema error
-    rather than something this parser guesses at."""
-    v = _strip_comment(v)
-    if v.startswith("[") and v.endswith("]"):
-        inner = v[1:-1].strip()
-        return [x.strip() for x in inner.split(",") if x.strip()] if inner else []
-    low = v.lower()
-    if low in ("true", "yes"):
-        return True
-    if low in ("false", "no"):
-        return False
-    if low in ("null", "~", ""):
-        return None
-    if re.fullmatch(r"-?\d+", v):
-        return int(v)
-    if re.fullmatch(r"-?\d*\.\d+", v):
-        return float(v)
-    return v.strip("'\"")
-
-
-def parse_profile_text(text: str) -> dict:
-    """Parse the profile subset into {section: {key: value}}.
-
-    Rejects rather than tolerates: an indented line before any section, or a
-    non-indented line that is not a section header, means the file is not the
-    shape every consumer assumes."""
-    out, current = {}, None
-    for n, raw in enumerate(text.splitlines(), 1):
-        line = raw.rstrip()
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        m = _SECTION.match(line)
-        if m:
-            current = m.group(1)
-            # A REPEATED SECTION SILENTLY REPLACED THE FIRST. Two `architecture:`
-            # blocks left only the last one, so a merge artefact or a careless
-            # paste changed the deployed model with nothing to see in review.
-            if current in out:
-                raise ProfileError(PROFILE_YAML_INVALID,
-                                   f"duplicate section {current!r} (line {n})")
-            out[current] = {}
-            continue
-        m = _FIELD.match(line)
-        if m:
-            if current is None:
-                raise ProfileError(PROFILE_YAML_INVALID,
-                                   f"indented key before any section (line {n})")
-            key = m.group(1)
-            # Same reasoning one level down: last-wins on a duplicated key is
-            # exactly how a profile ends up not meaning what it reads like.
-            if key in out[current]:
-                raise ProfileError(PROFILE_YAML_INVALID,
-                                   f"duplicate key {key!r} in {current!r} (line {n})")
-            val = m.group(2)
-            # An unclosed flow list was coerced to the bare string "[a, b", so a
-            # truncated list became a plausible-looking scalar.
-            if val.lstrip().startswith("[") and not val.rstrip().endswith("]"):
-                raise ProfileError(PROFILE_YAML_INVALID,
-                                   f"unclosed flow list for {key!r} (line {n})")
-            out[current][key] = _coerce(val)
-            continue
-        if not line.startswith(" "):
-            # Top-level scalars such as `disk_gb: 64` are legitimate.
-            k, sep, v = line.partition(":")
-            if sep and re.fullmatch(r"[a-z_]+", k.strip()):
-                out[k.strip()] = _coerce(v)
-                current = None
-                continue
-        raise ProfileError(PROFILE_YAML_INVALID, f"unparsable line {n}")
-    return out
 
 
 # ── public interface ────────────────────────────────────────────────────────
@@ -241,7 +112,7 @@ def state_root(override_path=None) -> Path:
 
 
 def config_root(repo_root=None) -> Path:
-    """User-editable policy: profiles/, clients.yaml, .env.
+    """User-editable policy: profiles/, clients.toml, .env.
 
     ailocal never overwrites anything under this root without an explicit
     manifest-digest match proving the file is still exactly what was shipped.
@@ -285,7 +156,7 @@ def profiles_dir(repo_root=None) -> Path:
 
 
 def profile_path(tier: str, repo_root=None) -> Path:
-    return profiles_dir(repo_root) / f"{tier}.yaml"
+    return profiles_dir(repo_root) / f"{tier}.toml"
 
 
 def active_profile_path(state=None) -> Path:
@@ -299,72 +170,49 @@ def effective_profile_path(state=None) -> Path:
 
 
 def client_policy_path(repo_root=None) -> Path:
-    return config_root(repo_root) / "profiles" / "clients.yaml"
+    return config_root(repo_root) / "profiles" / "clients.toml"
+
+
+def _read_toml(path: Path, missing: str, invalid: str) -> dict:
+    """Parse a policy file. tomllib rejects duplicate keys and duplicate tables,
+    which is the failure this fails closed on: a repeated section used to leave
+    only the last one, so a merge artefact changed the deployed model silently.
+    """
+    if not path.exists():
+        raise ProfileError(missing, str(path))
+    try:
+        with open(path, "rb") as fh:
+            return tomllib.load(fh)
+    except tomllib.TOMLDecodeError as e:
+        raise ProfileError(invalid, str(e)) from None
+
+
+def load_profile_file(path: Path) -> dict:
+    """A profile document, unvalidated. load_profile() adds the schema checks."""
+    return _read_toml(Path(path), PROFILE_FILE_MISSING, PROFILE_INVALID)
 
 
 def load_client_policy(repo_root=None) -> dict:
-    """Which capability each client surface uses. Fails closed like profiles.
-
-    Rejects unknown sections, duplicate sections and duplicate keys: a silently
-    ignored mapping sends a client to the wrong capability.
-    """
-    path = client_policy_path(repo_root)
-    if not path.exists():
-        raise ProfileError(CLIENT_POLICY_MISSING, str(path))
-    data: dict = {}
-    section = None
-    for n, raw in enumerate(path.read_text().splitlines(), 1):
-        line = raw.rstrip()
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        if not line.startswith(" "):
-            if not line.endswith(":"):
-                raise ProfileError(CLIENT_POLICY_INVALID,
-                                   f"line {n}: expected a section, got {line!r}")
-            section = line[:-1].strip()
-            if section in data:
-                raise ProfileError(CLIENT_POLICY_INVALID,
-                                   f"line {n}: duplicate section {section!r}")
-            if section not in CLIENTS:
-                raise ProfileError(CLIENT_POLICY_INVALID,
-                                   f"line {n}: unknown client {section!r}; "
-                                   f"expected one of {', '.join(CLIENTS)}")
-            data[section] = {}
-            continue
-        if section is None:
+    """Which capability each client surface uses. Fails closed like profiles."""
+    data = _read_toml(client_policy_path(repo_root),
+                      CLIENT_POLICY_MISSING, CLIENT_POLICY_INVALID)
+    for section, mapping in data.items():
+        if section not in CLIENTS:
             raise ProfileError(CLIENT_POLICY_INVALID,
-                               f"line {n}: mapping outside any client section")
-        if ":" not in line:
-            raise ProfileError(CLIENT_POLICY_INVALID, f"line {n}: expected key: value")
-        key, _, value = line.strip().partition(":")
-        key = key.strip()
-        if key in data[section]:
+                               f"unknown client {section!r}; expected one of "
+                               f"{', '.join(CLIENTS)}")
+        if not isinstance(mapping, dict):
             raise ProfileError(CLIENT_POLICY_INVALID,
-                               f"line {n}: duplicate key {key!r} in {section!r}")
-        data[section][key] = _client_value(value.strip(), n)
+                               f"{section!r} must be a table")
+    # An UNQUOTED key containing a dot is a dotted key in TOML: `gpt-5.5 = "x"`
+    # nests silently into {"gpt-5": {"5": "x"}} instead of naming the model.
+    # Every compat entry maps one client-sent model ID to one capability.
+    for name, target in (data.get("compat") or {}).items():
+        if not isinstance(target, str):
+            raise ProfileError(CLIENT_POLICY_INVALID,
+                               f"compat.{name} must name one capability; quote a "
+                               "model ID that contains a dot")
     return data
-
-
-def _client_value(v: str, line: int):
-    """Scalar, flow list or flow mapping. Anything else is rejected."""
-    if v.startswith("["):
-        if not v.endswith("]"):
-            raise ProfileError(CLIENT_POLICY_INVALID, f"line {line}: unclosed list")
-        inner = v[1:-1].strip()
-        return [x.strip() for x in inner.split(",") if x.strip()] if inner else []
-    if v.startswith("{"):
-        if not v.endswith("}"):
-            raise ProfileError(CLIENT_POLICY_INVALID, f"line {line}: unclosed mapping")
-        out = {}
-        inner = v[1:-1].strip()
-        for pair in (p for p in inner.split(",") if p.strip()):
-            if ":" not in pair:
-                raise ProfileError(CLIENT_POLICY_INVALID,
-                                   f"line {line}: expected key: value in mapping")
-            k, _, val = pair.partition(":")
-            out[k.strip()] = val.strip()
-        return out
-    return _strip_comment(v)
 
 
 def slot_problems(tier=None, repo_root=None) -> list:
@@ -390,7 +238,7 @@ def slot_problems(tier=None, repo_root=None) -> list:
             if "completion" in profile else "?"
         out.append(("error",
                     f"claude.slots {bad} -> 'completion' (FIM tier, num_ctx {ctx}). "
-                    f"Conversational slots must not use it. Fix clients.yaml."))
+                    f"Conversational slots must not use it. Fix clients.toml."))
 
     # Two slots on one capability is legal, but Claude Code's /model picker
     # lists that capability once per slot pointing at it.
@@ -441,7 +289,7 @@ def load_profile(tier: str, repo_root=None) -> dict:
     path = profile_path(tier, repo_root)
     if not path.exists():
         raise ProfileError(PROFILE_FILE_MISSING, str(path))
-    data = parse_profile_text(path.read_text())
+    data = _read_toml(path, PROFILE_FILE_MISSING, PROFILE_INVALID)
     present = [r for r in ROLES if r in data]
     if not present:
         raise ProfileError(PROFILE_SCHEMA_INVALID, "no capability roles found")

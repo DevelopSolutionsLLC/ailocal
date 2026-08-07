@@ -8,7 +8,7 @@
 # Values on the right are capability names from the active profile. Flow-style lists.
 
 # Claude Code
-claude:
+[claude]
   # architecture, NOT implementation. Claude Code is an agentic client: its whole
   # loop is read -> tool -> observe -> edit. Measured on this stack with the same
   # task (add a zero-division guard to calc.py, "use the Edit tool"):
@@ -20,7 +20,7 @@ claude:
   #   ailocal-architecture (qwen3-coder:30b-a3b) -- 3 turns, file ACTUALLY EDITED.
   # Launching on the non-agentic tier meant claude-local could not do agentic work
   # out of the box. Sonnet still maps to implementation for those who want it.
-  launch_default: architecture
+launch_default = "architecture"
   # built-in slot -> capability. Also emitted into model_group_alias so `model: opus`
   # in a subagent (or a background Opus/Sonnet/Haiku call) routes to the right tier.
   # haiku is deliberately NOT `completion`. Claude Code uses its haiku slot for real
@@ -35,37 +35,37 @@ claude:
   #   background summarisation.
   #   fast (qwen3.5:2b, 32768 ctx, native tools, persona) is built for exactly
   #   this traffic and had no consumer at all until now.
-  slots: {opus: architecture, sonnet: implementation, haiku: fast, fable: review}
+slots = {opus = "architecture", sonnet = "implementation", haiku = "fast", fable = "review"}
 
 # Codex CLI
-codex:
-  default: implementation
+[codex]
+default = "implementation"
   # named profiles (codex --profile plan / review)
-  profiles: {plan: architecture, review: review}
+profiles = {plan = "architecture", review = "review"}
 
 # Continue (VS Code) — chat picker entries, the direct-Ollama FIM model, embeddings
-continue:
-  chat: [architecture, implementation, review]
-  autocomplete: completion
-  embeddings: embeddings
+[continue]
+chat = ["architecture", "implementation", "review"]
+autocomplete = "completion"
+embeddings = "embeddings"
 
 # External client compatibility names -> capability. These are NOT ailocal roles — they are model
 # IDs that Claude Code and the OpenAI SDK hard-code and cannot be told to stop sending (e.g.
 # claude-local background calls send claude-haiku-4-5). Without them those clients 404. The old
 # ailocal role names (coder-main/coder-fast/coder-agent/deep-think*/supervisor/embed) are gone:
 # agents and configs use capability names now.
-compat:
-  claude-opus-4-8: architecture
-  claude-opus-4-8-20251101: architecture
-  claude-fable-5: review
-  claude-sonnet-4-6: implementation
-  claude-sonnet-4-6-20250219: implementation
-  gpt-5.5: implementation
+[compat]
+"claude-opus-4-8" = "architecture"
+"claude-opus-4-8-20251101" = "architecture"
+"claude-fable-5" = "review"
+"claude-sonnet-4-6" = "implementation"
+"claude-sonnet-4-6-20250219" = "implementation"
+"gpt-5.5" = "implementation"
   # See the note on claude.slots above: these are conversational model IDs, so they
   # must not resolve to the 4096-token FIM tier. Only `continue.autocomplete` should
   # ever point at `completion`.
-  claude-haiku-4-5: fast
-  claude-haiku-4-5-20251001: fast
-  gpt-4o: implementation
-  gpt-4o-mini: implementation
-  gpt-3.5-turbo: implementation
+"claude-haiku-4-5" = "fast"
+"claude-haiku-4-5-20251001" = "fast"
+"gpt-4o" = "implementation"
+"gpt-4o-mini" = "implementation"
+"gpt-3.5-turbo" = "implementation"

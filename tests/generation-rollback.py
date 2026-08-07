@@ -94,7 +94,7 @@ def run(fail_after: int | None) -> tuple[dict, dict, int]:
 
 
 def main() -> int:
-    profile = ROOT / "profiles" / "64gb.yaml"
+    profile = ROOT / "profiles" / "64gb.toml"
     original = profile.read_text()
 
     print("GENERATION ROLLBACK")
@@ -102,7 +102,7 @@ def main() -> int:
         # A source change, so a successful generation produces DIFFERENT bytes.
         # Without it a "no files changed" result would be indistinguishable from
         # a rollback, and the test would pass while proving nothing.
-        perturbed = original.replace("  temperature: 0.1\n", "  temperature: 0.15\n", 1)
+        perturbed = original.replace("temperature = 0.1\n", "temperature = 0.15\n", 1)
         check(perturbed != original, "the fixture perturbs a real profile value")
         profile.write_text(perturbed)
 

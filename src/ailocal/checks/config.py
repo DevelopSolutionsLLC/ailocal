@@ -40,7 +40,7 @@ def check_profiles_parse() -> list[CheckResult]:
         try:
             prof = P.load_profile(tier)
         except Exception as exc:
-            out.append(CheckResult(f"profile:{tier}", FAIL, f"{tier}.yaml is invalid",
+            out.append(CheckResult(f"profile:{tier}", FAIL, f"{tier}.toml is invalid",
                                    f"{getattr(exc, 'code', type(exc).__name__)}: {exc}"))
             continue
         roles = [r for r in P.ROLES if r in prof]
@@ -63,13 +63,13 @@ def check_capabilities_declare_backends(tier: str | None = None) -> list[CheckRe
 
 
 def check_client_mappings() -> list[CheckResult]:
-    """Every clients.yaml mapping must target a capability this tier defines."""
+    """Every clients.toml mapping must target a capability this tier defines."""
     tier = P.resolve_active_tier()
     known = set(P.load_profile(tier))
     try:
         policy = P.load_client_policy()
     except P.ProfileError as exc:
-        return [CheckResult("client-policy", FAIL, "clients.yaml is invalid",
+        return [CheckResult("client-policy", FAIL, "clients.toml is invalid",
                             f"{exc.code}: {exc}")]
     out = []
     for client, mapping in sorted(policy.items()):
@@ -79,7 +79,7 @@ def check_client_mappings() -> list[CheckResult]:
             f"client:{client}", FAIL if unknown else PASS,
             f"{client} mappings resolve" if not unknown
             else f"{client} targets unknown capabilities: {', '.join(unknown)}",
-            remediation=None if not unknown else "edit profiles/clients.yaml"))
+            remediation=None if not unknown else "edit profiles/clients.toml"))
     return out
 
 
@@ -321,7 +321,7 @@ def check_client_slots() -> list[CheckResult]:
         return [CheckResult("client-slots", PASS,
                             "claude slots respect profile geometry")]
     return [CheckResult("client-slots", FAIL if sev == "error" else WARN, msg,
-                        remediation="edit profiles/clients.yaml")
+                        remediation="edit profiles/clients.toml")
             for sev, msg in problems]
 
 

@@ -36,7 +36,7 @@ claude-local() {
   # calls (the "Haiku" slot) resolve to something LiteLLM actually serves.
   # (Requires Claude Code v2.1.129+ for gateway discovery.)
   #
-  # The slot block below is GENERATED from profiles/clients.yaml `claude.slots` by
+  # The slot block below is GENERATED from profiles/clients.toml `claude.slots` by
   # sync-models.py — do not hand-edit it. Hand-maintained slots drift: pointing
   # HAIKU at a small FIM tier hard-400s every background call, and a missing
   # FABLE silently strands the `reviewer` subagent off the review tier.

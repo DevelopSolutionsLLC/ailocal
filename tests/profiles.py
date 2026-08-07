@@ -41,19 +41,11 @@ check = _suite.check
 
 
 def parse(tier):
-    """Capability -> field map. A deliberately small reader: these files are ours."""
-    text = (REPO / "profiles" / f"{tier}.yaml").read_text()
-    out = {}
-    for m in re.finditer(r'^([a-z_]+):\n((?:  .*\n)+)', text, re.M):
-        cap, body = m.group(1), m.group(2)
-        fields = {}
-        for fm in re.finditer(r'^  ([a-z_]+): *(.+?)\s*(?:#.*)?$', body, re.M):
-            fields[fm.group(1)] = fm.group(2).strip()
-        out[cap] = fields
-    return out, text
+    """Capability -> field map, straight from the policy owner's reader."""
+    path = REPO / "profiles" / f"{tier}.toml"
+    return P.load_profile_file(path), path.read_text()
 
 
-PARSED = {t: parse(t) for t in PROFILES}
 PARSED = {t: parse(t) for t in PROFILES}
 
 
@@ -72,7 +64,7 @@ def sandbox(marker=None, profile_text=None) -> Path:
     if marker is not None:
         _write_marker(root, marker)
     if profile_text is not None:
-        (root / "profiles" / "64gb.yaml").write_text(profile_text)
+        (root / "profiles" / "64gb.toml").write_text(profile_text)
     return root
 
 
@@ -88,7 +80,8 @@ def _write_marker(root: Path, text: str) -> None:
     target.write_text(text)
 
 
-GOOD = "architecture:\n  role: Lead\n  active: m:1\n  context_input: 100\n  max_output: 20\n"
+GOOD = ('[architecture]\nrole = "Lead"\nactive = "m:1"\n'
+        'context_input = 100\nmax_output = 20\n')
 
 
 
@@ -107,14 +100,15 @@ def resolver_checks() -> None:
         ("empty marker", sandbox(marker="   \n"), P.ACTIVE_PROFILE_EMPTY, "tier"),
         ("unknown tier", sandbox(marker="999gb"), P.ACTIVE_PROFILE_INVALID, "tier"),
         ("missing profile file", sandbox(marker="64gb"), P.PROFILE_FILE_MISSING, "load"),
-        ("malformed yaml", sandbox(marker="64gb", profile_text="  stray: 1\n"),
-         P.PROFILE_YAML_INVALID, "load"),
+        ("malformed policy", sandbox(marker="64gb", profile_text="[architecture\n"),
+         P.PROFILE_INVALID, "load"),
         ("non-integer context_input",
          sandbox(marker="64gb",
-                 profile_text="architecture:\n  role: L\n  active: m\n  context_input: x\n"),
+                 profile_text='[architecture]\nrole = "L"\nactive = "m"\ncontext_input = "x"\n'),
          P.ROLE_CONFIG_INVALID, "load"),
         ("role missing required field",
-         sandbox(marker="64gb", profile_text="architecture:\n  role: L\n  context_input: 10\n"),
+         sandbox(marker="64gb",
+                 profile_text='[architecture]\nrole = "L"\ncontext_input = 10\n'),
          P.PROFILE_SCHEMA_INVALID, "load"),
     ]
     for label, root, expect, kind in cases:
@@ -148,16 +142,16 @@ def resolver_checks() -> None:
     # change the deployed model with nothing to see. An unclosed flow list
     # became the bare string "[a, b".
     BAD = [
-        ("temprature: 0.1",     P.PROFILE_SCHEMA_INVALID),
-        ("topk: 20",            P.PROFILE_SCHEMA_INVALID),
-        ("keepalive: 6h",       P.PROFILE_SCHEMA_INVALID),
-        ("num_predict: 512",    P.PROFILE_SCHEMA_INVALID),   # retired by migration
-        ("context: 4096",       P.PROFILE_SCHEMA_INVALID),   # retired by migration
-        ("repeat-penalty: 1.0", P.PROFILE_YAML_INVALID),     # hyphen is not a key
-        ("preferred: [a, b",    P.PROFILE_YAML_INVALID),     # unclosed flow list
+        ('temprature = 0.1',       P.PROFILE_SCHEMA_INVALID),
+        ('topk = 20',              P.PROFILE_SCHEMA_INVALID),
+        ('keepalive = "6h"',       P.PROFILE_SCHEMA_INVALID),
+        ('num_predict = 512',      P.PROFILE_SCHEMA_INVALID),   # retired
+        ('context = 4096',         P.PROFILE_SCHEMA_INVALID),   # retired
+        ('"repeat-penalty" = 1.0', P.PROFILE_SCHEMA_INVALID),
+        ('preferred = [a, b',      P.PROFILE_INVALID),          # unclosed list
     ]
     for frag, expect in BAD:
-        root = sandbox(marker="64gb", profile_text=GOOD + f"  {frag}\n")
+        root = sandbox(marker="64gb", profile_text=GOOD + f"{frag}\n")
         try:
             P.load_profile("64gb", root)
             got = "ACCEPTED"
@@ -166,9 +160,10 @@ def resolver_checks() -> None:
         check(got == expect, f"`{frag}` \u21d2 {expect} (got {got})")
         shutil.rmtree(root, ignore_errors=True)
 
-    dup_key = ("architecture:\n  role: L\n  active: m:1\n"
-               "  context_input: 100\n  context_input: 999\n  max_output: 20\n")
-    dup_sec = GOOD + "architecture:\n  role: X\n  active: other\n  context_input: 55\n"
+    # Duplicates were last-wins under the old parser: a merge artefact could
+    # change the deployed model with nothing to see in review.
+    dup_key = GOOD + "context_input = 999\n"
+    dup_sec = GOOD + '[architecture]\nrole = "X"\nactive = "other"\n'
     for label, text in (("duplicate key", dup_key), ("duplicate section", dup_sec)):
         root = sandbox(marker="64gb", profile_text=text)
         try:
@@ -176,8 +171,8 @@ def resolver_checks() -> None:
             got = "ACCEPTED"
         except P.ProfileError as e:
             got = e.code
-        check(got == P.PROFILE_YAML_INVALID,
-              f"{label} \u21d2 PROFILE_YAML_INVALID (got {got})")
+        check(got == P.PROFILE_INVALID,
+              f"{label} \u21d2 PROFILE_INVALID (got {got})")
         shutil.rmtree(root, ignore_errors=True)
 
     # And the real profiles must still load -- a stricter parser that rejects
@@ -192,7 +187,7 @@ def resolver_checks() -> None:
 
     print("\nERRORS CARRY A CODE, NOT FILE CONTENTS")
     root = sandbox(marker="64gb",
-                   profile_text=GOOD + "  secret_token: abc123SECRET\n")
+                   profile_text=GOOD + 'secret_token = "abc123SECRET"\n')
     try:
         P.load_profile("64gb", root)
         msg = ""
@@ -371,15 +366,16 @@ def resolver_checks() -> None:
     box = Path(tempfile.mkdtemp(prefix="legacy-"))
     (box / "profiles").mkdir(parents=True)
     _write_marker(box, "64gb")
-    (box / "profiles" / "64gb.yaml").write_text(
-        "architecture:\n  role: L\n  active: m\n  context: 4096\n")
+    (box / "profiles" / "64gb.toml").write_text(
+        '[architecture]\nrole = "L"\nactive = "m"\ncontext = 4096\n')
     try:
         P.load_profile("64gb", box); got = "NO ERROR"
     except P.ProfileError as e:
         got = e.code
     check(got == P.PROFILE_SCHEMA_INVALID, f"legacy `context` fails closed (got {got})")
-    (box / "profiles" / "64gb.yaml").write_text(
-        "architecture:\n  role: L\n  active: m\n  context_input: 100\n  max_output: -1\n")
+    (box / "profiles" / "64gb.toml").write_text(
+        '[architecture]\nrole = "L"\nactive = "m"\n'
+        'context_input = 100\nmax_output = -1\n')
     try:
         P.load_profile("64gb", box); got = "NO ERROR"
     except P.ProfileError as e:
@@ -510,7 +506,7 @@ def resolver_checks() -> None:
     # ALL tiers: the artifact now normalizes every tier and validates every
     # source hash, so a fixture carrying only the active profile is incomplete.
     for _t in P.TIERS:
-        _sh.copy(REPO / "profiles" / f"{_t}.yaml", box / "profiles")
+        _sh.copy(REPO / "profiles" / f"{_t}.toml", box / "profiles")
     check(P.load_effective(box, _state(box))["tier"] == eff["tier"], "a faithful copy validates")
 
     def expect(code, mutate, label):
@@ -541,7 +537,7 @@ def resolver_checks() -> None:
            lambda b: _write_marker(b, f"{eff['tier']}   \n\n"),
            "active-profile rewritten with the same tier")
     expect(P.EFFECTIVE_PROFILE_STALE_SOURCE,
-           lambda b: (b / "profiles" / f"{eff['tier']}.yaml")
+           lambda b: (b / "profiles" / f"{eff['tier']}.toml")
                      .write_text("architecture:\n  role: x\n  active: y\n  context: 1\n"),
            "source profile edited")
 
@@ -570,7 +566,7 @@ def resolver_checks() -> None:
     # string round-trip. A prose mention of "reserialize" is not the defect.
     _sm = load_sync()
     _models = _sm.load_models_yaml(REPO / "profiles" /
-                                   f"{P.active_tier()}.yaml")
+                                   f"{P.active_tier()}.toml")
     # `completion`, not `architecture`: preferred is documentation-only and
     # optional (policy defaults it to []), and architecture's list was
     # removed on 2026-08-03 when qwen3-coder:30b stopped being a supported
@@ -648,7 +644,7 @@ def hardware_checks() -> None:
               f"{tier} primary total_context is 65536")
         # num_predict is now DERIVED from max_output; the profile declares the
         # intent, not the backend parameter name.
-        check(caps["architecture"].get("max_output") == "8192",
+        check(caps["architecture"].get("max_output") == 8192,
               f"{tier} primary output ceiling is 8192")
         check(caps["completion"].get("active") == "qwen2.5-coder:1.5b",
               f"{tier} completion uses qwen2.5-coder:1.5b (native FIM)")
@@ -777,10 +773,10 @@ def hardware_checks() -> None:
     if settings.exists() and cc:
         import json
         env = json.loads(settings.read_text()).get("env", {})
-        check(env.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW") == cc["window"],
+        check(env.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW") == str(cc["window"]),
               f"claude settings.json window matches the active profile ({tier})",
               f"{env.get('CLAUDE_CODE_AUTO_COMPACT_WINDOW')!r} != {cc['window']!r}")
-        check(env.get("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE") == cc["pct"],
+        check(env.get("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE") == str(cc["pct"]),
               f"claude settings.json pct matches the active profile ({tier})",
               f"{env.get('CLAUDE_AUTOCOMPACT_PCT_OVERRIDE')!r} != {cc['pct']!r}")
 
@@ -789,9 +785,7 @@ def hardware_checks() -> None:
     # default model whose entire context is 24,576 -- unreachable, because the model
     # 400s on context length long before compaction could fire.
     codex = P.state_root() / "clients/codex/config.toml"
-    clients_yaml = (REPO / "profiles/clients.yaml").read_text()
-    m = re.search(r'(?m)^codex:\n(?:.*\n)*?\s*default:\s*(\w+)', clients_yaml)
-    cx_cap = m.group(1) if m else "implementation"
+    cx_cap = P.load_client_policy().get("codex", {}).get("default", "implementation")
     if codex.exists() and cc and cx_cap in PARSED[tier][0]:
         txt = codex.read_text()
         _cx = PARSED[tier][0][cx_cap]
@@ -842,15 +836,17 @@ def policy_checks() -> None:
     import tempfile, shutil
     cases = {
         "unknown client":    "bogus:\n  default: fast\n",
-        "duplicate section": "claude:\n  a: fast\nclaude:\n  b: fast\n",
-        "duplicate key":     "claude:\n  default: fast\n  default: review\n",
-        "unclosed list":     "continue:\n  chat: [a, b\n",
-        "unclosed mapping":  "claude:\n  slots: {opus: fast\n",
-        "orphan mapping":    "  default: fast\n",
+        "duplicate section": '[claude]\na = "fast"\n[claude]\nb = "fast"\n',
+        "duplicate key":     '[claude]\ndefault = "fast"\ndefault = "review"\n',
+        "unclosed list":     '[continue]\nchat = ["a", "b"\n',
+        "unclosed mapping":  '[claude]\nslots = {opus = "fast"\n',
+        "unknown client":    '[nosuchclient]\ndefault = "fast"\n',
+        # An UNQUOTED dotted key nests instead of naming a model.
+        "bare dotted key":   '[compat]\ngpt-5.5 = "implementation"\n',
     }
     for name, text in cases.items():
         d = Path(tempfile.mkdtemp()); (d / "profiles").mkdir()
-        (d / "profiles" / "clients.yaml").write_text(text)
+        (d / "profiles" / "clients.toml").write_text(text)
         try:
             P.load_client_policy(repo_root=d)
             check(False, f"{name} is rejected", "ACCEPTED")
@@ -862,9 +858,9 @@ def policy_checks() -> None:
     d = Path(tempfile.mkdtemp())
     try:
         P.load_client_policy(repo_root=d)
-        check(False, "a missing clients.yaml is rejected", "ACCEPTED")
+        check(False, "a missing clients.toml is rejected", "ACCEPTED")
     except P.ProfileError as exc:
-        check(exc.code == P.CLIENT_POLICY_MISSING, "a missing clients.yaml is rejected")
+        check(exc.code == P.CLIENT_POLICY_MISSING, "a missing clients.toml is rejected")
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
@@ -883,8 +879,8 @@ def policy_checks() -> None:
     # Path CONSTRUCTION only: a quoted path that is the whole value, or a
     # pathlib join. Remediation sentences and prompts name the file in prose and
     # are not a second owner.
-    build = re.compile(r'(=\s*["\']config/(active-profile|clients\.yaml)["\']'
-                       r'|/\s*["\']config["\']\s*/\s*["\'](active-profile|clients\.yaml))')
+    build = re.compile(r'(=\s*["\']config/(active-profile|clients\.toml)["\']'
+                       r'|/\s*["\']config["\']\s*/\s*["\'](active-profile|clients\.toml))')
     offenders = []
     for q in prod:
         for line in q.read_text().splitlines():
@@ -940,7 +936,7 @@ def policy_checks() -> None:
           "sync-models reads client policy through the owner")
     check(gen.count("def load_clients_yaml") == 1
           and "for line in" not in gen.split("def load_clients_yaml")[1][:400],
-          "sync-models no longer parses clients.yaml itself")
+          "sync-models no longer parses clients.toml itself")
 
 
 SECTIONS = {"resolver": resolver_checks, "hardware": hardware_checks,

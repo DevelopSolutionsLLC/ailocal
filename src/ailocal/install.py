@@ -180,6 +180,20 @@ def provision(source: Path, config: Path, data: Path, state: Path) -> dict:
     # The manifest records what was SHIPPED, never what is on disk: adopting an
     # edited file's own digest would make it look untouched, and the next
     # upgrade would overwrite the edit it had just promised to keep.
+    # A policy file we shipped and no longer ship is removed, but only while it
+    # still matches the digest we recorded: an edited file is the operator's,
+    # whatever the distribution now contains.
+    retired = []
+    for rel, want in sorted(shipped.items()):
+        live = config / rel
+        if (source / rel).exists() or not live.is_file():
+            continue
+        if digest(live) == want:
+            live.unlink()
+            retired.append(rel)
+        else:
+            preserved.append(rel)
+
     record = {"config": dict(shipped), "data": {}}
     for c in CONFIG_COMPONENTS:
         record["config"].update({rel: d for rel, d in _tree(config, c).items()
@@ -187,7 +201,10 @@ def provision(source: Path, config: Path, data: Path, state: Path) -> dict:
     for c in DATA_COMPONENTS:
         record["data"].update(_tree(data, c))
     (state / MANIFEST_NAME).write_text(json.dumps(record, indent=1, sort_keys=True))
-    return {"installed": installed, "preserved": preserved, "absent": absent}
+    for rel in retired:
+        record["config"].pop(rel, None)
+    return {"installed": installed, "preserved": sorted(set(preserved)),
+            "absent": absent, "retired": retired}
 
 
 # ── host prerequisites ──────────────────────────────────────────────────────
@@ -819,6 +836,8 @@ def cmd_install(argv: list[str]) -> int:
         dim(f"kept {rel} (edited since install)")
     for rel in report["absent"]:
         dim(f"absent {rel} (shipped default you removed)")
+    for rel in report["retired"]:
+        dim(f"retired {rel} (no longer shipped)")
 
     step("Configuring Ollama")
     if assume_yes or _yes("Set up production autostart (launchd runs ollama serve "
