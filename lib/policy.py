@@ -99,10 +99,6 @@ class ProfileError(Exception):
         super().__init__(f"{code}: {detail}" if detail else code)
 
 
-def _root(repo_root=None) -> Path:
-    return Path(repo_root) if repo_root else REPO_DEFAULT
-
-
 # ── GENERATION-TIME ONLY: constrained profile-schema parser ─────────────────
 # This is NOT a YAML implementation and must not be used as one. It supports
 # exactly the constructs the four profiles use -- two levels, scalars, flow
@@ -215,47 +211,96 @@ def parse_profile_text(text: str) -> dict:
 CLIENTS = ("claude", "codex", "continue", "compat")
 
 
-def runtime_root(state_root=None) -> Path:
+# ── the three roots (ADR 009) ───────────────────────────────────────────────
+# Installed code, user-editable configuration, installed data assets and
+# generated state have separate homes. These three functions are the ONLY
+# implementations of that resolution; nothing else may compute a root.
+#
+# Policy is XDG throughout, with an AILOCAL_* override per root. Config and data
+# still default to the checkout: ADR 009 phase 4 moves those defaults to the XDG
+# locations, and having the override path already in place keeps that a
+# one-line change per root rather than a second migration.
+
+def _xdg(var: str, *fallback: str) -> Path:
+    return Path(os.environ.get(var) or os.path.join(
+        os.path.expanduser("~"), *fallback))
+
+
+def state_root(override_path=None) -> Path:
     """Generated and machine-selected state, OUTSIDE the checkout.
 
     One artifact -- the rendered SearXNG settings -- carries the Brave API key,
     and living outside Git's tree makes committing it impossible rather than
     merely discouraged. All generated state shares that root so there is one
     place to inspect, back up, repair and remove.
-
-    AILOCAL_STATE overrides it; XDG_STATE_HOME shifts the default. This is the
-    only implementation of that resolution.
     """
-    if state_root is not None:
-        return Path(state_root)
+    if override_path is not None:
+        return Path(override_path)
     override = os.environ.get("AILOCAL_STATE")
-    if override:
-        return Path(override)
-    xdg = os.environ.get("XDG_STATE_HOME") or os.path.join(
-        os.path.expanduser("~"), ".local", "state")
-    return Path(xdg) / "ailocal"
+    return Path(override) if override else _xdg(
+        "XDG_STATE_HOME", ".local", "state") / "ailocal"
+
+
+def config_root(repo_root=None) -> Path:
+    """User-editable policy: profiles/, clients.yaml, .env.
+
+    ailocal never overwrites anything under this root without an explicit
+    manifest-digest match proving the file is still exactly what was shipped.
+    """
+    if repo_root is not None:
+        return Path(repo_root)
+    override = os.environ.get("AILOCAL_CONFIG")
+    return Path(override) if override else REPO_DEFAULT
+
+
+def data_root(repo_root=None) -> Path:
+    """Installed static assets: deploy/, clients/. Replaced wholesale on
+    upgrade, so nothing user-authored may live here."""
+    if repo_root is not None:
+        return Path(repo_root)
+    override = os.environ.get("AILOCAL_DATA")
+    return Path(override) if override else REPO_DEFAULT
+
+
+def deployed_client_root() -> Path:
+    """Where generated client configuration is installed for clients to read.
+
+    Already the XDG config location; ADR 009 phase 4 makes config_root() resolve
+    here too, at which point the two converge. The shell surfaces spell this the
+    same way, so changing it means changing them together.
+    """
+    return _xdg("XDG_CONFIG_HOME", ".config") / "ailocal"
+
+
+def benchmark_tooling_root() -> Path:
+    """Third-party benchmark tooling: the lm-eval venv and the RULER checkout.
+
+    XDG data rather than the state root: these are installed artifacts, not
+    machine state, and re-downloading them costs hundreds of megabytes.
+    """
+    return _xdg("XDG_DATA_HOME", ".local", "share") / "ailocal" / "benchmark"
 
 
 def profiles_dir(repo_root=None) -> Path:
-    return _root(repo_root) / "profiles"
+    return config_root(repo_root) / "profiles"
 
 
 def profile_path(tier: str, repo_root=None) -> Path:
     return profiles_dir(repo_root) / f"{tier}.yaml"
 
 
-def active_profile_path(state_root=None) -> Path:
+def active_profile_path(state=None) -> Path:
     """Where the selected tier is recorded. The only place this is spelled."""
-    return runtime_root(state_root) / "active-profile"
+    return state_root(state) / "active-profile"
 
 
-def effective_profile_path(state_root=None) -> Path:
+def effective_profile_path(state=None) -> Path:
     """The generated, resolved profile every consumer reads."""
-    return runtime_root(state_root) / "litellm" / "effective-profile.json"
+    return state_root(state) / "litellm" / "effective-profile.json"
 
 
 def client_policy_path(repo_root=None) -> Path:
-    return _root(repo_root) / "profiles" / "clients.yaml"
+    return config_root(repo_root) / "profiles" / "clients.yaml"
 
 
 def load_client_policy(repo_root=None) -> dict:
@@ -373,12 +418,12 @@ def required_models(tier=None, repo_root=None) -> list:
     return sorted(set(out))
 
 
-def resolve_active_tier(repo_root=None, state_root=None) -> str:
+def resolve_active_tier(repo_root=None, state=None) -> str:
     """The active tier. NEVER defaults -- a missing marker is an error.
 
     An installation that silently picks a tier is an installation that can pull
     models the machine cannot hold."""
-    marker = active_profile_path(state_root)
+    marker = active_profile_path(state)
     if not marker.exists():
         raise ProfileError(ACTIVE_PROFILE_MISSING, str(marker))
     tier = marker.read_text().strip()
@@ -541,14 +586,14 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else ""
 
 
-def load_effective(repo_root=None, state_root=None) -> dict:
+def load_effective(repo_root=None, state=None) -> dict:
     """The generated effective profile, validated against its own inputs.
 
     Staleness is DETECTED, not assumed away: the artifact records the hashes of
     the profile and the active marker it was generated from, so editing either
     without re-running sync is an error rather than a silently wrong runtime."""
-    root = _root(repo_root)
-    path = effective_profile_path(state_root)
+    root = config_root(repo_root)
+    path = effective_profile_path(state)
     if not path.exists():
         raise ProfileError(EFFECTIVE_PROFILE_MISSING, str(path))
     try:
@@ -569,7 +614,7 @@ def load_effective(repo_root=None, state_root=None) -> dict:
             != data["config_sha256"]:
         raise ProfileError(EFFECTIVE_PROFILE_HASH_INVALID, "config_sha256")
 
-    marker = active_profile_path(state_root)
+    marker = active_profile_path(state)
     if not marker.exists():
         raise ProfileError(ACTIVE_PROFILE_MISSING, str(marker))
     if marker.read_text().strip() != data["tier"]:

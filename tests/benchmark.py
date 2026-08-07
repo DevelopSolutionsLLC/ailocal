@@ -1150,7 +1150,7 @@ def runtime_checks() -> None:
     _suite.section("BENCHMARK RUNTIME")
     import runtime as BR
 
-    check(BR.generated_dir() == _pc.runtime_root() / "litellm",
+    check(BR.generated_dir() == _pc.state_root() / "litellm",
           "the generated config dir comes from the one state-root owner")
     check("litellm" not in str(BR.generated_dir().parent),
           "it is not derived from the authored deploy/ tree")

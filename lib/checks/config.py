@@ -89,7 +89,7 @@ def check_client_mappings() -> list[CheckResult]:
 
 def check_generated_present() -> list[CheckResult]:
     """Every generated artefact exists, under the one runtime root."""
-    root = P.runtime_root()
+    root = P.state_root()
     expected = [P.effective_profile_path(),
                 root / "litellm" / "capabilities.json",
                 root / "litellm" / "config.yaml",
@@ -145,7 +145,7 @@ def _model_names(cfg: pathlib.Path) -> list[str]:
 
 def check_alias_uniqueness() -> CheckResult:
     """A duplicated alias silently shadows a capability."""
-    cfg = P.runtime_root() / "litellm" / "config.yaml"
+    cfg = P.state_root() / "litellm" / "config.yaml"
     if not cfg.is_file():
         return CheckResult("aliases", FAIL, "generated config.yaml is missing",
                            remediation="ailocal sync")
@@ -159,7 +159,7 @@ def check_alias_uniqueness() -> CheckResult:
 
 def check_no_raw_backend_tags() -> CheckResult:
     """Clients must reach models through ailocal-<capability>, never a raw tag."""
-    cfg = P.runtime_root() / "litellm" / "config.yaml"
+    cfg = P.state_root() / "litellm" / "config.yaml"
     if not cfg.is_file():
         return CheckResult("raw-tags", FAIL, "generated config.yaml is missing")
     raw = [n for n in _model_names(cfg)
@@ -175,10 +175,9 @@ def check_no_raw_backend_tags() -> CheckResult:
 def check_codex_no_mcp() -> CheckResult:
     """Codex cannot dispatch namespaced tools, so an empty MCP section is correct."""
     out = []
-    for label, path in (("generated", P.runtime_root() / "clients/codex/config.toml"),
-                        ("deployed", pathlib.Path(os.environ.get(
-                            "XDG_CONFIG_HOME", pathlib.Path.home() / ".config"))
-                            / "ailocal/codex/config.toml")):
+    for label, path in (("generated", P.state_root() / "clients/codex/config.toml"),
+                        ("deployed", P.deployed_client_root()
+                            / "codex" / "config.toml")):
         if not path.is_file():
             continue
         n = sum(1 for ln in path.read_text().splitlines()
@@ -208,7 +207,7 @@ def check_mount_drift() -> CheckResult:
         return CheckResult("mount-drift", FAIL,
                            "/app/generated/config.yaml is not readable in the container",
                            remediation="ailocal start")
-    local = (P.runtime_root() / "litellm" / "config.yaml").read_text()
+    local = (P.state_root() / "litellm" / "config.yaml").read_text()
     ok = inside.strip() == local.strip()
     return CheckResult("mount-drift", PASS if ok else FAIL,
                        "container is running the repo's config.yaml" if ok
@@ -252,7 +251,7 @@ def _compose_env() -> dict:
     return {**os.environ, "DOCKER_CLI_HINTS": "false",
             "AILOCAL_SEARXNG_SETTINGS": os.environ.get(
                 "AILOCAL_SEARXNG_SETTINGS",
-                str(P.runtime_root() / "searxng" / "settings.yml"))}
+                str(P.state_root() / "searxng" / "settings.yml"))}
 
 
 def _compose_json() -> dict | None:
@@ -303,7 +302,7 @@ def check_compose_config() -> list[CheckResult]:
         f"litellm and searxng share network: {','.join(nets['litellm'])}" if shared
         else f"litellm and searxng are NOT on a shared network: {nets}"))
 
-    cfg = P.runtime_root() / "litellm" / "config.yaml"
+    cfg = P.state_root() / "litellm" / "config.yaml"
     agrees = ("searxng" in svcs and cfg.is_file()
               and re.search(r"api_base:\s*http://searxng:8080", cfg.read_text()))
     out.append(CheckResult(
