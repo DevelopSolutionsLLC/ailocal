@@ -23,7 +23,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-REPO = Path(__file__).resolve().parent.parent   # benchmarks/ -> repo root
+REPO = Path(__file__).resolve().parents[2]   # tests/benchmarks/ -> repo root
+#: The ONE copy of every shipped default; the wheel carries this tree.
+RESOURCES = REPO / "src" / "ailocal" / "resources"
 
 from ailocal import policy
 

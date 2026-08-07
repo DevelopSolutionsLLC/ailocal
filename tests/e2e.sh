@@ -371,7 +371,7 @@ e2e_preflight
 WORK="${CODEX_E2E_WORKDIR:-/tmp/ailocal-codex-e2e}"
 ORIGINAL_EXPANSION="$(python3 - <<'PY'
 import re
-src = open("deploy/litellm/registry.yaml", encoding="utf-8").read()
+src = open("src/ailocal/resources/deploy/litellm/registry.yaml", encoding="utf-8").read()
 m = re.search(r"namespace_expansion:\s*\n\s*enabled:\s*(\S+)", src)
 print(m.group(1) if m else "false")
 PY
@@ -389,7 +389,7 @@ set_expansion() { # $1=true|false
   python3 - "$1" <<'PY'
 import re, sys
 want = sys.argv[1]
-path = "deploy/litellm/registry.yaml"
+path = "src/ailocal/resources/deploy/litellm/registry.yaml"
 src = open(path, encoding="utf-8").read()
 src = re.sub(r"(namespace_expansion:\s*\n\s*enabled:\s*)\S+",
              lambda m: m.group(1) + want, src, count=1)

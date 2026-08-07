@@ -192,6 +192,10 @@ def _doctor(argv: list[str]) -> int:
 # PyYAML, which exist only inside the proxy image, so a host-only run would
 # cover a fraction of the behaviour and still print green.
 
+#: Shipped assets live inside the package; the checkout path to them is
+#: spelled once.
+RES = "src/ailocal/resources"
+
 GATE_SLOW_S = int(os.environ.get("AILOCAL_GATE_SLOW_S", "10"))
 
 
@@ -303,7 +307,7 @@ def _gate_suites(repo: pathlib.Path, full: bool) -> list:
                                 _suite("/bin/bash", "tests/client-compatibility.sh")))
         suites.append(("END TO END (slow: drives a real client)", [
             ("benchmark, 2 interleaved rounds",
-             _suite(py, "-m", "ailocal.cli", "benchmark", "gateway"))]))
+             _suite("/bin/bash", "tests/benchmarks/gateway.sh"))]))
     return suites
 
 
@@ -327,8 +331,8 @@ def _version_current(repo: pathlib.Path) -> tuple[int, str]:
 
 def _shell_parses(repo: pathlib.Path) -> tuple[int, str]:
     bad = []
-    for pattern in ("ailocal", "tests/*.sh", "benchmarks/*.sh", "clients/*.sh",
-                    "clients/*.zsh"):
+    for pattern in ("ailocal", "tests/**/*.sh",
+                    f"{RES}/clients/*.sh", f"{RES}/clients/*.zsh"):
         for f in sorted(repo.glob(pattern)):
             r = subprocess.run(["bash", "-n", str(f)], capture_output=True, text=True)
             if r.returncode:
@@ -338,8 +342,7 @@ def _shell_parses(repo: pathlib.Path) -> tuple[int, str]:
 
 def _python_parses(repo: pathlib.Path) -> tuple[int, str]:
     bad = []
-    for pattern in ("src/**/*.py", "benchmarks/**/*.py", "tests/**/*.py",
-                    "deploy/litellm/hooks/*.py"):
+    for pattern in ("src/**/*.py", "tests/**/*.py"):
         for f in sorted(repo.glob(pattern)):
             try:
                 ast.parse(f.read_text(encoding="utf-8"))
@@ -353,10 +356,10 @@ def _timeouts_aligned(repo: pathlib.Path) -> tuple[int, str]:
     the proxy is still serving while the backend generates into a closed socket.
     """
     proxy = re.search(r"^ *timeout: *(\d+)",
-                      (repo / "deploy/litellm/config.template.yaml").read_text(),
+                      (repo / RES / "deploy/litellm/config.template.yaml").read_text(),
                       re.M)
     client = re.search(r"AILOCAL_API_TIMEOUT_MS:-(\d+)}",
-                       (repo / "clients/configure.template.zsh").read_text())
+                       (repo / RES / "clients/configure.template.zsh").read_text())
     if not (proxy and client):
         return 1, "could not read both timeouts"
     if int(client.group(1)) < int(proxy.group(1)) * 1000:

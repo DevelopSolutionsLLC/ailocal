@@ -1,5 +1,6 @@
-# Implementation of `ailocal benchmark gateway`. Not executable on its own.
-# benchmarks/tool-gateway.sh — A/B the gateway on the real client, real model.
+# tests/benchmarks/gateway.sh — A/B the gateway on the real client, real model.
+#
+# Developer tooling, run from a checkout (ADR 009). Not a product command.
 #
 # Runs the SAME task through claude-local twice: once with the gateway in
 # report mode (measures, changes nothing = the baseline) and once in filter
@@ -15,13 +16,13 @@
 # n=1 per arm by default. That is enough to see a 70% payload change and NOT
 # enough to resolve small latency differences; RUNS=n raises it.
 #
-# Usage:  ./benchmarks/gateway.sh [task-prompt]
+# Usage:  ./tests/benchmarks/gateway.sh [task-prompt]
 set -euo pipefail
 
 case "${1:-}" in
   -h|--help)
     cat <<'USAGE'
-usage: ailocal benchmark gateway [task-prompt]
+usage: tests/benchmarks/gateway.sh [task-prompt]
 
 A/B the tool gateway on the real client and model: one run in report mode
 (measures, changes nothing) and one in filter mode. Both go through the

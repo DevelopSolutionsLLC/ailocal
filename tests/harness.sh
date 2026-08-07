@@ -12,6 +12,8 @@
 #   report          # prints the summary; returns 0 clean, 1 otherwise
 
 ROOT_DIR="${ROOT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# The ONE copy of every shipped default, spelled once for every shell suite.
+RESOURCES="$ROOT_DIR/src/ailocal/resources"
 _fails=0
 _passes=0
 _skips=0

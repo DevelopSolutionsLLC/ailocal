@@ -71,7 +71,7 @@ check $(grep -q "not served by LiteLLM" <<<"$out" && echo 0 || echo 1) \
 # settings.json pins `model`, which OUTRANKS ANTHROPIC_DEFAULT_*. Verified
 # precedence (code.claude.com/docs/en/settings):
 #   --model > settings.json "model" > ANTHROPIC_DEFAULT_*_MODEL
-tpl="$ROOT_DIR/clients/configure.template.zsh"
+tpl="$RESOURCES/clients/configure.template.zsh"
 check $(grep -q -- '--model "$AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE"' "$tpl" && echo 0 || echo 1) \
   "architecture override passes --model, the highest-precedence mechanism"
 check $(grep -q 'claude "${_model_args\[@\]}" "$@"' "$tpl" && echo 0 || echo 1) \
@@ -80,18 +80,18 @@ check $([ -z "$(AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE= zsh -c "source '$CONFIGURE'
   "no override adds no --model argument (defaults untouched)"
 # The proxy log is the only authority on which model actually ran. Asserted here
 # as a capability; the benchmark calls it live before every candidate.
-# Asserted through the IMPORT surface, not by grepping a file: these moved to
-# clients.py in the module split and the old grep asserted their
-# location rather than their existence. Callers reach them via `import
-# benchmark`, so that is what is checked.
+# Asserted through the IMPORT surface, not by grepping a file: what matters is
+# that the capability exists, not where it lives.
 check $(python3 -c "
-import sys, inspect; sys.path.insert(0, '$ROOT_DIR/lib'); sys.path.insert(0, '$ROOT_DIR/benchmarks')
+import sys, inspect
+sys.path.insert(0, '$ROOT_DIR/tests/benchmarks'); sys.path.insert(0, '$ROOT_DIR/src')
 import suite as B
 assert callable(B.served_models_since)
 " >/dev/null 2>&1 && echo 0 || echo 1) \
   "harness can read served aliases from the proxy log"
 check $(python3 -c "
-import sys, inspect; sys.path.insert(0, '$ROOT_DIR/lib'); sys.path.insert(0, '$ROOT_DIR/benchmarks')
+import sys, inspect
+sys.path.insert(0, '$ROOT_DIR/tests/benchmarks'); sys.path.insert(0, '$ROOT_DIR/src')
 import suite as B
 assert 'INVALID_ROUTING' in inspect.getsource(B.verify_routing)
 " >/dev/null 2>&1 && echo 0 || echo 1) \
@@ -99,7 +99,7 @@ assert 'INVALID_ROUTING' in inspect.getsource(B.verify_routing)
 
 # The override block is hand-maintained and MUST live outside the spliced region,
 # or generation.py would erase it on the next regeneration.
-tpl="$ROOT_DIR/clients/configure.template.zsh"
+tpl="$RESOURCES/clients/configure.template.zsh"
 gen_begin=$(grep -n "BEGIN GENERATED claude slots" "$tpl" | cut -d: -f1)
 gen_end=$(grep -n "END GENERATED claude slots" "$tpl" | cut -d: -f1)
 ovr=$(grep -n "_ailocal_ovr=(" "$tpl" | cut -d: -f1)

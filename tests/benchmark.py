@@ -23,13 +23,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from harness import REPO, Suite, load_module  # noqa: E402
 
+#: Benchmarks import `ailocal` for every path they resolve. harness puts the
+#: package on PYTHONPATH; pass that environment to every child.
+import os as _os  # noqa: E402
+_ENV = dict(_os.environ)
+
 import re
 import sys
 from pathlib import Path
 import pathlib
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(REPO / "benchmarks" / "tasks"))
-sys.path.insert(0, str(REPO / "benchmarks"))
+sys.path.insert(0, str(REPO / "tests" / "benchmarks" / "tasks"))
+sys.path.insert(0, str(REPO / "tests" / "benchmarks"))
 import utils  # noqa: E402
 import ast as _ast
 import suite as B  # noqa: E402
@@ -50,7 +55,7 @@ import sys
 import tempfile
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(REPO / "benchmarks"))
+sys.path.insert(0, str(REPO / "tests" / "benchmarks"))
 import suite as B  # noqa: E402
 
 _suite = Suite()
@@ -133,7 +138,7 @@ def library_checks() -> None:
     # Assert on CODE, not on prose: docstrings legitimately name the models the
     # extractor was developed against.
     import ast as _ast
-    _src = (REPO / "benchmarks" / "tasks" / "utils.py").read_text()
+    _src = (REPO / "tests" / "benchmarks" / "tasks" / "utils.py").read_text()
     _tree = _ast.parse(_src)
     _docs = {_ast.get_docstring(n, clean=False) for n in _ast.walk(_tree)
              if isinstance(n, (_ast.Module, _ast.FunctionDef, _ast.ClassDef))}
@@ -156,7 +161,7 @@ def library_checks() -> None:
         _ast.parse(utils._extract(_resp, PROMPT))
     check(True, "every shape yields PARSEABLE Python")
     print("\ntask definition")
-    y = (REPO / "benchmarks" / "tasks"
+    y = (REPO / "tests" / "benchmarks" / "tasks"
          / "humaneval_instruct_robust.yaml").read_text()
     check("until:" in y, "stop sequences are retained (removing them emptied output)")
     check('"\\ndef"' not in y and '"\\nclass"' not in y,
@@ -585,7 +590,7 @@ def library_checks() -> None:
           "planner overlay preserved: 32768 in + 8192 out = 40960 total")
     check(B.build_alias("m", "off", 100, 10, {}, keep_alive="6h")["litellm_params"]["keep_alive"] == "6h",
           "keep_alive is overridable, not hardcoded")
-    src = (REPO / "benchmarks" / "runtime.py").read_text()
+    src = (REPO / "tests" / "benchmarks" / "runtime.py").read_text()
     check('"num_ctx": g["num_ctx"]' in src and "_pc.geometry(" in src,
           "num_ctx is taken from geometry(), not recomputed inline")
     check(src.count("THINK_MODES") >= 2 and src.count('{"off": False, "on": True') == 1,
@@ -598,26 +603,28 @@ def library_checks() -> None:
 def planner_checks() -> None:
     def load_driver():
         return load_module("planner_driver",
-                           REPO / "benchmarks" / "planner.py")
+                           REPO / "tests" / "benchmarks" / "planner.py")
     D = load_driver()
     def _planner_body() -> None:
         print("SAFE DEFAULTS")
-        r = subprocess.run([str(REPO / "ailocal"), "benchmark", "planner"],
-                           capture_output=True, text=True, timeout=120)
+        r = subprocess.run([sys.executable, str(REPO / "tests" / "benchmarks"
+                                                / "planner.py")],
+                           capture_output=True, text=True, timeout=120, env=_ENV)
         check(r.returncode == 2, "no arguments ⇒ refuses to act (rc=2)")
         check("never implicit" in r.stderr, "refusal explains that inference is never implicit")
 
-        src = (REPO / "benchmarks" / "planner.py").read_text()
+        src = (REPO / "tests" / "benchmarks" / "planner.py").read_text()
         check("--continue" not in src and '"--last"' not in src,
               "--continue and --last are never used (implicit resume is forbidden)")
         check("--force-rerun" in src, "re-running a completed candidate needs an explicit flag")
 
         print("\nDRY RUN DOES NOT TOUCH THE MAPPING OR A MODEL")
         out = Path(tempfile.mkdtemp(prefix="drv-"))
-        r = subprocess.run([str(REPO / "ailocal"), "benchmark", "planner",
+        r = subprocess.run([sys.executable,
+                            str(REPO / "tests" / "benchmarks" / "planner.py"),
                             "--dry-run", "--all", "--output-dir", str(out),
                             "--run-id", "unit-dry"],
-                           capture_output=True, text=True, timeout=300)
+                           capture_output=True, text=True, timeout=300, env=_ENV)
         check(r.returncode == 0, "dry run succeeds")
         blob = r.stdout
         check("mapping opened         NO" in blob, "dry run states the mapping was not opened")
@@ -824,7 +831,7 @@ def planner_checks() -> None:
               "a missing file fails PROMPTS_MISSING")
 
         # There must be no placeholder path back into the driver.
-        drv_src = (REPO / "benchmarks" / "planner.py").read_text()
+        drv_src = (REPO / "tests" / "benchmarks" / "planner.py").read_text()
         check("[planner turn" not in drv_src,
               "no placeholder prompt text survives anywhere in the driver")
         raised = False
@@ -988,7 +995,7 @@ def planner_checks() -> None:
         check(raised, "assert_no_placeholder rejects a placeholder")
         D.assert_no_placeholder("bench-real-alias", None)
         check(True, "a real alias passes the assertion")
-        drv = (REPO / "benchmarks" / "planner.py").read_text()
+        drv = (REPO / "tests" / "benchmarks" / "planner.py").read_text()
         check('f"<alias-for-{cand}>"' not in drv,
               "the driver no longer constructs placeholder aliases")
         check("assert_no_placeholder(alias)" in drv,
@@ -1061,20 +1068,24 @@ def command_checks() -> None:
     Behavioural throughout -- these run the real command. Nothing here inspects
     implementation source.
     """
-    cli = str(REPO / "ailocal")
+    BENCH = REPO / "tests" / "benchmarks"
+
+    def _argv(suite, args):
+        """Benchmarks are developer tooling run from a checkout (ADR 009), so
+        each suite is invoked directly rather than through the product CLI."""
+        path = BENCH / (f"{suite}.sh" if suite == "gateway" else f"{suite}.py")
+        launcher = ["/bin/bash"] if suite == "gateway" else [sys.executable]
+        return launcher + [str(path), *args]
 
     def run(*args, env=None, timeout=300):
-        return subprocess.run([cli, "benchmark", *args], capture_output=True,
-                              text=True, timeout=timeout, env=env)
+        return subprocess.run(_argv(args[0], args[1:]), capture_output=True,
+                              text=True, timeout=timeout,
+                              env=env if env is not None else _ENV)
 
-    _suite.section("COMMAND DISPATCH")
-    r = run("help")
-    check(r.returncode == 0, "benchmark help exits 0")
+    _suite.section("SUITES ARE REACHABLE FROM A CHECKOUT")
     for suite in ("models", "planner", "gateway"):
-        check(suite in r.stdout or suite in r.stderr,
-              f"help lists the {suite} suite")
-    check(run("definitely-not-a-suite").returncode == 2,
-          "an unknown suite exits 2")
+        check(_argv(suite, ()) and pathlib.Path(_argv(suite, ())[1]).is_file(),
+              f"the {suite} suite exists")
 
     _suite.section("MODELS SUITE")
     check(run("models", "--help").returncode == 0, "models --help exits 0")
@@ -1111,7 +1122,7 @@ def worktree_checks() -> None:
     """
     _suite.section("NO WORKTREE LEAK FROM NON-INFERENCE PATHS")
     import subprocess as _sp
-    cli = str(REPO / "ailocal")
+    planner = [sys.executable, str(REPO / "tests" / "benchmarks" / "planner.py")]
 
     def count() -> int:
         r = _sp.run(["git", "-C", str(REPO), "worktree", "list"],
@@ -1121,7 +1132,7 @@ def worktree_checks() -> None:
     for args in (["--help"], [], ["--dry-run"], ["--validate-private-routing"],
                  ["--candidate", "not-a-candidate"], ["--no-such-flag"]):
         before = count()
-        _sp.run([cli, "benchmark", "planner", *args],
+        _sp.run([*planner, *args],
                 capture_output=True, text=True, timeout=300)
         after = count()
         check(after == before,
@@ -1132,7 +1143,7 @@ def worktree_checks() -> None:
     # a single-shot check.
     before = count()
     for _ in range(3):
-        _sp.run([cli, "benchmark", "planner", "--dry-run"],
+        _sp.run([*planner, "--dry-run"],
                 capture_output=True, text=True, timeout=300)
     check(count() == before, "three dry-runs leave the worktree count unchanged",
           f"{before} -> {count()}")

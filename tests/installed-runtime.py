@@ -83,14 +83,20 @@ def main() -> None:
     })
 
     # Provisioning is a step of `ailocal install`, not a command of its own, so
-    # the installed package's API is what a bootstrap actually calls here.
+    # the installed package's API is what a bootstrap actually calls here. No
+    # source argument: the assets travel INSIDE the wheel, which is the property
+    # this suite exists to prove.
     r = run([str(venv / "bin" / "python3"), "-c",
              "from ailocal import install, policy;"
-             "install.provision(policy.Path(__import__('sys').argv[1]),"
-             " policy.config_root(), policy.data_root(), policy.state_root())",
-             str(source)], env)
+             "install.provision(install.distribution_source(),"
+             " policy.config_root(), policy.data_root(), policy.state_root())"],
+            env)
     check(r.returncode == 0, "assets provision into the managed roots",
           r.stderr[-400:])
+    check((cfg / "profiles" / "64gb.toml").is_file(),
+          "profiles ship in the wheel and land in the config root")
+    check((data / "deploy" / "litellm" / "hooks" / "tool_gateway.py").is_file(),
+          "the proxy hooks ship in the wheel and land in the data root")
     (state / "active-profile").write_text("64gb\n")
     # .env is user configuration and is never shipped; synthesize one so the
     # isolated stack has a key of its own rather than borrowing production's.

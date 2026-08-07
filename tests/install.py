@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-from harness import REPO, Suite  # noqa: E402
+from harness import RESOURCES, REPO, Suite  # noqa: E402
 from ailocal import install as I  # noqa: E402
 
 _suite = Suite()
@@ -30,7 +30,7 @@ def _roots():
 def main() -> None:
     _suite.section("A FRESH INSTALL POPULATES BOTH ROOTS")
     box, cfg, data, state = _roots()
-    I.provision(REPO, cfg, data, state)
+    I.provision(RESOURCES, cfg, data, state)
 
     for c in I.DATA_COMPONENTS:
         check((data / c).is_dir(), f"data root receives {c}/")
@@ -52,14 +52,14 @@ def main() -> None:
     keep = edited.read_text()
     untouched = cfg / "profiles" / "32gb.toml"
 
-    report = I.provision(REPO, cfg, data, state)
+    report = I.provision(RESOURCES, cfg, data, state)
     check("profiles/64gb.toml" in report["preserved"],
           "an edited profile is reported as preserved")
     check(edited.read_text() == keep, "an edited profile is NOT overwritten")
     check(untouched.read_text() == (REPO / "profiles" / "32gb.toml").read_text(),
           "an unedited profile still matches what was shipped")
 
-    report = I.provision(REPO, cfg, data, state)
+    report = I.provision(RESOURCES, cfg, data, state)
     check("profiles/64gb.toml" in report["preserved"],
           "an edit survives a SECOND upgrade (the manifest records what was "
           "shipped, not what is on disk)")
@@ -67,7 +67,7 @@ def main() -> None:
 
     _suite.section("A DELETED DEFAULT IS REPORTED, NEVER RESURRECTED")
     (cfg / "profiles" / "16gb.toml").unlink()
-    report = I.provision(REPO, cfg, data, state)
+    report = I.provision(RESOURCES, cfg, data, state)
     check("profiles/16gb.toml" in report["absent"],
           "a default the operator removed is reported")
     check(not (cfg / "profiles" / "16gb.toml").exists(),
@@ -75,14 +75,14 @@ def main() -> None:
 
     _suite.section("A CORRUPT MANIFEST NEVER LICENSES AN OVERWRITE")
     (state / I.MANIFEST_NAME).write_text("{ not json")
-    report = I.provision(REPO, cfg, data, state)
+    report = I.provision(RESOURCES, cfg, data, state)
     check(edited.read_text() == keep,
           "with no provenance, an edited file is still preserved")
 
     _suite.section("A RETIRED POLICY FILE IS REMOVED, UNLESS IT WAS EDITED")
     stale = cfg / "profiles" / "99gb.toml"
     stale.write_text("# a format or tier we no longer ship\n")
-    I.provision(REPO, cfg, data, state)          # records it as shipped? no: not in source
+    I.provision(RESOURCES, cfg, data, state)          # records it as shipped? no: not in source
     check(stale.is_file(),
           "a file the distribution never shipped is left alone")
     stale.unlink()
@@ -90,20 +90,26 @@ def main() -> None:
     _suite.section("DATA IS REPLACED WHOLESALE")
     stray = data / "deploy" / "not-shipped.sh"
     stray.write_text("# left behind by an older version\n")
-    I.provision(REPO, cfg, data, state)
+    I.provision(RESOURCES, cfg, data, state)
     check(not stray.exists(), "a file no longer shipped is gone after an upgrade")
     check((data / "deploy" / "litellm" / "registry.yaml").is_file(),
           "shipped data is present again")
 
-    _suite.section("THE SOURCE IS NEVER GUESSED")
-    check(I.distribution_source() == REPO,
-          "a checkout above the package is the distribution")
+    _suite.section("THE SOURCE IS THE PACKAGE, NEVER A GUESSED CHECKOUT")
+    check(I.distribution_source() == RESOURCES,
+          "the distribution is the package's own resource tree")
+    check((I.distribution_source() / "profiles" / "64gb.toml").is_file()
+          and (I.distribution_source() / "deploy").is_dir()
+          and (I.distribution_source() / "clients").is_dir(),
+          "every shipped component is reachable from the package alone")
+    # The checkout reaches the same profiles by two paths (root and resource
+    # tree). Copying one onto the other would truncate the file it is reading.
     try:
-        I.provision(REPO, REPO, data, state)
+        I.provision(RESOURCES, REPO, data, state)
         refused = False
     except SystemExit:
         refused = True
-    check(refused, "installing a checkout over itself is refused")
+    check(refused, "installing a shipped tree over itself is refused")
 
     _suite.section("TIER SELECTION NEVER ROUNDS UP")
     for gb, expected in ((8, None), (16, "16gb"), (31, "16gb"), (32, "32gb"),

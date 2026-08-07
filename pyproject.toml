@@ -21,5 +21,18 @@ dependencies = []
 [project.scripts]
 ailocal = "ailocal.cli:main"
 
+
+# Shipped static assets travel INSIDE the package, so a wheel or a pipx
+# installation carries everything `ailocal install` needs to provision. They are
+# never imported: install.provision() copies them into the managed data root,
+# and every consumer reads them from there.
+[tool.setuptools.package-data]
+ailocal = ["resources/**"]
+
+# resources/ holds data, not importable modules. Without this, setuptools finds
+# the hook directories (they contain .py files) and installs them as top-level
+# packages named `deploy`, `litellm`, `hooks`.
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["ailocal*"]
+exclude = ["ailocal.resources*"]

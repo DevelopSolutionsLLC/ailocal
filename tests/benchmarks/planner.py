@@ -33,12 +33,12 @@ import time
 import uuid
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent   # benchmarks/ -> repo root
-sys.path.insert(0, str(REPO / "benchmarks"))
+REPO = Path(__file__).resolve().parents[2]   # tests/benchmarks/ -> repo root
+sys.path.insert(0, str(REPO / "tests" / "benchmarks"))
 import suite as B  # noqa: E402
 
 PLANNER = Path.home() / ".local/state/ailocal/benchmark/planner"
-RUBRIC = REPO / "benchmarks" / "planner-rubric.md"
+RUBRIC = REPO / "tests" / "benchmarks" / "planner-rubric.md"
 CANDIDATES = ("candidate-a", "candidate-b", "candidate-c")
 PERMISSIONS = {"allowed": "Read,Glob,Grep",
                "denied": "Bash,Write,Edit,Task,WebFetch,WebSearch",

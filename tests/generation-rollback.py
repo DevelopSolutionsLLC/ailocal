@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from harness import REPO, Suite, load_module
+from harness import RESOURCES, REPO, Suite, load_module
 
 ROOT = REPO
 FAIL_AFTER = 3
@@ -74,7 +74,7 @@ def run(fail_after: int | None) -> tuple[dict, dict, int]:
 
 
 def main() -> int:
-    profile = ROOT / "profiles" / "64gb.toml"
+    profile = REPO / "profiles" / "64gb.toml"
     original = profile.read_text()
 
     print("A DRIFTED TEMPLATE STOPS GENERATION")

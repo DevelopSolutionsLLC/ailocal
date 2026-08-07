@@ -156,7 +156,7 @@ def tier_for_gb(gb: int):
     if gb >= 16:
         return "16gb"
     return None
-CONFIG = REPO / "benchmarks" / "benchmark.yaml"
+CONFIG = REPO / "tests" / "benchmarks" / "benchmark.yaml"
 PROFILE, EXPLICIT, PROFILE_PLUS = "PROFILE", "EXPLICIT", "PROFILE_PLUS_EXPLICIT"
 
 
