@@ -1,6 +1,6 @@
 # 009: Installed runtime layout
 
-- Status: Proposed
+- Status: Accepted (phases 1-5 implemented; 6-10 outstanding)
 - Date: 2026-08-06
 - Supersedes: none
 - Superseded by: none
@@ -266,19 +266,24 @@ stable, and never inside the same commit as a packaging change.
 
 ## Migration phases
 
-0. This ADR, plus ADR 010 for profile format. No code.
-1. **Path APIs.** `config_root()`, `data_root()`, `state_root()` land in
+Phases 1-5 are implemented. The defaults still resolve to the checkout, so the
+installed layout is available and exercised but not yet the default; phase 6 is
+the gate for flipping it.
+
+0. This ADR, plus ADR 010 for profile format. No code. **Done.**
+1. **Path APIs.** **Done.** `config_root()`, `data_root()`, `state_root()` land in
    `policy.py` as the sole owners, all still resolving to the checkout.
    Behavior unchanged; only derivation moves. Nothing else may compute a root.
-2. **Fix generated scheduled jobs.** The update-check LaunchAgent stops
+2. **Fix generated scheduled jobs.** **Done.** The update-check LaunchAgent stops
    embedding `$REPO/lib/security.sh` and invokes the installed `ailocal`
    command; until that entry point exists, `--install-schedule` refuses rather
    than writing a checkout path. See *Early defect* below.
-3. `pyproject.toml`, `src/ailocal/`, `[project.scripts]`. `cli.py` dispatches to
+3. **Done.** `pyproject.toml`, `src/ailocal/`, `[project.scripts]`. `cli.py` dispatches to
    existing implementations; root `ailocal` becomes a thin shim.
-4. `ailocal install` provisions the config and data roots, writes the manifest,
-   and performs the atomic swap. `preload.sh` moves out of Application Support.
-5. Compose switches to `--project-directory` on the data root plus explicit
+4. **Done** (as `ailocal provision`). Provisions the config and data roots,
+   writes the manifest, and performs the atomic swap. Moving `preload.sh` out
+   of Application Support is still outstanding.
+5. **Done.** Compose switches to `--project-directory` on the data root plus explicit
    `--env-file`.
 6. **Prove operation with the checkout moved.** The decisive test below.
 7. Lifecycle, clients, generation, and checks move into the package, one phase

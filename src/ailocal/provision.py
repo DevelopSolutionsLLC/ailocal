@@ -23,8 +23,10 @@ import os
 import shutil
 from pathlib import Path
 
-#: component -> destination root. Order is irrelevant; each swaps independently.
-DATA_COMPONENTS = ("lib", "deploy", "clients", "benchmarks")
+#: Installed assets. Order is irrelevant; each component swaps independently.
+#: `benchmarks/` is deliberately absent: it is a developer utility that is not
+#: part of install or update (ADR 009), so it keeps its checkout dependency.
+DATA_COMPONENTS = ("lib", "deploy", "clients")
 CONFIG_COMPONENTS = ("profiles",)
 
 MANIFEST_NAME = "install-manifest.json"
