@@ -24,13 +24,19 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from . import policy
+from . import policy, runtime
 
 BACKUP_KEEP = int(os.environ.get("BACKUP_KEEP", "5"))
 TARGETS = ("vscode", "codex", "claude")
 
 CONNECTOR_EXT = "Gethnet.litellm-connector-copilot"
-BASE_URL = os.environ.get("AILOCAL_BASE_URL", "http://localhost:4000")
+
+#: One canonical proxy URL for every host client, owned by runtime. It is
+#: 127.0.0.1 and not `localhost` on purpose: Docker publishes the port on IPv4
+#: only, `localhost` on macOS also resolves to ::1, and a client whose runtime
+#: tries ::1 first gets a bare connection refusal. Docker's own
+#: host.docker.internal is a different question and is not affected.
+BASE_URL = os.environ.get("AILOCAL_BASE_URL") or runtime.proxy_url()
 
 #: Literal marker pair another tool appends into files ailocal also writes. The
 #: strings are fixed because that tool writes them; ailocal only has to
@@ -240,34 +246,34 @@ DEPRECATED_SETTINGS = (
     "github.copilot.chat.customOAIModels",             # -> Custom Endpoint
     "github.copilot.agent.autoApprove",                # never a real setting
     "github.copilot.chat.tools.terminal.autoApprove",  # never a real setting
+    # ailocal used to set this to "mainAgent". That routes Copilot's utility
+    # and `tools` calls onto the SELECTED model, so a single chat turn fires
+    # several concurrent 50k-token requests at one local 26B. Ollama serves
+    # them one at a time (a 26B at 98k context does not fit twice), so the
+    # third waits minutes for its first byte and the socket is reset —
+    # "fetch failed", rootCause "read ECONNRESET". The connector's own README
+    # says to leave it at "GitHub Copilot"; ailocal now removes the override
+    # instead of writing it.
+    "chat.byokUtilityModelDefault",
 )
 
 #: Added to settings.json ONLY if absent, so the user's own choices and their
-#: comments survive. inactivityTimeout matters most: a 35B model cold-loads
-#: ~30 GB emitting no tokens, which trips the 60s default watchdog.
+#: comments survive.
+#:
+#: Every key here must be REQUIRED for a local model to answer in VS Code.
+#: ailocal is not a VS Code policy manager: auto-approve, auto-accept delays and
+#: agent-behaviour toggles are the user's preferences, not connectivity, and a
+#: tool that quietly writes them is a tool nobody can reason about.
+#: inactivityTimeout is the one that earns its place — a 26B model cold-loads
+#: tens of GB emitting no tokens, which trips the connector's 60s default.
 RECOMMENDED_SETTINGS = {
     "litellm-connector.inactivityTimeout": 300,
     "litellm-connector.enableResponsesApi": False,
     "litellm-connector.disableCaching": True,
-    # BYOK utility-model fix (VS Code 1.128+ regression): keep title/summary
-    # "utility" calls on the selected local model.
-    "chat.byokUtilityModelDefault": "mainAgent",
+    # Paired with the instruction files ailocal deploys; without the location
+    # the deployed files are dead weight.
     "github.copilot.chat.codeGeneration.useInstructionFiles": True,
     "chat.instructionsFilesLocations": {"~/.copilot/instructions": True},
-    "chat.editing.autoAcceptDelay": 0,
-    "github.copilot.chat.agent.runTasks": True,
-    "github.copilot.chat.agent.autoFix": True,
-    # The ONLY valid global auto-approve key. The other spellings are not real
-    # settings — VS Code silently ignores them.
-    "chat.tools.global.autoApprove": True,
-    # Auto-approve everything EXCEPT broad process kills and rm -rf: pkill of
-    # node in the integrated terminal takes down VS Code's own extension host
-    # and the connector with it.
-    "chat.tools.terminal.autoApprove": {
-        "/^.*/": True,
-        "/\\b(pkill|kill|killall)\\b/": False,
-        "/\\brm\\s+-rf\\b/": False,
-    },
 }
 
 
@@ -405,13 +411,10 @@ def install_vscode(argv: list[str]) -> int:
 
     installed = _extensions()
     if not dry:
-        # ms-python/golang.go are VS Code's own way of having language
-        # intelligence. Copilot Chat's agent mode consumes their language
-        # features directly, so the mcpls bridge is not handed to VS Code and
-        # there is no second symbol path (ADR 008). No shell entry: there is
-        # no first-party shell language server. Not claimed, not faked.
-        for ext in (CONNECTOR_EXT, "ms-python.python", "golang.go"):
-            _install_extension(ext, installed)
+        # The connector, and nothing else. Language extensions are the user's
+        # choice about their editor, not something a local-model runtime needs
+        # in order to answer a chat turn.
+        _install_extension(CONNECTOR_EXT, installed)
 
     _provider_group(user_dir / "chatLanguageModels.json", dry)
     _prune_deprecated(user_dir / "settings.json", dry)

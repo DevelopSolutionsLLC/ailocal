@@ -1,5 +1,5 @@
 # ailocal configure.zsh — sourced at the TOP of ~/.zshrc (before p10k instant
-# prompt). Managed file — installed by lib/install-clients.sh, always
+# prompt). Managed file — installed by `ailocal clients`, always
 # overwritten. Must produce ZERO stdout/stderr: this runs on every interactive
 # shell startup, and any output here corrupts p10k instant prompt / VS Code's
 # OSC 633 command markers.

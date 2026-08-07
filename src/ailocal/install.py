@@ -596,6 +596,68 @@ def _write_env(assume_yes: bool) -> None:
 # Out of scope by design: ~/.claude and ~/.codex, VS Code SecretStorage,
 # anything git tracks, and any container not named ailocal-*.
 
+def _vscode_findings() -> list:
+    """The VS Code side of "can a local model answer here?".
+
+    Three things, and only three: the connector points at the proxy URL this
+    installation actually serves, the API key reference survived (its VALUE
+    lives in SecretStorage and cannot be read from outside VS Code), and no
+    setting is present that routes Copilot's utility/`tools` calls onto the
+    selected local model. That last one is not cosmetic: it fires several
+    concurrent 50k-token requests at one model that serves them one at a time,
+    and the ones that queue die as "fetch failed" / rootCause ECONNRESET.
+
+    This inspects the USER's VS Code, which is host state, not managed
+    configuration — which is why it belongs to the audit and not to the
+    deterministic config layer. Silent when VS Code is not installed: not
+    using VS Code is not a broken installation.
+    """
+    from . import clients
+    from .checks import CheckResult, SKIP, WARN, passed
+
+    user_dir = clients._vscode_user_dir()
+    if user_dir is None:
+        return [CheckResult("vscode", SKIP, "vscode   not installed")]
+
+    out: list = []
+    models_json = user_dir / "chatLanguageModels.json"
+    try:
+        groups = json.loads(models_json.read_text(encoding="utf-8")) or []
+    except (OSError, ValueError):
+        groups = []
+    group = next((g for g in groups if isinstance(g, dict)
+                  and g.get("vendor") == "litellm-connector"), None)
+    want = runtime.proxy_url().rstrip("/")
+    if group is None:
+        out.append(CheckResult("vscode-provider", WARN,
+                               "MISSING no LiteLLM provider group",
+                               str(models_json), "run ailocal clients vscode"))
+    else:
+        have = str(group.get("baseUrl", "")).rstrip("/")
+        out.append(passed("vscode-provider", f"vscode   connector baseUrl {have}")
+                   if have == want else
+                   CheckResult("vscode-provider", WARN,
+                               f"STALE connector baseUrl {have}, proxy is {want}",
+                               str(models_json), "run ailocal clients vscode"))
+        out.append(passed("vscode-key", "vscode   API key reference present")
+                   if group.get("apiKey") else
+                   CheckResult("vscode-key", WARN,
+                               "MISSING no API key reference; chat will 401",
+                               str(models_json),
+                               "Command Palette → 'Chat: Manage Language Models' → LiteLLM"))
+
+    settings = user_dir / "settings.json"
+    text = settings.read_text(encoding="utf-8") if settings.is_file() else ""
+    bad = [k for k in clients.DEPRECATED_SETTINGS if f'"{k}"' in text]
+    out.append(passed("vscode-settings", "vscode   no deprecated or harmful settings")
+               if not bad else
+               CheckResult("vscode-settings", WARN,
+                           f"STALE settings that VS Code ignores or that break "
+                           f"local chat: {', '.join(bad)}",
+                           str(settings), "run ailocal clients vscode"))
+    return out
+
+
 def audit() -> list:
     """Read-only. Returns CheckResults; never deletes, moves or rewrites
     anything. A finding's `detail` is the path it is about, which is what
@@ -632,6 +694,7 @@ def audit() -> list:
     elif _has("code"):
         flag("MISSING", "VS Code connector extension", "VS Code",
                  "run ailocal clients vscode")
+    results += _vscode_findings()
 
     backups = policy.state_root() / "backups"
     count = len(list(backups.iterdir())) if backups.is_dir() else 0
