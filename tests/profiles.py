@@ -236,6 +236,18 @@ def resolver_checks() -> None:
             del os.environ[env]
     check(P.state_root() != P.config_root(),
           "state root is never the config root (generated state stays out of the tree)")
+    # A scheduled job outlives the shell that created it. If it embeds a path
+    # inside the checkout, moving the checkout breaks it silently and weeks
+    # later. Source inspection, because asserting this behaviourally would mean
+    # installing a real LaunchAgent.
+    sec = (REPO / "lib" / "security.sh").read_text()
+    # The heredoc body: between the opening marker and its terminator.
+    runner = sec.split("RUNNER_EOF")[1]
+    check("$REPO/lib" not in runner and "$ROOT/lib" not in runner,
+          "the generated update-check runner embeds no checkout path")
+    check("command -v ailocal" in sec,
+          "the update-check runner resolves the installed ailocal command")
+
     # Only policy.py may derive a root from XDG or ~/.local. Anything else is a
     # second owner that drifts the moment one of them moves.
     for path in sorted(REPO.glob("lib/**/*.py")) + sorted(REPO.glob("benchmarks/*.py")):
