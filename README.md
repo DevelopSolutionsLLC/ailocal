@@ -88,13 +88,16 @@ profile, never a generated file, then run `ailocal sync`.
 
 ## Commands
 
+`ailocal` is the only public entry point. Run `ailocal help` for the current
+list — it is the source of truth, so this page does not restate it.
+
+The ones you need first:
+
 ```
-ailocal status | doctor | validate | smoke      inspect
-ailocal start | stop | update | sync            lifecycle
-ailocal clients | vscode | models-install       deploy
-ailocal trace | metrics | e2e <client>          diagnostics
-ailocal benchmark <models|planner|gateway>      developer benchmarks
-ailocal teardown                                remove everything
+ailocal install     bootstrap the stack
+ailocal start       bring the proxy and models up
+ailocal status      live model status by capability
+ailocal test        the regression gate; run before every commit
 ```
 
 `ailocal sync` regenerates every derived file from the profile and client

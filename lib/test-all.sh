@@ -110,46 +110,24 @@ run "persona injection" \
 # execute commands the model never intended.
 run "tool-call repair (repairs real calls, refuses examples)" \
     python3 tests/gateway.py repair
-# E5. The message this replaces ("No fallback model group found ... Fallbacks=[...]")
-# was true and misleading: implementation is the TERMINAL tier, so having no chain is
-# intentional, and the real fault was upstream connectivity. Pure functions, so all
-# seven states are checked with no proxy and no model.
-# E1. The hook READS prompts, system text, tool definitions and tool results in
-# order to measure them, so every one of those is a place a secret or a source file
-# could enter a log. These tests push secret- and prompt-shaped values through the
-# real helpers and prove they never serialize, and that the token components are
-# disjoint and sum to the reported total.
+# The trace hook reads prompts, system text, tool definitions and tool results in
+# order to measure them, so each is a place a secret could enter a log. Redaction
+# and disjoint token accounting are the invariants.
 run "E1 trace schema, redaction and token reconciliation" \
     python3 tests/gateway.py trace
-# The planner comparison is the one benchmark whose SETUP has repeatedly been the
-# defect: it once measured a single model three times, and candidates could read
-# the answer key. These prove safe defaults, manifest locking, confinement wiring
-# and identity-stripped scoring copies -- with no inference.
+# Blinding and manifest locking are the invariants: a candidate must not be able
+# to read the answer key, and the comparison must not measure one model twice.
 run "planner comparison (safe defaults, locking, blinding)" \
     python3 tests/benchmark.py planner
-# E3. Declared num_ctx vs what the backend actually serves. nomic-embed-text
-# silently CLIPS at 2048 rather than erroring, so an over-declaration yields
-# successful-looking embeddings of truncated text — no error, just quietly worse
-# vectors.
-# The isolated claude-local root sets ENABLE_LSP_TOOL=1, but a plugin is what puts
-# a server behind that tool; delegating all plugin provisioning elsewhere leaves
-# the tool switched on with nothing behind it. This drives pyright-langserver over
-# stdio against a real repo file and requires real symbols back — presence of a
-# plugin is not capability.
-# profiles/*.yaml are the ONLY authoritative deployment config, and
-# config/active-profile has no implicit default. These prove there is one
-# parser and that every entry point fails closed rather than assuming 64gb.
-# The benchmark library owns alias construction, evidence capture, admission
-# geometry and restoration. It is gated here so a benchmark-only regression
-# cannot reach a planner run while the gate reports green.
+# Gated here so a benchmark-only regression cannot reach a planner run while the
+# gate still reports green.
 run "benchmark library (aliases, geometry, evidence, confinement)" \
     python3 tests/benchmark.py library
 run "benchmark command (models, planner, gateway dispatch)" \
     python3 tests/benchmark.py command
 run "benchmark runtime stages the generated config (not the authored tree)" \
     python3 tests/benchmark.py runtime
-# Non-inference paths must acquire nothing: a leaked worktree per gate run
-# accumulated 1,745 registrations and 2.5 GB before this was caught.
+# Non-inference paths must acquire no worktree; a leak per gate run accumulates.
 run "benchmark leaks no git worktree" \
     python3 tests/benchmark.py worktree
 run "profile resolver (single parser, fail-closed, no 64gb default)" \
@@ -163,16 +141,9 @@ run "Python LSP baseline for claude-local (real documentSymbol)" \
 
 echo
 echo "INTEGRATION"
-# Guards a backported LiteLLM fix. The bug it covers is NON-BLOCKING — streamed
-# /v1/messages kept working while success logging raised on every request — so
-# without a test its return would be invisible. Asserts the observable property
-# (no validation error) rather than "the patch is installed", so it also catches
-# a LiteLLM upgrade that makes the patch no-op while the bug persists.
-# MOVED TO --full. This drives nine REAL generations through a local model and
-# measured 51s of a 73s gate — the single reason the gate was slow enough to skip.
-# The cheap probe below still covers all three dialects on every run, so a broken
-# route is caught in seconds; the full matrix proves generation quality, which is
-# what --full is for.
+# --full only: drives nine real generations through a local model. The cheap
+# probe below covers all three dialects on every run, so a broken route is still
+# caught in seconds; the full matrix proves generation quality.
 if [ -n "$FULL" ]; then
   run "client compatibility (3 dialects x 3 modes)" \
       bash tests/client-compatibility.sh
@@ -220,25 +191,19 @@ run "ailocal sync is a fixed point" idempotent
 # Every shell script must parse. Cheap, and it has caught real breakage here.
 shell_syntax() {
   local bad=0
-  for f in scripts/*.sh clients/*.zsh; do
+  for f in ailocal lib/*.sh tests/*.sh benchmarks/*.sh clients/*.sh clients/*.zsh; do
     [ -e "$f" ] || continue
     bash -n "$f" 2>&1 || bad=1
   done
   return $bad
 }
-# The runtime must be the version the rest of this gate was validated against.
-# A floating tag silently moved us from 1.92.0 to 1.93.0 while the docs still
-# claimed the old one, so every "verified on" note referred to a version that was
-# no longer running.
+# The runtime must be the version the rest of this gate was validated against;
+# a floating tag moves it silently.
 run "litellm runtime matches the validated version" bash "$ROOT/lib/check-litellm-version.sh"
 run "all shell scripts parse (bash -n)" shell_syntax
 
-# The architecture-outage invariant. The client must never give up BEFORE the
-# proxy: when it did, a long cold prompt eval (789 s measured at 87,791 tokens)
-# was abandoned by Claude Code on its own undocumented default while LiteLLM
-# waited 900 s and Ollama kept generating into a closed connection. Only the
-# deterministic part of that defect is asserted here -- the two numbers agreeing
-# -- because reproducing the latency itself costs 13 minutes of GPU time.
+# The client must never give up before the proxy, or it abandons requests the
+# proxy is still serving while the backend generates into a closed connection.
 timeout_alignment() {
   local proxy client
   proxy="$(sed -n 's/^ *timeout: *\([0-9]*\).*/\1/p' deploy/litellm/config.template.yaml | head -1)"
@@ -260,7 +225,15 @@ python_syntax() {
   python3 - <<'PY'
 import ast, glob, sys
 bad = 0
-for path in glob.glob("scripts/*.py") + glob.glob("deploy/litellm/hooks/*.py"):
+# lib/profile-config is Python with no extension, so it is named explicitly —
+# without it, the one file every shell entry point shells out to goes unchecked.
+paths = sorted(set(
+    glob.glob("lib/**/*.py", recursive=True)
+    + glob.glob("benchmarks/**/*.py", recursive=True)
+    + glob.glob("tests/**/*.py", recursive=True)
+    + glob.glob("deploy/litellm/hooks/*.py")
+    + ["lib/profile-config"]))
+for path in paths:
     try:
         ast.parse(open(path, encoding="utf-8").read())
     except SyntaxError as exc:
