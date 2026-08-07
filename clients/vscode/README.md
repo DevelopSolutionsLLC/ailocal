@@ -2,7 +2,7 @@
 
 Deployed by `ailocal vscode` (also reachable as
 `ailocal clients vscode`). Validated by
-`ailocal e2e vscode`.
+`tests/e2e.sh vscode` from a checkout.
 
 ## Why VS Code spans three directories
 

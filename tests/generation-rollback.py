@@ -1,35 +1,18 @@
 #!/usr/bin/env python3
 """Generation is per-file atomic WITH ROLLBACK — never mixed on disk.
 
-THE DEFECT THIS REPRODUCES. flush_stage() wrote every temp file first and
-replaced effective-profile.json last, and the docstring called that
-transactionally atomic. It was not: os.replace() is atomic PER FILE, and the
-set is replaced one file at a time, so a failure part-way through left some
-destinations new and some old.
+DESTRUCTIVE, and separate for that reason: it perturbs a tracked profile and
+monkeypatches os.replace inside a loaded generation module. Every source it
+touches is restored and the tree is regenerated before it exits.
 
-Ordering alone does not save the deployed system either. Writing the marker
-last makes marker-aware readers fail closed, but LiteLLM reads
-litellm/config.yaml directly and each client reads its own generated
-file directly -- none of them consult effective-profile.json. Before the fix,
-failing after three replaces left capabilities.generated.json new
-while the marker and client configs were still old. Mixed state, on disk,
-servable.
-
-So flush_stage now backs up each destination before replacing it and restores
-every already-replaced destination if any later replacement fails.
-
-WHAT THIS PROVES, AND WHAT IT DOES NOT. It injects an I/O error, which the
+WHAT IT PROVES, AND WHAT IT DOES NOT. It injects an I/O error, which the
 recovery path can respond to. It does NOT simulate SIGKILL: nothing in-process
-can roll back after the process is gone. The accurate wording is "per-file
-atomic with rollback on partial failure", and that is what the code says.
-
-Read-only with respect to real configuration: every source it perturbs is
-restored, and the tree is regenerated before the test exits.
+can roll back after the process is gone. "Per-file atomic with rollback on
+partial failure" is the accurate claim, and it is what the code says.
 """
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import os
 import pathlib
 import sys
@@ -58,7 +41,7 @@ def destinations(sm) -> list[pathlib.Path]:
     return [sm.LITELLM_CONFIG, sm.CAPS_JSON, sm.CODEX_CATALOG, sm.CLAUDE_SETTINGS,
             sm.CODEX_CONFIG, sm.CODEX_PLAN, sm.CODEX_REVIEW, sm.CONTINUE_CONFIG,
             sm.CONFIGURE_ZSH, sm.COPILOT_REPO_MD, sm.CONTRACT_JSON,
-            ROOT / "config" / "effective-profile.json"]
+            sm.EFFECTIVE_JSON]
 
 
 def run(fail_after: int | None) -> tuple[dict, dict, int]:
@@ -80,14 +63,11 @@ def run(fail_after: int | None) -> tuple[dict, dict, int]:
         return real(src, dst)
 
     sm.os.replace = flaky
-    argv = sys.argv[:]
-    sys.argv = ["generation"]
     try:
-        sm.main()
+        sm.main([])
     except (SystemExit, OSError):
         pass
     finally:
-        sys.argv = argv
         sm.os.replace = real
     after = {p: digest(p) for p in dests}
     return before, after, calls["n"]
@@ -98,8 +78,8 @@ def main() -> int:
     original = profile.read_text()
 
     print("A DRIFTED TEMPLATE STOPS GENERATION")
-    # Skipping a missing marker emitted a config.yaml with NO model_list at all,
-    # and every consumer read it as a valid empty stack.
+    # A missing marker must abort: skipping one emits a config.yaml with no
+    # model_list, which every consumer reads as a valid empty stack.
     sm = load_sync()
     try:
         sm.splice("no markers here\n", "<<BEGIN>>", "<<END>>", "x", "model_list")
@@ -143,10 +123,8 @@ def main() -> int:
     finally:
         profile.write_text(original)
         # Leave the tree on the real configuration, not the fixture's.
-        sm = load_sync()
-        sys.argv = ["generation"]
         try:
-            sm.main()
+            load_sync().main([])
         except SystemExit:
             pass
 

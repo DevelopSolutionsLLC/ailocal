@@ -183,7 +183,7 @@ ailocal sync && ailocal clients
 **Verify**
 
 ```sh
-ailocal e2e codex     # bounded; classifies the outcome rather than hanging
+tests/e2e.sh codex    # bounded; classifies the outcome rather than hanging
 ```
 
 **Fix** — none available locally. Configuration, routing, geometry and tool
@@ -296,7 +296,7 @@ refreshed, or the extension is absent.
 **Verify**
 
 ```sh
-ailocal e2e vscode
+tests/e2e.sh vscode
 ```
 
 **Fix**
