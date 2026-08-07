@@ -313,7 +313,7 @@ def check_models_present(required: list[str]) -> CheckResult:
     if not missing:
         return CheckResult("models", PASS, f"all {len(required)} required models present")
     return CheckResult("models", FAIL, f"missing models: {', '.join(missing)}",
-                       remediation="ailocal models install")
+                       remediation="ailocal models-install")
 
 
 def check_generation(token: str, alias: str = "ailocal-fast") -> CheckResult:

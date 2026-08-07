@@ -21,13 +21,10 @@ def _root() -> Path:
 
 
 #: command -> (implementing module, fixed args, forwards argv)
-#: `models` deliberately does not forward: it is a fixed table rendering, and
-#: accepting arguments it then ignores would be worse than refusing them.
 PY, SH = "py", "sh"
 COMMANDS: dict[str, tuple[str, tuple, bool]] = {
     "install":        ("ailocal.install", ("install",), True),
     "status":         ("ailocal.runtime", ("status",), True),
-    "models":         ("ailocal.runtime", ("status", "--table"), False),
     "doctor":         ("ailocal.checks.run", ("doctor",), True),
     "validate":       ("ailocal.checks.run", ("validate",), True),
     "smoke":          ("ailocal.checks.run", ("smoke",), True),
@@ -40,7 +37,6 @@ COMMANDS: dict[str, tuple[str, tuple, bool]] = {
     "update":         ("ailocal.runtime", ("update",), True),
     "teardown":       ("ailocal.runtime", ("teardown",), True),
     "compose":        ("ailocal.runtime", ("compose",), True),
-    "ready":          ("ailocal.runtime", ("ready",), True),
     "clients":        ("ailocal.clients", (), True),
     "vscode":         ("ailocal.clients", ("--vscode-only",), True),
     "models-install": ("ailocal.install", ("models",), True),
@@ -69,15 +65,14 @@ NESTED: dict[str, dict[str, tuple]] = {
 #: is the documented consumer of session_observer traces -- see
 #: deploy/litellm/hooks/session_observer.py -- and is undiscoverable, not dead.
 INTERNAL = frozenset({
-    "verify-session", "trace", "metrics", "compose", "ready",
-    "update-check",
+    "verify-session", "trace", "metrics", "compose", "update-check",
 })
 
 #: Help layout: (heading, [command...]). Every non-internal command appears
 #: exactly once; the gate asserts it.
 GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("bootstrap the stack",        ("install",)),
-    ("inspect",                    ("status", "models", "doctor", "validate", "smoke")),
+    ("inspect",                    ("status", "doctor", "validate", "smoke")),
     ("container supply chain",     ("security",)),
     ("lifecycle",                  ("start", "stop", "update", "sync")),
     ("deploy",                     ("clients", "vscode", "models-install")),

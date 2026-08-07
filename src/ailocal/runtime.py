@@ -912,14 +912,9 @@ def cmd_compose(argv: list[str]) -> int:
     return compose(*argv, check=False).returncode
 
 
-def cmd_ready(argv: list[str]) -> int:
-    """Block until the proxy answers. Exit status is the answer."""
-    return 0 if wait_ready(int(argv[0]) if argv else 30, progress=True) else 1
-
-
 COMMANDS = {"status": cmd_status, "start": cmd_start, "stop": cmd_stop,
             "update": cmd_update, "teardown": cmd_teardown,
-            "compose": cmd_compose, "ready": cmd_ready, "trace": cmd_trace,
+            "compose": cmd_compose, "trace": cmd_trace,
             "metrics": cmd_metrics}
 
 
