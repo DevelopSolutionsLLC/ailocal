@@ -20,15 +20,14 @@ BASH = "/bin/bash"
 
 
 def _root() -> Path:
-    """Where lib/ and the deploy assets live.
+    """Where lib/ and the deploy assets live: the data root, and nothing else.
 
-    AILOCAL_DATA wins, so an installed package can be pointed at its assets.
-    Otherwise walk up from this file, which resolves inside a checkout
-    (src/ailocal/cli.py -> repo root) and is what every current entry point
-    assumes. ADR 009 phase 4 makes the installed data root the default.
+    This used to walk up from __file__, which is only ever right inside a
+    checkout -- installed under site-packages it produced a path with no lib/
+    in it. policy.py owns every root; asking it is the whole point.
     """
-    override = os.environ.get("AILOCAL_DATA")
-    return Path(override) if override else Path(__file__).resolve().parents[2]
+    from . import policy
+    return policy.data_root()
 
 
 #: command -> (interpreter, target relative to root, fixed args, forwards argv)
