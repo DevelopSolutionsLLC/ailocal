@@ -126,6 +126,39 @@ def _exec(kind: str, target: Path, args) -> None:
     os.execv(argv[0], argv)
 
 
+def _policy():
+    """policy.py still lives under lib/ (ADR 009 phase 7 moves it here)."""
+    sys.path.insert(0, str(_root() / "lib"))
+    import policy
+    return policy
+
+
+def _provision(argv: list[str]) -> int:
+    """Install authored assets into the config and data roots."""
+    from . import provision as prov
+    P = _policy()
+    source = Path(__file__).resolve().parents[2]
+    config = Path(argv[argv.index("--config") + 1]) if "--config" in argv \
+        else P.config_root()
+    data = Path(argv[argv.index("--data") + 1]) if "--data" in argv \
+        else P.data_root()
+    state = Path(argv[argv.index("--state") + 1]) if "--state" in argv \
+        else P.state_root()
+    if config == source or data == source:
+        print("provision: refusing to install a checkout over itself.\n"
+              "Pass --config/--data, or set AILOCAL_CONFIG/AILOCAL_DATA.",
+              file=sys.stderr)
+        return 2
+    report = prov.provision(source, config, data, state)
+    print(f"data     {data}: {', '.join(report['data_components'])}")
+    print(f"config   {config}: {len(report['installed'])} file(s) installed")
+    for rel in report["preserved"]:
+        print(f"  kept   {rel} (edited since install)")
+    for rel in prov.missing_defaults(source, config):
+        print(f"  absent {rel} (shipped default not present)")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     cmd = argv.pop(0) if argv else "help"
@@ -133,6 +166,9 @@ def main(argv: list[str] | None = None) -> int:
     if cmd in ("help", "-h", "--help"):
         print(_usage())
         return 0
+
+    if cmd == "provision":
+        return _provision(argv)
 
     if cmd in NESTED:
         targets = NESTED[cmd]

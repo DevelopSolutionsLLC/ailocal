@@ -552,6 +552,12 @@ def resolver_checks() -> None:
     expect(P.EFFECTIVE_PROFILE_STALE_TIER,
            lambda b: _write_marker(b, "32gb\n"),
            "active-profile changed")
+    # Same tier NAME, different bytes. Only the marker hash can see this, and it
+    # was unreachable while the generator hashed a path inside the checkout
+    # where no marker exists: the hash was "", and the guard skips a falsy hash.
+    expect(P.EFFECTIVE_PROFILE_STALE_TIER,
+           lambda b: _write_marker(b, f"{eff['tier']}   \n\n"),
+           "active-profile rewritten with the same tier")
     expect(P.EFFECTIVE_PROFILE_STALE_SOURCE,
            lambda b: (b / "profiles" / f"{eff['tier']}.yaml")
                      .write_text("architecture:\n  role: x\n  active: y\n  context: 1\n"),
