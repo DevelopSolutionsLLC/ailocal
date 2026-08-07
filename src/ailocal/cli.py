@@ -15,7 +15,6 @@ COMMANDS: dict[str, tuple[str, tuple]] = {
     "install":        ("ailocal.install", ("install",)),
     "status":         ("ailocal.runtime", ("status",)),
     "check":          ("ailocal.checks.run", ("check",)),
-    "test":           ("ailocal.checks.run", ("test",)),
 
     "sync":           ("ailocal.generation", ()),
     "start":          ("ailocal.runtime", ("start",)),
@@ -23,20 +22,13 @@ COMMANDS: dict[str, tuple[str, tuple]] = {
     "update":         ("ailocal.runtime", ("update",)),
     "teardown":       ("ailocal.runtime", ("teardown",)),
     "clients":        ("ailocal.clients", ()),
-    "vscode":         ("ailocal.clients", ("--vscode-only",)),
-    "models-install": ("ailocal.install", ("models",)),
-    "cleanup":        ("ailocal.install", ("cleanup",)),
-    "autostart":      ("ailocal.install", ("autostart",)),
-    "update-check":   ("ailocal.install", ("update-check",)),
     "trace":          ("ailocal.runtime", ("trace",)),
-    "metrics":        ("ailocal.runtime", ("metrics",)),
 }
 
-#: Dispatched but NOT advertised: single-purpose diagnostics and host setup
-#: with no documented user workflow. They stay reachable because deleting a
-#: working diagnostic is not a simplification, but they do not belong in the
-#: surface a new user reads.
-INTERNAL = frozenset({"trace", "metrics", "update-check"})
+#: Dispatched but NOT advertised: `trace` reads the per-request timeline the
+#: proxy hooks write, which is a subsystem this project ships and nothing else
+#: can read. It has no place in the surface a new user reads.
+INTERNAL = frozenset({"trace"})
 
 #: Help layout: (heading, [command...]). Every non-internal command appears
 #: exactly once; the gate asserts it.
@@ -44,10 +36,8 @@ GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("bootstrap the stack",        ("install",)),
     ("inspect",                    ("status", "check")),
     ("lifecycle",                  ("start", "stop", "update", "sync")),
-    ("deploy",                     ("clients", "vscode", "models-install")),
-    ("installation",               ("cleanup", "teardown")),
-    ("host setup",                 ("autostart",)),
-    ("the regression gate",        ("test",)),
+    ("point a client at it",       ("clients",)),
+    ("remove it",                  ("teardown",)),
     ("the active profile",         ("profile",)),
 )
 

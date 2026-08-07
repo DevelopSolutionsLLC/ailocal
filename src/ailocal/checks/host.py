@@ -76,7 +76,7 @@ def check_model_store() -> list[CheckResult]:
         out.append(CheckResult(
             "model-store", WARN,
             "OLLAMA_MODELS unset — models go to ~/.ollama, not the shared store",
-            remediation="ailocal autostart, then restart Ollama"))
+            remediation="ailocal install, then restart Ollama"))
     elif not os.path.isdir(target):
         out.append(CheckResult("model-store", WARN,
                                f"OLLAMA_MODELS={target} does not exist"))
@@ -93,7 +93,7 @@ def check_model_store() -> list[CheckResult]:
         out.append(CheckResult(
             "orphan-store", WARN,
             f"{home_store} holds {size} that Ollama cannot see",
-            remediation="ailocal autostart --env-only"))
+            remediation="ailocal install"))
     return out
 
 

@@ -55,7 +55,8 @@ services and deploys the client configurations. It refuses to select a profile
 the machine cannot hold.
 
 It can also install login agents that start Ollama and preload the resident
-model — answer `y` when prompted, or run `ailocal autostart` later.
+model — answer `y` when prompted. Re-running `ailocal install` is
+idempotent and reconfigures them.
 
 ## Verify
 

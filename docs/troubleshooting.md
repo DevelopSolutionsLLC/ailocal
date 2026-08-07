@@ -99,7 +99,7 @@ ailocal check     # names every missing model
 **Fix**
 
 ```sh
-ailocal models-install
+ailocal install
 ```
 
 **Status** — configuration issue.
@@ -251,7 +251,7 @@ ailocal check       # compares generated against deployed
 
 ```sh
 ailocal clients     # claude, codex, continue, copilot
-ailocal vscode      # VS Code connector
+ailocal clients vscode      # VS Code connector
 ```
 
 **Status** — configuration issue.
@@ -295,7 +295,7 @@ refreshed, or the extension is absent.
 **Fix**
 
 ```sh
-ailocal vscode
+ailocal clients vscode
 ```
 
 Then reload the VS Code window.

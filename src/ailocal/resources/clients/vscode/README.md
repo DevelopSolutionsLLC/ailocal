@@ -1,6 +1,6 @@
 # VS Code client
 
-Deployed by `ailocal vscode` (also reachable as `ailocal clients vscode`).
+Deployed by `ailocal clients vscode`.
 
 ## Why VS Code spans three directories
 

@@ -116,7 +116,7 @@ config root — never the repository.
 ## Extension points
 
 **Add a model** — edit the capability's `active` in `profiles/<tier>.toml`,
-then `ailocal sync && ailocal models-install`.
+then `ailocal sync && ailocal install`.
 
 **Add a profile** — create `profiles/<tier>.toml` and add the tier to
 `policy.TIERS`. Selection thresholds live in `src/ailocal/install.py`.
