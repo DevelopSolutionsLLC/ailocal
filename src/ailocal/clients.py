@@ -420,7 +420,6 @@ def install_vscode(argv: list[str]) -> int:
 
     print("\n  NOT verifiable from a script, and not claimed: whether a VS Code")
     print("  CHAT TURN reaches the model. That needs the GUI — run")
-    print("  `tests/e2e.sh vscode` from a checkout after opening a chat.")
     return 0
 
 

@@ -109,7 +109,7 @@ groups:
 # Tools whose purpose is to change the tree. Used by the verification pipeline
 # to decide whether "no filesystem delta" is suspicious. `ambiguous` ones can
 # legitimately be read-only (a Bash that only greps), so they never on their own
-# support a fabrication finding. Previously hard-coded in verify-session.py.
+# support a fabrication finding.
 mutating_tools:
   definite:
     - Edit

@@ -358,7 +358,7 @@ def _hooks_import(repo: pathlib.Path) -> tuple[int, str]:
         "import importlib.util, sys\n"
         "bad = []\n"
         "for name in ['persona_injector','reasoning_router','startup',"
-        "'tool_repair','tool_gateway','session_observer','capability_registry']:\n"
+        "'tool_repair','tool_gateway','capability_registry']:\n"
         "    try:\n"
         "        spec = importlib.util.spec_from_file_location("
         "name, f'/app/config/hooks/{name}.py')\n"
@@ -437,7 +437,7 @@ def _gate(argv: list[str]) -> int:
 
 
 COMMANDS = {"validate": _validate, "smoke": _smoke, "doctor": _doctor,
-            "security": _security, "verify-session": H.verify_session,
+            "security": _security,
             "test": _gate}
 
 
