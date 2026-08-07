@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ailocal"
+version = "0.1.0"
+description = "Run Claude Code, Codex CLI and VS Code Copilot Chat against local models on Apple Silicon."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+authors = [{ name = "DevelopSolutions, LLC" }]
+
+# Deliberately empty, and checked by the gate. The host interpreter must be able
+# to run ailocal with no virtual environment: every shell entry point calls
+# python3 directly, and `ailocal test` runs on a bare interpreter. Adding a
+# dependency here means owning a venv lifecycle across install, doctor, update
+# and teardown -- see ADR 009.
+dependencies = []
+
+[project.scripts]
+ailocal = "ailocal.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

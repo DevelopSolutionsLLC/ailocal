@@ -228,7 +228,8 @@ bad = 0
 # lib/profile-config is Python with no extension, so it is named explicitly —
 # without it, the one file every shell entry point shells out to goes unchecked.
 paths = sorted(set(
-    glob.glob("lib/**/*.py", recursive=True)
+    glob.glob("src/**/*.py", recursive=True)
+    + glob.glob("lib/**/*.py", recursive=True)
     + glob.glob("benchmarks/**/*.py", recursive=True)
     + glob.glob("tests/**/*.py", recursive=True)
     + glob.glob("deploy/litellm/hooks/*.py")

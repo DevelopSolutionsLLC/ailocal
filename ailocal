@@ -1,91 +1,11 @@
 #!/usr/bin/env bash
-# ailocal — the single public entry point. Implementations live in lib/.
-# The `help` heredoc at the foot of this file is the only command list; do not
-# restate it here, or the two drift apart.
+# ailocal — development shim. The real command is the installed console script
+# `ailocal` (pyproject.toml -> ailocal.cli:main); this exists so the repository
+# stays runnable from a checkout without installing anything, and is deleted
+# once the installed entry point is the only supported surface (ADR 009).
 #
-# Put it on PATH once:  ln -sf "$(pwd)/ailocal" /usr/local/bin/ailocal
+# The command list lives in src/ailocal/cli.py and is rendered from one table.
+# Do not restate it here.
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
-LIB="$ROOT_DIR/lib"
-# No default action. A bare command name prints usage rather than doing work —
-# the same contract as `cadence`, and the reason is the same: a command that acts
-# when invoked with no arguments is a command you cannot safely explore.
-cmd="${1:-help}"; shift || true
-
-case "$cmd" in
-  install)  exec bash "$LIB/install.sh" "$@" ;;
-  status)   exec bash "$LIB/status.sh" "$@" ;;
-  models)   exec bash "$LIB/status.sh" --table ;;
-  validate) exec python3 "$LIB/checks/run.py" validate "$@" ;;
-  doctor)  exec python3 "$LIB/checks/run.py" doctor "$@" ;;
-  security) exec bash "$LIB/security.sh" "$@" ;;
-  test)     exec bash "$LIB/test-all.sh" "$@" ;;
-  profile)  exec python3 "$LIB/profile-config" "$@" ;;
-  sync)    exec python3 "$LIB/sync-models.py" "$@" ;;
-  start)   exec bash "$LIB/lifecycle.sh" start "$@" ;;
-  stop)    exec bash "$LIB/lifecycle.sh" stop "$@" ;;
-  update)  exec bash "$LIB/lifecycle.sh" update "$@" ;;
-  # --external-search issues one federated query and SPENDS Brave API quota.
-  smoke)   exec python3 "$LIB/checks/run.py" smoke "$@" ;;
-  resolve) exec python3 "$LIB/sync-models.py" --resolve "$@" ;;
-  # Client deployment and the lifecycle actions that used to be run as
-  # individual scripts. Those files are internal; this is the supported entry.
-  clients)  exec bash "$LIB/install-clients.sh" "$@" ;;
-  vscode)   exec bash "$LIB/install-vscode.sh" "$@" ;;
-  models-install) exec bash "$LIB/install-models.sh" "$@" ;;
-  audit)    exec bash "$LIB/audit-installation.sh" "$@" ;;
-  cleanup)  exec bash "$LIB/cleanup-installation.sh" "$@" ;;
-  teardown) exec bash "$LIB/lifecycle.sh" teardown "$@" ;;
-  autostart) exec bash "$LIB/setup-startup.sh" "$@" ;;
-  ollama-env) exec bash "$LIB/setup-ollama-env.sh" "$@" ;;
-  preload)  exec bash "$LIB/preload-model.sh" "$@" ;;
-  trace)    exec bash "$LIB/request-trace.sh" "$@" ;;
-  metrics)  exec python3 "$LIB/gateway-metrics.py" "$@" ;;
-  verify-session) exec python3 "$LIB/diagnostics/verify-session.py" "$@" ;;
-  # benchmark <suite> [...] — the one entry point to the benchmark subsystem.
-  benchmark)
-    suite="${1:-help}"; shift || true
-    case "$suite" in
-      models)  exec python3 "$ROOT_DIR/benchmarks/models.py" "$@" ;;
-      planner) exec python3 "$ROOT_DIR/benchmarks/planner.py" "$@" ;;
-      gateway) exec bash   "$ROOT_DIR/benchmarks/gateway.sh" "$@" ;;
-      *)
-        cat >&2 <<'BENCH'
-usage: ailocal benchmark <suite> [options]
-
-  models    evaluate candidate models (plan | run | probe | client |
-            setup | doctor | report)
-  planner   blinded A/B of planner candidates on a fixed scenario
-  gateway   A/B the tool gateway on a real client, report vs filter
-
-Benchmarks are a developer utility: they never modify a profile, and they are
-not part of install, update or the regression gate.
-BENCH
-        case "$suite" in help|--help|-h) exit 0 ;; *) exit 2 ;; esac ;;
-    esac ;;
-  e2e)      # e2e <claude|codex|vscode>
-            case "${1:-}" in
-              claude) shift; exec bash "$LIB/validate-claude-e2e.sh" "$@" ;;
-              codex)  shift; exec bash "$LIB/validate-codex-e2e.sh"  "$@" ;;
-              vscode) shift; exec bash "$LIB/validate-vscode-e2e.sh" "$@" ;;
-              *) echo "ailocal e2e {claude|codex|vscode}" >&2; exit 1 ;;
-            esac ;;
-  help|-h|--help) cat <<'USAGE'
-ailocal — local model runtime
-
-  install                                         bootstrap the stack
-  status | models | doctor | validate | smoke     inspect
-  security [--scan|--check-updates]               container supply chain
-  start | stop | update | sync                    lifecycle
-  clients | vscode | models-install               deploy
-  audit | cleanup | teardown                      installation
-  autostart | ollama-env | preload                host setup
-  trace | metrics | verify-session | e2e <client> diagnostics
-  test [--full]                                   the regression gate
-  benchmark <models|planner|gateway>              developer benchmarks
-  profile <subcommand>                            query the active profile
-  resolve <capability>                            print the active backend
-USAGE
-     exit 0 ;;
-  *) echo "ailocal: unknown command '$cmd' — run 'ailocal help'" >&2; exit 1 ;;
-esac
+exec python3 -c 'import sys; sys.path.insert(0, sys.argv[1] + "/src"); from ailocal.cli import main; sys.exit(main(sys.argv[2:]))' "$ROOT_DIR" "$@"
