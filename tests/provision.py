@@ -38,6 +38,9 @@ def main() -> None:
     check((cfg / "profiles" / "clients.yaml").is_file(),
           "config root receives client policy")
     check((state / prov.MANIFEST_NAME).is_file(), "a manifest is recorded")
+    # Benchmarks are a developer utility, not part of install or update.
+    check(not (data / "benchmarks").exists(),
+          "benchmarks are not installed into the data root")
     check(not list(data.glob(".staging-*")), "no staging tree survives a success")
     check(not list(data.glob(".rollback-*")), "no rollback tree survives a success")
     # Authored policy must not also be shipped as replaceable data, or an
