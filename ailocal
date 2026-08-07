@@ -4,8 +4,16 @@
 # stays runnable from a checkout without installing anything, and is deleted
 # once the installed entry point is the only supported surface (ADR 009).
 #
+# A checkout run is DECLARED, not guessed. policy.py resolves config and data to
+# XDG locations; running against the working tree means saying so, which is why
+# these two exports exist and why nothing derives a repository root from its own
+# file location any more.
+#
 # The command list lives in src/ailocal/cli.py and is rendered from one table.
 # Do not restate it here.
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
-exec python3 -c 'import sys; sys.path.insert(0, sys.argv[1] + "/src"); from ailocal.cli import main; sys.exit(main(sys.argv[2:]))' "$ROOT_DIR" "$@"
+export AILOCAL_CONFIG="${AILOCAL_CONFIG:-$ROOT_DIR}"
+export AILOCAL_DATA="${AILOCAL_DATA:-$ROOT_DIR}"
+export PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
+exec python3 -c 'import sys; from ailocal.cli import main; sys.exit(main(sys.argv[1:]))' "$@"

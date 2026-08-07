@@ -20,7 +20,7 @@ USER_DIR="$HOME/Library/Application Support/Code/User"
 [ -d "$USER_DIR" ] || USER_DIR="$HOME/.config/Code/User"
 MODELS_JSON="$USER_DIR/chatLanguageModels.json"
 BASE_URL="${AILOCAL_BASE_URL:-http://localhost:4000}"
-KEY="$(grep -E '^LITELLM_MASTER_KEY=' .env 2>/dev/null | cut -d= -f2-)"
+KEY="$(grep -E '^LITELLM_MASTER_KEY=' "$(python3 "$ROOT_DIR/lib/profile-config" config-root)/.env" 2>/dev/null | cut -d= -f2-)"
 
 pass=0; fail=0; declare -a FAILED=()
 ok()   { printf '  \033[32mPASS\033[0m  %s\n' "$1"; pass=$((pass+1)); }

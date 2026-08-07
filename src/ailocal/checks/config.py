@@ -16,10 +16,8 @@ import sys
 
 from . import BLOCKED, FAIL, PASS, WARN, CheckResult
 
-REPO = pathlib.Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(REPO / "lib"))
 
-import policy as P  # noqa: E402
+from ailocal import policy as P
 
 
 # ── source configuration ────────────────────────────────────────────────────
@@ -220,7 +218,7 @@ def check_mount_drift() -> CheckResult:
 def check_compose_layout() -> list[CheckResult]:
     """deploy/ is canonical; a root compose file means two competing stacks."""
     out = []
-    root_compose = [p for p in (REPO / "docker-compose.yml", REPO / "docker-compose.yaml")
+    root_compose = [p for p in (P.data_root() / "docker-compose.yml", P.data_root() / "docker-compose.yaml")
                     if p.exists()]
     out.append(CheckResult(
         "compose-root", FAIL if root_compose else PASS,
@@ -229,12 +227,12 @@ def check_compose_layout() -> list[CheckResult]:
         remediation=None if not root_compose else "remove the root compose file"))
 
     published = []
-    for f in sorted((REPO / "deploy").rglob("docker-compose*.yml")):
+    for f in sorted((P.data_root() / "deploy").rglob("docker-compose*.yml")):
         for ln in f.read_text().splitlines():
             t = ln.strip().lstrip("- ").strip('"')
             if (t and t[0].isdigit() and ":" in t
                     and not t.startswith("127.0.0.1")):
-                published.append(f"{f.relative_to(REPO)}: {t}")
+                published.append(f"{f.relative_to(P.data_root())}: {t}")
     out.append(CheckResult(
         "compose-bindings", FAIL if published else PASS,
         "all published ports bound to 127.0.0.1" if not published
@@ -259,11 +257,11 @@ def _compose_json() -> dict | None:
     import subprocess
     try:
         r = subprocess.run(
-            ["docker", "compose", "--project-directory", str(REPO),
-             "-f", str(REPO / "deploy" / "litellm" / "compose.yaml"),
-             "-f", str(REPO / "deploy" / "searxng" / "compose.yaml"),
+            ["docker", "compose", "--project-directory", str(P.data_root()),
+             "-f", str(P.data_root() / "deploy" / "litellm" / "compose.yaml"),
+             "-f", str(P.data_root() / "deploy" / "searxng" / "compose.yaml"),
              "config", "--format", "json"],
-            capture_output=True, text=True, timeout=60, cwd=REPO,
+            capture_output=True, text=True, timeout=60, cwd=P.data_root(),
             env=_compose_env())
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -331,7 +329,7 @@ def check_generated_in_sync() -> CheckResult:
     """Regeneration is a fixed point; drift means a hand edit. Active tier only."""
     import subprocess
     try:
-        r = subprocess.run([sys.executable, str(REPO / "lib" / "sync-models.py"), "--check"],
+        r = subprocess.run([sys.executable, str(P.data_root() / "lib" / "sync-models.py"), "--check"],
                            capture_output=True, text=True, timeout=180)
     except (OSError, subprocess.TimeoutExpired) as exc:
         return CheckResult("generated-sync", BLOCKED,

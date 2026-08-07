@@ -80,8 +80,11 @@ def master_key() -> str:
     """
     if os.environ.get("LITELLM_MASTER_KEY"):
         return os.environ["LITELLM_MASTER_KEY"]
-    repo = pathlib.Path(__file__).resolve().parent.parent.parent
-    for path in (repo / ".env", repo / "clients" / "env.sh"):
+    from ailocal import policy as _pc
+    # .env is user configuration; clients/env.sh is an installed asset. Neither
+    # is found by walking up from this file once the package is installed.
+    for path in (_pc.config_root() / ".env",
+                 _pc.data_root() / "clients" / "env.sh"):
         if path.is_file():
             for line in path.read_text().splitlines():
                 line = line.strip().lstrip("export ").strip()
@@ -90,7 +93,7 @@ def master_key() -> str:
     for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
         if os.environ.get(var):
             return os.environ[var]
-    env = repo / "clients" / "env.sh"
+    env = _pc.data_root() / "clients" / "env.sh"
     if env.is_file():
         for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
             for line in env.read_text().splitlines():
@@ -392,7 +395,7 @@ def check_brave_key_configured() -> CheckResult:
     else:
         # The state root has one owner; do not re-derive it here.
         _sys.path.insert(0, str(_pl.Path(__file__).resolve().parent.parent))
-        import policy as _pc
+        from ailocal import policy as _pc
         settings = _pc.state_root() / "searxng" / "settings.yml"
     if not settings.is_file():
         return CheckResult("brave-key", BLOCKED, "rendered SearXNG settings not readable")

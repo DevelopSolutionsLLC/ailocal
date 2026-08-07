@@ -32,7 +32,7 @@
 # repository. Exported so the compose files can mount it by absolute path.
 # policy.py is the one implementation of this path; shell asks rather than
 # repeating the default expression.
-export AILOCAL_PROXY="${AILOCAL_PROXY:-http://127.0.0.1:4000}"
+export AILOCAL_PROXY="${AILOCAL_PROXY:-http://127.0.0.1:${AILOCAL_LITELLM_PORT:-4000}}"
 export AILOCAL_STATE="${AILOCAL_STATE:-$(python3 "$AILOCAL_ROOT/lib/profile-config" state-root)}"
 mkdir -p "$AILOCAL_STATE"
 
@@ -62,7 +62,7 @@ export AILOCAL_SEARXNG_SETTINGS="$AILOCAL_STATE/searxng/settings.yml"
 # Render deploy/searxng/settings.yml -> $AILOCAL_SEARXNG_SETTINGS, substituting
 # the Brave key. Fails closed; never prints the key.
 ailocal_render_searxng_settings() {
-  local src="$AILOCAL_ROOT/deploy/searxng/settings.yml"
+  local src="$AILOCAL_DATA_ROOT/deploy/searxng/settings.yml"
   local out="$AILOCAL_SEARXNG_SETTINGS"
   local dir; dir="$(dirname "$out")"
   local placeholder='__BRAVE_API_KEY__'
@@ -81,9 +81,9 @@ ailocal_render_searxng_settings() {
   fi
 
   local key=""
-  if [ -f "$AILOCAL_ROOT/.env" ]; then
+  if [ -f "$AILOCAL_ENV_FILE" ]; then
     # Values may be quoted; strip one layer. Never echoed.
-    key="$(sed -n 's/^BRAVE_API=//p' "$AILOCAL_ROOT/.env" | head -n1 \
+    key="$(sed -n 's/^BRAVE_API=//p' "$AILOCAL_ENV_FILE" | head -n1 \
            | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/")"
   fi
   if [ -z "$key" ]; then

@@ -30,7 +30,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 AILOCAL_STATE="${AILOCAL_STATE:-$(python3 "$ROOT_DIR/lib/profile-config" state-root)}"
-ENV_FILE="$ROOT_DIR/.env"
+ENV_FILE="$(python3 "$ROOT_DIR/lib/profile-config" config-root)/.env"
 AILOCAL_CFG="${XDG_CONFIG_HOME:-$HOME/.config}/ailocal"
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/output.sh"

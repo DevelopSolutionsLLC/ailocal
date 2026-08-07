@@ -25,8 +25,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent   # benchmarks/ -> repo root
 
-sys.path.insert(0, str(REPO / "lib"))
-import policy  # noqa: E402  every root has one owner (ADR 009)
+from ailocal import policy
 
 
 def state_dir() -> Path:

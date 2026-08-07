@@ -23,22 +23,23 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "benchmarks"))
 from harness import REPO, Suite  # noqa: E402
 
-from checks import BLOCKED, FAIL, PASS, WARN, CheckResult, exit_code  # noqa: E402
-from checks import config as C  # noqa: E402
-import policy as P  # noqa: E402
-from checks import services as S  # noqa: E402
+from ailocal.checks import BLOCKED, FAIL, PASS, WARN, CheckResult, exit_code  # noqa: E402
+from ailocal.checks import config as C  # noqa: E402
+from ailocal import policy as P
+from ailocal.checks import services as S  # noqa: E402
 
 _suite = Suite("VALIDATOR CHECKS")
 check = _suite.check
 
 # Public validators. A network call in any of these must carry a timeout.
-PUBLIC = ("checks/run.py",
-          "validate-claude-e2e.sh", "validate-codex-e2e.sh",
-          "validate-vscode-e2e.sh")
+# Repo-relative: these no longer share a directory now that the checks layer is
+# a package module and the e2e drivers are still shell under lib/.
+PUBLIC = ("src/ailocal/checks/run.py",
+          "lib/validate-claude-e2e.sh", "lib/validate-codex-e2e.sh",
+          "lib/validate-vscode-e2e.sh")
 
 
 def deterministic_checks() -> None:
@@ -102,7 +103,7 @@ def classification_checks() -> None:
 def bounded_checks() -> None:
     """No public validator may issue an unbounded network call."""
     for name in PUBLIC:
-        path = REPO / "lib" / name
+        path = REPO / name
         if not path.is_file():
             _suite.skip(f"{name} absent")
             continue
@@ -128,8 +129,8 @@ def search_quota_checks() -> None:
     query would spend the very quota the check exists to protect.
     """
     _suite.section("DEFAULT CHECKS SPEND NO SEARCH QUOTA")
-    src = (REPO / "lib" / "checks" / "services.py").read_text()
-    run_src = (REPO / "lib" / "checks" / "run.py").read_text()
+    src = (REPO / "src" / "ailocal" / "checks" / "services.py").read_text()
+    run_src = (REPO / "src" / "ailocal" / "checks" / "run.py").read_text()
 
     check("!wp" in S.FREE_ENGINE_QUERY,
           "the default search query pins a single engine", S.FREE_ENGINE_QUERY)
@@ -166,13 +167,13 @@ def search_quota_checks() -> None:
 def exits_checks() -> None:
     """doctor's three states, and the two-state contract of validate/smoke."""
     import subprocess
-    root = REPO / "lib"
 
     def run(mode: str, env: dict | None = None, args: list[str] | None = None) -> int:
-        """validate / smoke / doctor are modes of one implementation."""
-        e = {**os.environ, **(env or {})}
+        """validate / smoke / doctor are modes of one package module."""
+        e = {**os.environ, **(env or {}),
+             "PYTHONPATH": str(REPO / "src") + os.pathsep + os.environ.get("PYTHONPATH", "")}
         return subprocess.run(
-            ["python3", str(root / "checks" / "run.py"), mode, *(args or [])],
+            ["python3", "-m", "ailocal.checks.run", mode, *(args or [])],
             capture_output=True, text=True, timeout=600, env=e).returncode
 
     check(run("doctor") == 0, "doctor exits 0 on a healthy stack")

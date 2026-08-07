@@ -1,4 +1,4 @@
-name: ailocal
+name: ${COMPOSE_PROJECT_NAME:-ailocal}
 
 # ── ailocal :: LiteLLM proxy ────────────────────────────────────────────────
 #
@@ -31,7 +31,7 @@ services:
     # a commit. lib/check-litellm-version.sh gates the running build against
     # the validated version.
     image: ghcr.io/berriai/litellm@sha256:a1745e629abfb17d434426ff48b115f54f4f4c4a0f5af241de569e93c63c411e
-    container_name: ailocal-litellm
+    container_name: ${AILOCAL_LITELLM_CONTAINER:-ailocal-litellm}
     restart: unless-stopped
     mem_limit: 2g
     security_opt:
@@ -107,7 +107,10 @@ services:
     ports:
       # Localhost-only per security spec. To expose on a LAN, put an
       # authenticating reverse proxy in front — never expose LiteLLM directly.
-      - "127.0.0.1:4000:4000"
+      # Host port is overridable so an isolated integration stack can run
+      # without contending with a production instance. The CONTAINER port is
+      # fixed: the healthcheck and the internal service URL both assume 4000.
+      - "127.0.0.1:${AILOCAL_LITELLM_PORT:-4000}:4000"
     healthcheck:
       # /health/liveliness = proxy process is up. It does NOT require Ollama to
       # be reachable (that is checked by `ailocal doctor`). curl is not in the LiteLLM

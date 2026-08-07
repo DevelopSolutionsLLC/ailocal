@@ -211,7 +211,7 @@ PY
 # ── 4. report what is verifiable and what is not ───────────────────────────
 echo
 banner "verification"
-KEY="$(grep -E '^LITELLM_MASTER_KEY=' .env 2>/dev/null | cut -d= -f2-)"
+KEY="$(grep -E '^LITELLM_MASTER_KEY=' "$(python3 "$ROOT_DIR/lib/profile-config" config-root)/.env" 2>/dev/null | cut -d= -f2-)"
 if curl -sf -m 10 "$BASE_URL/model/info" -H "Authorization: Bearer $KEY" \
      -o /tmp/ailocal-modelinfo.json 2>/dev/null; then
   N=$(python3 -c "import json;print(len(json.load(open('/tmp/ailocal-modelinfo.json')).get('data') or []))")

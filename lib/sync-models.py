@@ -41,8 +41,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # Interactive-compaction thresholds, read from the profile's `compaction:` block.
 COMPACTION = {}
 
-sys.path.insert(0, str(ROOT / "lib"))
-import policy as _pc  # noqa: E402
+from ailocal import policy as _pc
 
 # Every path comes from policy (ADR 009): authored policy from the config root,
 # templates and assets from the data root, generated output from the state root.

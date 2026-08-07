@@ -13,9 +13,9 @@ import shutil
 import subprocess
 
 from . import PASS, WARN, CheckResult
+from ailocal import policy as P
 from .services import INSPECT_TIMEOUT, ollama_loaded
 
-REPO = pathlib.Path(__file__).resolve().parent.parent.parent
 
 
 def _run(cmd: list[str], timeout: int = INSPECT_TIMEOUT) -> str:
@@ -27,7 +27,7 @@ def _run(cmd: list[str], timeout: int = INSPECT_TIMEOUT) -> str:
 
 
 def check_env_file() -> CheckResult:
-    env = REPO / ".env"
+    env = P.config_root() / ".env"
     if not env.is_file():
         return CheckResult("env", WARN, ".env not found",
                            remediation="./ailocal install")

@@ -34,14 +34,14 @@ def _root() -> Path:
 #: command -> (interpreter, target relative to root, fixed args, forwards argv)
 #: `models` deliberately does not forward: it is a fixed table rendering, and
 #: accepting arguments it then ignores would be worse than refusing them.
-PY, SH = "py", "sh"
+PY, SH, MOD = "py", "sh", "mod"
 COMMANDS: dict[str, tuple] = {
     "install":        (SH, "lib/install.sh", (), True),
     "status":         (SH, "lib/status.sh", (), True),
     "models":         (SH, "lib/status.sh", ("--table",), False),
-    "doctor":         (PY, "lib/checks/run.py", ("doctor",), True),
-    "validate":       (PY, "lib/checks/run.py", ("validate",), True),
-    "smoke":          (PY, "lib/checks/run.py", ("smoke",), True),
+    "doctor":         (MOD, "ailocal.checks.run", ("doctor",), True),
+    "validate":       (MOD, "ailocal.checks.run", ("validate",), True),
+    "smoke":          (MOD, "ailocal.checks.run", ("smoke",), True),
     "security":       (SH, "lib/security.sh", (), True),
     "test":           (SH, "lib/test-all.sh", (), True),
     "profile":        (PY, "lib/profile-config", (), True),
@@ -116,34 +116,44 @@ def _usage() -> str:
                      + [f"  {left:<{width}}{heading}" for left, heading in rows])
 
 
-def _exec(kind: str, target: Path, args) -> None:
+def _exec(kind: str, target, args) -> None:
     """Replace this process, so exit codes and signals pass through unchanged."""
+    # Dispatched implementations import `ailocal.policy` for every path they
+    # resolve. They run as subprocesses, so the package has to be importable
+    # from wherever THIS module was loaded -- site-packages when installed, the
+    # checkout's src/ when not. Without this they would each rediscover a root,
+    # which is the duplication policy.py exists to prevent.
+    pkg_parent = str(Path(__file__).resolve().parents[1])
+    existing = os.environ.get("PYTHONPATH", "")
+    os.environ["PYTHONPATH"] = (f"{pkg_parent}{os.pathsep}{existing}"
+                                if existing else pkg_parent)
+    tail = [str(a) for a in args]
+    if kind == MOD:
+        os.execv(sys.executable, [sys.executable, "-m", str(target)] + tail)
     if not target.exists():
         sys.exit(f"ailocal: missing implementation {target}\n"
                  f"Set AILOCAL_DATA to the directory containing lib/.")
     argv = ([BASH, str(target)] if kind == SH
-            else [sys.executable, str(target)]) + [str(a) for a in args]
+            else [sys.executable, str(target)]) + tail
     os.execv(argv[0], argv)
 
 
-def _policy():
-    """policy.py still lives under lib/ (ADR 009 phase 7 moves it here)."""
-    sys.path.insert(0, str(_root() / "lib"))
-    import policy
-    return policy
+def _opt(argv: list[str], name: str):
+    return argv[argv.index(name) + 1] if name in argv else None
 
 
 def _provision(argv: list[str]) -> int:
-    """Install authored assets into the config and data roots."""
-    from . import provision as prov
-    P = _policy()
-    source = Path(__file__).resolve().parents[2]
-    config = Path(argv[argv.index("--config") + 1]) if "--config" in argv \
-        else P.config_root()
-    data = Path(argv[argv.index("--data") + 1]) if "--data" in argv \
-        else P.data_root()
-    state = Path(argv[argv.index("--state") + 1]) if "--state" in argv \
-        else P.state_root()
+    """Install authored assets into the config and data roots.
+
+    The source is the distribution being installed FROM -- a checkout, or an
+    unpacked release. It is deliberately not the data root: that is the
+    destination, and conflating them is how an install overwrites itself.
+    """
+    from . import policy as P, provision as prov
+    source = Path(_opt(argv, "--from") or Path(__file__).resolve().parents[2])
+    config = Path(_opt(argv, "--config") or P.config_root())
+    data = Path(_opt(argv, "--data") or P.data_root())
+    state = Path(_opt(argv, "--state") or P.state_root())
     if config == source or data == source:
         print("provision: refusing to install a checkout over itself.\n"
               "Pass --config/--data, or set AILOCAL_CONFIG/AILOCAL_DATA.",
@@ -186,7 +196,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     kind, rel, fixed, forwards = COMMANDS[cmd]
-    _exec(kind, _root() / rel, list(fixed) + (argv if forwards else []))
+    target = rel if kind == MOD else _root() / rel
+    _exec(kind, target, list(fixed) + (argv if forwards else []))
     return 0  # unreachable: _exec replaces the process
 
 
