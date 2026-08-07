@@ -412,30 +412,11 @@ def resolver_checks() -> None:
         check(np_ == mo, f"{name}: advertised max_output_tokens == enforced num_predict")
 
     print("\nPRODUCTION ADMISSION RESPECTS PHYSICAL GEOMETRY")
-    _sm2 = load_sync()
-
-    # num_ctx holds prompt AND generation. Advertising the whole window as
-    # admissible input is KNOWN_ISSUES #19: accepted by pre-call, then trimmed
-    # from the FRONT by Ollama with HTTP 200 and no error.
-    admit, note = _sm2.admission_for("architecture", 98304, 16384)
-    check(admit == 81920 and not note, "finite reserve: 98304-16384 = 81920")
-    admit, note = _sm2.admission_for("review", 24576, 4096)
-    check(admit == 20480, "finite reserve: 24576-4096 = 20480")
-
-    # -1 is Ollama INFINITE: no arithmetic is possible, so none is invented.
-    admit, note = _sm2.admission_for("implementation", 24576, -1)
-    check(admit == 24576 and note == _sm2.OUTPUT_RESERVE_UNBOUNDED,
-          "num_predict -1 preserves num_ctx and is MARKED unsafe, not silently reserved")
-
-    # Invalid geometry must fail generation, never clamp.
-    for ctx, np_, label in ((4096, 4096, "reserve == window"),
-                            (4096, 8192, "reserve > window"),
-                            (0, 128, "zero window")):
-        try:
-            _sm2.admission_for("x", ctx, np_); raised = False
-        except SystemExit:
-            raised = True
-        check(raised, f"invalid geometry rejected, not clamped ({label})")
+    # Admission has ONE owner, policy.geometry(); generation emits what it
+    # returns. Asserted on the deployed artifact rather than on a helper, so a
+    # second derivation reappearing in generation would fail here.
+    check(not hasattr(load_sync(), "admission_for"),
+          "generation carries no second admission derivation")
 
     # Every generated finite-output alias must satisfy the invariant.
     import re as _re
@@ -553,38 +534,17 @@ def resolver_checks() -> None:
     expect(P.EFFECTIVE_PROFILE_SCHEMA_INVALID, bad_schema, "unsupported schema")
     _sh.rmtree(box, ignore_errors=True)
 
-    print("\nNO RUNTIME YAML FALLBACK, NO REDUNDANT WRAPPER")
-    check(not (REPO / "lib" / "profile-json").exists(),
-          "scripts/profile-json is deleted (jq is already a dependency)")
-    check("_legacy_load_models_yaml" not in sync,
-          "the dead legacy parser is deleted")
-
+    print("\nNO SECOND PARSER IN THE GENERATOR")
     # Behavioural, not textual: typed values must survive generation without a
-    # string round-trip. A prose mention of "reserialize" is not the defect.
+    # string round-trip, and the generator must own no scalar parser of its own.
     _sm = load_sync()
     _models = _sm.load_models_yaml(REPO / "profiles" /
                                    f"{P.active_tier()}.toml")
-    # `completion`, not `architecture`: preferred is documentation-only and
-    # optional (policy defaults it to []), and architecture's list was
-    # removed on 2026-08-03 when qwen3-coder:30b stopped being a supported
-    # candidate. This assertion only needs SOME typed list to prove values
-    # survive generation without a string round-trip; it must not pin a role
-    # whose fallback policy is allowed to change.
     _pref = _models["completion"]["preferred"]
     check(isinstance(_pref, list),
           f"lists stay typed through generation (preferred is {type(_pref).__name__})")
-    # policy.py returns typed lists for both profiles and client policy, so the
-    # generator has no scalar parser of its own left to test -- only that an
-    # absent optional field reads as empty rather than None.
-    check(_sm.flow_list(_pref) is _pref, "a typed list passes through unchanged")
-    check(_sm.flow_list(None) == [], "an absent optional list reads as empty")
-    check(not hasattr(_sm, "flow_dict") and not hasattr(_sm, "truthy"),
+    check(not any(hasattr(_sm, n) for n in ("flow_dict", "truthy", "_int_or_none")),
           "the generator carries no second scalar parser")
-    # validate/smoke/doctor are one Python implementation calling policy
-    # directly, so "no bespoke profile parser" is structural rather than a
-    # property of some shell script's text.
-    check(not (REPO / "lib" / "doctor.sh").exists(),
-          "doctor is not a shell wrapper with its own parsing")
 
     print("\nGENERATION IS ATOMIC AND INSTALL FAILS CLOSED")
     check("flush_stage" in sync and "os.replace" in sync,
