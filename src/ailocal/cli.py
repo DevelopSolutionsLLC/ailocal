@@ -43,7 +43,7 @@ COMMANDS: dict[str, tuple] = {
     "validate":       (MOD, "ailocal.checks.run", ("validate",), True),
     "smoke":          (MOD, "ailocal.checks.run", ("smoke",), True),
     "security":       (MOD, "ailocal.checks.run", ("security",), True),
-    "test":           (SH, "lib/test-all.sh", (), True),
+    "test":           (MOD, "ailocal.checks.run", ("test",), True),
 
     "sync":           (MOD, "ailocal.generation", (), True),
     "resolve":        (MOD, "ailocal.generation", ("--resolve",), True),
