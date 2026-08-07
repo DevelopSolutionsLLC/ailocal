@@ -41,3 +41,6 @@ dist/
 *.iml
 .claude/
 .grepai/
+
+# Development environment (editable install); production uses pipx.
+/.venv/

@@ -18,12 +18,8 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-# This gate runs against the WORKING TREE, so it declares a checkout run the
-# same way ./ailocal does. policy.py resolves these to XDG otherwise, and
-# nothing infers a repository root from a file location.
-export AILOCAL_CONFIG="${AILOCAL_CONFIG:-$ROOT}"
-export AILOCAL_DATA="${AILOCAL_DATA:-$ROOT}"
-export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
+# The suites declare their own roots: tests/harness.py is the one test
+# environment owner, so nothing needs exporting here.
 
 FULL=""
 [ "${1:-}" = "--full" ] && FULL=1
