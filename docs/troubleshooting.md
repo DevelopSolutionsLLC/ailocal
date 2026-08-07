@@ -180,11 +180,7 @@ ailocal sync && ailocal clients
 
 **Likely cause** — a streamed Responses turn never emits its terminal event.
 
-**Verify**
-
-```sh
-tests/e2e.sh codex    # bounded; classifies the outcome rather than hanging
-```
+**Verify** — open a session and watch `ailocal trace` for the request.
 
 **Fix** — none available locally. Configuration, routing, geometry and tool
 transport are validated; only interactive streaming is affected.
@@ -293,11 +289,8 @@ chmod 600 "${AILOCAL_STATE:-$HOME/.local/state/ailocal}/searxng/settings.yml"
 **Likely cause** — the connector is installed but the model list was not
 refreshed, or the extension is absent.
 
-**Verify**
-
-```sh
-tests/e2e.sh vscode
-```
+**Verify** — open a Copilot chat and confirm the request appears in
+`ailocal trace`.
 
 **Fix**
 

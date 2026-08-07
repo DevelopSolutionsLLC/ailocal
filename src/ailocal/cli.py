@@ -35,18 +35,13 @@ COMMANDS: dict[str, tuple[str, tuple]] = {
     "update-check":   ("ailocal.install", ("update-check",)),
     "trace":          ("ailocal.runtime", ("trace",)),
     "metrics":        ("ailocal.runtime", ("metrics",)),
-    "verify-session": ("ailocal.checks.run", ("verify-session",)),
 }
 
-#: Dispatched but NOT advertised. These are single-purpose developer and
-#: host-setup tools with no documented user workflow: they stay reachable
-#: because deleting a working diagnostic is not a simplification, but they do
-#: not belong in the surface a new user reads. `verify-session` in particular
-#: is the documented consumer of session_observer traces -- see
-#: deploy/litellm/hooks/session_observer.py -- and is undiscoverable, not dead.
-INTERNAL = frozenset({
-    "verify-session", "trace", "metrics", "compose", "update-check",
-})
+#: Dispatched but NOT advertised: single-purpose diagnostics and host setup
+#: with no documented user workflow. They stay reachable because deleting a
+#: working diagnostic is not a simplification, but they do not belong in the
+#: surface a new user reads.
+INTERNAL = frozenset({"trace", "metrics", "compose", "update-check"})
 
 #: Help layout: (heading, [command...]). Every non-internal command appears
 #: exactly once; the gate asserts it.

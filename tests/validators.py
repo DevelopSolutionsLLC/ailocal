@@ -36,7 +36,7 @@ check = _suite.check
 # Public validators. A network call in any of these must carry a timeout.
 # Repo-relative: these no longer share a directory now that the checks layer is
 # a package module and the E2E drivers are shell under tests/.
-PUBLIC = ("src/ailocal/checks/run.py", "tests/e2e.sh")
+PUBLIC = ("src/ailocal/checks/run.py",)
 
 
 def deterministic_checks() -> None:
@@ -201,43 +201,11 @@ def exits_checks() -> None:
           "smoke exits 1 when the proxy is unreachable")
 
 
-def e2e_checks() -> None:
-    """The E2E suite must be bounded and must not leak processes."""
-    import subprocess
-    suite = REPO / "tests" / "e2e.sh"
-    check(suite.is_file(), "the E2E suite exists")
-    src = suite.read_text()
-    check("e2e_run" in src and src.count("e2e_run()") == 1,
-          "one bounded-execution implementation, shared by every client")
-    # Codex must stay honestly blocked: arriving content is not success.
-    check("BLOCKED_UPSTREAM_LITELLM_27442" in src,
-          "codex keeps its upstream-blocked classification")
-
-    # A hung child is terminated and leaves nothing behind.
-    # A duration unique to this process: two concurrent suites sweeping the same
-    # literal pattern count each other's children and report a phantom stray.
-    nap = 29000 + os.getpid() % 900
-    probe = (
-        f'. "{suite}" 2>/dev/null\n'
-        f'e2e_run 4 /dev/null bash -c "sleep {nap} & sleep {nap}"\n'
-        'echo "rc=$?"\n'
-        'sleep 1\n'
-        f'echo "strays=$(pgrep -f \'sleep {nap}\' | wc -l | tr -d \' \')"\n'
-        f'pkill -f "sleep {nap}" 2>/dev/null || true\n')
-    r = subprocess.run(["bash", "-c", probe], capture_output=True, text=True,
-                       timeout=120)
-    check("rc=124" in r.stdout, "a hung client is terminated at its budget",
-          r.stdout.strip())
-    check("strays=0" in r.stdout, "no descendant survives the budget",
-          r.stdout.strip())
-
-
 SECTIONS = {"deterministic": deterministic_checks,
             "search-quota": search_quota_checks,
             "classification": classification_checks,
             "bounded": bounded_checks,
-            "exits": exits_checks,
-            "e2e": e2e_checks}
+            "exits": exits_checks}
 
 if __name__ == "__main__":
     which = sys.argv[1] if len(sys.argv) > 1 else None

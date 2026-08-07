@@ -1,8 +1,6 @@
 # VS Code client
 
-Deployed by `ailocal vscode` (also reachable as
-`ailocal clients vscode`). Validated by
-`tests/e2e.sh vscode` from a checkout.
+Deployed by `ailocal vscode` (also reachable as `ailocal clients vscode`).
 
 ## Why VS Code spans three directories
 

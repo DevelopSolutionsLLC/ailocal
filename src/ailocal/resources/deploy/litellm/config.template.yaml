@@ -124,7 +124,6 @@ litellm_settings:
     - /app/config/hooks/tool_gateway.proxy_handler_instance
     # Session observation: records what a session actually did, for the gateway
     # metrics report.
-    - /app/config/hooks/session_observer.proxy_handler_instance
     # Per-request timeline: request id, ttfb, total, finish/stop reason, and the
     # exception + traceback on failure. Off unless AILOCAL_TRACE_DIR is set.
     # Exists because the Claude "API error" was invisible to every component:
