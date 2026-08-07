@@ -27,11 +27,10 @@ Look for `ImportError` or `Could not find module file`.
 **Fix**
 
 ```sh
-ailocal sync      # regenerate
-ailocal start     # restart the stack
+ailocal start     # regenerates the configuration, then restarts the stack
 ```
 
-**Status** — local defect if it persists after a clean sync.
+**Status** — local defect if it persists after a clean start.
 
 ---
 
@@ -43,20 +42,18 @@ generated file was hand-edited.
 **Verify**
 
 ```sh
-ailocal check               # the configuration section reports drift
-ailocal sync --check        # non-zero if generated output has drifted
+ailocal check     # the configuration section reports drift
 ```
 
 **Fix**
 
 ```sh
-ailocal sync
-ailocal clients             # redeploy client configuration
-ailocal start               # reload the proxy
+ailocal start     # regenerates and reloads the proxy
+ailocal clients   # redeploy client configuration
 ```
 
 Generated files live under `${AILOCAL_STATE:-~/.local/state/ailocal}`. Deleting
-that directory and re-running `ailocal sync` is a supported recovery.
+that directory and re-running `ailocal start` is a supported recovery.
 
 **Status** — configuration issue.
 
@@ -120,7 +117,7 @@ ailocal check     # advertised geometry matches the profile, and an
 ```
 
 **Fix** — use a larger capability (`ailocal-architecture`), or raise
-`context_input` in the profile and `ailocal sync`. Do not raise it past what the
+`context_input` in the profile and `ailocal start`. Do not raise it past what the
 machine can hold.
 
 **Status** — expected behaviour. A rejection is correct; silent truncation would
@@ -169,7 +166,7 @@ grep -a "client closing the connection" ~/.ollama/logs/server.log | tail -3
 `API_TIMEOUT_MS` to match the proxy.
 
 ```sh
-ailocal sync && ailocal clients
+ailocal start && ailocal clients
 ```
 
 **Status** — fixed by configuration; re-deploy if it reappears.

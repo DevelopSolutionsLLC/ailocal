@@ -36,19 +36,19 @@ python3 tests/gate.py   # the regression gate
 ```
 
 After editing anything under `profiles/` or `src/ailocal/resources/`, provision
-and regenerate before validating — the managed copies are what runs:
+before validating — the managed copies are what runs, and `ailocal start`
+regenerates from them:
 
 ```sh
 ailocal install     # provisions resources into the managed roots
-ailocal sync        # regenerates config from policy
-ailocal start       # remount, if the stack is already up
+ailocal start       # regenerates, then remounts
 ```
 
 ## Invariants
 
 - Generated state lives only under `$AILOCAL_STATE` (default
   `~/.local/state/ailocal`). Never hand-edit it, never commit it. Deleting the
-  state root and re-running `ailocal sync` must fully recover.
+  state root and re-running `ailocal start` must fully recover.
 - One capability is one `model_list` entry named `ailocal-<capability>`, never a
   raw model tag.
 - Geometry is derived, never restated: `num_ctx = context_input + max_output`,

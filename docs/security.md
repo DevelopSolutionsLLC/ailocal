@@ -64,11 +64,11 @@ Verify with `ailocal check`, which reports `.env` readable by other users.
 ## Authored versus generated
 
 A tracked file is authored source or a template. It is never a runtime artifact
-that generation rewrites, which means `ailocal sync` cannot dirty the working
+that generation rewrites, which means generation cannot dirty the working
 tree and cannot introduce a secret into a commit.
 
 Generated output is disposable: deleting `$AILOCAL_STATE` and re-running
-`ailocal sync` fully recovers it. Nothing of value is stored only there except
+`ailocal start` fully recovers it. Nothing of value is stored only there except
 capture history.
 
 ---

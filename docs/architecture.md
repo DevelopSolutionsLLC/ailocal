@@ -22,7 +22,7 @@ authored profiles + client policy + templates
                     ↓
               policy.py                one reader, fails closed
                     ↓
-             ailocal sync              the only generator
+             generation                the only generator
                     ↓
       one staged generation transaction
         stage → validate → back up → replace → roll back on failure
@@ -40,7 +40,7 @@ authored profiles + client policy + templates
 
 Everything generated lives under `${AILOCAL_STATE:-~/.local/state/ailocal}`,
 mode `0700`. Nothing here is authored; deleting the directory and running
-`ailocal sync` is a supported recovery.
+`ailocal start` is a supported recovery.
 
 ```
 $AILOCAL_STATE/
@@ -116,7 +116,7 @@ config root — never the repository.
 ## Extension points
 
 **Add a model** — edit the capability's `active` in `profiles/<tier>.toml`,
-then `ailocal sync && ailocal install`.
+then `ailocal install`.
 
 **Add a profile** — create `profiles/<tier>.toml` and add the tier to
 `policy.TIERS`. Selection thresholds live in `src/ailocal/install.py`.

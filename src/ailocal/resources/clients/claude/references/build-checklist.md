@@ -37,7 +37,7 @@ sessions short, diffs small, and claims verifiable. Follow it literally.
 - Paste the real command output (or a faithful summary of it), not a
   guessed result.
 - Any shell script you touch: run `bash -n <script>` before calling it done.
-- Config changes: `ailocal sync` must produce zero diff after
+- Config changes: regeneration must produce zero diff after
   regeneration if the active profile changed.
 - Prefer `ailocal check` (0=healthy, 1=something failed) as the final sanity
   check when touching runtime

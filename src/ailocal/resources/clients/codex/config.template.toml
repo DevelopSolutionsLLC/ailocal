@@ -1,5 +1,5 @@
 # ── GENERATED — DO NOT EDIT ─────────────────────────────────────────────────
-# Owner:       ailocal (`ailocal sync` + `ailocal clients`)
+# Owner:       ailocal (generated, then deployed by `ailocal clients`)
 # Source:      profiles/<active tier>.yaml  (role: implementation)
 # Deployed to: ~/.config/ailocal/codex/config.toml  (CODEX_HOME)
 #

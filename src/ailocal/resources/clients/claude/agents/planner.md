@@ -32,7 +32,7 @@ Output ONLY a numbered implementation plan, nothing else:
 2. Ordered steps (one file/concern per step, smallest safe increment first).
 3. Risks (what could break, hidden coupling, config that must stay in sync).
 4. Verification commands (exact commands the implementer/reviewer should run,
-   e.g. `bash -n script.sh`, `ailocal sync`, `ailocal check`).
+   e.g. `bash -n script.sh`, `ailocal check`).
 
 Keep the plan tight. No prose outside the numbered sections. No apologies,
 no meta-commentary, no restating the request.

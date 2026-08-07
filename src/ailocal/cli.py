@@ -15,28 +15,22 @@ COMMANDS: dict[str, tuple[str, tuple]] = {
     "install":        ("ailocal.install", ("install",)),
     "status":         ("ailocal.runtime", ("status",)),
     "check":          ("ailocal.checks.run", ("check",)),
-
-    "sync":           ("ailocal.generation", ()),
+    "trace":          ("ailocal.runtime", ("trace",)),
 
     "start":          ("ailocal.runtime", ("start",)),
     "stop":           ("ailocal.runtime", ("stop",)),
     "update":         ("ailocal.runtime", ("update",)),
     "teardown":       ("ailocal.runtime", ("teardown",)),
     "clients":        ("ailocal.clients", ()),
-    "trace":          ("ailocal.runtime", ("trace",)),
 }
 
-#: Dispatched but NOT advertised: `trace` reads the per-request timeline the
-#: proxy hooks write, which is a subsystem this project ships and nothing else
-#: can read. It has no place in the surface a new user reads.
-INTERNAL = frozenset({"trace"})
-
-#: Help layout: (heading, [command...]). Every non-internal command appears
-#: exactly once; the gate asserts it.
+#: Help layout: (heading, [command...]). Every dispatchable command appears
+#: exactly once; the gate asserts it. There is no hidden command: a surface
+#: that dispatches what it does not advertise is a surface nobody can trust.
 GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("bootstrap the stack",        ("install",)),
-    ("inspect",                    ("status", "check")),
-    ("lifecycle",                  ("start", "stop", "update", "sync")),
+    ("inspect",                    ("status", "check", "trace")),
+    ("lifecycle",                  ("start", "stop", "update")),
     ("point a client at it",       ("clients",)),
     ("remove it",                  ("teardown",)),
     ("the active profile",         ("profile",)),

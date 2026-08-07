@@ -804,13 +804,10 @@ def policy_checks() -> None:
           ", ".join(sorted({n for n in listed if listed.count(n) > 1})))
     # `profile` is answered inside cli.main() rather than by a module.
     dispatchable = set(cli.COMMANDS) | {"profile"}
-    check(set(listed) == dispatchable - cli.INTERNAL,
-          "help lists every public command, and nothing it cannot dispatch",
+    check(set(listed) == dispatchable,
+          "help lists every command, and nothing it cannot dispatch",
           f"help-only={sorted(set(listed) - dispatchable)} "
-          f"unlisted={sorted(dispatchable - cli.INTERNAL - set(listed))}")
-    # An internal command must still dispatch: it is undiscoverable, not gone.
-    check(cli.INTERNAL <= dispatchable, "every internal command still dispatches",
-          ", ".join(sorted(cli.INTERNAL - dispatchable)))
+          f"unlisted={sorted(dispatchable - set(listed))}")
     import importlib
 
     # A package command must import AND expose the main(argv) the CLI calls; a

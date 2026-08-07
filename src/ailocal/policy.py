@@ -439,7 +439,7 @@ def load_effective(repo_root=None, state=None) -> dict:
         src = root / blk["source_profile"]
         if blk.get("source_profile_sha256") and _sha(src) != blk["source_profile_sha256"]:
             raise ProfileError(EFFECTIVE_PROFILE_STALE_SOURCE,
-                               f"{t} profile edited since generation — run `ailocal sync`")
+                               f"{t} profile edited since generation — run `ailocal start`")
     return data
 
 

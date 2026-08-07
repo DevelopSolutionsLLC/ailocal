@@ -197,7 +197,7 @@ def ensure_shell_sourcing(key: str) -> None:
         shutil.copyfile(contract, cfg / "integration-contract.json")
         info(f"{cfg / 'integration-contract.json'} published (runtime schema)")
     else:
-        warn("integration-contract.json missing — run ailocal sync")
+        warn("integration-contract.json missing — run ailocal start")
 
     rc = Path(os.environ.get("ZDOTDIR") or Path.home()) / ".zshrc"
     if not rc.exists():

@@ -1,6 +1,9 @@
 # 009: Installed runtime layout
 
 - Status: Accepted (phases 1-5 implemented; 6-10 outstanding)
+- Note: this record uses the names in force when it was written. `ailocal sync`
+  and `ailocal doctor` are gone; generation now runs as part of `ailocal start`
+  and diagnosis is `ailocal check`. The decisions below are unchanged.
 - Date: 2026-08-06
 - Supersedes: none
 - Superseded by: none

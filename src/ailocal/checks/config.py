@@ -101,20 +101,20 @@ def check_generated_present() -> list[CheckResult]:
         "generated", PASS if not missing else FAIL,
         f"all {len(expected)} generated artefacts present under {root}"
         if not missing else f"missing: {', '.join(missing)}",
-        remediation=None if not missing else "ailocal sync")]
+        remediation=None if not missing else "ailocal start")]
 
 
 def check_effective_profile() -> CheckResult:
     p = P.effective_profile_path()
     if not p.is_file():
         return CheckResult("effective-profile", FAIL, "effective-profile.json is missing",
-                           remediation="ailocal sync")
+                           remediation="ailocal start")
     try:
         doc = json.loads(p.read_text())
     except ValueError as exc:
         return CheckResult("effective-profile", FAIL,
                            "effective-profile.json is not valid JSON", str(exc),
-                           "ailocal sync")
+                           "ailocal start")
     tier = doc.get("tier") or doc.get("profile")
     try:
         active = P.resolve_active_tier()
@@ -125,7 +125,7 @@ def check_effective_profile() -> CheckResult:
     return CheckResult("effective-profile", PASS if ok else FAIL,
                        f"effective profile is {tier}" if ok
                        else f"effective profile is {tier}, active tier is {active}",
-                       remediation=None if ok else "ailocal sync")
+                       remediation=None if ok else "ailocal start")
 
 
 def _model_names(cfg: pathlib.Path) -> list[str]:
@@ -146,13 +146,13 @@ def check_alias_uniqueness() -> CheckResult:
     cfg = P.state_root() / "litellm" / "config.yaml"
     if not cfg.is_file():
         return CheckResult("aliases", FAIL, "generated config.yaml is missing",
-                           remediation="ailocal sync")
+                           remediation="ailocal start")
     names = _model_names(cfg)
     dupes = sorted({n for n in names if names.count(n) > 1})
     return CheckResult("aliases", FAIL if dupes else PASS,
                        f"{len(names)} model_name entries are unique" if not dupes
                        else f"DUPLICATED model_name: {', '.join(dupes)}",
-                       remediation=None if not dupes else "ailocal sync")
+                       remediation=None if not dupes else "ailocal start")
 
 
 def check_no_raw_backend_tags() -> CheckResult:
@@ -165,7 +165,7 @@ def check_no_raw_backend_tags() -> CheckResult:
     return CheckResult("raw-tags", FAIL if raw else PASS,
                        "no raw backend tags exposed as model_name" if not raw
                        else f"raw backend tag(s) exposed: {', '.join(raw)}",
-                       remediation=None if not raw else "ailocal sync")
+                       remediation=None if not raw else "ailocal start")
 
 
 # ── deployed client state ───────────────────────────────────────────────────
@@ -346,7 +346,7 @@ def check_generated_in_sync() -> CheckResult:
     return CheckResult("generated-sync", FAIL,
                        "generated files have drifted from their source",
                        (r.stdout + r.stderr).strip()[-400:],
-                       "ailocal sync && commit the result")
+                       "ailocal start regenerates them; commit the result")
 
 
 def deterministic_checks(tier: str | None = None) -> list[CheckResult]:
