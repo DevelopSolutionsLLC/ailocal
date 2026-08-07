@@ -51,6 +51,17 @@ if [[ -n "$SCHEDULE" ]]; then
     rm -f "$PLIST"
     echo "weekly update check removed ($LABEL)"; exit 0
   fi
+  # A generated scheduled job must never embed a path inside a Git checkout
+  # (ADR 009): moving or deleting the checkout would break a weekly agent
+  # silently, on someone else's timetable. Resolve the INSTALLED commands
+  # absolutely at install time, and refuse rather than fall back to a repo path.
+  AILOCAL_BIN="$(command -v ailocal || true)"
+  if [[ -z "$AILOCAL_BIN" ]]; then
+    echo "ailocal is not on PATH, so a scheduled job could only reference this" >&2
+    echo "checkout. Install the command first, then re-run --install-schedule." >&2
+    exit 1
+  fi
+  CADENCE_BIN="$(command -v cadence || true)"
   mkdir -p "$STATE" "$HOME/Library/LaunchAgents"
   RUNNER="$STATE/update-check.sh"
   cat > "$RUNNER" <<RUNNER_EOF
@@ -59,9 +70,9 @@ if [[ -n "$SCHEDULE" ]]; then
 exec >"$STATE/update-check.log" 2>&1
 echo "=== \$(date -u +%FT%TZ) ==="
 rc=0
-"$REPO/lib/security.sh" --check-updates || rc=\$?
-CAD="$(cd "$REPO/.." && pwd)/cadence/scripts/cadence"
-if [ -x "\$CAD" ]; then "\$CAD" security --check-updates || rc=\$?; fi
+"$AILOCAL_BIN" security --check-updates || rc=\$?
+CAD="$CADENCE_BIN"
+if [ -n "\$CAD" ] && [ -x "\$CAD" ]; then "\$CAD" security --check-updates || rc=\$?; fi
 echo "\$(date -u +%FT%TZ) rc=\$rc" > "$STATE/update-check.status"
 # Notify ONLY when action is required. A quiet check must stay quiet.
 if [ "\$rc" = 1 ]; then
