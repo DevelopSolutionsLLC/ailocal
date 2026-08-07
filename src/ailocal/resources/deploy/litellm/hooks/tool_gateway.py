@@ -11,47 +11,28 @@ tests/capability-registry-impl.py greps this file's executable code for model,
 client and tool literals and fails if it finds any. If a fact about a model
 belongs anywhere, it belongs in the registry.
 
-THE BOUNDARY IS THE SUBJECT, NOT THE MODEL
-------------------------------------------
-Building around "make the local model work" puts model assumptions into code.
-A model the registry marks `passthrough` — any frontier/cloud model — is
-measured and forwarded untouched no matter what the feature flags say; a local
-model is optimised aggressively. Swapping either is a registry edit.
-
 MODES (env AILOCAL_TOOL_GATEWAY, read per-request)
---------------------------------------------------
-  off     hook returns immediately. Nothing measured, nothing changed. DEFAULT.
+  off     returns immediately; nothing measured, nothing changed. DEFAULT.
   report  measure and log. NEVER mutates the request.
   filter  measure, then remove the negotiated-away tools.
+An unrecognised value is reported and treated as off, never silently coerced: a
+typo that disables a layer must not look like the layer working.
 
-An unrecognised value is reported and treated as off — never silently coerced,
-because a typo'd env var that quietly disables a safety layer is indistinguishable
-from the layer working.
+FAIL-OPEN, EVERYWHERE. No registry, an unparseable registry, an unknown client
+or model, an unnamed tool: each forwards the request unchanged. A capability
+layer that fails closed turns a config mistake into a client that has silently
+lost its tools.
 
-WHAT IT REFUSES TO CLAIM
-------------------------
-`bytes_dropped` counts only tools that would otherwise have REACHED the backend.
-LiteLLM discards some tool types itself during dialect translation (which types
-is a registry fact, per route). Counting those would credit this gateway with
-work already done — measured, that is the difference between a 71% and an 18%
-figure on one real client. They are reported separately as
-`bytes_prefiltered_by_litellm` and `bytes_dropped_moot`.
-
-Token figures come from litellm's counter, which selects the cl100k tokenizer
-even for a non-OpenAI backend. Calibrated against Ollama's real
-prompt_eval_count at 1.009-1.021 (measured against Ollama), so the estimate
-under-counts by 1-2% on tool-schema JSON. Labelled `cl100k-proxy` in every
-record; re-calibrate after a model change.
-
-FAIL-OPEN, EVERYWHERE
----------------------
-No registry, an unparseable registry, an unknown client, an unknown model, an
-unnamed tool entry: each results in forwarding the request unchanged. A
-capability layer that fails closed turns a config mistake into a client that has
-silently lost its tools.
+WHAT IT REFUSES TO CLAIM. `bytes_dropped` counts only tools that would have
+REACHED the backend; LiteLLM discards some types itself during dialect
+translation, and those are reported separately as `bytes_prefiltered_by_litellm`
+and `bytes_dropped_moot`. [REAL] conflating them is the difference between a 71%
+and an 18% figure on one real client. Token figures are [APPROX]: litellm's
+cl100k counter, calibrated 1.009-1.021 against Ollama's prompt_eval_count, so it
+under-counts by 1-2% on tool-schema JSON. Re-calibrate after a model change.
 
 Registered LAST in litellm_settings.callbacks, after websearch_interception, so
-that interception always sees the client's full tool list.
+interception always sees the client's full tool list.
 Ref: https://docs.litellm.ai/docs/proxy/call_hooks
 """
 

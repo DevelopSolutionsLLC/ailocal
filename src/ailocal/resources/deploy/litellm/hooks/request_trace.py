@@ -9,27 +9,17 @@ gateway completed, repair clean, SSE well-formed) while the user sees a long
 silence before the first byte, which no single component owns. A per-request
 timeline makes that visible instead of requiring it to be re-derived.
 
-WHAT IS MEASURABLE HERE, AND WHAT IS NOT
-This runs inside the proxy, so it sees the proxy's view and no more. The gaps
-matter:
+This runs inside the proxy and sees only the proxy's view. Two gaps are
+load-bearing when reading a record:
 
-  MEASURABLE   request id, client, model, capability, route, tool count and
-               bytes, time to first streamed chunk, total duration, finish/stop
-               reason, exception + traceback on failure
-  NOT MEASURABLE
-               Ollama's prompt_eval_duration / eval_duration. Verified: they do
-               not survive into the LiteLLM response — `usage` carries only
-               prompt_tokens/completion_tokens/total_tokens. Time-to-first-chunk
-               is recorded as `ttfb_ms` and is a PROXY for prompt-eval time, not
-               a measurement of it. Getting the real figure needs a direct Ollama
-               query, which this hook deliberately does not make.
-  NOT VISIBLE AT ALL
-               Client-side timeouts and disconnects. If Claude Code gives up at
-               60 s, the proxy keeps streaming and records a success. A trace
-               showing a large ttfb_ms and a completed response, next to a client
-               that reported an error, IS the evidence of a client timeout — but
-               the disconnect itself is not observable from here. Never record a
-               client-side failure as though it were seen.
+  ttfb_ms is [APPROX] for prompt-eval time, not a measurement of it. Ollama's
+  prompt_eval_duration does not survive into the LiteLLM response; `usage`
+  carries token counts only.
+
+  Client timeouts and disconnects are NOT VISIBLE. If a client gives up at 60 s
+  the proxy keeps streaming and records a success. A large ttfb_ms beside a
+  client that reported an error IS the evidence — but never record a
+  client-side failure as though it were observed here.
 """
 
 import json
@@ -48,15 +38,10 @@ def _classify_event(item) -> str | None:
     the question ("did the user see anything?") is the same in each.
     """
     try:
-        # /v1/messages delivers RAW SSE FRAMES (`bytes`), not objects. A branch
-        # that assumes a mapping returns None for every Anthropic-route event and
-        # leaves first_visible_text_ms silently null.
-        #
-        # This is deliberately MARKER DETECTION, not SSE parsing: the frame is
-        # tested for the two event signatures that answer "did the user see
-        # text", and nothing is decoded, framed, buffered or reassembled. A
-        # second SSE parser beside LiteLLM's own is exactly what must not be
-        # built here, and anything richer than this would be one.
+        # /v1/messages delivers RAW SSE FRAMES (`bytes`), not objects.
+        # MARKER DETECTION, not SSE parsing: the frame is tested for two event
+        # signatures and nothing is decoded, framed or reassembled. A second SSE
+        # parser beside LiteLLM's own is what must not be built here.
         if isinstance(item, (bytes, bytearray)):
             if b'"type": "text_delta"' in item or b'"type":"text_delta"' in item:
                 return "text"
@@ -200,21 +185,12 @@ KEY = "_ailocal_trace"
 
 
 
-# ── E1: schema version, process generation, token components ─────────────────
-# Bumped whenever a FIELD'S MEANING changes, not when one is added, so a consumer
-# can trust older records instead of guessing which shape it is reading.
+# Bumped when a FIELD'S MEANING changes, never when one is added, so a consumer
+# can trust older records. A null is "unknown", not a measurement.
 #
-# Reading records below the current version: a null is "unknown", not a
-# measurement. From v3 on, a null on a stream_end record carries an explicit
-# availability reason and means the provider sent none.
-# 3 -> 4 (2026-08-03): `model` was OVERLOADED and is no longer emitted. On
-# pre-call and stream_end records it held the requested ALIAS; on completion
-# records LiteLLM has already resolved it, so the same field held the BACKEND
-# tag. A reproduction run was wasted joining cases on it. New records emit
-# `requested_alias` and `resolved_backend_model` as separate fields.
-# READING HISTORY: v1-v3 records still carry `model`. Interpret it by phase --
-# alias on pre_call/stream_end, backend model on completion. Historical files
-# are never rewritten.
+# READING HISTORY (files are never rewritten): v1-v3 carry an overloaded `model`
+# — the requested alias on pre_call/stream_end, the resolved backend tag on
+# completion. v4 emits `requested_alias` and `resolved_backend_model` instead.
 EVENT_VERSION = 4
 
 # A stable identity for THIS proxy process. The startup connect-refused burst was
@@ -376,23 +352,16 @@ def _context_budget(self_registry, data, components) -> dict:
     declared = None
     try:
         if self_registry is not None:
-            # Registry.max_context, NOT max_context_for — the latter has never
-            # existed. The bare `except` below made that a silent permanent null
-            # rather than an error: every trace ever written reported
-            # declared_context_tokens and context_headroom_tokens as None, so the
-            # one record that could attribute an overflow to a component was the
-            # one field guaranteed to be empty. Caught by E3's six controlled
-            # cases, where all six came back with
-            # a null budget while the component counts were all correct.
+            # Registry.max_context, NOT max_context_for, which does not exist.
+            # The bare `except` below turns a typo here into a permanent null
+            # budget — the one field that can attribute an overflow.
             declared = self_registry.max_context(d.get("model"))
     except Exception:
         declared = None
-    # The fallback below looked under litellm_params.model_info, but model_info
-    # is a SIBLING of litellm_params in the deployment config, not nested inside
-    # it -- so this path never resolved and declared_context_tokens was
-    # permanently null for every bench-* alias (the registry does not know
-    # temporary aliases either). Both locations are now tried, in the order
-    # LiteLLM actually populates them.
+    # model_info is a SIBLING of litellm_params in the deployment config, not
+    # nested inside it. Both locations are tried, in the order LiteLLM populates
+    # them; looking only inside litellm_params leaves every temporary bench-*
+    # alias with a null budget.
     if declared is None:
         for src in (d.get("model_info"),
                     (d.get("litellm_params") or {}).get("model_info")):
@@ -611,15 +580,11 @@ class RequestTrace(CustomLogger):
         first_text = None
         first_tool = None
         saw_text = False
-        # Completion evidence is deliberately NOT extracted here: on /v1/messages
-        # this hook receives RAW SSE `bytes` frames, so reading usage would mean a
-        # second SSE parser beside LiteLLM's own. LiteLLM assembles the finished
-        # response and hands it to async_log_success_event, which owns that record.
-        # A stream that stopped early and one that ended normally are different
-        # facts with different owners, and "stream_end" alone cannot tell them
-        # apart. Anything that leaves the loop other than exhaustion -- client
-        # disconnect (GeneratorExit/CancelledError) or a backend fault -- is an
-        # interruption, and the completion evidence from it is partial BY CAUSE.
+        # Completion evidence is NOT extracted here: on /v1/messages this hook
+        # sees RAW SSE bytes, so reading usage would mean a second SSE parser.
+        # async_log_success_event owns that record. Anything leaving the loop
+        # other than exhaustion -- client disconnect or a backend fault -- is an
+        # interruption, and its evidence is partial BY CAUSE.
         interrupted = False
         interrupt_type = None
         try:

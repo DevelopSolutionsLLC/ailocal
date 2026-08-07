@@ -6,46 +6,28 @@ does not alter requests, does not inject turns, and does not touch client
 conversation state — that stays off the table until protocol ownership is
 settled. If this module fails, the request still goes through.
 
-WHY
----
-A local model's report that it finished is not evidence that it finished. The
-failure that matters is not a wrong answer, it is a confident summary of work
-that never happened — an "I've updated the file" with no write behind it. That
-is only detectable by comparing three things that live in three places:
+The failure it targets is a confident summary of work that never happened. That
+needs three facts from two places:
 
-  what was asked       the first user message          (the proxy sees this)
-  what was executed    the tool calls in the history   (the proxy sees this)
-  what changed         the filesystem and git          (only the HOST sees this)
+  what was asked / what was executed   the proxy sees these — this module
+  what changed on disk                 only the HOST sees it — verify-session
 
-This module owns the first two. `ailocal verify-session` owns the third and
-does the comparison. The split is not incidental: the proxy runs in a container
-with no access to the repository, so a verification layer that lived entirely
-here could only ever check the model against its own claims.
+The split is forced: the proxy runs in a container with no access to the
+repository, so a verification layer living entirely here could only check the
+model against its own claims.
 
-WHY ONE HOOK SEES THE WHOLE SESSION
------------------------------------
-Agent clients are stateless over HTTP: every turn re-sends the entire
-conversation. So a single async_pre_call_hook observation carries the whole
-history — every tool call the model has made and every result it got back. There
-is no need to hook responses, buffer streams, or correlate turns. The last
-request of a session contains the complete ledger for that session, and each
-write simply supersedes the previous one.
+ONE HOOK SEES THE WHOLE SESSION. Agent clients are stateless over HTTP, so every
+turn re-sends the entire conversation and a single async_pre_call_hook
+observation carries the full history. Each write supersedes the previous one.
+Nothing needs to hook responses, buffer streams or correlate turns.
 
-This is why the module is small, and why it cannot miss a tool call that
-happened before it was loaded, as long as one request arrives afterwards.
+SESSION IDENTITY is a hash of the first user message plus the model, because no
+client sends a stable id on all three routes and inventing one would mean
+mutating the request. Consequence, stated rather than hidden: two sessions with
+a byte-identical first message and the same model share a ledger and the later
+wins. Ledgers are a debugging aid, not an audit log.
 
-SESSION IDENTITY
-----------------
-Derived from a hash of the first user message plus the model. Clients do not
-send a stable session id on all three routes, and inventing one would mean
-mutating the request. The consequence is honest and worth stating: two sessions
-that begin with a byte-identical first message and the same model share a
-ledger, and the later one wins. Ledgers are a debugging aid, not an audit log.
-
-ENABLEMENT
-----------
-AILOCAL_SESSION_LEDGER must be set to a writable directory, or the hook returns
-immediately. Off unless asked for, like the gateway.
+Off unless AILOCAL_SESSION_LEDGER names a writable directory.
 """
 
 import hashlib
