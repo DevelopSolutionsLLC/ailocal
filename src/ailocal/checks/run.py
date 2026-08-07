@@ -33,8 +33,13 @@ outcome. They differ only in which checks they collect.
 
 from __future__ import annotations
 
+import ast
+import os
 import pathlib
+import re
+import subprocess
 import sys
+import time
 
 
 from ailocal.checks import BLOCKED, FAIL, WARN, exit_code, render  # noqa: E402
@@ -182,8 +187,289 @@ def _doctor(argv: list[str]) -> int:
     return 2
 
 
+# ── the regression gate ─────────────────────────────────────────────────────
+#
+# "Could not run" is failure, never a skip. Several suites need PyYAML and the
+# registry, which exist only inside the proxy image; a host-only run would cover
+# a fraction of the behaviour and still print green.
+
+GATE_SLOW_S = int(os.environ.get("AILOCAL_GATE_SLOW_S", "10"))
+
+
+def _repo() -> pathlib.Path:
+    """The checkout the suites live in. `ailocal test` is a developer command."""
+    here = pathlib.Path.cwd()
+    for candidate in (here, *here.parents):
+        if (candidate / "tests").is_dir() and (candidate / "pyproject.toml").is_file():
+            return candidate
+    sys.exit("ailocal test runs the repository's suites; run it from a checkout.")
+
+
+def _gate_preconditions(repo: pathlib.Path) -> None:
+    """Refuse rather than run a reduced set and report success."""
+    container = S.CONTAINER
+    state, health = S.container_state(container)
+    if state != "running":
+        sys.exit(f"\n  {container} is not running. The registry, negotiator and "
+                 "compatibility suites all need it.\n      ailocal start")
+    if health not in ("healthy", ""):
+        sys.exit(f"\n  {container} health is {health!r}, not healthy. Fix that "
+                 "before trusting any result.")
+    # Container health means the proxy PROCESS is up, not that the router serves
+    # /v1/models — which is what several checks need, and what a client wrapper
+    # fails closed on after 5s. 401 counts as ready: it proves the route answers.
+    for _ in range(60):
+        try:
+            S.http_json(f"{S.PROXY}/v1/models", timeout=5)
+            return
+        except S.Unreachable as exc:
+            if "401" in str(exc):
+                return
+        time.sleep(1)
+    sys.exit(f"\n  {container} is healthy but /v1/models did not serve within 60s."
+             "\n  Refusing to run: PRECONDITION NOT MET.")
+
+
+def _suite(*argv) -> list:
+    return list(argv)
+
+
+def _gate_suites(repo: pathlib.Path, full: bool) -> list:
+    py = sys.executable
+    suites = [
+        ("UNIT / BEHAVIOUR", [
+            ("capability registry (+ no-hard-coded-literals assertion)",
+             _suite("/bin/bash", "tests/in-container.sh",
+                    "tests/capability-registry-impl.py",
+                    "AILOCAL_GATEWAY_SOURCE=/app/config/hooks/tool_gateway.py")),
+            ("capability negotiator (byte accounting, modes, passthrough)",
+             _suite("/bin/bash", "tests/in-container.sh",
+                    "tests/tool-gateway-impl.py",
+                    "AILOCAL_GATEWAY_MODULE=/app/config/hooks/tool_gateway.py")),
+            ("persona injection", _suite(py, "tests/gateway.py", "persona")),
+            # Both directions: a repair layer that fires on a tutorial fence
+            # would execute commands the model never intended.
+            ("tool-call repair (repairs real calls, refuses examples)",
+             _suite(py, "tests/gateway.py", "repair")),
+            # The trace hook reads prompts, system text, tool definitions and
+            # results in order to measure them; each is a place a secret could
+            # enter a log.
+            ("E1 trace schema, redaction and token reconciliation",
+             _suite(py, "tests/gateway.py", "trace")),
+            # A candidate must not read the answer key, and the comparison must
+            # not measure one model twice.
+            ("planner comparison (safe defaults, locking, blinding)",
+             _suite(py, "tests/benchmark.py", "planner")),
+            ("benchmark library (aliases, geometry, evidence, confinement)",
+             _suite(py, "tests/benchmark.py", "library")),
+            ("benchmark command (models, planner, gateway dispatch)",
+             _suite(py, "tests/benchmark.py", "command")),
+            ("benchmark runtime stages the generated config",
+             _suite(py, "tests/benchmark.py", "runtime")),
+            # A leaked worktree per gate run accumulates.
+            ("benchmark leaks no git worktree",
+             _suite(py, "tests/benchmark.py", "worktree")),
+            ("profile resolver (single reader, fail-closed, no 64gb default)",
+             _suite(py, "tests/profiles.py", "resolver")),
+            ("policy ownership (one reader, client policy fails closed)",
+             _suite(py, "tests/profiles.py", "policy")),
+            ("hardware profiles (schema, tiers, dedup)",
+             _suite(py, "tests/profiles.py", "hardware")),
+            ("Python LSP baseline for claude-local (real documentSymbol)",
+             _suite(py, "tests/lsp-baseline.py")),
+        ]),
+        ("INTEGRATION", [
+            # Dry-run only (stub `claude` on PATH, no inference).
+            ("client role alias overrides (defaults intact, fails closed)",
+             _suite("/bin/bash", "tests/clients.sh", "roles")),
+            ("codex MCP is withheld (no grepai/lsp/github, no re-sync)",
+             _suite("/bin/bash", "tests/clients.sh", "codex")),
+            ("shell output helpers (streams, colour, one owner)",
+             _suite("/bin/bash", "tests/shell-output.sh")),
+            ("validator checks (deterministic, bounded, search quota)",
+             _suite(py, "tests/validators.py")),
+            ("consolidated suites stay section-isolated",
+             _suite(py, "tests/suite-structure.py")),
+            ("generation rolls back on partial failure (never mixed on disk)",
+             _suite(py, "tests/generation-rollback.py")),
+            # Provisioning writes OUTSIDE the checkout, so "an edited profile is
+            # never overwritten" is what protects an operator's policy.
+            ("install: provisioning, provenance and tier selection",
+             _suite(py, "tests/install.py")),
+            # Claude Code sends Anthropic-shaped probes LiteLLM does not
+            # implement; asserts the probe answers AND that nothing else moved.
+            ("client compatibility probes (/api/hello, no side effects)",
+             _suite("/bin/bash", "tests/compat-routes.sh")),
+        ]),
+        ("INVARIANTS", [
+            ("ailocal sync is a fixed point", _fixed_point),
+            ("litellm runtime matches the validated version", _version_current),
+            ("all shell scripts parse (bash -n)", _shell_parses),
+            ("all python modules parse", _python_parses),
+            ("client timeout is not below the proxy timeout", _timeouts_aligned),
+            ("every registered hook imports inside the proxy image", _hooks_import),
+            ("installers are idempotent",
+             _suite("/bin/bash", "tests/idempotent-install.sh")),
+            # The audit exits 3 on actionable items; only exit 1 (the audit
+            # itself broke) fails the gate.
+            ("installation audit runs cleanly", _audit_runs),
+        ]),
+    ]
+    if full:
+        suites[1][1].insert(0, ("client compatibility (3 dialects x 3 modes)",
+                                _suite("/bin/bash", "tests/client-compatibility.sh")))
+        suites.append(("END TO END (slow: drives a real client)", [
+            ("benchmark, 2 interleaved rounds",
+             _suite(py, "-m", "ailocal.cli", "benchmark", "gateway"))]))
+    return suites
+
+
+def _fixed_point(repo: pathlib.Path) -> tuple[int, str]:
+    """The generated config IS the deployed config, so a generator that is not a
+    fixed point means the proxy and the repository can silently disagree."""
+    from ailocal import policy as P
+    generated = P.state_root() / "litellm" / "config.yaml"
+    before = generated.read_bytes() if generated.is_file() else b""
+    r = subprocess.run([sys.executable, "-m", "ailocal.generation"],
+                       cwd=repo, capture_output=True, text=True)
+    if r.returncode:
+        return 1, r.stdout + r.stderr
+    return (0, "") if generated.read_bytes() == before else         (1, "ailocal sync is not a fixed point")
+
+
+def _version_current(repo: pathlib.Path) -> tuple[int, str]:
+    r = S.check_litellm_version()
+    return (0 if r.status is not FAIL else 1), r.summary
+
+
+def _shell_parses(repo: pathlib.Path) -> tuple[int, str]:
+    bad = []
+    for pattern in ("ailocal", "tests/*.sh", "benchmarks/*.sh", "clients/*.sh",
+                    "clients/*.zsh"):
+        for f in sorted(repo.glob(pattern)):
+            r = subprocess.run(["bash", "-n", str(f)], capture_output=True, text=True)
+            if r.returncode:
+                bad.append(f"{f.name}: {r.stderr.strip()}")
+    return (1, "\n".join(bad)) if bad else (0, "")
+
+
+def _python_parses(repo: pathlib.Path) -> tuple[int, str]:
+    bad = []
+    for pattern in ("src/**/*.py", "benchmarks/**/*.py", "tests/**/*.py",
+                    "deploy/litellm/hooks/*.py"):
+        for f in sorted(repo.glob(pattern)):
+            try:
+                ast.parse(f.read_text(encoding="utf-8"))
+            except SyntaxError as exc:
+                bad.append(f"{f}: {exc}")
+    return (1, "\n".join(bad)) if bad else (0, "")
+
+
+def _timeouts_aligned(repo: pathlib.Path) -> tuple[int, str]:
+    """The client must never give up before the proxy, or it abandons requests
+    the proxy is still serving while the backend generates into a closed socket.
+    """
+    proxy = re.search(r"^ *timeout: *(\d+)",
+                      (repo / "deploy/litellm/config.template.yaml").read_text(),
+                      re.M)
+    client = re.search(r"AILOCAL_API_TIMEOUT_MS:-(\d+)}",
+                       (repo / "clients/configure.template.zsh").read_text())
+    if not (proxy and client):
+        return 1, "could not read both timeouts"
+    if int(client.group(1)) < int(proxy.group(1)) * 1000:
+        return 1, (f"client API_TIMEOUT_MS {client.group(1)} is BELOW the LiteLLM "
+                   f"timeout {proxy.group(1)}s")
+    return 0, ""
+
+
+def _hooks_import(repo: pathlib.Path) -> tuple[int, str]:
+    """A registered-but-unimportable callback takes the container down at boot:
+    a sibling import that works on the host fails under LiteLLM's loader."""
+    program = (
+        "import importlib.util, sys\n"
+        "bad = []\n"
+        "for name in ['persona_injector','reasoning_router','startup',"
+        "'tool_repair','tool_gateway','session_observer','capability_registry']:\n"
+        "    try:\n"
+        "        spec = importlib.util.spec_from_file_location("
+        "name, f'/app/config/hooks/{name}.py')\n"
+        "        mod = importlib.util.module_from_spec(spec)\n"
+        "        sys.modules[name] = mod\n"
+        "        spec.loader.exec_module(mod)\n"
+        "    except Exception as exc:\n"
+        "        bad.append(f'{name}: {type(exc).__name__}: {exc}')\n"
+        "print(chr(10).join(bad))\n"
+        "sys.exit(1 if bad else 0)\n")
+    r = subprocess.run(["docker", "exec", "-i", S.CONTAINER, "python", "-"],
+                       input=program, capture_output=True, text=True, timeout=120)
+    return r.returncode, r.stdout + r.stderr
+
+
+def _audit_runs(repo: pathlib.Path) -> tuple[int, str]:
+    """Exit 3 means actionable findings, which is a normal working state. Only
+    the audit itself breaking fails the gate."""
+    r = subprocess.run([sys.executable, "-m", "ailocal.install", "audit"],
+                       cwd=repo, capture_output=True, text=True)
+    return (1, r.stdout + r.stderr) if r.returncode == 1 else (0, "")
+
+
+def _gate(argv: list[str]) -> int:
+    full = "--full" in argv
+    repo = _repo()
+    _gate_preconditions(repo)
+    print("═" * 70 + "\n ailocal regression gate\n" + "═" * 70)
+
+    passed = failed = 0
+    failures, slow = [], []
+    for heading, entries in _gate_suites(repo, full):
+        print(f"\n{heading}")
+        for label, runner in entries:
+            started = time.monotonic()
+            if callable(runner):
+                try:
+                    rc, out = runner(repo)
+                except Exception as exc:  # noqa: BLE001
+                    rc, out = 1, f"{type(exc).__name__}: {exc}"
+            else:
+                r = subprocess.run(runner, cwd=repo, capture_output=True, text=True)
+                rc, out = r.returncode, r.stdout + r.stderr
+            seconds = int(time.monotonic() - started)
+            mark = (f" \033[33m[{seconds}s]\033[0m" if seconds >= GATE_SLOW_S
+                    else f" ({seconds}s)" if seconds >= 2 else "")
+            if seconds >= GATE_SLOW_S:
+                slow.append(f"{label} ({seconds}s)")
+            if rc == 0:
+                print(f"  \033[32mPASS\033[0m  {label}{mark}")
+                passed += 1
+            else:
+                print(f"  \033[31mFAIL\033[0m  {label}{mark}")
+                for line in [l for l in out.splitlines()
+                             if re.search(r"FAIL|[Ee]rror|Traceback|not idempotent",
+                                          l)][:6]:
+                    print(f"          {line}")
+                failed += 1
+                failures.append(label)
+
+    print("\n" + "═" * 70)
+    if failed:
+        print(f" REGRESSION GATE: {failed} FAILED, {passed} passed")
+        for label in failures:
+            print(f"   - {label}")
+        return 1
+    print(f" REGRESSION GATE: all {passed} checks passed")
+    if slow:
+        print(f" {len(slow)} check(s) at/over {GATE_SLOW_S}s — keep the gate fast "
+              "enough to run:")
+        for label in slow:
+            print(f"   {label}")
+    if not full:
+        print(" (add --full for the compatibility matrix and the end-to-end benchmark)")
+    return 0
+
+
 COMMANDS = {"validate": _validate, "smoke": _smoke, "doctor": _doctor,
-            "security": _security, "verify-session": H.verify_session}
+            "security": _security, "verify-session": H.verify_session,
+            "test": _gate}
 
 if __name__ == "__main__":
     if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:

@@ -194,6 +194,15 @@ def provision(source: Path, config: Path, data: Path, state: Path) -> dict:
         else:
             preserved.append(rel)
 
+    # Data components are replaced by RENAME, so a running container keeps its
+    # bind mount on the unlinked old directory and sees an empty /app/config
+    # until it is recreated. Silent, and it looks like missing hooks.
+    if "ailocal-litellm" in subprocess.run(
+            ["docker", "ps", "--format", "{{.Names}}"],
+            capture_output=True, text=True).stdout.split():
+        warn("the stack is running on the previous assets — run `ailocal start` "
+             "to remount")
+
     record = {"config": dict(shipped), "data": {}}
     for c in CONFIG_COMPONENTS:
         record["config"].update({rel: d for rel, d in _tree(config, c).items()
