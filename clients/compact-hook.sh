@@ -12,7 +12,7 @@
 # reported "no compaction" for a session that compacted. Payload now arrives on a
 # pipe and the script is passed with -c.
 set -euo pipefail
-# Deployed outside the checkout, so it cannot call lib/profile-config.
+# Deployed outside the checkout, so it reads the generated artefact directly.
 # It honours AILOCAL_STATE and otherwise mirrors policy.state_root().
 STATE="${AILOCAL_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/ailocal}"
 mkdir -p "$STATE"

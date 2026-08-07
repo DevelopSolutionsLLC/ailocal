@@ -1,5 +1,5 @@
 <!-- SOURCE for repo-instructions.md. The capabilities table below is filled
-     by sync-models.py from profiles/<tier>.toml; the generated file is
+     by generation.py from profiles/<tier>.toml; the generated file is
      git-ignored. Edit this template, then run `ailocal sync`. -->
 # Copilot Agent Instructions — ailocal
 
@@ -120,7 +120,7 @@ cat /tmp/step1.log
 
 ## Local model roles
 
-<!-- >>> BEGIN GENERATED capabilities (sync-models.py) — do not edit <<< -->
+<!-- >>> BEGIN GENERATED capabilities (ailocal sync) — do not edit <<< -->
 <!-- >>> END GENERATED capabilities <<< -->
 
 ---

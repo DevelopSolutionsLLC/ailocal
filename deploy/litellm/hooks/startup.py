@@ -25,7 +25,7 @@ from litellm.integrations.custom_logger import CustomLogger
 
 log = logging.getLogger("startup")
 
-#: The GENERATED config — sync-models.py writes it to $AILOCAL_STATE and Compose
+#: The GENERATED config — generation.py writes it to $AILOCAL_STATE and Compose
 #: mounts it at /app/generated. It is NOT in the authored /app/config mount.
 CONFIG_PATH = os.environ.get("AILOCAL_CONFIG_PATH", "/app/generated/config.yaml")
 
@@ -55,7 +55,7 @@ def _say(msg):
 
 
 def _load_model_list():
-    """The generated model_list. sync-models.py owns that file, so new
+    """The generated model_list. generation.py owns that file, so new
     capabilities are picked up with no change here."""
     try:
         import yaml

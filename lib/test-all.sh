@@ -187,9 +187,9 @@ echo "INVARIANTS"
 # report legitimately uncommitted work.
 idempotent() {
   local before after
-  _gen="$(python3 lib/profile-config state-root)/litellm/config.yaml"
+  _gen="$(./ailocal profile state-root)/litellm/config.yaml"
   before="$(md5 -q "$_gen" 2>/dev/null || md5sum "$_gen" | cut -d' ' -f1)"
-  python3 lib/sync-models.py >/dev/null 2>&1 || return 1
+  ./ailocal sync >/dev/null 2>&1 || return 1
     after="$(md5 -q "$_gen" 2>/dev/null || md5sum "$_gen" | cut -d' ' -f1)"
   [ "$before" = "$after" ] || { echo "ailocal sync is not idempotent"; return 1; }
 }
@@ -238,15 +238,13 @@ python_syntax() {
   python3 - <<'PY'
 import ast, glob, sys
 bad = 0
-# lib/profile-config is Python with no extension, so it is named explicitly —
-# without it, the one file every shell entry point shells out to goes unchecked.
 paths = sorted(set(
     glob.glob("src/**/*.py", recursive=True)
     + glob.glob("lib/**/*.py", recursive=True)
     + glob.glob("benchmarks/**/*.py", recursive=True)
     + glob.glob("tests/**/*.py", recursive=True)
     + glob.glob("deploy/litellm/hooks/*.py")
-    + ["lib/profile-config"]))
+    ))
 for path in paths:
     try:
         ast.parse(open(path, encoding="utf-8").read())

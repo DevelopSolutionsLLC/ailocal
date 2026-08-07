@@ -748,8 +748,7 @@ def cmd_update(argv: list[str]) -> int:
     # Client configs are NOT redeployed here: that would rewrite the user's
     # client homes on every update. Redeploy explicitly with ailocal clients.
     step("Regenerating model config")
-    subprocess.run([sys.executable,
-                    str(policy.data_root() / "lib" / "sync-models.py")], check=True)
+    subprocess.run([sys.executable, "-m", "ailocal.generation"], check=True)
 
     step("Restarting services")
     compose("up", "-d", "--remove-orphans")

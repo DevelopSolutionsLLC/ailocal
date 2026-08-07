@@ -671,8 +671,7 @@ def main(argv: list[str]) -> int:
 
     # Every derived artifact first: deploying from stale generated state is how
     # a client ends up configured for a profile that is no longer active.
-    subprocess.run([sys.executable,
-                    str(policy.data_root() / "lib" / "sync-models.py")], check=True)
+    subprocess.run([sys.executable, "-m", "ailocal.generation"], check=True)
 
     key = _master_key()
     ensure_shell_sourcing(key)

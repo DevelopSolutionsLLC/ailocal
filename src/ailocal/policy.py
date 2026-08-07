@@ -40,7 +40,7 @@ REQUIRED_ROLE_FIELDS = ("role", "active", "context_input")
 LEGACY_CONTEXT_FIELD = "context"
 
 #: Optional, with their current behaviour when absent:
-#:   reasoning      -> None; sync-models treats absent as non-thinking
+#:   reasoning      -> None; generation treats absent as non-thinking
 #:   temperature/top_p/top_k/repeat_penalty -> None; omitted from generated params
 #:   num_predict    -> DERIVED from max_output by geometry(); never configured
 #:   keep_alive     -> None; omitted, Ollama default applies

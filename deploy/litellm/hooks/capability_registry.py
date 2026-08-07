@@ -17,7 +17,7 @@ DESIGN COMMITMENTS
    (malformed) are separate, because a corrupt registry demands a different
    response from a deliberately missing one.
 3. **max_context is not restated.** It is read from
-   config/capabilities.generated.json, which sync-models.py derives from the
+   config/capabilities.generated.json, which generation.py derives from the
    active profile. Duplicating it here would create two sources that drift apart
    after a profile change. The registry's own max_context is a fallback for
    classes with no generated entry (cloud models).

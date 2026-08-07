@@ -12,6 +12,7 @@ surface and nothing else.
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -43,9 +44,9 @@ COMMANDS: dict[str, tuple] = {
     "smoke":          (MOD, "ailocal.checks.run", ("smoke",), True),
     "security":       (MOD, "ailocal.checks.run", ("security",), True),
     "test":           (SH, "lib/test-all.sh", (), True),
-    "profile":        (PY, "lib/profile-config", (), True),
-    "sync":           (PY, "lib/sync-models.py", (), True),
-    "resolve":        (PY, "lib/sync-models.py", ("--resolve",), True),
+
+    "sync":           (MOD, "ailocal.generation", (), True),
+    "resolve":        (MOD, "ailocal.generation", ("--resolve",), True),
     "start":          (MOD, "ailocal.runtime", ("start",), True),
     "stop":           (MOD, "ailocal.runtime", ("stop",), True),
     "update":         (MOD, "ailocal.runtime", ("update",), True),
@@ -139,6 +140,65 @@ def _exec(kind: str, target, args) -> None:
     os.execv(argv[0], argv)
 
 
+#: `ailocal profile <query>`. Scalars print bare so `$(...)` captures them
+#: cleanly; every failure prints the error CODE to stderr and exits non-zero.
+#: The login preload agent is the runtime consumer of `role --field`.
+def _profile(argv: list[str]) -> int:
+    from . import policy as P
+    query = argv[0] if argv else ""
+    rest = argv[1:]
+
+    def opt(name):
+        return rest[rest.index(name) + 1] if name in rest else None
+
+    try:
+        if query == "state-root":
+            print(P.state_root())
+        elif query == "config-root":
+            print(P.config_root())
+        elif query == "data-root":
+            print(P.data_root())
+        elif query == "active-profile-path":
+            print(P.active_profile_path())
+        elif query == "active-tier":
+            print(P.active_tier())
+        elif query == "role":
+            tier = opt("--tier")
+            cfg = P.resolve_role(tier, rest[0]) if tier else P.effective_role(rest[0])
+            field = opt("--field")
+            if field is None:
+                print(json.dumps(cfg, indent=1, sort_keys=True))
+            elif field not in cfg:
+                print(f"{P.ROLE_CONFIG_INVALID}: no field {field!r}", file=sys.stderr)
+                return 2
+            else:
+                # An absent optional field is not an error, but it must not
+                # print as the string "None" into a shell variable.
+                print("" if cfg[field] is None else cfg[field])
+        elif query == "profile-summary":
+            tier = opt("--tier")
+            print(json.dumps(P.profile_summary(tier) if tier
+                             else P.effective_summary(), indent=1, sort_keys=True))
+        elif query == "validate":
+            P.load_effective()
+            print(f"ok: {P.active_tier()} active; generated profile state is valid")
+        else:
+            print("usage: ailocal profile <active-tier|state-root|config-root|"
+                  "data-root|active-profile-path|role NAME [--field F] [--tier T]|"
+                  "profile-summary [--tier T]|validate>", file=sys.stderr)
+            return 2
+    except P.ProfileError as e:
+        print(f"{e.code}: {e.detail}", file=sys.stderr)
+        return 2
+    return 0
+
+
+#: Commands answered in this process rather than by exec: they are a few lines
+#: over policy, and a subprocess for them would be the only reason to keep a
+#: separate script.
+HANDLERS = {"profile": _profile}
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     cmd = argv.pop(0) if argv else "help"
@@ -146,6 +206,9 @@ def main(argv: list[str] | None = None) -> int:
     if cmd in ("help", "-h", "--help"):
         print(_usage())
         return 0
+
+    if cmd in HANDLERS:
+        return HANDLERS[cmd](argv)
 
     if cmd in NESTED:
         targets = NESTED[cmd]

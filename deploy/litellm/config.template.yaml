@@ -22,7 +22,7 @@
 # Reference: https://docs.litellm.ai/docs/proxy/configs
 model_list:
 
-  # >>> BEGIN GENERATED model_list (sync-models.py) — do not edit <<<
+  # >>> BEGIN GENERATED model_list (ailocal sync) — do not edit <<<
   # >>> END GENERATED model_list <<<
 
 router_settings:
@@ -37,7 +37,7 @@ router_settings:
   # GENERATED from profiles/clients.yaml by sync-models.py — claude-*/gpt-* compat names,
   # each aliased to its ailocal-<capability> group.
   # Do NOT hand-edit between the markers — edit profiles/clients.yaml and run sync.
-  # >>> BEGIN GENERATED model_group_alias (sync-models.py) — do not edit <<<
+  # >>> BEGIN GENERATED model_group_alias (ailocal sync) — do not edit <<<
   # >>> END GENERATED model_group_alias <<<
 
   # NO FALLBACKS, DELIBERATELY.
