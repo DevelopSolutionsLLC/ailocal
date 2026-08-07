@@ -152,9 +152,9 @@ fingerprint baseline >/dev/null
 
 # ── ailocal sync ───────────────────────────────────────────────────────────
 banner "ailocal sync x2"
-./ailocal sync >/dev/null 2>&1 || bad "ailocal sync #1 failed"
+ailocal sync >/dev/null 2>&1 || bad "ailocal sync #1 failed"
 fingerprint sync1 >/dev/null
-./ailocal sync >/dev/null 2>&1 || bad "ailocal sync #2 failed"
+ailocal sync >/dev/null 2>&1 || bad "ailocal sync #2 failed"
 fingerprint sync2 >/dev/null
 compare sync1 sync2 "ailocal sync"
 
@@ -162,9 +162,9 @@ compare sync1 sync2 "ailocal sync"
 # claude + codex only by default: the vscode target touches the user's editor
 # config, which is opt-in here.
 banner "ailocal clients claude codex x2"
-if ./ailocal clients claude codex >/dev/null 2>&1; then
+if ailocal clients claude codex >/dev/null 2>&1; then
   fingerprint clients1 >/dev/null
-  ./ailocal clients claude codex >/dev/null 2>&1
+  ailocal clients claude codex >/dev/null 2>&1
   fingerprint clients2 >/dev/null
   compare clients1 clients2 "ailocal clients claude codex"
 else
@@ -174,9 +174,9 @@ fi
 # ── ailocal vscode (opt-in) ────────────────────────────────────────────────
 if [ -n "$INCLUDE_VSCODE" ]; then
   banner "ailocal vscode x2"
-  if ./ailocal vscode >/dev/null 2>&1; then
+  if ailocal vscode >/dev/null 2>&1; then
     fingerprint vsc1 >/dev/null
-    ./ailocal vscode >/dev/null 2>&1
+    ailocal vscode >/dev/null 2>&1
     fingerprint vsc2 >/dev/null
     compare vsc1 vsc2 "ailocal vscode"
   else

@@ -44,7 +44,6 @@ profiles/              hardware policy: capability -> model, geometry, sampling
                        authored, dev-editable, and the shipped default
 tests/                 domain suites (`ailocal test` is the gate)
 docs/                  runtime flow, security, troubleshooting, ADRs
-./ailocal              development shim for running from a checkout (ADR 009)
 pyproject.toml         packaging; `[project.scripts]` declares the command
 ```
 

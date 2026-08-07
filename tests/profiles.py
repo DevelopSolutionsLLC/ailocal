@@ -232,7 +232,7 @@ def resolver_checks() -> None:
           "the update-check runner resolves the installed ailocal command")
 
     print("\nCLI IS USABLE FROM A SHELL AND FAILS NON-ZERO")
-    cli = [str(REPO / "ailocal"), "profile"]
+    cli = ["ailocal", "profile"]
     r = subprocess.run(cli + ["active-tier"], capture_output=True, text=True)
     check(r.returncode == 0 and r.stdout.strip() in P.TIERS,
           f"active-tier prints a bare scalar ({r.stdout.strip()})")
