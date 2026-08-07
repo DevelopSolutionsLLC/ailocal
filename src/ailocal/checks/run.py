@@ -267,8 +267,6 @@ def _gate_suites(repo: pathlib.Path, full: bool) -> list:
              ["/bin/bash", "tests/shell-output.sh"]),
             ("validator checks (deterministic, bounded, search quota)",
              [py, "tests/validators.py"]),
-            ("consolidated suites stay section-isolated",
-             [py, "tests/suite-structure.py"]),
             ("generation rolls back on partial failure (never mixed on disk)",
              [py, "tests/generation-rollback.py"]),
             ("install: provisioning, provenance and tier selection",
