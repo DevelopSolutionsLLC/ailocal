@@ -393,7 +393,7 @@ def check_brave_key_configured() -> CheckResult:
         # The state root has one owner; do not re-derive it here.
         _sys.path.insert(0, str(_pl.Path(__file__).resolve().parent.parent))
         import policy as _pc
-        settings = _pc.runtime_root() / "searxng" / "settings.yml"
+        settings = _pc.state_root() / "searxng" / "settings.yml"
     if not settings.is_file():
         return CheckResult("brave-key", BLOCKED, "rendered SearXNG settings not readable")
     text = settings.read_text(errors="replace")

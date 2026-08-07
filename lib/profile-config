@@ -47,7 +47,7 @@ def main() -> int:
         # no YAML fallback: falling back would hide a stale or failed generation
         # behind a value that looks fine.
         if a.cmd == "state-root":
-            print(P.runtime_root()); return 0
+            print(P.state_root()); return 0
         if a.cmd == "active-profile-path":
             print(P.active_profile_path()); return 0
         if a.cmd == "active-tier":

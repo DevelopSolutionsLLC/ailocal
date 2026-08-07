@@ -48,8 +48,8 @@ import policy as _pc  # noqa: E402
 ACTIVE_PROFILE = _pc.active_profile_path(ROOT)   # machine-selected tier
 CLIENTS_YAML   = ROOT / "profiles/clients.yaml"
 LITELLM_TEMPLATE = ROOT / "deploy/litellm/config.template.yaml"
-_CLIENTS_OUT   = _pc.runtime_root() / "clients"
-_LITELLM_OUT   = _pc.runtime_root() / "litellm"
+_CLIENTS_OUT   = _pc.state_root() / "clients"
+_LITELLM_OUT   = _pc.state_root() / "litellm"
 LITELLM_CONFIG   = _LITELLM_OUT / "config.yaml"
 CAPS_JSON      = _LITELLM_OUT / "capabilities.json"
 CODEX_CATALOG  = _CLIENTS_OUT / "model_catalog.json"
@@ -71,7 +71,7 @@ COPILOT_REPO_MD  = _CLIENTS_OUT / "copilot/repo-instructions.md"
 # The machine-readable seam with Cadence. Cadence reads THIS and nothing else to
 # learn about the local runtime — see write_integration_contract(). ailocal does
 # NOT own client instruction policy; an external consumer composes it from this contract.
-CONTRACT_JSON  = _pc.runtime_root() / "integration-contract.json"
+CONTRACT_JSON  = _pc.state_root() / "integration-contract.json"
 BASE_URL       = "http://localhost:4000"
 
 
@@ -1088,7 +1088,7 @@ def main():
             return re.sub(r'"generated_at":\s*"[^"]*"', '"generated_at": ""', t)
 
         def _label(d):
-            for base in (_pc.runtime_root(), ROOT):
+            for base in (_pc.state_root(), ROOT):
                 try:
                     return str(d.relative_to(base))
                 except ValueError:

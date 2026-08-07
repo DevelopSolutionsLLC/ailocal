@@ -190,7 +190,7 @@ def generated_dir() -> Path:
     import sys as _sys
     _sys.path.insert(0, str(Path(__file__).resolve().parent))
     import policy
-    return policy.runtime_root() / "litellm"
+    return policy.state_root() / "litellm"
 
 
 def apply_aliases(entries: list) -> dict:
@@ -259,7 +259,7 @@ def _compose(args: list, extra=None):
     for f in (extra or []):
         files += ["-f", str(f)]
     import policy
-    env = {**os.environ, "AILOCAL_STATE": str(policy.runtime_root())}
+    env = {**os.environ, "AILOCAL_STATE": str(policy.state_root())}
     return subprocess.run(["docker", "compose", "--project-directory", str(REPO),
                            *files, *args], capture_output=True, text=True,
                           timeout=300, env=env)

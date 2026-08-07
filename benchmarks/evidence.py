@@ -17,6 +17,7 @@ import hashlib
 import os
 import re
 import subprocess
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,25 +25,20 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent   # benchmarks/ -> repo root
 
+sys.path.insert(0, str(REPO / "lib"))
+import policy  # noqa: E402  every root has one owner (ADR 009)
+
 
 def state_dir() -> Path:
-    """Benchmark state, under the one runtime root."""
-    import sys
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import policy
-    p = policy.runtime_root() / "benchmark"
+    """Benchmark state, under the one state root."""
+    p = policy.state_root() / "benchmark"
     p.mkdir(parents=True, exist_ok=True)
     return p
 
 
 def tooling_dir() -> Path:
-    """Third-party benchmark tooling: the lm-eval venv and the RULER checkout.
-
-    XDG_DATA_HOME rather than the state root: these are installed artifacts, not
-    machine state, and re-downloading them costs hundreds of megabytes.
-    """
-    base = os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")
-    return Path(base) / "ailocal" / "benchmark"
+    """Third-party benchmark tooling. policy.py owns the path (ADR 009)."""
+    return policy.benchmark_tooling_root()
 
 
 def runtime_dir() -> Path:

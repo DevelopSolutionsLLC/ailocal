@@ -220,6 +220,31 @@ def resolver_checks() -> None:
             check(n == 1, f"{name} resolves the tier exactly once")
     sync = (REPO / "lib" / "sync-models.py").read_text()
     check('return "64gb"' not in sync, "sync-models no longer defaults to 64gb")
+
+    # ADR 009. Config, data and state have separate homes, and policy.py owns
+    # all three. A second implementation is how the state root acquired the
+    # `|| echo ~/.local/state` shape that this module exists to prevent.
+    check(all(hasattr(P, f) for f in ("config_root", "data_root", "state_root")),
+          "policy exposes config_root, data_root and state_root")
+    for env, fn in (("AILOCAL_CONFIG", P.config_root),
+                    ("AILOCAL_DATA", P.data_root),
+                    ("AILOCAL_STATE", P.state_root)):
+        os.environ[env] = "/tmp/ailocal-root-probe"
+        try:
+            check(str(fn()) == "/tmp/ailocal-root-probe", f"{env} overrides its root")
+        finally:
+            del os.environ[env]
+    check(P.state_root() != P.config_root(),
+          "state root is never the config root (generated state stays out of the tree)")
+    # Only policy.py may derive a root from XDG or ~/.local. Anything else is a
+    # second owner that drifts the moment one of them moves.
+    for path in sorted(REPO.glob("lib/**/*.py")) + sorted(REPO.glob("benchmarks/*.py")):
+        if path.name == "policy.py":
+            continue
+        body = path.read_text()
+        check("XDG_STATE_HOME" not in body and "XDG_CONFIG_HOME" not in body
+              and "XDG_DATA_HOME" not in body,
+              f"{path.name} does not resolve an XDG root itself")
     bench = (REPO / "benchmarks" / "suite.py").read_text()
     check("re.finditer" not in bench.split("def parse_profile")[1].split("def ")[0],
           "benchmark's parse_profile no longer parses YAML itself")
@@ -268,13 +293,13 @@ def resolver_checks() -> None:
     comp = eff["compaction"]
     check(comp.get("window") and comp.get("pct"),
           f"profile owns compaction ({comp.get('window')} x {comp.get('pct')}%)")
-    claude = json.loads((P.runtime_root() / "clients/claude/settings.json").read_text())
+    claude = json.loads((P.state_root() / "clients/claude/settings.json").read_text())
     env = claude.get("env", {})
     check(env.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW") == str(comp["window"])
           and env.get("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE") == str(comp["pct"]),
           "Claude compaction is generated from the profile block verbatim")
 
-    codex = (P.runtime_root() / "clients/codex/config.toml").read_text()
+    codex = (P.state_root() / "clients/codex/config.toml").read_text()
     import re as _r
     cw = int(_r.search(r"model_context_window\s*=\s*(\d+)", codex).group(1))
     cl = int(_r.search(r"model_auto_compact_token_limit\s*=\s*(\d+)", codex).group(1))
@@ -311,7 +336,7 @@ def resolver_checks() -> None:
         "max_output": 10, "role": "F"})
     check("model: ollama_chat/nomic-shaped-name:1b" in blk,
           "a nomic-SHAPED name no longer forces the embedding route")
-    cfg = (P.runtime_root() / "litellm" / "config.yaml").read_text()
+    cfg = (P.state_root() / "litellm" / "config.yaml").read_text()
     check("model: ollama/nomic-embed-text" in cfg,
           "embeddings still generates the ollama (non-chat) route")
     check(cfg.count("model: ollama_chat/") == 5,
@@ -382,7 +407,7 @@ def resolver_checks() -> None:
     # Advertised must equal enforced: they disagreed before (fast advertised
     # 12288 while enforcing 4096).
     import re as _re3
-    cfg3 = (P.runtime_root() / "litellm" / "config.yaml").read_text()
+    cfg3 = (P.state_root() / "litellm" / "config.yaml").read_text()
     for blk in cfg3.split("  - model_name: ")[1:]:
         name = blk.split("\n")[0].strip()
         gg = lambda k: (int(m.group(1)) if (m := _re3.search(rf"{k}:\s*(-?\d+)", blk)) else None)
@@ -419,7 +444,7 @@ def resolver_checks() -> None:
 
     # Every generated finite-output alias must satisfy the invariant.
     import re as _re
-    cfg = (P.runtime_root() / "litellm" / "config.yaml").read_text()
+    cfg = (P.state_root() / "litellm" / "config.yaml").read_text()
     checked = 0
     for blk in cfg.split("  - model_name: ")[1:]:
         name = blk.split("\n")[0].strip()
@@ -614,7 +639,7 @@ def resolver_checks() -> None:
 
     print("\nGENERATED FILES ARE OUTPUTS, NOT SOURCES")
     # Generated artefacts live under the runtime root, never in the checkout.
-    _root = P.runtime_root()
+    _root = P.state_root()
     for gen in ("litellm/capabilities.json", "integration-contract.json"):
         check((_root / gen).exists(), f"{gen} exists under the runtime root")
     check(not (REPO / "capabilities.generated.json").exists(),
@@ -793,7 +818,7 @@ def hardware_checks() -> None:
     active = P.active_profile_path()
     tier = active.read_text().strip() if active.exists() else "64gb"
     cc = PARSED[tier][0].get("compaction", {})
-    settings = P.runtime_root() / "clients/claude/settings.json"
+    settings = P.state_root() / "clients/claude/settings.json"
     if settings.exists() and cc:
         import json
         env = json.loads(settings.read_text()).get("env", {})
@@ -808,7 +833,7 @@ def hardware_checks() -> None:
     # Deriving them from architecture wrote a compaction limit of 49,152 against a
     # default model whose entire context is 24,576 -- unreachable, because the model
     # 400s on context length long before compaction could fire.
-    codex = P.runtime_root() / "clients/codex/config.toml"
+    codex = P.state_root() / "clients/codex/config.toml"
     clients_yaml = (REPO / "profiles/clients.yaml").read_text()
     m = re.search(r'(?m)^codex:\n(?:.*\n)*?\s*default:\s*(\w+)', clients_yaml)
     cx_cap = m.group(1) if m else "implementation"

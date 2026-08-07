@@ -13,7 +13,7 @@
 # pipe and the script is passed with -c.
 set -euo pipefail
 # Deployed outside the checkout, so it cannot call lib/profile-config.
-# It honours AILOCAL_STATE and otherwise mirrors policy.runtime_root().
+# It honours AILOCAL_STATE and otherwise mirrors policy.state_root().
 STATE="${AILOCAL_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/ailocal}"
 mkdir -p "$STATE"
 python3 -c '
