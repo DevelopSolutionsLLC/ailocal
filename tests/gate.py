@@ -105,7 +105,7 @@ def _gate_suites(repo: pathlib.Path, full: bool) -> list:
              ["/bin/bash", "tests/compat-routes.sh"]),
         ]),
         ("INVARIANTS", [
-            ("ailocal sync is a fixed point", _fixed_point),
+            ("generation is a fixed point", _fixed_point),
             ("litellm runtime matches the validated version", _version_current),
             ("all shell scripts parse (bash -n)", _shell_parses),
             ("all python modules parse", _python_parses),
@@ -114,6 +114,7 @@ def _gate_suites(repo: pathlib.Path, full: bool) -> list:
             ("installers are idempotent",
              ["/bin/bash", "tests/idempotent-install.sh"]),
             ("installation audit runs cleanly", _audit_runs),
+            ("every read-only command actually runs", _readonly_commands_run),
         ]),
     ]
     if full:
@@ -132,7 +133,7 @@ def _fixed_point(repo: pathlib.Path) -> tuple[int, str]:
                        cwd=repo, capture_output=True, text=True)
     if r.returncode:
         return 1, r.stdout + r.stderr
-    return (0, "") if generated.read_bytes() == before else         (1, "ailocal sync is not a fixed point")
+    return (0, "") if generated.read_bytes() == before else         (1, "generation is not a fixed point")
 
 
 def _version_current(repo: pathlib.Path) -> tuple[int, str]:
@@ -200,6 +201,19 @@ def _hooks_import(repo: pathlib.Path) -> tuple[int, str]:
     r = subprocess.run(["docker", "exec", "-i", S.CONTAINER, "python", "-"],
                        input=program, capture_output=True, text=True, timeout=120)
     return r.returncode, r.stdout + r.stderr
+
+
+def _readonly_commands_run(repo: pathlib.Path) -> tuple[int, str]:
+    """Importing a module proves nothing about calling it: `ailocal trace` and
+    `ailocal status` both once raised NameError on a helper deleted from under
+    them, and every import-level check stayed green."""
+    bad = []
+    for cmd in ("help", "status", "trace", "profile active-tier"):
+        r = subprocess.run([sys.executable, "-m", "ailocal.cli", *cmd.split()],
+                           cwd=repo, capture_output=True, text=True, timeout=120)
+        if "Traceback" in r.stderr:
+            bad.append(f"ailocal {cmd}: {r.stderr.strip().splitlines()[-1]}")
+    return (1, "\n".join(bad)) if bad else (0, "")
 
 
 def _audit_runs(repo: pathlib.Path) -> tuple[int, str]:

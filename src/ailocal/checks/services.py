@@ -252,7 +252,7 @@ def check_aliases(token: str, expected: list[str]) -> list[CheckResult]:
         ok = alias in served
         out.append(CheckResult(f"alias:{alias}", PASS if ok else FAIL,
                                f"serves {alias}" if ok else f"{alias} is NOT served",
-                               remediation=None if ok else "ailocal sync && ailocal start"))
+                               remediation=None if ok else "ailocal start"))
     return out
 
 
@@ -273,7 +273,7 @@ def check_geometry(token: str, expected: dict[str, int]) -> list[CheckResult]:
         out.append(CheckResult(
             f"geometry:{alias}", PASS if ok else FAIL,
             f"{alias} advertises max_input={got}" + ("" if ok else f" (profile says {want})"),
-            remediation=None if ok else "ailocal sync && ailocal start"))
+            remediation=None if ok else "ailocal start"))
     return out
 
 
@@ -483,7 +483,7 @@ def check_context_window(token: str, alias: str = "ailocal-completion") -> Check
                        "context-window validation NOT enforced — oversized prompt accepted",
                        "model_registrar likely failed; local models are being "
                        "silently truncated",
-                       "ailocal sync && ailocal start")
+                       "ailocal start")
 
 
 # ── container supply chain ──────────────────────────────────────────────────

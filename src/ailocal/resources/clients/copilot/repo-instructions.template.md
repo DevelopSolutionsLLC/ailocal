@@ -1,6 +1,6 @@
 <!-- SOURCE for repo-instructions.md. The capabilities table below is filled
      by generation.py from profiles/<tier>.toml; the generated file is
-     git-ignored. Edit this template, then run `ailocal sync`. -->
+     git-ignored. Edit this template; `ailocal start` regenerates. -->
 # Copilot Agent Instructions — ailocal
 
 You are running inside VS Code connected to **local Ollama models via a LiteLLM proxy at
@@ -120,7 +120,7 @@ cat /tmp/step1.log
 
 ## Local model roles
 
-<!-- >>> BEGIN GENERATED capabilities (ailocal sync) — do not edit <<< -->
+<!-- >>> BEGIN GENERATED capabilities — do not edit <<< -->
 <!-- >>> END GENERATED capabilities <<< -->
 
 ---
@@ -138,12 +138,12 @@ policy. It is not restated here.
 - `profiles/clients.toml` — which capability each client surface uses
 
 **Never hand-edit generated output.** All of it lives under `$AILOCAL_STATE`,
-outside the checkout, and is rewritten by `ailocal sync`.
+outside the checkout, and is rewritten by `ailocal start`.
 
 **To change a model:**
 ```bash
 $EDITOR profiles/64gb.toml
-ailocal sync > /tmp/sync.log 2>&1 & exit 0
+ailocal start > /tmp/ailocal-start.log 2>&1 & exit 0
 # then: cat /tmp/sync.log
 # then: ailocal start > /tmp/restart.log 2>&1 & exit 0
 ```

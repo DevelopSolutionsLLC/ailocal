@@ -18,7 +18,7 @@ Rules:
 - Follow existing repo conventions and patterns found in the file you're
   editing — do not introduce new style, new deps, or drive-by refactors.
 - After each step, run the verification command stated in the plan (or the
-  most targeted one available: `bash -n`, a build, a test, `ailocal sync`).
+  most targeted one available: `bash -n`, a build, a test).
   Paste the real command output. Do not claim success without evidence.
 - If a step fails twice in a row, stop. Report: what you tried, the exact
   error output, and what you think is needed. Do not improvise a workaround

@@ -269,7 +269,7 @@ def _vscode_connector() -> bool:
 def _capabilities() -> list:
     path = policy.state_root() / "litellm" / "capabilities.json"
     if not path.is_file():
-        raise SystemExit("capabilities.json missing — run ailocal sync")
+        raise SystemExit("capabilities.json missing — run ailocal start")
     return json.loads(path.read_text())["capabilities"]
 
 
@@ -323,6 +323,62 @@ def _gateway_summary(container: str) -> None:
     if dropped:
         print(f"                 removed: {', '.join(dropped)}")
     print(f"  {len(rows)} request(s) seen")
+
+
+#: How to read a trace record, literally:
+#:   ttfb_ms  time to the FIRST STREAMED CHUNK. A proxy for prompt-eval time,
+#:            not a measurement of it — Ollama's prompt_eval_duration does not
+#:            survive into the LiteLLM response.
+#:   outcome  what the PROXY saw. A client that timed out at 60s while the proxy
+#:            streamed happily still shows `streamed`; the client's disconnect
+#:            is not observable from inside the proxy and is never recorded as
+#:            though it were.
+SILENT_MS = 60000
+
+
+def trace_dir() -> Path:
+    return Path(os.environ.get("AILOCAL_TRACE_HOST_DIR")
+                or policy.state_root() / "captures" / "traces")
+
+
+def trace_rows(directory: Path | None = None) -> list:
+    rows = []
+    for f in sorted(glob.glob(str((directory or trace_dir()) / "*.jsonl"))):
+        with open(f, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                try:
+                    rows.append(json.loads(line))
+                except ValueError:
+                    pass
+    return rows
+
+
+def _silent(rows) -> list:
+    return [r for r in rows if isinstance(r.get("ttfb_ms"), (int, float))
+            and r["ttfb_ms"] > SILENT_MS]
+
+
+def _traces(directory: Path) -> None:
+    """The three most recent, for the dashboard."""
+    rows = trace_rows(directory)
+    if not rows:
+        return dim("no traces yet")
+    fails = [r for r in rows if r.get("outcome") == "failure"]
+    slow = _silent(rows)
+    for r in rows[-3:]:
+        when = time.strftime("%H:%M:%S", time.localtime(r.get("ts") or 0))
+        t = r.get("ttfb_ms")
+        tt = f"{t:.0f}ms" if isinstance(t, (int, float)) else "-"
+        print(f"  {when}  {str(r.get('client') or '?'):11} "
+              f"{str(r.get('capability') or '?'):13} ttfb={tt:>9}  {r.get('outcome')}")
+    msg = f"  {len(rows)} trace(s)"
+    if fails:
+        msg += f", {_c(f'{len(fails)} failure(s)', RED)}"
+    if slow:
+        msg += f", {_c(f'{len(slow)} with >60s first byte', YELLOW)}"
+    print(msg)
+    if fails or slow:
+        print("  -> ailocal trace --failures")
 
 
 def cmd_trace(argv: list[str]) -> int:

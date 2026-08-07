@@ -118,12 +118,17 @@ ailocal install     bootstrap the stack
 ailocal start       bring the proxy and models up
 ailocal status      live model status by capability
 ailocal check       is everything ready and working?
+ailocal trace       per-request timeline: which component, and when
 ailocal stop        bring it down
 ```
 
+`ailocal trace` answers the one question logs cannot: every component reported
+success but the first byte took a minute — where did it go? It is off until
+`AILOCAL_TRACE_DIR` is set in `.env`.
+
 Configuration is generated from the profile into
 `${AILOCAL_STATE:-~/.local/state/ailocal}`, outside the repository. Deleting
-that directory and re-running `ailocal sync` is a supported repair.
+that directory and re-running `ailocal start` is a supported repair.
 
 ## Supported clients
 

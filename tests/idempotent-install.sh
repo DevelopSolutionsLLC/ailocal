@@ -150,13 +150,13 @@ echo "════════════════════════�
 banner "fingerprint: baseline"
 fingerprint baseline >/dev/null
 
-# ── ailocal sync ───────────────────────────────────────────────────────────
-banner "ailocal sync x2"
-ailocal sync >/dev/null 2>&1 || bad "ailocal sync #1 failed"
+# ── generation ─────────────────────────────────────────────────────────────
+banner "generation x2"
+python3 -m ailocal.generation >/dev/null 2>&1 || bad "generation #1 failed"
 fingerprint sync1 >/dev/null
-ailocal sync >/dev/null 2>&1 || bad "ailocal sync #2 failed"
+python3 -m ailocal.generation >/dev/null 2>&1 || bad "generation #2 failed"
 fingerprint sync2 >/dev/null
-compare sync1 sync2 "ailocal sync"
+compare sync1 sync2 "generation"
 
 # ── ailocal clients ────────────────────────────────────────────────────────
 # claude + codex only by default: the vscode target touches the user's editor
