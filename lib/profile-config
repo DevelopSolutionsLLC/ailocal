@@ -31,6 +31,8 @@ def main() -> int:
     sub.add_parser("active-tier")
     sub.add_parser("active-profile-path")
     sub.add_parser("state-root")
+    sub.add_parser("config-root")
+    sub.add_parser("data-root")
     r = sub.add_parser("role")
     r.add_argument("role")
     r.add_argument("--field")
@@ -48,6 +50,10 @@ def main() -> int:
         # behind a value that looks fine.
         if a.cmd == "state-root":
             print(P.state_root()); return 0
+        if a.cmd == "config-root":
+            print(P.config_root()); return 0
+        if a.cmd == "data-root":
+            print(P.data_root()); return 0
         if a.cmd == "active-profile-path":
             print(P.active_profile_path()); return 0
         if a.cmd == "active-tier":

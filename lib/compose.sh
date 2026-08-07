@@ -12,9 +12,12 @@
 # SearXNG at http://searxng:8080. A bare `docker compose` in the repo root would
 # find no compose file and silently operate on nothing.
 #
-# --project-directory pins path resolution AND .env discovery to the repo root,
-# so every relative path inside both compose files is repo-root-relative and the
-# root .env is auto-loaded. Do not drop it.
+# --project-directory pins relative-path resolution inside both compose files;
+# --env-file names the environment explicitly. Compose would otherwise
+# auto-discover .env from the project directory, which silently couples the
+# secrets file to wherever the compose assets happen to live. ADR 009 separates
+# those: assets move to the data root, .env stays with user configuration, and
+# auto-discovery would quietly stop finding it. Do not drop either flag.
 
 # AILOCAL_ROOT must already be set by the caller, or we derive it from this file.
 # This file lives at <root>/lib/compose.sh, so the root is one level up.
@@ -33,9 +36,17 @@ export AILOCAL_PROXY="${AILOCAL_PROXY:-http://127.0.0.1:4000}"
 export AILOCAL_STATE="${AILOCAL_STATE:-$(python3 "$AILOCAL_ROOT/lib/profile-config" state-root)}"
 mkdir -p "$AILOCAL_STATE"
 
+# Deploy assets come from the data root and .env from the config root; policy.py
+# owns both. They still resolve to the checkout, so this is the same command it
+# has always been -- but the coupling is now stated rather than inherited from
+# where this file happens to sit.
+export AILOCAL_DATA_ROOT="${AILOCAL_DATA_ROOT:-$(python3 "$AILOCAL_ROOT/lib/profile-config" data-root)}"
+export AILOCAL_CONFIG_ROOT="${AILOCAL_CONFIG_ROOT:-$(python3 "$AILOCAL_ROOT/lib/profile-config" config-root)}"
+AILOCAL_ENV_FILE="$AILOCAL_CONFIG_ROOT/.env"
+
 AILOCAL_COMPOSE_FILES=(
-  -f "$AILOCAL_ROOT/deploy/litellm/compose.yaml"
-  -f "$AILOCAL_ROOT/deploy/searxng/compose.yaml"
+  -f "$AILOCAL_DATA_ROOT/deploy/litellm/compose.yaml"
+  -f "$AILOCAL_DATA_ROOT/deploy/searxng/compose.yaml"
 )
 
 # Rendered SearXNG settings. SearXNG has NO environment interpolation for an
@@ -139,8 +150,11 @@ dc() {
     up|start|restart|create|run)
       ailocal_render_searxng_settings || return 1 ;;
   esac
+  local _envopt=()
+  [ -f "$AILOCAL_ENV_FILE" ] && _envopt=(--env-file "$AILOCAL_ENV_FILE")
   DOCKER_CLI_HINTS=false docker compose \
-    --project-directory "$AILOCAL_ROOT" \
+    --project-directory "$AILOCAL_DATA_ROOT" \
+    "${_envopt[@]}" \
     "${AILOCAL_COMPOSE_FILES[@]}" \
     "$@"
 }
