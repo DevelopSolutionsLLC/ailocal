@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """install.py — bootstrapping a machine: provisioning, tier selection, audit.
 
-The invariants that make ADR 009's split safe: a data root is replaced
-wholesale, a config root is never replaced once the operator has edited it, a
-default the operator deleted is not resurrected, and an interrupted upgrade
-leaves either the old tree or the new one.
+The provenance invariants: a config file is never replaced once the operator
+has edited it, a default they deleted is not resurrected, a file the
+distribution retires is removed only while it still matches what was shipped,
+and no manifest state can license an overwrite.
+
+Shipped assets (deploy/, clients/) are NOT provisioned — they are read in place
+from the package — so there is no data root here to assert about.
 """
 from __future__ import annotations
 
@@ -24,25 +27,21 @@ check = _suite.check
 
 def _roots():
     box = Path(tempfile.mkdtemp(prefix="install-"))
-    return box, box / "config", box / "data", box / "state"
+    return box, box / "config", box / "state"
 
 
 def main() -> None:
-    _suite.section("A FRESH INSTALL POPULATES BOTH ROOTS")
-    box, cfg, data, state = _roots()
-    I.provision(RESOURCES, cfg, data, state)
+    _suite.section("A FRESH INSTALL POPULATES THE CONFIG ROOT, AND ONLY THAT")
+    box, cfg, state = _roots()
+    I.provision(RESOURCES, cfg, state)
 
-    for c in I.DATA_COMPONENTS:
-        check((data / c).is_dir(), f"data root receives {c}/")
+    check(sorted(p.name for p in cfg.iterdir()) == ["profiles"],
+          "the config root receives profiles/ and nothing else")
     check((cfg / "profiles" / "64gb.toml").is_file(),
           "config root receives the authored profiles")
     check((cfg / "profiles" / "clients.toml").is_file(),
           "config root receives client policy")
     check((state / I.MANIFEST_NAME).is_file(), "a manifest is recorded")
-    check(not list(data.glob(".staging-*")), "no staging tree survives a success")
-    check(not list(data.glob(".rollback-*")), "no rollback tree survives a success")
-    check(not (data / "profiles").exists(),
-          "profiles are config, never shipped into the data root")
 
     _suite.section("AN EDITED PROFILE SURVIVES AN UPGRADE")
     edited = cfg / "profiles" / "64gb.toml"
@@ -50,14 +49,14 @@ def main() -> None:
     keep = edited.read_text()
     untouched = cfg / "profiles" / "32gb.toml"
 
-    report = I.provision(RESOURCES, cfg, data, state)
+    report = I.provision(RESOURCES, cfg, state)
     check("profiles/64gb.toml" in report["preserved"],
           "an edited profile is reported as preserved")
     check(edited.read_text() == keep, "an edited profile is NOT overwritten")
     check(untouched.read_text() == (REPO / "profiles" / "32gb.toml").read_text(),
           "an unedited profile still matches what was shipped")
 
-    report = I.provision(RESOURCES, cfg, data, state)
+    report = I.provision(RESOURCES, cfg, state)
     check("profiles/64gb.toml" in report["preserved"],
           "an edit survives a SECOND upgrade (the manifest records what was "
           "shipped, not what is on disk)")
@@ -65,7 +64,7 @@ def main() -> None:
 
     _suite.section("A DELETED DEFAULT IS REPORTED, NEVER RESURRECTED")
     (cfg / "profiles" / "16gb.toml").unlink()
-    report = I.provision(RESOURCES, cfg, data, state)
+    report = I.provision(RESOURCES, cfg, state)
     check("profiles/16gb.toml" in report["absent"],
           "a default the operator removed is reported")
     check(not (cfg / "profiles" / "16gb.toml").exists(),
@@ -73,25 +72,17 @@ def main() -> None:
 
     _suite.section("A CORRUPT MANIFEST NEVER LICENSES AN OVERWRITE")
     (state / I.MANIFEST_NAME).write_text("{ not json")
-    report = I.provision(RESOURCES, cfg, data, state)
+    report = I.provision(RESOURCES, cfg, state)
     check(edited.read_text() == keep,
           "with no provenance, an edited file is still preserved")
 
     _suite.section("A RETIRED POLICY FILE IS REMOVED, UNLESS IT WAS EDITED")
     stale = cfg / "profiles" / "99gb.toml"
     stale.write_text("# a format or tier we no longer ship\n")
-    I.provision(RESOURCES, cfg, data, state)          # records it as shipped? no: not in source
+    I.provision(RESOURCES, cfg, state)          # records it as shipped? no: not in source
     check(stale.is_file(),
           "a file the distribution never shipped is left alone")
     stale.unlink()
-
-    _suite.section("DATA IS REPLACED WHOLESALE")
-    stray = data / "deploy" / "not-shipped.sh"
-    stray.write_text("# left behind by an older version\n")
-    I.provision(RESOURCES, cfg, data, state)
-    check(not stray.exists(), "a file no longer shipped is gone after an upgrade")
-    check((data / "deploy" / "litellm" / "registry.yaml").is_file(),
-          "shipped data is present again")
 
     _suite.section("THE SOURCE IS THE PACKAGE, NEVER A GUESSED CHECKOUT")
     check(I.distribution_source() == RESOURCES,
@@ -103,7 +94,7 @@ def main() -> None:
     # The checkout reaches the same profiles by two paths (root and resource
     # tree). Copying one onto the other would truncate the file it is reading.
     try:
-        I.provision(RESOURCES, REPO, data, state)
+        I.provision(RESOURCES, REPO, state)
         refused = False
     except SystemExit:
         refused = True

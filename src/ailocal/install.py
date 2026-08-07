@@ -4,15 +4,13 @@ Prerequisite verification, asset provisioning, the active tier, .env, the Ollama
 set, the login agents, and the read-only audit of an installation that
 `ailocal check` reports.
 
-Provenance rule (ADR 009): the data root holds shipped assets with no supported
-edit surface and is replaced wholesale; the config root holds user-editable
-policy and is replaced only where the file still matches the digest recorded
-when it was installed.
+Provenance rule: shipped assets are read in place from the package and are never
+copied anywhere; the config root holds user-editable policy and is replaced only
+where the file still matches the digest recorded when it was installed.
 """
 from __future__ import annotations
 
 import hashlib
-import importlib.resources
 import json
 import os
 import plistlib
@@ -77,7 +75,6 @@ def _yes(prompt: str) -> bool:
 
 # ── provisioning ────────────────────────────────────────────────────────────
 
-DATA_COMPONENTS = ("deploy", "clients")
 CONFIG_COMPONENTS = ("profiles",)
 MANIFEST_NAME = "install-manifest.json"
 
@@ -94,31 +91,28 @@ def _tree(root: Path, component: str) -> dict:
 
 
 def distribution_source() -> Path:
-    """The tree being installed FROM: the package's own resources.
-
-    Shipped assets travel inside the wheel, so this exists under a pipx install
-    with no checkout anywhere on the machine. It is a real directory rather than
-    a Traversable because provision() copies whole trees; ailocal is never
-    installed from a zipimport, and asserting that is better than pretending to
-    support it.
-    """
-    root = Path(str(importlib.resources.files("ailocal"))) / "resources"
-    if all((root / c).is_dir() for c in DATA_COMPONENTS):
+    """The tree being installed FROM: the package's own resources."""
+    root = policy.data_root()
+    if all((root / c).is_dir() for c in ("deploy", "clients")):
         return root
     raise SystemExit(f"install: the package carries no resources at {root}; "
                      "the installation is incomplete.")
 
 
-def provision(source: Path, config: Path, data: Path, state: Path) -> dict:
-    """Install assets. Raises rather than half-applying."""
-    for p in (config, data, state):
+def provision(source: Path, config: Path, state: Path) -> dict:
+    """Install the user-editable policy defaults. Nothing else is copied.
+
+    deploy/ and clients/ are read straight out of the package (policy.data_root),
+    so there is no shipped-asset tree to stage, swap or roll back, and no way for
+    a running container to be mounted on a directory this function is replacing.
+
+    A config file is replaced only where it still matches the digest recorded
+    when it was installed; anything else is the operator's and is preserved.
+    """
+    for p in (config, state):
         p.mkdir(parents=True, exist_ok=True)
-    # Refuse to copy a component onto itself. Compared RESOLVED and per
-    # component, because the shipped defaults are reachable by more than one
-    # path: a checkout exposes profiles/ at the root AND inside the resource
-    # tree, and a directory-level comparison misses that.
-    for c in DATA_COMPONENTS + CONFIG_COMPONENTS:
-        dest = (data if c in DATA_COMPONENTS else config) / c
+    for c in CONFIG_COMPONENTS:
+        dest = config / c
         if dest.exists() and (source / c).resolve() == dest.resolve():
             raise SystemExit(
                 f"install: {dest} is the shipped source itself; refusing to "
@@ -140,32 +134,6 @@ def provision(source: Path, config: Path, data: Path, state: Path) -> dict:
         preserved = sorted(str(p.relative_to(config))
                            for c in CONFIG_COMPONENTS
                            for p in (config / c).rglob("*") if p.is_file())
-
-    # Per component, not per file: a half-replaced deploy/ tree is a new compose
-    # file against old hooks.
-    staging = data / f".staging-{os.getpid()}"
-    shutil.rmtree(staging, ignore_errors=True)
-    for c in DATA_COMPONENTS:
-        shutil.copytree(source / c, staging / c,
-                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-    done = []
-    try:
-        for c in DATA_COMPONENTS:
-            live, old = data / c, data / f".rollback-{c}"
-            shutil.rmtree(old, ignore_errors=True)
-            if live.exists():
-                live.rename(old)
-            (staging / c).rename(live)
-            done.append((live, old))
-    except OSError:
-        for live, old in reversed(done):
-            shutil.rmtree(live, ignore_errors=True)
-            old.rename(live)
-        raise
-    finally:
-        shutil.rmtree(staging, ignore_errors=True)
-    for _, old in done:
-        shutil.rmtree(old, ignore_errors=True)
 
     installed, absent = [], []
     for c in CONFIG_COMPONENTS:
@@ -203,29 +171,10 @@ def provision(source: Path, config: Path, data: Path, state: Path) -> dict:
         else:
             preserved.append(rel)
 
-    # A component that is no longer shipped is removed, not left to rot as a
-    # data root nobody writes to any more.
-    for stale in data.iterdir():
-        if stale.is_dir() and stale.name not in DATA_COMPONENTS \
-                and not stale.name.startswith("."):
-            if stale.name in ("lib",):
-                shutil.rmtree(stale)
-
-    # Data components are replaced by RENAME, so a running container keeps its
-    # bind mount on the unlinked old directory and sees an empty /app/config
-    # until it is recreated. Silent, and it looks like missing hooks.
-    if "ailocal-litellm" in subprocess.run(
-            ["docker", "ps", "--format", "{{.Names}}"],
-            capture_output=True, text=True).stdout.split():
-        warn("the stack is running on the previous assets — run `ailocal start` "
-             "to remount")
-
-    record = {"config": dict(shipped), "data": {}}
+    record = {"config": dict(shipped)}
     for c in CONFIG_COMPONENTS:
         record["config"].update({rel: d for rel, d in _tree(config, c).items()
                                  if rel not in preserved})
-    for c in DATA_COMPONENTS:
-        record["data"].update(_tree(data, c))
     (state / MANIFEST_NAME).write_text(json.dumps(record, indent=1, sort_keys=True))
     for rel in retired:
         record["config"].pop(rel, None)
@@ -696,13 +645,6 @@ def audit() -> list:
                  "run ailocal clients vscode")
     results += _vscode_findings()
 
-    backups = policy.state_root() / "backups"
-    count = len(list(backups.iterdir())) if backups.is_dir() else 0
-    if count > 20:
-        flag("STALE", f"{count} files in {backups}", backups, "prune the oldest")
-    else:
-        fine(f"state backups   {count} file(s)")
-
     for label in ("com.ailocal.ollama", "com.ailocal.ollama-env", "com.ailocal.preload"):
         plist = LA_DIR / f"{label}.plist"
         if not plist.is_file():
@@ -740,8 +682,11 @@ def audit() -> list:
 
 USAGE = """usage: ailocal install [--yes] [--profile <16gb|32gb|64gb|128gb>]
 
-Bootstraps the stack: prerequisites, assets, .env, profile selection,
-generation, models, services and client configuration. Idempotent.
+One-time host setup, then a normal start. What only install does: verify
+prerequisites, install the policy defaults, take :11434 with a launchd agent,
+prepare the shared model store, write the master key, pick the tier, fetch the
+pinned images and pull the model set. Everything after that is `ailocal start`.
+Idempotent.
 
   --yes              unattended; also enables production autostart
   --profile <tier>   override the tier detected from installed memory
@@ -762,9 +707,8 @@ def cmd_install(argv: list[str]) -> int:
 
     step("Installing assets")
     source = distribution_source()
-    report = provision(source, policy.config_root(), policy.data_root(),
-                       policy.state_root())
-    ok(f"data {policy.data_root()}: {', '.join(DATA_COMPONENTS)}")
+    report = provision(source, policy.config_root(), policy.state_root())
+    ok(f"shipped assets read in place from {source}")
     ok(f"config {policy.config_root()}: {len(report['installed'])} file(s)")
     for rel in report["preserved"]:
         dim(f"kept {rel} (edited since install)")
@@ -796,15 +740,12 @@ def cmd_install(argv: list[str]) -> int:
     print()
     _print_plan(tier, f"physical memory:     {ram} GB")
 
-    (policy.state_root() / "backups").mkdir(parents=True, exist_ok=True)
-    (policy.state_root() / "backups").chmod(0o700)
-
+    # The ONLY image fetch in the product. Every tag is digest-pinned, so this
+    # is a first-fetch, not an upgrade; `ailocal start` deliberately runs
+    # offline against whatever is already on disk.
     step("Pulling pinned Docker images")
     runtime.compose("pull")
-    runtime.cmd_start(["--no-wait"])
-    runtime.compose("restart", "litellm", "searxng")
-    if not runtime.wait_ready(30, progress=True):
-        warn("LiteLLM did not become ready — check: docker logs ailocal-litellm")
+    runtime.cmd_start([])
 
     pull_models()
     from .checks import run as checks_run

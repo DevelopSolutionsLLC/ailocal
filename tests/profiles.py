@@ -196,14 +196,16 @@ def resolver_checks() -> None:
     shutil.rmtree(root, ignore_errors=True)
 
     print("\nNO SECOND PARSER, NO SILENT FALLBACK")
-    # ADR 009. Config, data and state have separate homes, and policy.py owns
-    # all three. A second implementation is how the state root acquired the
+    # Four roots with four owners, and policy.py owns every resolution. A
+    # second implementation is how the state root acquired the
     # `|| echo ~/.local/state` shape that this module exists to prevent.
-    check(all(hasattr(P, f) for f in ("config_root", "data_root", "state_root")),
-          "policy exposes config_root, data_root and state_root")
+    check(all(hasattr(P, f) for f in ("config_root", "data_root", "state_root",
+                                      "deployed_client_root")),
+          "policy exposes config, data, state and client roots")
     for env, fn in (("AILOCAL_CONFIG", P.config_root),
                     ("AILOCAL_DATA", P.data_root),
-                    ("AILOCAL_STATE", P.state_root)):
+                    ("AILOCAL_STATE", P.state_root),
+                    ("AILOCAL_CLIENTS", P.deployed_client_root)):
         # Restore, never delete: a checkout run DECLARES these, so dropping one
         # silently repoints every later check at the XDG location instead.
         prior = os.environ.get(env)
@@ -217,6 +219,25 @@ def resolver_checks() -> None:
                 os.environ[env] = prior
     check(P.state_root() != P.config_root(),
           "state root is never the config root (generated state stays out of the tree)")
+
+    # THE REGRESSION: config_root is AUTHORED POLICY, deployed_client_root is
+    # GENERATED OUTPUT. They default to the same directory, but they are not the
+    # same root. While one function answered both, the test harness pointing
+    # AILOCAL_CONFIG at the checkout (to read the shipped profiles) redirected
+    # every generated client file into the repository, where they were
+    # committed. Overriding the policy root must move policy, and nothing else.
+    _prior = os.environ.get("AILOCAL_CONFIG")
+    os.environ["AILOCAL_CONFIG"] = "/tmp/ailocal-policy-probe"
+    try:
+        check(str(P.config_root()) == "/tmp/ailocal-policy-probe",
+              "AILOCAL_CONFIG moves the policy root")
+        check("/tmp/ailocal-policy-probe" not in str(P.deployed_client_root()),
+              "AILOCAL_CONFIG does NOT move generated client output")
+    finally:
+        if _prior is None:
+            os.environ.pop("AILOCAL_CONFIG", None)
+        else:
+            os.environ["AILOCAL_CONFIG"] = _prior
     # A scheduled job outlives the shell that created it. If it embeds a path
     # inside the checkout, moving the checkout breaks it silently and weeks
     # later. Source inspection, because asserting this behaviourally would mean
@@ -249,17 +270,16 @@ def resolver_checks() -> None:
     # to its default model's window — a documented client correction, not a
     # second source: using architecture's window wrote a limit Codex's default
     # model could never reach.
-    eff = P.load_effective()
-    comp = eff["compaction"]
+    comp = P.effective_summary()["compaction"]
     check(comp.get("window") and comp.get("pct"),
           f"profile owns compaction ({comp.get('window')} x {comp.get('pct')}%)")
-    claude = json.loads((P.state_root() / "clients/claude/settings.json").read_text())
+    claude = json.loads((P.deployed_client_root() / "claude/settings.json").read_text())
     env = claude.get("env", {})
     check(env.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW") == str(comp["window"])
           and env.get("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE") == str(comp["pct"]),
           "Claude compaction is generated from the profile block verbatim")
 
-    codex = (P.state_root() / "clients/codex/config.toml").read_text()
+    codex = (P.deployed_client_root() / "codex/config.toml").read_text()
     import re as _r
     cw = int(_r.search(r"model_context_window\s*=\s*(\d+)", codex).group(1))
     cl = int(_r.search(r"model_auto_compact_token_limit\s*=\s*(\d+)", codex).group(1))
@@ -396,96 +416,6 @@ def resolver_checks() -> None:
               f"{name}: admits {mit} <= {ctx}-{np_} = {ctx-np_}")
     check(checked >= 3, f"invariant checked on {checked} finite-output aliases")
 
-    print("\nGENERATED ARTIFACT IS AUTHORITATIVE AT RUNTIME")
-    eff = P.load_effective()
-    check(eff["schema_version"] in P.SUPPORTED_SCHEMA_VERSIONS,
-          f"schema_version is supported ({eff['schema_version']})")
-    for k in ("tier", "roles", "source_profile", "source_profile_sha256",
-              "active_profile_sha256", "config_sha256", "generated_at"):
-        check(k in eff, f"artifact records {k}")
-    arch = eff["roles"]["architecture"]
-    for k in ("model", "context", "num_predict", "reasoning", "temperature",
-              "top_p", "top_k", "repeat_penalty", "keep_alive", "persona"):
-        check(k in arch, f"role carries {k}")
-    check(P.active_tier() == eff["tier"], "runtime tier comes from the artifact")
-
-
-    print("\nALL TIERS COME FROM GENERATED DATA — NO RUNTIME YAML")
-    tiers = P.effective_tiers()
-    check(sorted(tiers) == sorted(P.TIERS), f"all four tiers normalized {sorted(tiers)}")
-    for t in P.TIERS:
-        blk = tiers[t]
-        check(blk["source_profile_sha256"], f"{t} records its source hash")
-        check(len(blk["roles"]) >= 4, f"{t} carries {len(blk['roles'])} roles")
-    check(P.effective_role_for_tier("32gb", "architecture")["model"],
-          "a non-active tier resolves from generated data")
-    try:
-        P.effective_role_for_tier("999gb", "architecture"); got = "NO ERROR"
-    except P.ProfileError as e:
-        got = e.code
-    check(got == P.EFFECTIVE_PROFILE_SCHEMA_INVALID, "unknown tier fails closed")
-
-    print("\nSTALENESS AND CORRUPTION FAIL CLOSED")
-    import shutil as _sh
-    box = Path(tempfile.mkdtemp(prefix="eff-"))
-    (box / "profiles").mkdir(parents=True)
-    _eff_dst = P.effective_profile_path(_state(box))
-    _eff_dst.parent.mkdir(parents=True, exist_ok=True)
-    _sh.copy(P.effective_profile_path(), _eff_dst)
-    _write_marker(box, P.active_profile_path().read_text())
-    # ALL tiers: the artifact now normalizes every tier and validates every
-    # source hash, so a fixture carrying only the active profile is incomplete.
-    for _t in P.TIERS:
-        _sh.copy(REPO / "profiles" / f"{_t}.toml", box / "profiles")
-    check(P.load_effective(box, _state(box))["tier"] == eff["tier"], "a faithful copy validates")
-
-    def expect(code, mutate, label):
-        b = Path(tempfile.mkdtemp(prefix="eff-"))
-        _sh.copytree(box / "profiles", b / "profiles")
-        # Runtime state is external and sandbox-scoped: copy box's whole state
-        # so b owns an independent, complete generation to mutate.
-        _sh.copytree(_state(box), _state(b))
-        mutate(b)
-        try:
-            P.load_effective(b, _state(b))
-            got = "NO ERROR"
-        except P.ProfileError as e:
-            got = e.code
-        check(got == code, f"{label} ⇒ {code} (got {got})")
-        _sh.rmtree(b, ignore_errors=True)
-
-    expect(P.EFFECTIVE_PROFILE_MISSING,
-           lambda b: P.effective_profile_path(_state(b)).unlink(),
-           "artifact deleted")
-    expect(P.EFFECTIVE_PROFILE_STALE_TIER,
-           lambda b: _write_marker(b, "32gb\n"),
-           "active-profile changed")
-    # Same tier NAME, different bytes. Only the marker hash can see this, and it
-    # was unreachable while the generator hashed a path inside the checkout
-    # where no marker exists: the hash was "", and the guard skips a falsy hash.
-    expect(P.EFFECTIVE_PROFILE_STALE_TIER,
-           lambda b: _write_marker(b, f"{eff['tier']}   \n\n"),
-           "active-profile rewritten with the same tier")
-    expect(P.EFFECTIVE_PROFILE_STALE_SOURCE,
-           lambda b: (b / "profiles" / f"{eff['tier']}.toml")
-                     .write_text("architecture:\n  role: x\n  active: y\n  context: 1\n"),
-           "source profile edited")
-
-    def corrupt(b):
-        f = P.effective_profile_path(_state(b))
-        d = json.loads(f.read_text())
-        d["config_sha256"] = "0" * 64
-        f.write_text(json.dumps(d))
-    expect(P.EFFECTIVE_PROFILE_HASH_INVALID, corrupt, "config hash corrupted")
-
-    def bad_schema(b):
-        f = P.effective_profile_path(_state(b))
-        d = json.loads(f.read_text())
-        d["schema_version"] = 99
-        f.write_text(json.dumps(d))
-    expect(P.EFFECTIVE_PROFILE_SCHEMA_INVALID, bad_schema, "unsupported schema")
-    _sh.rmtree(box, ignore_errors=True)
-
     print("\nNO SECOND PARSER IN THE GENERATOR")
     # Behavioural, not textual: typed values must survive generation without a
     # string round-trip, and the generator must own no scalar parser of its own.
@@ -502,8 +432,10 @@ def resolver_checks() -> None:
     print("\nGENERATED FILES ARE OUTPUTS, NOT SOURCES")
     # Generated artefacts live under the runtime root, never in the checkout.
     _root = P.state_root()
-    for gen in ("litellm/capabilities.json", "integration-contract.json"):
-        check((_root / gen).exists(), f"{gen} exists under the runtime root")
+    check((_root / "litellm" / "capabilities.json").exists(),
+          "capabilities.json exists under the runtime root")
+    check((P.deployed_client_root() / "integration-contract.json").exists(),
+          "integration-contract.json exists in the config root Cadence reads")
     check(not (REPO / "capabilities.generated.json").exists(),
           "no generated artefact remains in the checkout")
     caps = json.loads((_root / "litellm" / "capabilities.json").read_text())
@@ -668,7 +600,7 @@ def hardware_checks() -> None:
     active = P.active_profile_path()
     tier = active.read_text().strip() if active.exists() else "64gb"
     cc = PARSED[tier][0].get("compaction", {})
-    settings = P.state_root() / "clients/claude/settings.json"
+    settings = P.deployed_client_root() / "claude/settings.json"
     if settings.exists() and cc:
         import json
         env = json.loads(settings.read_text()).get("env", {})
@@ -683,7 +615,7 @@ def hardware_checks() -> None:
     # Deriving them from architecture wrote a compaction limit of 49,152 against a
     # default model whose entire context is 24,576 -- unreachable, because the model
     # 400s on context length long before compaction could fire.
-    codex = P.state_root() / "clients/codex/config.toml"
+    codex = P.deployed_client_root() / "codex/config.toml"
     cx_cap = P.load_client_policy().get("codex", {}).get("default", "implementation")
     if codex.exists() and cc and cx_cap in PARSED[tier][0]:
         txt = codex.read_text()

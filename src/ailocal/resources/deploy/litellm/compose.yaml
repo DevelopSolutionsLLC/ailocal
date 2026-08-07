@@ -67,12 +67,10 @@ services:
       # Set to /app/captures to dump real client tool payloads for analysis.
       # Empty = no capture. Payloads contain tool schemas, not conversation.
       - AILOCAL_TOOL_GATEWAY_CAPTURE=${AILOCAL_TOOL_GATEWAY_CAPTURE:-}
-      # request_trace.py — one JSONL record per request. Empty = off.
       # The version this stack was VALIDATED against. `ailocal check` compares
       # it to the running library and fails loudly on drift, so a floating tag or
       # a manual pull can never again leave docs and runtime disagreeing.
       - AILOCAL_LITELLM_VERSION=1.93.0
-      - AILOCAL_TRACE_DIR=${AILOCAL_TRACE_DIR:-}
       # capability_registry.py — the Local Agent Gateway's registry (Phase A).
       - AILOCAL_REGISTRY=/app/config/registry.yaml
       # Phase D task negotiation: infer the tools a task needs from the first

@@ -39,9 +39,8 @@ def digest(p: pathlib.Path) -> str:
 
 def destinations(sm) -> list[pathlib.Path]:
     return [sm.LITELLM_CONFIG, sm.CAPS_JSON, sm.CODEX_CATALOG, sm.CLAUDE_SETTINGS,
-            sm.CODEX_CONFIG, sm.CODEX_PLAN, sm.CODEX_REVIEW, sm.CONTINUE_CONFIG,
-            sm.CONFIGURE_ZSH, sm.COPILOT_REPO_MD, sm.CONTRACT_JSON,
-            sm.EFFECTIVE_JSON]
+            sm.CODEX_CONFIG, sm.CODEX_PLAN, sm.CODEX_REVIEW,
+            sm.CONFIGURE_ZSH, sm.CONTRACT_JSON]
 
 
 def run(fail_after: int | None) -> tuple[dict, dict, int]:

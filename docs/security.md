@@ -54,7 +54,6 @@ or in captured evidence, which redacts key-shaped content before persisting.
 | `$AILOCAL_STATE` | `0700` | contains credentials and machine state |
 | `$AILOCAL_STATE/active-profile` | `0600` | selects what the machine runs |
 | `$AILOCAL_STATE/searxng/settings.yml` | `0600` | carries the Brave key |
-| `$AILOCAL_STATE/backups/` | `0700` | pre-replacement copies may contain secrets |
 | `.env` | `0600` expected | every credential |
 
 Verify with `ailocal check`, which reports `.env` readable by other users.

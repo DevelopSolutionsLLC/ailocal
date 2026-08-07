@@ -85,128 +85,6 @@ import json
 import re
 import sys
 from pathlib import Path
-TRACE = RESOURCES / "deploy" / "litellm" / "hooks" / "request_trace.py"
-def load_trace_module():
-    """Import request_trace for real, with litellm stubbed.
-
-    The module imports `litellm.integrations.custom_logger`, which exists only
-    in the proxy image. Stubbing that one symbol runs the ACTUAL module rather
-    than exec'ing a slice of its source, so these checks cannot pass against
-    code the proxy would not execute.
-    """
-    import importlib.util
-    import sys
-    import types
-    if "litellm" not in sys.modules:
-        pkg = types.ModuleType("litellm")
-        integ = types.ModuleType("litellm.integrations")
-        cl = types.ModuleType("litellm.integrations.custom_logger")
-        cl.CustomLogger = type("CustomLogger", (), {})
-        sys.modules.update({"litellm": pkg, "litellm.integrations": integ,
-                            "litellm.integrations.custom_logger": cl})
-    spec = importlib.util.spec_from_file_location("request_trace", TRACE)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-def historical_compatibility_checks() -> None:
-    """Real records on disk must stay readable across every schema version.
-
-    A reader tolerates fields older records carry and the current version no
-    longer writes; that tolerance is what this proves.
-    """
-    print("\nhistorical record compatibility")
-    import glob
-    total = bad = 0
-    versions = set()
-    for path in glob.glob(str(Path.home() /
-                              ".local/state/ailocal/captures/traces/*.jsonl")):
-        for line in open(path, errors="replace"):
-            total += 1
-            try:
-                versions.add(json.loads(line).get("event_version"))
-            except Exception:  # noqa: BLE001
-                bad += 1
-    if not total:
-        print("  - no historical records present; skipped")
-        return
-    check(bad == 0, f"all {total} historical records parse ({bad} failures)")
-    check(len(versions) > 1,
-          f"records from several schema versions coexist {sorted(v for v in versions if v)}")
-
-
-SECRETS = [
-    "ghp_REALLOOKINGTOKENVALUE0000000000",
-    "github_pat_11ABCDEFG0000000000000",
-    "sk-abcdef0123456789abcdef0123456789",
-    "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
-]
-PROMPT_MARKERS = [
-    "SECRET_BUSINESS_PLAN_PARAGRAPH",
-    "def internal_pricing_algorithm(",
-    "the customer's home address is",
-]
-
-
-def _trace_body() -> None:
-    mod = load_trace_module()
-    print("E1 SCHEMA")
-    check(mod.EVENT_VERSION >= 5, f"event_version is set ({mod.EVENT_VERSION})")
-    check(mod._PROCESS_GENERATION.startswith("pg-"),
-          "a stable process generation identifier exists")
-
-    print("\nREDACTION: SECRET- AND PROMPT-SHAPED VALUES NEVER SERIALIZE")
-    # Built through the real record builder, on a request carrying a secret or
-    # customer content in every field a trace touches.
-    tracer = mod.RequestTrace()
-    hostile = {
-        "model": "ailocal-implementation",
-        "tools": [{"name": "Read", "description": SECRETS[0] + PROMPT_MARKERS[1]}],
-        "system": "You are a helpful assistant. " + SECRETS[2] + PROMPT_MARKERS[0],
-        "messages": [
-            {"role": "user", "content": PROMPT_MARKERS[2] + " " + SECRETS[1]},
-            {"role": "user", "content": [
-                {"type": "tool_result", "content": PROMPT_MARKERS[1] + SECRETS[3]}]},
-        ],
-        "litellm_params": {"api_base": f"http://{SECRETS[2]}@ollama:11434",
-                           "model": "ollama_chat/qwen3-coder:30b"},
-        # The user-agent IS recorded, deliberately and truncated — it is how a
-        # record is attributed to a client. Authorization must never appear.
-        "proxy_server_request": {"headers": {"user-agent": "claude-cli/2.0.1",
-                                             "authorization": SECRETS[3]}},
-        "max_tokens": 100,
-    }
-    record = tracer._base(hostile, call_type="acompletion")
-    blob = json.dumps(record, default=str)
-    for secret in SECRETS:
-        check(secret not in blob, f"no secret {secret[:12]}... in the record")
-    for marker in PROMPT_MARKERS:
-        check(marker not in blob, f"no prompt/source content {marker[:24]!r}")
-    check(not re.search(r"(ghp_|github_pat_|sk-|Bearer )", blob),
-          "no credential-shaped substring survives at all")
-    check(all(isinstance(v, (int, float, str, bool, type(None)))
-              for v in record.values()),
-          "every emitted field is a bounded scalar")
-    check(all(not isinstance(v, str) or len(v) <= 130 for v in record.values()),
-          "no field carries an unbounded string")
-
-    print("\nIDENTITY IS CARRIED, NEVER INFERRED")
-    check(record["requested_alias"] == "ailocal-implementation",
-          "the alias the client asked for is recorded")
-    check(record["resolved_backend_model"] == "ollama_chat/qwen3-coder:30b",
-          "the backend that served it is recorded separately")
-    check(record["tools_declared"] == 1 and record["messages"] == 2,
-          "payload shape is counted, never retained")
-    # The alias alone tells us nothing about the backend; claiming otherwise
-    # would manufacture evidence.
-    bare = tracer._base({"model": "ailocal-fast"}, call_type="acompletion")
-    check(bare["resolved_backend_model"] is None,
-          "no backend is claimed when only the alias is known")
-
-    historical_compatibility_checks()
-
-
 def persona_checks() -> None:
     d = hook({"model": "ailocal-implementation", "messages": [{"role": "user", "content": "hi"}]}, "acompletion")
     sys0 = d["messages"][0]
@@ -300,12 +178,7 @@ def repair_checks() -> None:
     check(calls is None, "empty content -> no crash")
 
 
-def trace_checks() -> None:
-    _trace_body()
-
-
-SECTIONS = {"persona": persona_checks, "repair": repair_checks,
-            "trace": trace_checks}
+SECTIONS = {"persona": persona_checks, "repair": repair_checks}
 
 if __name__ == "__main__":
     which = sys.argv[1] if len(sys.argv) > 1 else None

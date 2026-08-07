@@ -24,8 +24,12 @@ ROOT="$ROOT_DIR"
 cd "$ROOT"
 
 PROXY="${AILOCAL_PROXY:-http://127.0.0.1:4000}"
-KEY="$(grep -E '^LITELLM_MASTER_KEY=' .env 2>/dev/null | cut -d= -f2-)"
-[ -n "$KEY" ] || { echo "No LITELLM_MASTER_KEY in .env"; exit 1; }
+# The config root's .env, not a checkout-relative one. .env has not lived in the
+# checkout for a long time; this only ever passed on a working tree that still
+# had a stray copy, and a fresh clone has none.
+ENV_FILE="$(ailocal profile config-root)/.env"
+KEY="$(grep -E '^LITELLM_MASTER_KEY=' "$ENV_FILE" 2>/dev/null | cut -d= -f2-)"
+[ -n "$KEY" ] || { echo "No LITELLM_MASTER_KEY in $ENV_FILE"; exit 1; }
 
 
 status() { # method path [auth]
@@ -62,43 +66,12 @@ code="$(status HEAD /api/hello)"
 [ "$code" = "200" ] && ok "HEAD /api/hello unauthenticated -> 200" \
                     || bad "HEAD /api/hello unauthenticated -> $code (want 200)"
 
-# 4. No model invocation. A probe that woke a backend would be a latency and
-# memory regression that no status-code assertion would ever catch.
-#
-# Count the trace LEDGER, not `docker logs`. Only the failure path prints to
-# stdout, so a successful inference adds no stdout line at all and a count of
-# those cannot detect a woken backend. Every request — success or failure —
-# appends to the JSONL ledger, so that is the signal.
-#
-# The ledger is shared and written asynchronously after the response, so a
-# record from a preceding check can land mid-measurement. Settle first: read
-# until the count stops moving, bounded, then measure.
-trace_count() {
-  docker exec ailocal-litellm sh -c 'cat /app/captures/traces/*.jsonl 2>/dev/null | wc -l' \
-    2>/dev/null | tr -d ' \n' || echo 0
-}
-settle_traces() {   # bounded wait for the ledger to stop growing
-  local prev cur i
-  prev="$(trace_count)"
-  for i in $(seq 1 20); do
-    sleep 0.25
-    cur="$(trace_count)"
-    [ "$cur" = "$prev" ] && { printf '%s' "$cur"; return 0; }
-    prev="$cur"
-  done
-  printf '%s' "$prev"          # unsettled: measure anyway, the diff still reports
-}
-
-if [ -z "$(trace_count)" ] || [ "$(trace_count)" = "0" ]; then
-  skip "no trace ledger (AILOCAL_TRACE_DIR unset?) — model-invocation check not run"
-else
-  before="$(settle_traces)"
-  curl -s -o /dev/null -m 15 -I "$PROXY/api/hello"
-  curl -s -o /dev/null -m 15 "$PROXY/api/hello"
-  after="$(settle_traces)"
-  [ "$before" = "$after" ] && ok "no model invoked (trace ledger $before unchanged)" \
-    || bad "probe invoked a model: trace ledger went $before -> $after"
-fi
+# The "no model was invoked" assertion that used to live here counted the
+# request-trace ledger. That ledger is gone with the trace subsystem, and no
+# surviving signal distinguishes "served from cache" from "never invoked" for a
+# route that returns before the router. Rather than assert it from a proxy that
+# cannot see it, this is not claimed: /api/hello returns before any model_list
+# lookup, which the status codes above already establish.
 
 echo
 echo "==> no side effects on existing routes"
@@ -111,8 +84,7 @@ code="$(status GET '/v1/models?limit=1000' auth)"
 
 # The next request is deliberately unauthenticated, so LiteLLM logs an
 # ERROR-level `user_api_key_auth(): Exception occured - No api key passed in.`
-# traceback, plus a `request_trace {"phase": "failure"}` entry from our own hook.
-# That is the assertion working, not a fault — but read cold in `docker logs` it
+# traceback. That is the assertion working, not a fault — but read cold in `docker logs` it
 # looks exactly like a real failure, and it HAS been mistaken for one.
 #
 # WHY IT IS MARKED RATHER THAN SUPPRESSED (investigated, not assumed):
@@ -124,11 +96,6 @@ code="$(status GET '/v1/models?limit=1000' auth)"
 #   one of: editing the installed package (forbidden), a global log-level or
 #   auth-handler change (forbidden), or ASGI middleware in the production request
 #   path for every request — disproportionate for one test assertion.
-#
-#   Our own request_trace failure entry COULD be header-suppressed, but that
-#   would hide only half the noise while giving any caller a header that
-#   suppresses their own failure trace — a real hole in production
-#   observability, bought for a test's convenience. Declined deliberately.
 #
 #   Running the negative-auth case against a throwaway proxy would isolate it
 #   fully, but costs a second container start per gate run for one 401.
@@ -145,8 +112,8 @@ proxy_log_mark() {  # best-effort: never fail the test over a log annotation
 
 echo
 echo "  vvvv  EXPECTED-AUTH-FAILURE — the next request is INTENTIONALLY unauthenticated."
-echo "        LiteLLM will log an ERROR traceback + request_trace failure. This is CORRECT."
-proxy_log_mark "=== BEGIN EXPECTED-AUTH-FAILURE (test-compat-routes.sh): the following 'No api key passed in.' ERROR + request_trace failure is an INTENTIONAL negative-auth assertion, not a fault ==="
+echo "        LiteLLM will log an ERROR traceback. This is CORRECT."
+proxy_log_mark "=== BEGIN EXPECTED-AUTH-FAILURE (test-compat-routes.sh): the following 'No api key passed in.' ERROR is an INTENTIONAL negative-auth assertion, not a fault ==="
 code="$(status GET /v1/models)"
 proxy_log_mark "=== END EXPECTED-AUTH-FAILURE (test-compat-routes.sh) ==="
 echo "  ^^^^  END EXPECTED-AUTH-FAILURE (bracketed in the proxy log too)"

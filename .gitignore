@@ -11,10 +11,20 @@ build/
 dist/
 *.egg-info/
 
-# Guard only: runtime state belongs in $AILOCAL_STATE. These stay so a path
-# that regresses to a repo-relative default cannot commit runtime state.
+# Guard only. Generated output belongs in the user's roots, never in the
+# checkout. These entries exist so that a root which regresses to a
+# repo-relative default — as AILOCAL_CONFIG does under the test harness —
+# cannot commit generated state a second time.
 /captures/
 /logs/
+/claude/
+/codex/
+/configure.zsh
+/integration-contract.json
+/litellm/
+/searxng/
+/active-profile
+/install-manifest.json
 
 # Local tool state
 .DS_Store

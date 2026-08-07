@@ -25,15 +25,22 @@ REPO = pathlib.Path(__file__).resolve().parent.parent
 RESOURCES = REPO / "src" / "ailocal" / "resources"
 
 # ── the one test environment owner ──────────────────────────────────────────
-# A suite under test runs against the WORKING TREE, and policy.py resolves the
-# config and data roots to XDG locations unless told otherwise. Declaring that
-# belongs here, once, rather than in an exported variable every contributor has
-# to remember: importing this module IS the declaration. Production code keeps
-# no checkout fallback -- this is test machinery, and only test machinery.
+# A suite runs against the WORKING TREE'S CODE and the REAL installation's
+# policy. Declaring that belongs here, once, rather than in an exported variable
+# every contributor has to remember: importing this module IS the declaration.
 #
-# Set, not overwritten: an isolated run (tests/installed-runtime.py) points these
+# AILOCAL_DATA points at the checkout's resources, because those ARE the shipped
+# assets and a suite must exercise the ones it is editing.
+#
+# AILOCAL_CONFIG is deliberately NOT set. The checkout is not a config root. It
+# happens to have profiles/ at its top level, which is what made pointing the
+# policy root at it look reasonable, but the config root also owns `.env` — so
+# the override quietly asserted that a secrets file belongs in the checkout, and
+# `ailocal check` failed under the suite the moment one was not there. Suites
+# read the operator's real config root, exactly as the product does.
+#
+# Set, not overwritten: an isolated run (tests/installed-runtime.py) points this
 # somewhere else on purpose.
-os.environ.setdefault("AILOCAL_CONFIG", str(REPO))
 os.environ.setdefault("AILOCAL_DATA", str(RESOURCES))
 if str(REPO / "src") not in sys.path:
     sys.path.insert(0, str(REPO / "src"))
