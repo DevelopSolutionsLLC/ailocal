@@ -153,6 +153,45 @@ def container_file(path: str, name: str = CONTAINER) -> str | None:
     return r.stdout if r.returncode == 0 else None
 
 
+def check_litellm_version(name: str = CONTAINER) -> CheckResult:
+    """The RUNNING LiteLLM must be the one that was validated.
+
+    `main-stable` floats. It moved under this project once: the runtime was
+    1.93.0 while the documentation claimed 1.92.0, so behaviour recorded as
+    verified had been verified against a version no longer running. The
+    installed distribution metadata is the evidence — litellm exposes no
+    __version__, and trusting the tag is what produced the drift. An
+    unverifiable version is a failure, not a pass.
+    """
+    expected = _run(["docker", "exec", name, "printenv",
+                     "AILOCAL_LITELLM_VERSION"]).stdout.strip()
+    if not expected:
+        return CheckResult("litellm-version", FAIL,
+                           "AILOCAL_LITELLM_VERSION is not set in the container",
+                           remediation="the compose file must declare the "
+                                       "validated version")
+    actual = ""
+    r = _run(["docker", "exec", name, "sh", "-c",
+              "cat /app/.venv/lib/python*/site-packages/litellm-*.dist-info/METADATA"])
+    for line in r.stdout.splitlines():
+        if line.startswith("Version:"):
+            actual = line.split(":", 1)[1].strip()
+            break
+    if not actual:
+        return CheckResult("litellm-version", FAIL,
+                           f"could not read the installed LiteLLM version from {name}")
+    if actual != expected:
+        return CheckResult("litellm-version", FAIL,
+                           f"VERSION DRIFT: validated {expected}, running {actual}",
+                           remediation="the image moved, or the pin changed "
+                                       "without re-validating: re-run the gate, "
+                                       "then update digest, "
+                                       "AILOCAL_LITELLM_VERSION and the docs "
+                                       "together")
+    return CheckResult("litellm-version", PASS,
+                       f"LiteLLM {actual} (matches the validated version)")
+
+
 # ── ollama ──────────────────────────────────────────────────────────────────
 
 def ollama_installed() -> set[str]:

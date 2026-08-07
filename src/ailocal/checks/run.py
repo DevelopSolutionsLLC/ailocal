@@ -129,7 +129,8 @@ def _doctor(argv: list[str]) -> int:
     render(results, remediation=True)
 
     print(f"\n{BOLD}Runtime{RESET}")
-    runtime = [S.check_docker(), S.check_container(), S.check_proxy_health(),
+    runtime = [S.check_docker(), S.check_container(),
+               S.check_litellm_version(), S.check_proxy_health(),
                S.check_ollama(), S.check_models_present(backends)]
     runtime += S.check_aliases(token, aliases)
     runtime += [S.check_searxng(), S.check_brave_key_configured(),

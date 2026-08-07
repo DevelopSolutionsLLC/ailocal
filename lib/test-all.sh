@@ -206,7 +206,13 @@ shell_syntax() {
 }
 # The runtime must be the version the rest of this gate was validated against;
 # a floating tag moves it silently.
-run "litellm runtime matches the validated version" bash "$ROOT/lib/check-litellm-version.sh"
+litellm_version() {
+  python3 -c "import sys; sys.path.insert(0, 'src')
+from ailocal.checks import services as S
+r = S.check_litellm_version(); print(r.summary)
+sys.exit(0 if r.status.value == 'pass' else 1)"
+}
+run "litellm runtime matches the validated version" litellm_version
 run "all shell scripts parse (bash -n)" shell_syntax
 
 # The client must never give up before the proxy, or it abandons requests the
