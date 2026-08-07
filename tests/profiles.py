@@ -868,7 +868,8 @@ def policy_checks() -> None:
     listed = [n for _, names in cli.GROUPS for n in names]
     check(len(listed) == len(set(listed)), "no command is listed twice in help",
           ", ".join(sorted({n for n in listed if listed.count(n) > 1})))
-    dispatchable = set(cli.COMMANDS) | set(cli.HANDLERS)
+    # `profile` is answered inside cli.main() rather than by a module.
+    dispatchable = set(cli.COMMANDS) | {"profile"}
     check(set(listed) == dispatchable - cli.INTERNAL,
           "help lists every public command, and nothing it cannot dispatch",
           f"help-only={sorted(set(listed) - dispatchable)} "
@@ -881,7 +882,7 @@ def policy_checks() -> None:
     # A package command must import AND expose the main(argv) the CLI calls; a
     # benchmark target must exist as a file under the data root.
     missing = []
-    for name, (module, _, _) in cli.COMMANDS.items():
+    for name, (module, _) in cli.COMMANDS.items():
         try:
             if not callable(getattr(importlib.import_module(module), "main", None)):
                 missing.append(f"{name} -> {module} has no main(argv)")
