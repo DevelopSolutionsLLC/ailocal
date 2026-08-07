@@ -35,7 +35,6 @@ COMMANDS: dict[str, tuple] = {
     "test":           (MOD, "ailocal.checks.run", ("test",), True),
 
     "sync":           (MOD, "ailocal.generation", (), True),
-    "resolve":        (MOD, "ailocal.generation", ("--resolve",), True),
     "start":          (MOD, "ailocal.runtime", ("start",), True),
     "stop":           (MOD, "ailocal.runtime", ("stop",), True),
     "update":         (MOD, "ailocal.runtime", ("update",), True),
@@ -70,7 +69,7 @@ NESTED: dict[str, dict[str, tuple]] = {
 #: is the documented consumer of session_observer traces -- see
 #: deploy/litellm/hooks/session_observer.py -- and is undiscoverable, not dead.
 INTERNAL = frozenset({
-    "resolve", "verify-session", "trace", "metrics", "compose", "ready",
+    "verify-session", "trace", "metrics", "compose", "ready",
     "update-check",
 })
 

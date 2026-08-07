@@ -27,7 +27,6 @@ accepts durations, -1, or the words forever/persistent (both -> -1). Never hand-
 region — edit profiles/<tier>.toml / profiles/clients.toml and re-run.
 """
 
-import collections
 import hashlib
 import json
 import os
@@ -156,14 +155,9 @@ def load_clients_yaml():
 
 
 def backend_of(info):
-    """The Ollama backend tag actually served: `active`, else `backend`, else first
-    `preferred`. Never hidden — this is the real model that runs."""
-    if info.get("active"):
-        return info["active"]
-    if info.get("backend"):
-        return info["backend"]
-    pref = flow_list(info.get("preferred"))
-    return pref[0] if pref else ""
+    """The Ollama backend tag actually served. `active` is required by the
+    profile schema, so there is no fallback chain to guess through."""
+    return info.get("active") or ""
 
 
 def norm_keep_alive(v):
@@ -174,25 +168,13 @@ def norm_keep_alive(v):
     return "-1" if s.lower() in ("forever", "persistent") else s
 
 
-def _int_or_none(v):
-    if isinstance(v, int):
-        return v
-    if isinstance(v, str) and v.strip().lstrip("-").isdigit():
-        return int(v.strip())
-    return None
-
 def _geom(info):
-    """Derived geometry for a role, from the ONE implementation.
+    """Derived geometry for a role, from the ONE implementation in policy.
 
-    generation must not re-derive num_ctx / num_predict / admission. It reads
-    context_input + max_output straight from the profile and hands them to
-    policy.geometry(), which is the same function every other consumer
-    calls. There is deliberately no default: a role missing context_input is a
-    migration error, not a 32768 guess -- the old fallback silently rewrote
-    every alias to 32768 when the schema changed.
+    generation never re-derives num_ctx, num_predict or admission, and injects
+    no default: a role missing context_input is an error, not a guess.
     """
-    return _pc.geometry(_int_or_none(info.get("context_input")),
-                        _int_or_none(info.get("max_output")))
+    return _pc.geometry(info.get("context_input"), info.get("max_output"))
 
 
 def ctx_of(info):
@@ -201,47 +183,6 @@ def ctx_of(info):
 
 
 # ── LiteLLM model_list ─────────────────────────────────────────────────────────
-
-OUTPUT_RESERVE_UNBOUNDED = "OUTPUT_RESERVE_UNBOUNDED_UNSAFE_FOR_STRICT_ADMISSION"
-
-
-def admission_for(role, num_ctx, num_predict):
-    """How much INPUT this alias may admit, and why.
-
-    num_ctx is the PHYSICAL window and it holds prompt AND generation. Advertising
-    the whole window as admissible input is the defect measured in
-    KNOWN_ISSUES #19: LiteLLM's pre-call check accepts a prompt that leaves no
-    room for the reply, Ollama then trims from the FRONT, and the caller gets
-    HTTP 200 with finish_reason=stop and a silently truncated prompt. Measured
-    on qwen3.5:2b at num_ctx 40960: 43,645 tokens admitted -> 20,482 evaluated,
-    system prompt gone, task instruction not followed.
-
-    Returns (max_input_tokens, note). Invalid finite geometry RAISES rather than
-    clamping: a clamp would hide exactly the misconfiguration this exists to
-    surface.
-    """
-    if not isinstance(num_ctx, int) or num_ctx <= 0:
-        raise SystemExit(f"invalid geometry: {role} num_ctx={num_ctx!r}")
-    # num_predict -1 is Ollama's INFINITE and -2 is fill-context. Neither reserves
-    # a knowable amount, so no arithmetic is possible and none is invented. The
-    # deployed value is preserved and the role is MARKED, not silently treated as
-    # though it reserved nothing. A real reserve arrives with the schema
-    # migration (context_input + max_output), not here.
-    if num_predict in (-1, -2):
-        return num_ctx, OUTPUT_RESERVE_UNBOUNDED
-    if num_predict in (None, "", 0):
-        return num_ctx, "no output reserve declared"
-    if not isinstance(num_predict, int) or num_predict < 0:
-        raise SystemExit(f"invalid geometry: {role} num_predict={num_predict!r}")
-    if num_predict >= num_ctx:
-        raise SystemExit(
-            f"invalid geometry: {role} reserves {num_predict} output tokens from "
-            f"a {num_ctx}-token window — nothing would be left for the prompt")
-    admit = num_ctx - num_predict
-    if admit <= 0:
-        raise SystemExit(f"invalid geometry: {role} admits {admit} input tokens")
-    return admit, ""
-
 
 def gen_role_block(role, info):
     num_ctx = ctx_of(info)
@@ -288,16 +229,15 @@ def gen_role_block(role, info):
         return "\n".join(lines) + "\n"
 
     reasoning = bool(info.get("reasoning"))
-    merge     = bool(info.get("merge"))
-    vision    = bool(info.get("vision"))
     parallel  = not reasoning
-    # Was min(16384, max(1024, num_ctx // 4)) -- a derivation with no owner that
-    # disagreed with num_predict. max_output is now declared in the profile.
-    # One geometry derivation per call: this computed _geom(info) twice.
     _g        = _geom(info)
-    max_out   = _g["max_output"] or min(16384, max(1024, num_ctx // 4))
-    _admit, _admit_note = admission_for(role, _g["num_ctx"], _g["num_predict"])
+    max_out   = _g["max_output"]
     desc      = info.get("role", "")
+    # No invented ceiling. A chat role without max_output has no knowable output
+    # reserve, so admission is uncomputable and a guess would advertise a window
+    # the backend does not honour.
+    if max_out is None:
+        raise SystemExit(f"invalid geometry: {role} declares no max_output")
 
     params = [
         f"  - model_name: {mn(role)}",
@@ -321,8 +261,6 @@ def gen_role_block(role, info):
         params.append(f"      num_predict: {_g['num_predict']}")
     if ka is not None:
         params.append(f"      keep_alive: {ka}")
-    if merge:
-        params.append("      merge_reasoning_content_in_choices: true")
     if not reasoning:
         # Suppress reasoning ONLY for models that cannot do it. Claude Code sends
         # `thinking` on every request and a non-thinking backend 400s on it, but
@@ -355,13 +293,10 @@ def gen_role_block(role, info):
         f"      cache_creation_input_token_cost: 0",
         f"      cache_read_input_token_cost: 0",
     ]
-    if vision:
-        mi += ["      supports_vision: true", "      supports_pdf_input: true"]
-    # Cost zeros are emitted ONCE, above. Repeating them here produces duplicate
-    # YAML keys in every model_info block — the later key wins, so the values are
-    # still right, but a strict parser rejects the file outright.
+    # Admission is context_input by construction (policy.geometry). Deriving it
+    # a second time here is what let advertised and enforced windows disagree.
     mi += [
-        f"      max_input_tokens: {_admit}",
+        f"      max_input_tokens: {_g['max_input_tokens']}",
         f"      max_output_tokens: {max_out}",
     ]
     header = f"  # {mn(role)} — {desc} ({backend})\n" if desc else ""
@@ -373,7 +308,7 @@ def gen_model_list(models):
     return ML_BEGIN + "\n\n" + "\n".join(blocks) + "\n" + ML_END + "\n"
 
 
-def gen_alias_block(models, clients):
+def gen_alias_block(clients):
     """model_group_alias entries from clients.toml: the external client-compat names (claude-*/gpt-*)
     that Claude Code and the OpenAI SDK hard-code, each pointing at its `ailocal-<cap>` model group.
     No `local/*` namespace — the single canonical `ailocal-<cap>` model_list entry is the only name.
@@ -404,7 +339,7 @@ def regen_litellm(models, clients):
     # template exists to prevent.
     text = LITELLM_TEMPLATE.read_text()
     text = splice(text, ML_BEGIN, ML_END, gen_model_list(models), "model_list")
-    text = splice(text, AL_BEGIN, AL_END, gen_alias_block(models, clients),
+    text = splice(text, AL_BEGIN, AL_END, gen_alias_block(clients),
                   "model_group_alias")
     stage(LITELLM_CONFIG, text)
     return True
@@ -565,7 +500,6 @@ def regen_catalog(models):
             continue
         backend = backend_of(info)
         num_ctx = ctx_of(info)
-        vision = bool(info.get("vision"))
         role = info.get("role", name)
         instr = "\n\n".join([CATALOG_PREAMBLE,
                              CATALOG_ROLE_SENTENCE.get(name, f"You are the {role} capability."),
@@ -582,7 +516,7 @@ def regen_catalog(models):
             "context_window": num_ctx,
             "max_context_window": num_ctx,
             "effective_context_window_percent": 90,
-            "input_modalities": ["text", "image"] if vision else ["text"],
+            "input_modalities": ["text"],
             "supports_parallel_tool_calls": not bool(info.get("reasoning")),
             "supports_search_tool": False,
             "supports_image_detail_original": False,
@@ -745,20 +679,11 @@ def regen_codex(models, clients):
         stage(CODEX_CONFIG, text)
         done = True
         # Codex's own compactor, same policy as claude-local. These keys must be
-        # TOP-LEVEL: Codex does not reliably honour them inside a named profile,
-        # so they are written to the root of the isolated codex-local config
-        # rather than relying on profile inheritance.
-        # Derive from the capability CODEX ACTUALLY DEFAULTS TO, not architecture.
-        # Using architecture's 98,304 wrote a compaction limit of 49,152 for a
-        # default model whose ENTIRE context is 24,576 -- compaction could never
-        # fire, because the model would 400 on context length first. The window
-        # must describe the model Codex will really talk to.
+        # TOP-LEVEL: Codex does not reliably honour them inside a named profile.
+        # Both are derived from the capability CODEX DEFAULTS TO, never from
+        # architecture: a window describing a different model makes compaction
+        # unreachable, because the backend 400s on context length first.
         win, pct = COMPACTION.get("window"), COMPACTION.get("pct")
-        # total_context from the SHARED geometry. This read `.get("context")`,
-        # a key the geometry migration removed, so the guard below silently
-        # failed and this file was never regenerated -- it simply kept its
-        # pre-migration contents, which looked correct only because the value
-        # had not changed yet. Fail loudly instead of skipping.
         _cx = _geom(models.get(default) or {})
         cx_ctx = _cx["total_context"]        # the window Codex advertises
         cx_in = _cx["context_input"]         # what the backend will ADMIT
@@ -767,33 +692,23 @@ def regen_codex(models, clients):
                 "codex compaction cannot be derived: "
                 f"window={win!r} pct={pct!r} total_context={cx_ctx!r} "
                 f"context_input={cx_in!r}")
-        if True:
-            # Never advertise a compaction point the model cannot reach.
-            #
-            # The cap is context_input, NOT total_context. total_context is
-            # input+output, and the output half is space the INPUT can never
-            # occupy -- so a fraction of it can still land above the admission
-            # limit. On implementation (16384 + 8192):
-            # 75% of total_context gave a trigger of 18,432 while LiteLLM
-            # admits 16,384 (max_input_tokens, confirmed via /model/info), so a
-            # long session would have taken an HTTP 400 ContextWindowExceeded
-            # 2,048 tokens BEFORE Codex could compact. That is precisely the
-            # failure the line above claims to prevent; only the denominator
-            # was wrong.
-            trigger = min(int(win) * int(pct) // 100, int(int(cx_in) * int(pct) / 100))
-            if trigger > int(cx_in):
-                raise SystemExit(
-                    "codex compaction trigger exceeds admissible input: "
-                    f"trigger={trigger} context_input={cx_in}")
-            arch_ctx = cx_ctx
-            text = _staged_text(CODEX_CONFIG)
-            for key, val in (("model_context_window", arch_ctx),
-                             ("model_auto_compact_token_limit", trigger)):
-                if re.search(rf'(?m)^{key}\s*=', text):
-                    text = re.sub(rf'(?m)^{key}\s*=.*$', f'{key} = {val}', text, count=1)
-                else:
-                    text = f'{key} = {val}\n' + text
-            stage(CODEX_CONFIG, text)
+        # The trigger is capped by context_input, NOT total_context: the output
+        # half of the window is space the input can never occupy, so a fraction
+        # of the total can still exceed the admission limit and take an HTTP 400
+        # before Codex ever compacts.
+        trigger = min(int(win) * int(pct) // 100, int(int(cx_in) * int(pct) / 100))
+        if trigger > int(cx_in):
+            raise SystemExit(
+                "codex compaction trigger exceeds admissible input: "
+                f"trigger={trigger} context_input={cx_in}")
+        text = _staged_text(CODEX_CONFIG)
+        for key, val in (("model_context_window", cx_ctx),
+                         ("model_auto_compact_token_limit", trigger)):
+            if re.search(rf'(?m)^{key}\s*=', text):
+                text = re.sub(rf'(?m)^{key}\s*=.*$', f'{key} = {val}', text, count=1)
+            else:
+                text = f'{key} = {val}\n' + text
+        stage(CODEX_CONFIG, text)
     if "plan" in profiles:
         _set_toml_model(CODEX_PLAN, mn(profiles["plan"]), CODEX_PLAN_TPL)
     if "review" in profiles:
@@ -838,25 +753,6 @@ def regen_continue(models, clients):
 # Copilot instruction files are hand-maintained prose (generating a table into them created
 # duplication); they are NOT regenerated here. Update them by hand when capabilities change.
 
-# ── resolve mode (for shell) ───────────────────────────────────────────────────
-def resolve(role, tier=None):
-    info = load_models_yaml(profile_path(explicit=tier)).get(role)
-    if not info:
-        print("", end="")
-        return 1
-    print(backend_of(info))
-    return 0
-
-
-def resolve_keep_alive(role, tier=None):
-    info = load_models_yaml(profile_path(explicit=tier)).get(role)
-    if not info:
-        print("", end="")
-        return 1
-    print(norm_keep_alive(info.get("keep_alive")))
-    return 0
-
-
 def parse_profile_flag(argv):
     """Pull `--profile <tier>` out of argv, returning (tier_or_None, remaining_argv)."""
     tier, rest, i = None, [], 0
@@ -872,7 +768,7 @@ EFFECTIVE_SCHEMA_VERSION = 2
 EFFECTIVE_JSON = _pc.effective_profile_path()
 
 
-def build_effective_profile(active_tier, path):
+def build_effective_profile(active_tier):
     """The canonical post-generation view of the deployed role configuration.
 
     A DEDICATED artifact rather than an extension of capabilities.generated.json:
@@ -1048,11 +944,6 @@ def main():
     check_only = bool(args) and args[0] == "--check"
     if check_only:
         args = args[1:]
-    if args and args[0] == "--resolve":
-        sys.exit(resolve(args[1], tier) if len(args) >= 2 else 1)
-
-    if args and args[0] == "--resolve-keep-alive":
-        sys.exit(resolve_keep_alive(args[1], tier) if len(args) >= 2 else 1)
 
     # The TEMPLATE is the precondition. config.yaml is this script's output, so
     # requiring it to pre-exist made a fresh clone unable to bootstrap.
@@ -1078,7 +969,7 @@ def main():
 
     step("Writing derived files")
     stage(EFFECTIVE_JSON,
-          json.dumps(build_effective_profile(tier, path), indent=2,
+          json.dumps(build_effective_profile(tier), indent=2,
                      sort_keys=True) + "\n")
     ok("effective-profile.json")
     ok("capabilities.generated.json") if write_caps_json(models) else warn("caps json skipped")
@@ -1106,6 +997,10 @@ def main():
 
         drift = sorted(_label(d) for d, text in _STAGE.items()
                        if not d.exists() or _stable(d.read_text()) != _stable(text))
+        # --check writes nothing, so the staging tables must not survive into a
+        # later call in the same process.
+        _STAGE.clear()
+        _STAGED_TEXT.clear()
         if drift:
             print("DRIFT — generated files are stale: " + ", ".join(drift),
                   file=sys.stderr)
