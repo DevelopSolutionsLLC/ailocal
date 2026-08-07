@@ -1,30 +1,12 @@
 #!/usr/bin/env python3
-"""generation.py — propagate the capability registry to every derived file.
+"""generation.py — the ONE generator, and the only public entry point for it.
 
-Single source of truth (both TRACKED — no gitignored intermediate):
-  profiles/<tier>.toml  WHAT each capability is (backend `active`, context, sampling,
-                        keep_alive, persona, decision metadata), per RAM tier. Edit the profile
-                        directly. The active tier lives in $AILOCAL_STATE (machine-specific,
-                        written by `ailocal install` from detected RAM) or `--profile <tier>`. There is NO
-                        default tier: an unresolvable marker is an error.
-  profiles/clients.toml   WHICH capability each client surface uses (launch defaults, Codex
-                        profiles, Continue entries, compat aliases).
+Reads profiles/<tier>.toml (what each capability is) and profiles/clients.toml
+(which capability each client surface uses) through policy, and writes every
+derived artifact under $AILOCAL_STATE. Outputs are staged and swapped
+atomically, so the tree is never part old and part new.
 
-`ailocal sync` regenerates, deterministically:
-  $AILOCAL_STATE/litellm/config.yaml   model_list + model_group_alias (between markers)
-  config/capabilities.generated.json resolved capabilities (for `ailocal status`)
-  clients/model_catalog.json  Codex picker (capability slugs)
-  clients/claude/settings.json launch default + valid-capability note
-  clients/codex/config.toml    default model + valid-capability note
-  clients/codex/{plan,review}.config.toml  profile models
-  clients/continue/config.json chat models, FIM autocomplete, embeddings
-
-`ailocal profile role <capability> --field model` resolves a backend at run time, so a
-login agent never parses policy itself.
-
-Capabilities are TOP-LEVEL keys in the profile; lists are flow-style [a, b, c]. keep_alive
-accepts durations, -1, or the words forever/persistent (both -> -1). Never hand-edit a generated
-region — edit profiles/<tier>.toml / profiles/clients.toml and re-run.
+Never hand-edit a generated file: edit the profile and re-run `ailocal sync`.
 """
 
 import hashlib
@@ -43,9 +25,7 @@ from ailocal import policy as _pc
 
 # Every path comes from policy (ADR 009): authored policy from the config root,
 # templates and assets from the data root, generated output from the state root.
-# Deriving them from this file's location instead put the tier marker inside the
-# checkout, where it does not exist -- so its staleness hash was the empty
-# string, and policy.py's guard, which skips a falsy hash, never ran.
+# Nothing here derives a root from this file's location.
 PROFILES_DIR   = _pc.profiles_dir()
 ACTIVE_PROFILE = _pc.active_profile_path()       # machine-selected tier
 CLIENTS_YAML   = _pc.client_policy_path()
@@ -87,9 +67,8 @@ CP_END   = "<!-- >>> END GENERATED capabilities <<< -->"
 CS_BEGIN = "  # >>> BEGIN GENERATED claude slots (ailocal sync) — do not edit <<<"
 CS_END   = "  # >>> END GENERATED claude slots <<<"
 
-# Capabilities are short keys in the source (profiles/<tier>.toml + profiles/clients.toml);
-# every client-facing model id is that key with an `ailocal-` prefix, applied only at emit time.
-# One canonical model_list entry per capability (`ailocal-<cap>`) — no `local/*` duplicate.
+# One model_list entry per capability, named `ailocal-<cap>`. The prefix is
+# applied only at emit time; the source spells the bare capability key.
 MODEL_PREFIX = "ailocal-"
 def mn(cap):
     """Client-facing model id for a capability (the ailocal- prefixed name LiteLLM serves)."""
@@ -116,9 +95,7 @@ def flow_list(v):
 def resolve_tier(explicit=None):
     """Which RAM profile is active: an explicit --profile wins, else the marker.
 
-    Delegates to policy, which FAILS CLOSED. The previous version fell
-    through to a hardcoded tier, so a missing or empty marker silently
-    regenerated every client and the proxy for the wrong hardware."""
+    Delegates to policy, which fails closed: there is no default tier."""
     if explicit:
         return explicit
     return _pc.resolve_active_tier()
@@ -140,9 +117,6 @@ def load_models_yaml(path):
     for section, fields in data.items():
         if not isinstance(fields, dict):
             continue          # top-level scalars such as disk_gb
-        # Typed values pass through as-is. flow_list() is idempotent and the
-        # Scalar consumers coerce with int() at the point of use, so
-        # no string round-trip is needed.
         models[section] = dict(fields)
     models.pop("disk_gb", None)
     COMPACTION.update(models.pop("compaction", {}))
@@ -189,21 +163,12 @@ def gen_role_block(role, info):
     backend = backend_of(info)
     ka = norm_keep_alive(info.get("keep_alive"))
 
-    # Provider comes from the profile. This used to sniff the role name and the
-    # model tag (`backend.startswith("nomic")`) — a model-name conditional that
-    # broke the moment an embedding model was not called "nomic".
+    # Provider comes from the profile; never from the role or model name.
     provider = (info.get("provider") or "").strip() or "ollama_chat"
     if provider == "ollama":
-        # `ollama`, NOT `ollama_chat`. LiteLLM has no embeddings route for the
-        # ollama_chat provider: an /v1/embeddings call against it fails with
-        # "Unmapped LLM provider for this endpoint. You passed
-        # model=nomic-embed-text, custom_llm_provider=ollama_chat".
-        #
-        # litellm.embedding(model="ollama/...") works; "ollama_chat/..." 400s.
-        # Getting this wrong advertises ailocal-embeddings in /v1/models and 400s
-        # on every call. Cadence is unaffected because it talks to Ollama
-        # directly, which is why nobody noticed — a client configured to use the
-        # proxy for embeddings (Continue) would have failed.
+        # `ollama`, NOT `ollama_chat`: LiteLLM has no embeddings route for the
+        # chat provider, and /v1/embeddings against it returns "Unmapped LLM
+        # provider for this endpoint".
         lines = [
             f"  - model_name: {mn(role)}",
             f"    litellm_params:",
@@ -219,10 +184,6 @@ def gen_role_block(role, info):
             f"      max_tokens: {num_ctx}",
             f"      input_cost_per_token: 0",
             f"      output_cost_per_token: 0",
-            # Same reason as the chat branch: without these LiteLLM logs
-            # "not in built-in cost map ... cache cost fields will default to 0"
-            # at boot. Zero is the truthful value for a local model, not invented
-            # pricing. Cost accounting only; no effect on routing or inference.
             f"      cache_creation_input_token_cost: 0",
             f"      cache_read_input_token_cost: 0",
         ]
@@ -254,9 +215,9 @@ def gen_role_block(role, info):
                 "repeat_penalty"):
         if info.get(key) not in (None, ""):
             params.append(f"      {key}: {info[key]}")
-    # num_predict is DERIVED from max_output. It is the only ceiling the backend
-    # honours: a per-request max_tokens of 512 against an alias declaring 32768
-    # returned 4,199 tokens (measured, LiteLLM 1.93.0 ollama_chat).
+    # num_predict is the only ceiling the backend honours: [REAL] a per-request
+    # max_tokens of 512 against an alias declaring 32768 returned 4,199 tokens
+    # (LiteLLM 1.93.0, ollama_chat).
     if _g["num_predict"] is not None:
         params.append(f"      num_predict: {_g['num_predict']}")
     if ka is not None:
@@ -270,9 +231,6 @@ def gen_role_block(role, info):
         params.append('      additional_drop_params: ["thinking", "reasoning_effort"]')
         params.append("      think: false")
     else:
-        # A thinking-capable model: do NOT drop the client's thinking params and
-        # do NOT force think:false. Verified against Ollama /api/show — the
-        # capability list is the source of truth, not the model name.
         params.append("      think: true")
 
     mi = [
@@ -283,11 +241,9 @@ def gen_role_block(role, info):
         f"      supports_system_messages: true",
         f"      supports_native_streaming: true",
         f"      supports_reasoning: {'true' if reasoning else 'false'}",
-        # Local models are free. Without these four fields LiteLLM's cost layer
-        # logs "not in built-in cost map ... cache cost fields will default to 0"
-        # for every model at boot. Purely cosmetic — it affects cost accounting
-        # only, never routing, tools, MCP, LSP or inference — but it buries real
-        # warnings in noise. Zeros are the truthful value here: nothing is billed.
+        # Local models are billed nothing, and declaring it keeps LiteLLM's
+        # "not in built-in cost map" warning out of every boot log. Cost
+        # accounting only; no effect on routing or inference.
         f"      input_cost_per_token: 0",
         f"      output_cost_per_token: 0",
         f"      cache_creation_input_token_cost: 0",
@@ -375,23 +331,15 @@ def write_caps_json(models):
 
 
 def write_integration_contract(models):
-    """The ONLY surface Cadence reads to learn about this runtime.
+    """The ONLY surface an external consumer reads to learn about this runtime.
 
-    ailocal owns the runtime; client instruction policy is composed elsewhere. The seam
-    between them is this file and nothing else — Cadence must never parse
-    ailocal's prose or generated Markdown to discover a fact, because that
-    couples a policy generator to our formatting.
+    FACTS ONLY — roots, endpoint, canonical capability names, and what is
+    measurably true about routes through the proxy. No policy and no prose: a
+    consumer must never have to parse ailocal's Markdown to discover a fact.
 
-    So this publishes FACTS ONLY: where the roots are, what the endpoint is,
-    which capability names are canonical, and what is measurably true about
-    routes that pass through the proxy. No policy, no instructions, no prose
-    telling an agent how to behave.
-
-    `schema_version` is load-bearing: Cadence fails CLOSED on a version it does
-    not understand rather than guessing at fields whose meaning may have moved.
-    Bump it on any breaking change to shape or field semantics.
-
-    No timestamp — the file must be byte-stable so idempotence is hash-checkable.
+    `schema_version` is load-bearing (the consumer fails closed on a version it
+    does not understand); bump it on any change to shape or field semantics.
+    No timestamp, so idempotence stays hash-checkable.
     """
     contract = {
         "schema_version": 1,
@@ -409,51 +357,32 @@ def write_integration_contract(models):
         # Measured compatibility of routes that pass THROUGH the proxy. These are
         # the facts that make Cadence describe a tool as usable or not; getting
         # them wrong makes it advertise a broken tool as a first choice.
+        # THESE DESCRIBE DEPLOYED STATE, NOT AN INVESTIGATION. A consumer reads
+        # them to decide whether a tool is usable, so a stale value here makes
+        # it apply the wrong policy.
         "compatibility": {
-            # THESE DESCRIBE DEPLOYED STATE, NOT HISTORICAL EXPERIMENTS.
-            # Both entries previously reported the outcome of an investigation
-            # rather than the configuration that ships, and Cadence reads this
-            # file to decide whether a tool is usable -- so a stale value here
-            # makes it apply the wrong policy. `execution: failing` was recorded
-            # while native LSP was being debugged; `codex_mcp_lsp.configured:
-            # true` described an experiment that was concluded and withdrawn.
             "claude_native_lsp": {
                 "configured": True,
                 # The gateway names native `LSP` explicitly (registry group
                 # `native_lsp`, in the `always` floor) rather than relying on
-                # fail-open, so the schema reaches the model on every task class
-                # that keeps a floor.
+                # fail-open, so the schema survives every task class.
                 "schema_preserved": True,
-                # Asserted by the gate: tests/lsp-baseline.py drives a
-                # real documentSymbol request through claude-local and requires
-                # actual symbols back. If that stops working the gate fails
-                # before this file can claim otherwise.
-                # "working", not an invented word. Cadence's consumer maps
-                # execution onto a FIXED vocabulary in _state_from()
-                # (compose_instructions.py): working | failing | blocked |
-                # blocked_namespace_dispatch. Anything else falls through to
-                # `configured` -- "configured but not verified working" --
-                # which UNDERSTATES a capability the gate proves works.
-                # Measured against the real consumer: "verified" produced
-                # state='configured'; "working" produces state='working'.
+                # `execution` is a FIXED vocabulary on the consumer side:
+                # working | failing | blocked | blocked_namespace_dispatch.
+                # Any other string degrades to "configured but not verified".
                 "execution": "working",
                 "verified_by": "tests/lsp-baseline.py",
                 "scope": "python",
             },
+            # WITHHELD, not missing: Codex declares MCP servers as namespace
+            # BUNDLES, which LiteLLM discards before the backend, and flattening
+            # them makes Codex's own dispatcher refuse the call
+            # (openai/codex#20652). `reason` exists so a consumer does not read
+            # this as a transient failure and retry.
             "codex_mcp_lsp": {
-                # WITHHELD, so `configured` is false. codex-local ships with no
-                # MCP servers at all -- no grepai, no LSP, no GitHub -- and
-                # `tests/clients.sh codex` asserts the generated and deployed
-                # configs contain zero [mcp_servers.*] blocks.
                 "configured": False,
                 "schema_preserved": False,
                 "execution": "withheld_client_incompatible",
-                # WHY, so Cadence does not read this as a transient failure and
-                # retry: Codex declares MCP servers as namespace BUNDLES, which
-                # LiteLLM discards before the backend; flattening them makes
-                # Codex's own dispatcher refuse the call (openai/codex#20652).
-                # An MCP server here would advertise a surface Codex cannot
-                # drive, so none is registered.
                 "reason": "codex_cannot_dispatch_namespaced_tools",
                 "upstream": "openai/codex#20652",
                 "verified_by": "tests/clients.sh codex",
@@ -489,9 +418,6 @@ CATALOG_PRIORITY = {"architecture": 10, "implementation": 15, "review": 40, "com
 
 
 def regen_catalog(models):
-    # No self-existence check. This writes the WHOLE file, so requiring it to
-    # already exist meant a fresh clone — where it is correctly git-ignored —
-    # could never produce it.
     CODEX_CATALOG.parent.mkdir(parents=True, exist_ok=True)
     entries = []
     prio = 10
@@ -538,12 +464,10 @@ def regen_catalog(models):
     return True
 
 
-# ── Claude settings.json ───────────────────────────────────────────────────────
 # ── configure.zsh: the claude-local built-in-slot env block ───────────────────
-# These four vars are what actually decide which backend Claude Code's built-in
-# tiers (and any subagent whose frontmatter says `model: haiku|sonnet|opus|fable`)
-# resolve to. They were hand-maintained and drifted out of sync with clients.toml,
-# which is why haiku pointed at the 4096-token FIM tier and fable was absent.
+# These decide which backend Claude Code's built-in tiers resolve to (and any
+# subagent whose frontmatter names one). Generated from clients.toml, because a
+# hand-maintained copy drifts from the profile it claims to describe.
 SLOT_ENV = {
     "opus":   "ANTHROPIC_DEFAULT_OPUS_MODEL",
     "sonnet": "ANTHROPIC_DEFAULT_SONNET_MODEL",
@@ -569,12 +493,8 @@ def gen_slot_block(clients):
 def gen_copilot_capabilities(models):
     """The capability table for the VS Code Copilot repo instructions.
 
-    Generated because the hand-written version drifted badly: by 2026-07-28 four
-    of six rows were wrong — `review` had been gpt-oss:20b for weeks while the
-    file still said deepseek-coder-v2, keep_alive values were stale, and the
-    `fast` tier was missing entirely. A client instruction file that restates
-    generated truth always drifts, because nothing regenerates it. Now something
-    does."""
+    Generated, not written: a client instruction file that restates generated
+    truth drifts, because nothing regenerates it."""
     lines = [CP_BEGIN,
              "",
              "Use **capability names** only — never a backend model tag. The router owns",
@@ -771,15 +691,10 @@ EFFECTIVE_JSON = _pc.effective_profile_path()
 def build_effective_profile(active_tier):
     """The canonical post-generation view of the deployed role configuration.
 
-    A DEDICATED artifact rather than an extension of capabilities.generated.json:
-    that file's documented purpose is the resolved-capability view for
-    `ailocal status`, it is consumed by ten call sites including the LiteLLM
-    container, and overloading it would couple the proxy's capability contract
-    to profile internals such as sampling parameters.
-
-    Hashes of BOTH inputs are recorded so a consumer can tell that generated
-    state no longer matches the profile it came from -- staleness is detectable
-    rather than assumed away."""
+    Separate from capabilities.json, which is the proxy's capability contract:
+    overloading it would couple that contract to profile internals such as
+    sampling. Hashes of BOTH inputs are recorded so a consumer can detect that
+    generated state no longer matches the profile it came from."""
     def tier_block(t):
         prof_path = PROFILES_DIR / f"{t}.toml"
         roles = {}
@@ -800,11 +715,8 @@ def build_effective_profile(active_tier):
                 "compaction": data.get("compaction", {}),
                 "roles": roles}
 
-    # EVERY tier is normalized here, at generation time. Benchmark cross-tier
-    # planning previously parsed non-active profile YAML at runtime, which
-    # contradicted "sync-models is the sole YAML consumer" and left a second
-    # parser reachable from live code. One indexed artifact removes that without
-    # creating four unrelated files.
+    # EVERY tier is normalized here, at generation time, so benchmark
+    # cross-tier planning never needs a second profile parser at runtime.
     tiers = {t: tier_block(t) for t in _pc.TIERS
              if (PROFILES_DIR / f"{t}.toml").exists()}
     body = {
@@ -864,23 +776,16 @@ def flush_stage():
     """Write every staged output, then swap them in with rollback on failure.
 
     THE GUARANTEE: per-file atomic, with rollback on partial failure. Not a
-    transaction -- os.replace() is atomic PER FILE and the set is replaced one
-    file at a time -- but a failure part-way through restores every destination
-    already replaced, so the tree ends up entirely old or entirely new.
+    transaction -- os.replace() is atomic PER FILE -- but a failure part-way
+    through restores every destination already replaced, so the tree ends up
+    entirely old or entirely new. An ordered commit marker is not enough on its
+    own: LiteLLM and the clients read their generated files directly and consult
+    no marker, so a partial run leaves mixed state that is servable
+    (tests/generation-rollback.py proves it by fault injection).
 
-    WHY ROLLBACK AND NOT JUST AN ORDERED COMMIT MARKER. Writing
-    effective-profile.json last does make marker-aware readers fail closed, but
-    it does not protect the deployed system: LiteLLM reads
-    litellm/config.yaml directly and the clients read their own generated
-    files directly -- none of them consult the marker. Proven by fault
-    injection (tests/generation-rollback.py): failing after three
-    replaces left config/capabilities.generated.json new while the marker and
-    the client configs were still old. Mixed state, on disk, servable.
-
-    Order still matters and is kept: temp files are written and validated
-    first, dependent artifacts are replaced next, and effective-profile.json
-    goes LAST -- so even in the window before rollback completes, the marker
-    never claims a generation that is not fully applied."""
+    Order is still kept -- temp files written and validated first, dependants
+    next, effective-profile.json LAST -- so even before rollback completes the
+    marker never claims a generation that is not fully applied."""
     tmp, backups, replaced = {}, {}, []
     try:
         for path, text in _STAGE.items():

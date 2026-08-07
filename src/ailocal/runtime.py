@@ -1,11 +1,8 @@
 """runtime.py — the running stack: how it is composed, driven and inspected.
 
-One owner for the Docker Compose invocation, the lifecycle (start, stop,
-update, teardown) and the status renderings, because all three need the same
+One owner for the Compose invocation, the lifecycle (start, stop, update,
+teardown) and the status/metric/trace renderings, because they need the same
 roots, the same rendered SearXNG settings and the same readiness signal.
-
-Three renderings of one status query -- dashboard, table, verbose -- so they
-share the resolution and differ only in output.
 """
 from __future__ import annotations
 
@@ -67,9 +64,8 @@ def _confirm(prompt: str) -> bool:
 #
 # --project-directory pins relative-path resolution inside both compose files;
 # --env-file names the environment explicitly, because Compose would otherwise
-# auto-discover .env from the project directory and silently couple the secrets
-# file to wherever the compose assets happen to live. ADR 009 separates those.
-# Do not drop either flag.
+# auto-discover .env from the project directory and couple the secrets file to
+# wherever the compose assets live. Do not drop either flag.
 
 BRAVE_PLACEHOLDER = "__BRAVE_API_KEY__"
 
@@ -104,11 +100,9 @@ def env_value(name: str) -> str:
 def render_searxng_settings() -> None:
     """Render deploy/searxng/settings.yml with the Brave key, atomically.
 
-    SearXNG has no environment interpolation for an engine's api_key, so the key
-    cannot be passed the way SEARXNG_SECRET is and the tracked settings.yml must
-    stay secret-free. The rendered copy lives under the state root, OUTSIDE the
-    checkout, which is what makes committing it impossible rather than merely
-    discouraged. Fails closed; never prints the key.
+    SearXNG has no environment interpolation for an engine's api_key, so the
+    tracked settings.yml must stay secret-free and the rendered copy lives under
+    the state root, OUTSIDE the checkout. Fails closed; never prints the key.
     """
     src = policy.data_root() / "deploy" / "searxng" / "settings.yml"
     out = searxng_settings()
@@ -337,16 +331,14 @@ def _summarize(records: list) -> dict:
     """Aggregate the gateway's metric stream.
 
     Every ratio uses bytes_kept_reachable over bytes_reachable — what the model
-    received over what the route would have forwarded. Using bytes_kept or
-    bytes_in produces nonsense on /v1/responses, where LiteLLM discards
-    namespace tools itself: that calculation once reported a -133.7% reduction.
+    received over what the route would have forwarded. bytes_kept and bytes_in
+    give nonsense on /v1/responses, where LiteLLM drops namespace tools itself.
 
     `off`-mode records carry no negotiation decision and are counted separately
-    rather than averaged in as zeros, and a passthrough request has a reduction
-    of zero by design. Token figures are the cl100k proxy, calibrated
-    1.009-1.021 against Ollama's prompt_eval_count. Latency is deliberately
-    absent: these records hold the hook's own overhead, and printing hook
-    microseconds beside a model's seconds invites the wrong conclusion.
+    rather than averaged in as zeros. Token figures are [APPROX]: the cl100k
+    proxy, calibrated 1.009-1.021 against Ollama's prompt_eval_count. End-to-end
+    latency is deliberately absent — these records hold only the hook's own
+    overhead.
     """
     negotiated = [r for r in records if r.get("mode") in ("report", "filter")]
     acting = [r for r in negotiated
@@ -604,10 +596,9 @@ def cmd_trace(argv: list[str]) -> int:
 # ── lifecycle ───────────────────────────────────────────────────────────────
 
 #: Files LiteLLM reads ONCE at boot and that are bind-mounted, so editing them
-#: changes no Compose spec and `up -d` will not restart anything. The proxy then
-#: keeps serving the OLD routing, personas and tool policy while the files on
-#: disk say something else, with nothing in the logs to say so. Fingerprinting
-#: them is how a restart becomes deliberate rather than remembered.
+#: changes no Compose spec and `up -d` restarts nothing — the proxy keeps
+#: serving the old routing and tool policy with nothing in the logs to say so.
+#: Fingerprinting them makes the restart deliberate rather than remembered.
 def _config_fingerprint() -> str:
     data, state = policy.data_root(), policy.state_root()
     paths = [state / "litellm" / "config.yaml",
@@ -649,8 +640,7 @@ def _preflight() -> None:
         return
     ok("Ollama daemon responding")
 
-    # The model set comes from the GENERATED artifact. Resolving it here, once,
-    # is what keeps a second reader of the profile from appearing.
+    # The model set comes from the GENERATED artifact, never the profile.
     present = {m.get("name", "") for m in json.loads(tags).get("models", [])}
     stems = {n.split(":", 1)[0] for n in present}
     required = {r["model"] for r in policy.effective_summary()["roles"].values()}
@@ -732,9 +722,8 @@ def cmd_update(argv: list[str]) -> int:
     else:
         warn("No .env found — nothing to snapshot.")
 
-    # NOT an image upgrade. Every image is digest-pinned, so this re-fetches the
-    # SAME digests and exists only to repair a locally deleted layer. Replacing
-    # an image is a validated, human-approved change: ailocal security.
+    # NOT an image upgrade: every image is digest-pinned, so this re-fetches
+    # the SAME digests and exists only to repair a locally deleted layer.
     step("Pulling pinned Docker images (digests unchanged by design)")
     compose("pull")
 
@@ -788,8 +777,6 @@ def cmd_teardown(argv: list[str]) -> int:
         _docker("network", "rm", "ailocal_net")
 
     if remove_images:
-        # Compose reports the composition's own image references; grepping the
-        # compose files for `image:` was a second parser of the same fact.
         step("Removing Docker images")
         r = compose("config", "--images", check=False, capture=True)
         for img in filter(None, (l.strip() for l in r.stdout.splitlines())):
@@ -920,11 +907,8 @@ def cmd_status(argv: list[str]) -> int:
 
 
 def cmd_compose(argv: list[str]) -> int:
-    """Run one Compose subcommand against this composition.
-
-    The single entry point for anything outside this module that must drive the
-    stack directly -- test suites and benchmarks that flip a service setting.
-    """
+    """Run one Compose subcommand against this composition: the single entry
+    point for anything outside this module that drives the stack directly."""
     return compose(*argv, check=False).returncode
 
 
