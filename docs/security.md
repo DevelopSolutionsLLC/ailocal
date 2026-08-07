@@ -38,7 +38,7 @@ has the user's account.
 environment interpolation for an engine's `api_key`: its settings loader
 supports a fixed allow-list of variables and no `${VAR}` substitution, so the
 Brave key cannot be passed the way `SEARXNG_SECRET` is. The tracked
-`deploy/searxng/settings.yml` therefore carries a placeholder and the rendered
+`resources/deploy/searxng/settings.yml` therefore carries a placeholder and the rendered
 copy is written to the state root. Being outside Git's tree makes committing it
 impossible rather than merely discouraged.
 

@@ -2,7 +2,7 @@
 
 The operating contract for changing this repository. Architecture lives in
 `docs/architecture.md`, symptoms in `docs/troubleshooting.md`, secrets in
-`docs/security.md`, and benchmark methodology in `benchmarks/README.md`.
+`docs/security.md`, and benchmark methodology in `tests/benchmarks/README.md`.
 
 ## Mission
 
@@ -23,31 +23,44 @@ dependency.
 
 ## Repository map
 
-```
-src/ailocal/       the installed package — the whole product
-  cli.py             the command table; the only public surface
-  policy.py          the ONE policy reader, and the only root resolver
-  generation.py      the ONE generator; `ailocal sync` is its entry point
-  runtime.py         Compose, lifecycle, status, metrics, traces
-  install.py         prerequisites, provisioning, agents, models, audit
-  clients.py         deploying the isolated client homes
-  checks/            validate · smoke · security · doctor · the gate
-./ailocal          development shim for running from a checkout (ADR 009)
-pyproject.toml     packaging; `[project.scripts]` declares the command
+Four directories. Everything ailocal ships is inside the package.
 
-profiles/          hardware policy: capability -> model, geometry, sampling
-profiles/clients.toml  which capability each client surface uses
-clients/           authored client templates (never generated output)
-deploy/litellm/    proxy hooks/, capability registry, config template, personas
-deploy/searxng/    search service definition
-benchmarks/        benchmark policy, tasks and suite implementations
-tests/             domain suites; `ailocal test` is the gate
-docs/              architecture, security, troubleshooting
+```
+src/ailocal/           the installed package — the whole product
+  cli.py                 the command table; the only public surface
+  policy.py              the ONE policy reader, and the only root resolver
+  generation.py          the ONE generator; `ailocal sync` is its entry point
+  runtime.py             Compose, lifecycle, status, metrics, traces
+  install.py             prerequisites, provisioning, agents, models, audit
+  clients.py             deploying the isolated client homes
+  checks/                validate · smoke · security · doctor · the gate
+  resources/             SHIPPED ASSETS — never imported, always provisioned
+    deploy/litellm/        proxy hooks, capability registry, template, personas
+    deploy/searxng/        search service definition
+    clients/               authored client templates
+    profiles -> ../../../profiles   symlink: one copy, carried by the wheel
+
+profiles/              hardware policy: capability -> model, geometry, sampling
+                       authored, dev-editable, and the shipped default
+tests/                 domain suites (`ailocal test` is the gate) + benchmarks
+docs/                  runtime flow, security, troubleshooting, ADRs
+./ailocal              development shim for running from a checkout (ADR 009)
+pyproject.toml         packaging; `[project.scripts]` declares the command
 ```
 
-A package command is a **function**, not a program: `cli.py` imports the owning
-module and calls `main(argv)`. Only the benchmark scripts under the data root
-are executed as separate processes.
+**Resources are provisioned, never read in place.** `install.provision()` copies
+`resources/` into `$XDG_DATA_HOME/ailocal` and `$XDG_CONFIG_HOME/ailocal`; every
+consumer — Compose bind mounts, client deployment, the registry — reads the
+managed copy. Nothing reads site-packages at runtime, and `ailocal install`
+needs no checkout.
+
+**A package command is a function, not a program.** `cli.py` imports the owning
+module and calls `main(argv)`. There is one dispatch mechanism and no second
+interpreter.
+
+**Benchmarks are developer tooling** (ADR 009), run from a checkout as
+`python3 tests/benchmarks/<suite>.py`. They are not a product command and are
+not installed.
 
 ## Canonical sources
 
@@ -55,7 +68,7 @@ are executed as separate processes.
 |---|---|
 | `profiles/<tier>.toml` | capability → model, `context_input`, `max_output`, sampling, reasoning, keep-alive, persona, compaction |
 | `profiles/clients.toml` | which capability each client surface uses — no model tuning |
-| `deploy/litellm/registry.yaml` | intrinsic runtime capability: engine, context enforcement, tool support |
+| `resources/deploy/litellm/registry.yaml` | intrinsic runtime capability: engine, context enforcement, tool support |
 
 `src/ailocal/policy.py` is the **one** reader for all of it. It fails closed:
 no default tier, unknown fields rejected, duplicate keys and sections rejected.
@@ -154,7 +167,8 @@ developer's Git, editor or shell policy.
 - `AGENTS.md` owns repository-wide policy: this file is authoritative.
 - `CLAUDE.md` is a one-line `@AGENTS.md` import, because Claude Code reads
   `CLAUDE.md` rather than `AGENTS.md`. It carries no rules.
-- `clients/<client>/` owns local runtime and client compatibility facts only.
+- `src/ailocal/resources/clients/<client>/` owns local runtime and client
+  compatibility facts only.
 - Task prompts, commands and agent definitions own workflow-specific behaviour.
 - Tests, schemas and permissions enforce what must not depend on model
   compliance. This repository installs no Git hooks.
@@ -163,7 +177,7 @@ Do not duplicate repository policy into a client preload, or copy volatile
 profile values into prose when generation can supply them.
 
 Investigation history belongs in an ADR if it explains a durable decision,
-`docs/troubleshooting.md` if operational, `benchmarks/README.md` if about
+`docs/troubleshooting.md` if operational, `tests/benchmarks/README.md` if about
 reproducibility, and Git history otherwise.
 
 ## Security and Git

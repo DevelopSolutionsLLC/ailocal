@@ -53,6 +53,7 @@ ${XDG_CONFIG_HOME:-~/.config}/ailocal/
 
 ${XDG_DATA_HOME:-~/.local/share}/ailocal/
     deploy/litellm/       hooks, registry, config template, compose
+                          (shipped from src/ailocal/resources/deploy/)
     deploy/searxng/
     clients/              authored client templates
 
@@ -141,15 +142,16 @@ the specific outcome this prevents. `ailocal doctor` reports a `.staging-*` or
 
 ### Benchmarks are developer-only
 
-`ailocal benchmark` is **not an end-user product capability**. This is already
-the declared contract: *"Benchmarks are a developer utility: they never modify a
-profile, and they are not part of install, update or the regression gate."*
+Benchmarks are a developer utility: they never modify a profile, and they are
+not part of install, update or the regression gate.
 
 Consequently benchmark assets are **not installed** — not into the data root and
-not as package data. They retain an explicit checkout dependency and are
-excluded from ordinary installation. `benchmarks/` stays in the repository and
-runs from a checkout only. Should benchmarks ever become an end-user capability,
-their assets move under the data root and this paragraph is superseded.
+not as package data — and there is **no public `ailocal benchmark` command**. A
+command dispatching through the data root would resolve a path that provisioning
+never creates, which is exactly what it did until the assets moved. They live in
+`tests/benchmarks/` and are invoked directly from a checkout. Should benchmarks
+ever become an end-user capability, their assets move under the data root and
+this paragraph is superseded.
 
 **Profile format is deferred to ADR 010** and is not decided here. It is a
 separate question with a separate blast radius, and coupling it to packaging
