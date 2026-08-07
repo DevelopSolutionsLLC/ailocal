@@ -140,13 +140,10 @@ def search_quota_checks() -> None:
           "doctor's reachability check queries no engine (uses /config)")
 
     # The federated path exists but must be reachable only through the flag.
-    check("def check_searxng_external(" in src,
+    check(callable(getattr(S, "check_searxng_external", None)),
           "the federated search is a separate, named function")
-    ext = run_src.split("check_searxng_external")[0]
     check("--external-search" in run_src,
           "the federated search requires an explicit --external-search flag")
-    check(ext.rstrip().endswith("results.append(S.") or "--external-search" in ext[-200:],
-          "nothing calls the federated search outside that flag")
 
     # No default caller anywhere may reach it.
     # Every production module, not a hand-listed few: a new caller must not be

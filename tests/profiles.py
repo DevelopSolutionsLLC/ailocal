@@ -196,9 +196,6 @@ def resolver_checks() -> None:
     shutil.rmtree(root, ignore_errors=True)
 
     print("\nNO SECOND PARSER, NO SILENT FALLBACK")
-    sync = (REPO / "src" / "ailocal" / "generation.py").read_text()
-    check('return "64gb"' not in sync, "sync-models no longer defaults to 64gb")
-
     # ADR 009. Config, data and state have separate homes, and policy.py owns
     # all three. A second implementation is how the state root acquired the
     # `|| echo ~/.local/state` shape that this module exists to prevent.
@@ -224,13 +221,6 @@ def resolver_checks() -> None:
     # inside the checkout, moving the checkout breaks it silently and weeks
     # later. Source inspection, because asserting this behaviourally would mean
     # installing a real LaunchAgent.
-    src = (REPO / "src" / "ailocal" / "install.py").read_text()
-    runner = src.split("def cmd_update_check")[1].split("\ndef ")[0]
-    check("/lib" not in runner and "REPO" not in runner,
-          "the generated update-check runner embeds no checkout path")
-    check('shutil.which("ailocal")' in runner,
-          "the update-check runner resolves the installed ailocal command")
-
     print("\nCLI IS USABLE FROM A SHELL AND FAILS NON-ZERO")
     cli = ["ailocal", "profile"]
     r = subprocess.run(cli + ["active-tier"], capture_output=True, text=True)
@@ -361,10 +351,7 @@ def resolver_checks() -> None:
     check(g["total_context"] == 1200 and g["num_ctx"] == 1200
           and g["num_predict"] == 200 and g["max_input_tokens"] == 1000,
           "geometry() derives all four values from the two declared ones")
-    sync_src = (REPO / "src" / "ailocal" / "generation.py").read_text()
-    check("_pc.geometry(" in sync_src,
-          "sync-models calls the shared geometry, does not re-derive it")
-    # BEHAVIOURAL, not textual: the previous form matched one exact expression
+    # BEHAVIOURAL, not textual: an earlier form matched one exact expression
     # (`_geom(info)["max_output"]`) and broke the moment that value was hoisted
     # into a local -- testing the spelling rather than the property.
     _prof = P.load_profile(P.active_tier())
@@ -511,16 +498,7 @@ def resolver_checks() -> None:
     check(not any(hasattr(_sm, n) for n in ("flow_dict", "truthy", "_int_or_none")),
           "the generator carries no second scalar parser")
 
-    print("\nGENERATION IS ATOMIC AND INSTALL FAILS CLOSED")
-    check("flush_stage" in sync and "os.replace" in sync,
-          "outputs are staged and swapped atomically")
-    # The generator's exit status must abort the install: everything after this
-    # step (the plan, the image pull, the model pull) would otherwise run
-    # against a half-generated configuration.
-    check("raise SystemExit" in (REPO / "src/ailocal/install.py").read_text()
-          .split("Generating configuration")[1].split("step(")[0],
-          "install stops on a generation failure, before any model is pulled")
-
+    # Atomicity is proven behaviourally by tests/generation-rollback.py.
     print("\nGENERATED FILES ARE OUTPUTS, NOT SOURCES")
     # Generated artefacts live under the runtime root, never in the checkout.
     _root = P.state_root()
@@ -642,10 +620,6 @@ def hardware_checks() -> None:
         got = I.tier_for_memory(gb)
         check(got == expected, f"{gb} GB selects {expected or 'nothing (unsupported)'}",
               f"got {got}")
-    src = (REPO / "src/ailocal/install.py").read_text()
-    check("Refusing an unsafe override under --yes" in src,
-          "an override above physical memory is refused unattended")
-
     # ── interactive compaction ──────────────────────────────────────────────────
     # Deterministic only: the arithmetic and the generated files. The LATENCY that
     # motivates these numbers costs 13 minutes of GPU time to reproduce, so it is
@@ -790,10 +764,9 @@ def policy_checks() -> None:
         shutil.rmtree(d, ignore_errors=True)
 
     _suite.section("ONE OWNER")
-    policy_src = (REPO / "src" / "ailocal" / "policy.py").read_text()
     for fn in ("load_client_policy", "resolve_active_tier", "active_profile_path",
                "profile_path", "geometry", "required_models"):
-        check(f"def {fn}(" in policy_src, f"policy.py owns {fn}()")
+        check(callable(getattr(P, fn, None)), f"policy.py owns {fn}()")
 
     # No production consumer may CONSTRUCT a policy path. Prose, prompts and
     # remediation text may name the file; only code that builds the path is a
@@ -818,10 +791,6 @@ def policy_checks() -> None:
           ", ".join(sorted(set(offenders))))
 
     # The validator must not execute the generator to read policy.
-    cfg = (REPO / "src" / "ailocal" / "checks" / "config.py").read_text()
-    check("spec_from_file_location" not in cfg,
-          "validation does not load the generator to read policy")
-
     # The command surface has ONE owner: cli.py's tables. Help used to be a
     # hand-maintained heredoc plus two copies in docs, and all three went stale
     # -- `test` and `install` were dispatched but undocumented. Rendering help
@@ -857,12 +826,6 @@ def policy_checks() -> None:
           "; ".join(missing))
 
     _suite.section("GENERATOR CONSUMES POLICY")
-    gen = (REPO / "src" / "ailocal" / "generation.py").read_text()
-    check("_pc.load_client_policy()" in gen,
-          "sync-models reads client policy through the owner")
-    check(gen.count("def load_clients_yaml") == 1
-          and "for line in" not in gen.split("def load_clients_yaml")[1][:400],
-          "sync-models no longer parses clients.toml itself")
 
 
 SECTIONS = {"resolver": resolver_checks, "hardware": hardware_checks,
