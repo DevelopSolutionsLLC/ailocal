@@ -561,10 +561,10 @@ run_next_steps() {
     skip|"")
       info "Skipped — run later with:  ailocal clients [all|claude|codex|vscode]" ;;
     all)
-      bash "$ROOT_DIR/lib/install-clients.sh" || warn "Client install reported issues." ;;
+      "$ROOT_DIR/ailocal" clients || warn "Client install reported issues." ;;
     *)
       # shellcheck disable=SC2086
-      bash "$ROOT_DIR/lib/install-clients.sh" $CLIENTS \
+      "$ROOT_DIR/ailocal" clients $CLIENTS \
         || warn "Client install reported issues — check target names (claude codex vscode)." ;;
   esac
 

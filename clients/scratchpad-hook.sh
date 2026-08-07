@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scratchpad-hook.sh — shared SessionStart hook for claude-local and codex-local.
-# Deployed to ~/.config/ailocal/ by install-clients.sh and registered in both
+# Deployed to ~/.config/ailocal/ by `ailocal clients` and registered in both
 # claude/settings.json ("hooks".SessionStart) and codex/config.toml ([[hooks.SessionStart]]).
 #
 # Both clients pass the hook a JSON payload on stdin containing `session_id`, and

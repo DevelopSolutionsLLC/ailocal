@@ -178,7 +178,7 @@ map client surfaces to it in `profiles/clients.yaml`.
 **Add a client template** — place the authored template under
 `clients/<client>/`, emit its rendered output to
 `$AILOCAL_STATE/clients/<client>/` from the generator, and deploy it from
-`lib/install-clients.sh`. Never write generated output beside the template.
+`src/ailocal/clients.py`. Never write generated output beside the template.
 
 **Add a benchmark suite** — implement it under `benchmarks/` and add a
 case to the `benchmark` dispatcher in `ailocal`.

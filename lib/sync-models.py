@@ -823,7 +823,7 @@ def regen_continue(models, clients):
     data["//"] = [
         "ailocal — VS Code Continue config. MANAGED/GENERATED — edit profiles/clients.yaml +",
         "profiles/<tier>.yaml + profiles/clients.yaml, run `ailocal sync`. Deployed by",
-        "install-clients.sh (vscode); __LITELLM_KEY__ substituted from .env at install.",
+        "ailocal clients vscode; __LITELLM_KEY__ substituted from .env at install.",
         "Chat/edit go through LiteLLM (4000); autocomplete hits Ollama (11434) directly for FIM.",
         "Models: " + " | ".join(mn(k) for k in models.keys()),
     ]

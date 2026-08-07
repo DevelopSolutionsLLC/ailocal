@@ -141,10 +141,10 @@ fi
 # 3. ailocal does not invoke a global Cadence MCP sync. THE core assertion: with
 #    Cadence installed, the old code path ran unconditionally, so this is what
 #    actually keeps Codex clean rather than luck about what Cadence holds.
-IC="$ROOT_DIR/lib/install-clients.sh"
+IC="$ROOT_DIR/src/ailocal/clients.py"
 inv=$(grep -cE '^[^#]*cadence[[:space:]]+mcp[[:space:]]+sync' "$IC" 2>/dev/null || true)
 check $([ "${inv:-0}" -eq 0 ] && echo 0 || echo 1) \
-  "install-clients.sh does not invoke 'cadence mcp sync' (found ${inv:-0})"
+  "clients.py does not invoke 'cadence mcp sync' (found ${inv:-0})"
 
 # 4. …and no other ailocal script does either.
 other=$(grep -rlE '^[^#]*cadence[[:space:]]+mcp[[:space:]]+sync' "$ROOT_DIR/scripts" 2>/dev/null \
@@ -162,7 +162,7 @@ check $([ "${warned:-0}" -eq 0 ] && echo 0 || echo 1) \
 #    an excuse to strip Claude's.
 pres=$(grep -cE '\.claude\.json' "$IC" 2>/dev/null || true)
 check $([ "${pres:-0}" -ge 1 ] && echo 0 || echo 1) \
-  "install-clients.sh still preserves .claude.json (claude-local MCP survives)"
+  "clients.py still preserves .claude.json (claude-local MCP survives)"
 
 
 
