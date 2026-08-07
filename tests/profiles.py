@@ -549,7 +549,10 @@ def resolver_checks() -> None:
     print("\nGENERATION IS ATOMIC AND INSTALL FAILS CLOSED")
     check("flush_stage" in sync and "os.replace" in sync,
           "outputs are staged and swapped atomically")
-    check("check=True" in (REPO / "src/ailocal/install.py").read_text()
+    # The generator's exit status must abort the install: everything after this
+    # step (the plan, the image pull, the model pull) would otherwise run
+    # against a half-generated configuration.
+    check("raise SystemExit" in (REPO / "src/ailocal/install.py").read_text()
           .split("Generating configuration")[1].split("step(")[0],
           "install stops on a generation failure, before any model is pulled")
 
@@ -873,17 +876,19 @@ def policy_checks() -> None:
     # An internal command must still dispatch: it is undiscoverable, not gone.
     check(cli.INTERNAL <= dispatchable, "every internal command still dispatches",
           ", ".join(sorted(cli.INTERNAL - dispatchable)))
-    import importlib.util as _ilu
+    import importlib
 
-    def _resolves(kind, rel):
-        # A module target is importable; a file target is a path under the tree.
-        return (_ilu.find_spec(rel) is not None if kind == cli.MOD
-                else (REPO / rel).exists())
-
-    missing = [f"{n} -> {rel}" for n, (k, rel, _, _) in cli.COMMANDS.items()
-               if not _resolves(k, rel)]
+    # A package command must import AND expose the main(argv) the CLI calls; a
+    # benchmark target must exist as a file under the data root.
+    missing = []
+    for name, (module, _, _) in cli.COMMANDS.items():
+        try:
+            if not callable(getattr(importlib.import_module(module), "main", None)):
+                missing.append(f"{name} -> {module} has no main(argv)")
+        except ImportError as exc:
+            missing.append(f"{name} -> {module}: {exc}")
     missing += [f"{c} {t} -> {rel}" for c, ts in cli.NESTED.items()
-                for t, (k, rel) in ts.items() if not _resolves(k, rel)]
+                for t, (_, rel) in ts.items() if not (REPO / rel).exists()]
     check(not missing, "every command resolves to a real implementation",
           "; ".join(missing))
 

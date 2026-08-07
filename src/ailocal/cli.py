@@ -20,37 +20,37 @@ def _root() -> Path:
     return policy.data_root()
 
 
-#: command -> (interpreter, target relative to root, fixed args, forwards argv)
+#: command -> (implementing module, fixed args, forwards argv)
 #: `models` deliberately does not forward: it is a fixed table rendering, and
 #: accepting arguments it then ignores would be worse than refusing them.
-PY, SH, MOD = "py", "sh", "mod"
-COMMANDS: dict[str, tuple] = {
-    "install":        (MOD, "ailocal.install", ("install",), True),
-    "status":         (MOD, "ailocal.runtime", ("status",), True),
-    "models":         (MOD, "ailocal.runtime", ("status", "--table"), False),
-    "doctor":         (MOD, "ailocal.checks.run", ("doctor",), True),
-    "validate":       (MOD, "ailocal.checks.run", ("validate",), True),
-    "smoke":          (MOD, "ailocal.checks.run", ("smoke",), True),
-    "security":       (MOD, "ailocal.checks.run", ("security",), True),
-    "test":           (MOD, "ailocal.checks.run", ("test",), True),
+PY, SH = "py", "sh"
+COMMANDS: dict[str, tuple[str, tuple, bool]] = {
+    "install":        ("ailocal.install", ("install",), True),
+    "status":         ("ailocal.runtime", ("status",), True),
+    "models":         ("ailocal.runtime", ("status", "--table"), False),
+    "doctor":         ("ailocal.checks.run", ("doctor",), True),
+    "validate":       ("ailocal.checks.run", ("validate",), True),
+    "smoke":          ("ailocal.checks.run", ("smoke",), True),
+    "security":       ("ailocal.checks.run", ("security",), True),
+    "test":           ("ailocal.checks.run", ("test",), True),
 
-    "sync":           (MOD, "ailocal.generation", (), True),
-    "start":          (MOD, "ailocal.runtime", ("start",), True),
-    "stop":           (MOD, "ailocal.runtime", ("stop",), True),
-    "update":         (MOD, "ailocal.runtime", ("update",), True),
-    "teardown":       (MOD, "ailocal.runtime", ("teardown",), True),
-    "compose":        (MOD, "ailocal.runtime", ("compose",), True),
-    "ready":          (MOD, "ailocal.runtime", ("ready",), True),
-    "clients":        (MOD, "ailocal.clients", (), True),
-    "vscode":         (MOD, "ailocal.clients", ("--vscode-only",), True),
-    "models-install": (MOD, "ailocal.install", ("models",), True),
-    "audit":          (MOD, "ailocal.install", ("audit",), True),
-    "cleanup":        (MOD, "ailocal.install", ("cleanup",), True),
-    "autostart":      (MOD, "ailocal.install", ("autostart",), True),
-    "update-check":   (MOD, "ailocal.install", ("update-check",), True),
-    "trace":          (MOD, "ailocal.runtime", ("trace",), True),
-    "metrics":        (MOD, "ailocal.runtime", ("metrics",), True),
-    "verify-session": (MOD, "ailocal.checks.run", ("verify-session",), True),
+    "sync":           ("ailocal.generation", (), True),
+    "start":          ("ailocal.runtime", ("start",), True),
+    "stop":           ("ailocal.runtime", ("stop",), True),
+    "update":         ("ailocal.runtime", ("update",), True),
+    "teardown":       ("ailocal.runtime", ("teardown",), True),
+    "compose":        ("ailocal.runtime", ("compose",), True),
+    "ready":          ("ailocal.runtime", ("ready",), True),
+    "clients":        ("ailocal.clients", (), True),
+    "vscode":         ("ailocal.clients", ("--vscode-only",), True),
+    "models-install": ("ailocal.install", ("models",), True),
+    "audit":          ("ailocal.install", ("audit",), True),
+    "cleanup":        ("ailocal.install", ("cleanup",), True),
+    "autostart":      ("ailocal.install", ("autostart",), True),
+    "update-check":   ("ailocal.install", ("update-check",), True),
+    "trace":          ("ailocal.runtime", ("trace",), True),
+    "metrics":        ("ailocal.runtime", ("metrics",), True),
+    "verify-session": ("ailocal.checks.run", ("verify-session",), True),
 }
 
 #: Nested surfaces: `ailocal <command> <target> [args]`.
@@ -100,25 +100,28 @@ def _usage() -> str:
                      + [f"  {left:<{width}}{heading}" for left, heading in rows])
 
 
-def _exec(kind: str, target, args) -> None:
-    """Replace this process, so exit codes and signals pass through unchanged."""
-    # Dispatched implementations import `ailocal.policy` for every path they
-    # resolve. They run as subprocesses, so the package has to be importable
-    # from wherever THIS module was loaded -- site-packages when installed, the
-    # checkout's src/ when not. Without this they would each rediscover a root,
-    # which is the duplication policy.py exists to prevent.
+def _call(module: str, args) -> int:
+    """A package command runs in THIS process: it is a function, not a program."""
+    import importlib
+    return importlib.import_module(module).main([str(a) for a in args])
+
+
+def _exec_script(kind: str, target: Path, args) -> None:
+    """Replace this process for a data-root script, so signals pass through.
+
+    Benchmarks import `ailocal` for every path they resolve, so the package has
+    to be importable from wherever THIS module was loaded -- site-packages when
+    installed, the checkout's src/ when not.
+    """
     pkg_parent = str(Path(__file__).resolve().parents[1])
     existing = os.environ.get("PYTHONPATH", "")
     os.environ["PYTHONPATH"] = (f"{pkg_parent}{os.pathsep}{existing}"
                                 if existing else pkg_parent)
-    tail = [str(a) for a in args]
-    if kind == MOD:
-        os.execv(sys.executable, [sys.executable, "-m", str(target)] + tail)
     if not target.exists():
         sys.exit(f"ailocal: missing implementation {target}\n"
                  f"Set AILOCAL_DATA to the installed data root.")
     argv = ([BASH, str(target)] if kind == SH
-            else [sys.executable, str(target)]) + tail
+            else [sys.executable, str(target)]) + [str(a) for a in args]
     os.execv(argv[0], argv)
 
 
@@ -200,17 +203,15 @@ def main(argv: list[str] | None = None) -> int:
                   file=sys.stderr)
             return 0 if target in ("help", "-h", "--help") else 2
         kind, rel = targets[target]
-        _exec(kind, _root() / rel, argv)
+        _exec_script(kind, _root() / rel, argv)
 
     if cmd not in COMMANDS:
         print(f"ailocal: unknown command '{cmd}' — run 'ailocal help'",
               file=sys.stderr)
         return 1
 
-    kind, rel, fixed, forwards = COMMANDS[cmd]
-    target = rel if kind == MOD else _root() / rel
-    _exec(kind, target, list(fixed) + (argv if forwards else []))
-    return 0  # unreachable: _exec replaces the process
+    module, fixed, forwards = COMMANDS[cmd]
+    return _call(module, list(fixed) + (argv if forwards else []))
 
 
 if __name__ == "__main__":

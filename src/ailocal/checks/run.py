@@ -471,7 +471,14 @@ COMMANDS = {"validate": _validate, "smoke": _smoke, "doctor": _doctor,
             "security": _security, "verify-session": H.verify_session,
             "test": _gate}
 
+
+def main(argv: list[str]) -> int:
+    if not argv or argv[0] not in COMMANDS:
+        print(f"usage: python -m ailocal.checks.run <{'|'.join(COMMANDS)}> [options]",
+              file=sys.stderr)
+        return 2
+    return COMMANDS[argv[0]](argv[1:])
+
+
 if __name__ == "__main__":
-    if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
-        sys.exit(f"usage: run.py {{{'|'.join(COMMANDS)}}} [options]")
-    sys.exit(COMMANDS[sys.argv[1]](sys.argv[2:]))
+    sys.exit(main(sys.argv[1:]))

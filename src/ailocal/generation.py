@@ -938,8 +938,8 @@ def flush_stage():
 
 
 
-def main():
-    tier, args = parse_profile_flag(sys.argv[1:])
+def main(argv=None):
+    tier, args = parse_profile_flag(sys.argv[1:] if argv is None else list(argv))
 
     check_only = bool(args) and args[0] == "--check"
     if check_only:
@@ -1012,7 +1012,8 @@ def main():
     ok(f"{n} generated files replaced atomically")
     step("Done — restart LiteLLM (`ailocal start`) and re-run `ailocal clients` "
          "to deploy the regenerated client configs.")
+    return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main() or 0)
+    sys.exit(main())
