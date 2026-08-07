@@ -165,8 +165,6 @@ developer's Git, editor or shell policy.
 ## Instruction ownership
 
 - `AGENTS.md` owns repository-wide policy: this file is authoritative.
-- `CLAUDE.md` is a one-line `@AGENTS.md` import, because Claude Code reads
-  `CLAUDE.md` rather than `AGENTS.md`. It carries no rules.
 - `src/ailocal/resources/clients/<client>/` owns local runtime and client
   compatibility facts only.
 - Task prompts, commands and agent definitions own workflow-specific behaviour.
