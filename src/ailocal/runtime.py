@@ -580,7 +580,7 @@ def cmd_trace(argv: list[str]) -> int:
         ttfb_s = f"{ttfb:.0f}ms" if isinstance(ttfb, (int, float)) else "-"
         total_s = f"{total:.0f}ms" if isinstance(total, (int, float)) else "-"
         print(f"{when:9} {str(r.get('request_id'))[:16]:17} "
-              f"{str(r.get('model'))[:23]:24} {ttfb_s:>8} {total_s:>9} "
+              f"{str(r.get('requested_alias'))[:23]:24} {ttfb_s:>8} {total_s:>9} "
               f"{str(r.get('tools_declared') or '-'):>5} "
               f"{str(r.get('messages') or '-'):>5}  {outcome}")
     fails = [r for r in rows if r.get("outcome") == "failure"]
