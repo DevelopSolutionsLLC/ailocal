@@ -211,142 +211,23 @@ not a supported configuration and carries no compatibility guarantee.
 contributor works on the package; it is not product distribution, because it
 requires a checkout and offers no upgrade or uninstall semantics.
 
-## Profile format
+## Validation
 
-Evidence for the deferred decision (ADR 010).
+The layout holds only if the product still works with the source checkout moved
+out of reach. `tests/installed-runtime.py` is that proof: it provisions through
+the package API, renames the checkout, and drives the installed command. Passing
+the gate from inside a checkout cannot show this, because the checkout supplies
+the assets.
 
-`lib/policy.py` hand-rolls a narrow YAML parser (`parse_profile_text`,
-`_strip_comment`, `_coerce`) to keep the host path dependency-free. It parses
-exactly five files: `profiles/{16,32,64,128}gb.yaml` and `profiles/clients.yaml`
-(665 lines total). Every other YAML file in the repository is consumed by
-something else and is out of scope:
+The standing invariants, each asserted by the gate:
 
-- `deploy/litellm/registry.yaml` is read inside the container by real PyYAML.
-- `deploy/litellm/config.template.yaml` and the generated `config.yaml` are
-  LiteLLM's format.
-- `deploy/*/compose.yaml` is Docker Compose's format.
-- `deploy/searxng/settings.yml` is SearXNG's format.
-- `benchmarks/*.yaml` is read by the benchmark suites.
-
-So the custom parser serves five files and nothing else. Options:
-
-1. **Retain the narrow parser.** No migration. Keeps a bespoke parser that must
-   be maintained and is a second YAML dialect by definition.
-2. **PyYAML.** Removes the parser, adds the first host runtime dependency, and
-   requires a venv for `ailocal test`, which currently runs on bare `python3`.
-3. **TOML + `tomllib`.** Removes the parser with no runtime dependency.
-   `tomllib` is standard library from Python 3.11; the development host runs
-   3.14.6. `sync-models.py` already emits TOML for the Codex templates, so the
-   format is not foreign.
-
-Option 3 is preferred if semantic equivalence is practical. The profiles are
-two-level maps of scalars and inline string lists with no anchors, aliases, or
-block scalars, so they map cleanly. Two migration hazards are known and must be
-handled explicitly rather than discovered:
-
-- `profiles/clients.yaml` contains compat keys with dots (`gpt-5.5`,
-  `claude-opus-4-8-20251101`). A bare dotted key in TOML denotes nesting, so
-  every such key must be quoted.
-- `keep_alive` holds both `6h` and `-1`. YAML coerces loosely; TOML does not.
-  The field must be typed deliberately, most likely as a string.
-
-Comment fidelity is a genuine cost: the profiles carry substantial provenance
-comments (`config-verified, NOT measured on 16 GB hardware`) that the evidence
-policy requires. TOML preserves comments in the file, but any generator that
-rewrites a profile would drop them. Profiles are authored, never generated, so
-this is acceptable — but it must stay true.
-
-ADR 010 must prove **semantic equality**, not plausibility: load all five policy
-files through the current parser and through `tomllib`, normalize both to the
-same policy object, and compare. It must explicitly cover quoted dotted keys,
-mixed scalar types (`6h` and `-1`), comment retention, strict validation
-(unknown-field and duplicate-key rejection must survive the format change), and
-rollback. Conversion is considered only after the runtime-path migration is
-stable, and never inside the same commit as a packaging change.
-
-## Migration phases
-
-Phases 1-5 are implemented. The defaults still resolve to the checkout, so the
-installed layout is available and exercised but not yet the default; phase 6 is
-the gate for flipping it.
-
-0. This ADR, plus ADR 010 for profile format. No code. **Done.**
-1. **Path APIs.** **Done.** `config_root()`, `data_root()`, `state_root()` land in
-   `policy.py` as the sole owners, all still resolving to the checkout.
-   Behavior unchanged; only derivation moves. Nothing else may compute a root.
-2. **Fix generated scheduled jobs.** **Done.** The update-check LaunchAgent stops
-   embedding `$REPO/lib/security.sh` and invokes the installed `ailocal`
-   command; until that entry point exists, `--install-schedule` refuses rather
-   than writing a checkout path. See *Early defect* below.
-3. **Done.** `pyproject.toml`, `src/ailocal/`, `[project.scripts]`. `cli.py` dispatches to
-   existing implementations; root `ailocal` becomes a thin shim.
-4. **Done** (as `ailocal provision`). Provisions the config and data roots,
-   writes the manifest, and performs the atomic swap. Moving `preload.sh` out
-   of Application Support is still outstanding.
-5. **Done.** Compose switches to `--project-directory` on the data root plus explicit
-   `--env-file`.
-6. **Prove operation with the checkout moved.** The decisive test below.
-7. Lifecycle, clients, generation, and checks move into the package, one phase
-   each, gate green between phases.
-8. Migration for existing installations: detect a checkout-based install, copy
-   assets into the new roots, verify, report.
-9. Delete the root shim and `AILOCAL_DEV_ROOT` once the removal criteria are met.
-10. Profile format (ADR 010) only after runtime-path migration is stable.
-
-### Early defect
-
-`ailocal security --install-schedule` generates a runner under the state root
-that hard-codes `"$REPO/lib/security.sh" --check-updates` (`lib/security.sh:61`).
-A generated, scheduled artifact therefore already depends on the checkout not
-moving — a defect under the current architecture, not merely a migration item.
-It is scheduled at Phase 2, before packaging, because a scheduled job that
-embeds a repository implementation path fails silently and on someone else's
-timetable. **Generated scheduled jobs must invoke the installed `ailocal`
-command and must never embed a checkout path.**
-
-## Rollback
-
-Phases 1 through 4 are revertible by Git revert; the running installation is
-unaffected because assets have not moved. Phase 3 is the first irreversible-ish
-step: it writes outside the checkout. It must be reversible by
-`ailocal cleanup`, which already removes installation artifacts and must learn
-the two new roots in the same change. Phase 5 must not delete the checkout or
-the old state root until the operator confirms.
-
-## Validation requirements
-
-### The decisive proof
-
-The migration is complete only when, with the source checkout **renamed or moved
-out of reach**, an installed package and installed static assets still serve:
-
-```
-ailocal help
-ailocal validate
-ailocal sync
-ailocal doctor
-ailocal start
-```
-
-Nothing else demonstrates that checkout coupling is gone. Passing the gate from
-inside a checkout cannot show this, because the checkout supplies the assets.
-This runs as an opt-in suite — it moves a real installation — and is the exit
-criterion for Phase 6 and for deleting `AILOCAL_DEV_ROOT`.
-
-### Ongoing
-
-- `ailocal sync` remains a fixed point across all three roots.
+- `ailocal sync` is a fixed point across all three roots.
 - An edited profile survives an upgrade; an unedited shipped default is
-  replaced. Both directions asserted, driven by the manifest digest.
-- A shipped default key absent from a user-edited profile is reported by
-  `validate`, never injected.
+  replaced. Both directions, driven by the manifest digest.
 - A data-root upgrade interrupted mid-swap leaves either the old tree or the new
-  tree, never a mixture; `.rollback` restores.
-- Uninstall leaves no LaunchAgent, no container, and no file in any of the three
-  roots.
+  tree, never a mixture.
 - No generated scheduled job contains a path inside a Git checkout.
-- Two installed versions do not share a data root without `doctor` reporting the
-  mismatch.
 - `.env` is never copied into the data root and never appears in a bind mount.
-- No component resolves a root except via `config_root()`, `data_root()` or
-  `state_root()`.
+- Nothing resolves a root except `config_root()`, `data_root()`, `state_root()`.
+
+The profile format that this layout assumes is decided separately in ADR 010.

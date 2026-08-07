@@ -24,7 +24,14 @@ dependency.
 ## Repository map
 
 ```
-src/ailocal/       the installed package; cli.py owns the command surface
+src/ailocal/       the installed package — the whole product
+  cli.py             the command table; the only public surface
+  policy.py          the ONE policy reader, and the only root resolver
+  generation.py      the ONE generator; `ailocal sync` is its entry point
+  runtime.py         Compose, lifecycle, status, metrics, traces
+  install.py         prerequisites, provisioning, agents, models, audit
+  clients.py         deploying the isolated client homes
+  checks/            validate · smoke · security · doctor · the gate
 ./ailocal          development shim for running from a checkout (ADR 009)
 pyproject.toml     packaging; `[project.scripts]` declares the command
 
@@ -34,10 +41,13 @@ clients/           authored client templates (never generated output)
 deploy/litellm/    proxy hooks/, capability registry, config template, personas
 deploy/searxng/    search service definition
 benchmarks/        benchmark policy, tasks and suite implementations
-lib/               shared implementation and lifecycle; not executable
 tests/             domain suites; `ailocal test` is the gate
 docs/              architecture, security, troubleshooting
 ```
+
+A package command is a **function**, not a program: `cli.py` imports the owning
+module and calls `main(argv)`. Only the benchmark scripts under the data root
+are executed as separate processes.
 
 ## Canonical sources
 
@@ -47,9 +57,10 @@ docs/              architecture, security, troubleshooting
 | `profiles/clients.toml` | which capability each client surface uses — no model tuning |
 | `deploy/litellm/registry.yaml` | intrinsic runtime capability: engine, context enforcement, tool support |
 
-`lib/policy.py` is the **one** reader for all of it. It fails closed:
+`src/ailocal/policy.py` is the **one** reader for all of it. It fails closed:
 no default tier, unknown fields rejected, duplicate keys and sections rejected.
-Nothing else parses YAML, builds a policy path, or resolves geometry.
+Nothing else parses policy, builds a policy path, or resolves geometry —
+including admission, which is `policy.geometry()` and nowhere else.
 
 ## Authored versus generated
 
@@ -115,8 +126,8 @@ globals. Tables only where behaviour differs solely by data. Comments explain
 contracts, invariants, security and destructive boundaries, or an active
 external compatibility constraint — never investigation history, measurement
 diaries or prior layouts. Python is standard library only and follows PEP 8
-and PEP 257; shell uses `set -euo pipefail`, the shared helpers in
-`lib/output.sh`, and fails closed. No generic managers, factories, registries
+and PEP 257; the shell that remains uses `set -euo pipefail`, the shared helpers in
+`tests/harness.sh`, and fails closed. No generic managers, factories, registries
 or utility layers without concrete consumers.
 
 **Tests.** `ailocal test` is the gate; suites live in `tests/` and are
