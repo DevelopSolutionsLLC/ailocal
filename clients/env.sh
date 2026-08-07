@@ -17,7 +17,7 @@
 #   Then derives all SDK-specific variables (OPENAI_*, ANTHROPIC_*) from it.
 
 # ── Source of truth: AILOCAL_BASE_URL / AILOCAL_API_KEY ──────────────────────
-# Prefer the installed config dir (written by install-clients.sh); fall back
+# Prefer the installed config dir (written by `ailocal clients`); fall back
 # to the repo .env for a dev checkout that hasn't run the installer yet.
 
 CFG_ENV="${XDG_CONFIG_HOME:-$HOME/.config}/ailocal/env"

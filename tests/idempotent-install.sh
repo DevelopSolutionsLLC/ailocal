@@ -158,32 +158,32 @@ python3 lib/sync-models.py >/dev/null 2>&1 || bad "ailocal sync #2 failed"
 fingerprint sync2 >/dev/null
 compare sync1 sync2 "ailocal sync"
 
-# ── install-clients.sh ─────────────────────────────────────────────────────
+# ── ailocal clients ────────────────────────────────────────────────────────
 # claude + codex only by default: the vscode target touches the user's editor
 # config, which is opt-in here.
-banner "install-clients.sh claude codex x2"
-if bash lib/install-clients.sh claude codex >/dev/null 2>&1; then
+banner "ailocal clients claude codex x2"
+if ./ailocal clients claude codex >/dev/null 2>&1; then
   fingerprint clients1 >/dev/null
-  bash lib/install-clients.sh claude codex >/dev/null 2>&1
+  ./ailocal clients claude codex >/dev/null 2>&1
   fingerprint clients2 >/dev/null
-  compare clients1 clients2 "install-clients.sh claude codex"
+  compare clients1 clients2 "ailocal clients claude codex"
 else
-  bad "install-clients.sh failed on the first run — idempotency untested"
+  bad "ailocal clients failed on the first run — idempotency untested"
 fi
 
-# ── install-vscode.sh (opt-in) ─────────────────────────────────────────────
+# ── ailocal vscode (opt-in) ────────────────────────────────────────────────
 if [ -n "$INCLUDE_VSCODE" ]; then
-  banner "install-vscode.sh x2"
-  if bash lib/install-vscode.sh >/dev/null 2>&1; then
+  banner "ailocal vscode x2"
+  if ./ailocal vscode >/dev/null 2>&1; then
     fingerprint vsc1 >/dev/null
-    bash lib/install-vscode.sh >/dev/null 2>&1
+    ./ailocal vscode >/dev/null 2>&1
     fingerprint vsc2 >/dev/null
-    compare vsc1 vsc2 "install-vscode.sh"
+    compare vsc1 vsc2 "ailocal vscode"
   else
-    bad "install-vscode.sh failed on the first run"
+    bad "ailocal vscode failed on the first run"
   fi
 else
-  printf '  \033[2m—\033[0m install-vscode.sh skipped (--include-vscode to test it)\n'
+  printf '  \033[2m—\033[0m ailocal vscode skipped (--include-vscode to test it)\n'
 fi
 
 # ── the specific counts that must not grow ─────────────────────────────────

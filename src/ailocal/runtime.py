@@ -85,7 +85,7 @@ def proxy_url() -> str:
     return os.environ.get("AILOCAL_PROXY", f"http://127.0.0.1:{port}")
 
 
-def _env_value(name: str) -> str:
+def env_value(name: str) -> str:
     """Read one key out of .env. Values may carry one layer of quotes."""
     path = env_file()
     if not path.is_file():
@@ -119,7 +119,7 @@ def render_searxng_settings() -> None:
     # No placeholder => Brave is intentionally not configured. Disabling Brave
     # must not break the deployment.
     if BRAVE_PLACEHOLDER in text:
-        key = _env_value("BRAVE_API")
+        key = env_value("BRAVE_API")
         if not key:
             raise _fail(
                 "BRAVE_KEY_MISSING: braveapi is configured in "
