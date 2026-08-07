@@ -34,9 +34,9 @@ def main() -> None:
 
     for c in I.DATA_COMPONENTS:
         check((data / c).is_dir(), f"data root receives {c}/")
-    check((cfg / "profiles" / "64gb.yaml").is_file(),
+    check((cfg / "profiles" / "64gb.toml").is_file(),
           "config root receives the authored profiles")
-    check((cfg / "profiles" / "clients.yaml").is_file(),
+    check((cfg / "profiles" / "clients.toml").is_file(),
           "config root receives client policy")
     check((state / I.MANIFEST_NAME).is_file(), "a manifest is recorded")
     check(not (data / "benchmarks").exists(),
@@ -47,30 +47,30 @@ def main() -> None:
           "profiles are config, never shipped into the data root")
 
     _suite.section("AN EDITED PROFILE SURVIVES AN UPGRADE")
-    edited = cfg / "profiles" / "64gb.yaml"
+    edited = cfg / "profiles" / "64gb.toml"
     edited.write_text(edited.read_text() + "\n# operator edit\n")
     keep = edited.read_text()
-    untouched = cfg / "profiles" / "32gb.yaml"
+    untouched = cfg / "profiles" / "32gb.toml"
 
     report = I.provision(REPO, cfg, data, state)
-    check("profiles/64gb.yaml" in report["preserved"],
+    check("profiles/64gb.toml" in report["preserved"],
           "an edited profile is reported as preserved")
     check(edited.read_text() == keep, "an edited profile is NOT overwritten")
-    check(untouched.read_text() == (REPO / "profiles" / "32gb.yaml").read_text(),
+    check(untouched.read_text() == (REPO / "profiles" / "32gb.toml").read_text(),
           "an unedited profile still matches what was shipped")
 
     report = I.provision(REPO, cfg, data, state)
-    check("profiles/64gb.yaml" in report["preserved"],
+    check("profiles/64gb.toml" in report["preserved"],
           "an edit survives a SECOND upgrade (the manifest records what was "
           "shipped, not what is on disk)")
     check(edited.read_text() == keep, "and is still not overwritten")
 
     _suite.section("A DELETED DEFAULT IS REPORTED, NEVER RESURRECTED")
-    (cfg / "profiles" / "16gb.yaml").unlink()
+    (cfg / "profiles" / "16gb.toml").unlink()
     report = I.provision(REPO, cfg, data, state)
-    check("profiles/16gb.yaml" in report["absent"],
+    check("profiles/16gb.toml" in report["absent"],
           "a default the operator removed is reported")
-    check(not (cfg / "profiles" / "16gb.yaml").exists(),
+    check(not (cfg / "profiles" / "16gb.toml").exists(),
           "and it is not written back")
 
     _suite.section("A CORRUPT MANIFEST NEVER LICENSES AN OVERWRITE")
@@ -78,6 +78,14 @@ def main() -> None:
     report = I.provision(REPO, cfg, data, state)
     check(edited.read_text() == keep,
           "with no provenance, an edited file is still preserved")
+
+    _suite.section("A RETIRED POLICY FILE IS REMOVED, UNLESS IT WAS EDITED")
+    stale = cfg / "profiles" / "99gb.toml"
+    stale.write_text("# a format or tier we no longer ship\n")
+    I.provision(REPO, cfg, data, state)          # records it as shipped? no: not in source
+    check(stale.is_file(),
+          "a file the distribution never shipped is left alone")
+    stale.unlink()
 
     _suite.section("DATA IS REPLACED WHOLESALE")
     stray = data / "lib" / "not-shipped.sh"

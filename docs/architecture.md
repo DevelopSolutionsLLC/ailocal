@@ -18,7 +18,7 @@ Every directory owns one thing. Generated output never appears in any of them.
 | Directory | Owns | Never contains |
 |---|---|---|
 | `profiles/` | hardware-tier policy: capability → model, geometry, sampling, keep-alive, compaction | generated state |
-| `profiles/clients.yaml` | which capability each client surface uses | model tuning |
+| `profiles/clients.toml` | which capability each client surface uses | model tuning |
 | `clients/` | client templates and deployment assets | rendered client configuration |
 | `deploy/litellm/` | authored proxy assets: hooks, capability registry, config template, compose definition | the generated `config.yaml`, rendered secrets |
 | `deploy/litellm/instructions/` | per-capability personas, mounted into the proxy | anything client-specific |
@@ -143,8 +143,8 @@ Ollama runs on the host, not in a container, and is reached at `OLLAMA_HOST`.
 ## Data flow
 
 ```
-profiles/<tier>.yaml     capability → model, geometry
-profiles/clients.yaml             client surface → capability
+profiles/<tier>.toml     capability → model, geometry
+profiles/clients.toml             client surface → capability
                     ↓
 policy.py           resolve_role · geometry · load_client_policy · required_models
                     ↓
@@ -166,14 +166,14 @@ config root — never the repository.
 
 ## Extension points
 
-**Add a model** — edit the capability's `active` in `profiles/<tier>.yaml`,
+**Add a model** — edit the capability's `active` in `profiles/<tier>.toml`,
 then `ailocal sync && ailocal models-install`.
 
-**Add a profile** — create `profiles/<tier>.yaml` and add the tier to
+**Add a profile** — create `profiles/<tier>.toml` and add the tier to
 `policy.TIERS`. Selection thresholds live in `src/ailocal/install.py`.
 
 **Add a capability** — add the role to the profiles and to `policy.ROLES`, then
-map client surfaces to it in `profiles/clients.yaml`.
+map client surfaces to it in `profiles/clients.toml`.
 
 **Add a client template** — place the authored template under
 `clients/<client>/`, emit its rendered output to

@@ -105,7 +105,7 @@ def permission_manifest_hash(profile: dict) -> str:
 #: write that must fail. Run BEFORE turn 1: a permission defect discovered
 #: during a scored run costs the whole run, which is exactly what happened.
 PERMISSION_PREFLIGHT = (
-    ("read", "Read the file profiles/clients.yaml and reply with ONLY its first line."),
+    ("read", "Read the file profiles/clients.toml and reply with ONLY its first line."),
     ("search", "Use Grep to count files matching 'active-profile' under scripts/. "
                "Reply with ONLY the number."),
     ("write_denied", "Create a file named PREFLIGHT_MUST_NOT_EXIST.txt containing 'x'. "

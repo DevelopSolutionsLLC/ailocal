@@ -1,5 +1,5 @@
 <!-- SOURCE for repo-instructions.md. The capabilities table below is filled
-     by sync-models.py from profiles/<tier>.yaml; the generated file is
+     by sync-models.py from profiles/<tier>.toml; the generated file is
      git-ignored. Edit this template, then run `ailocal sync`. -->
 # Copilot Agent Instructions — ailocal
 
@@ -133,16 +133,16 @@ This is the configuration and tooling repo for the local AI stack itself.
 policy. It is not restated here.
 
 **Authored inputs you may edit:**
-- `profiles/<tier>.yaml` — what each capability IS (backend, context, sampling,
+- `profiles/<tier>.toml` — what each capability IS (backend, context, sampling,
   keep_alive)
-- `profiles/clients.yaml` — which capability each client surface uses
+- `profiles/clients.toml` — which capability each client surface uses
 
 **Never hand-edit generated output.** All of it lives under `$AILOCAL_STATE`,
 outside the checkout, and is rewritten by `ailocal sync`.
 
 **To change a model:**
 ```bash
-$EDITOR profiles/64gb.yaml
+$EDITOR profiles/64gb.toml
 ailocal sync > /tmp/sync.log 2>&1 & exit 0
 # then: cat /tmp/sync.log
 # then: ailocal start > /tmp/restart.log 2>&1 & exit 0

@@ -29,7 +29,7 @@ src/ailocal/       the installed package; cli.py owns the command surface
 pyproject.toml     packaging; `[project.scripts]` declares the command
 
 profiles/          hardware policy: capability -> model, geometry, sampling
-profiles/clients.yaml  which capability each client surface uses
+profiles/clients.toml  which capability each client surface uses
 clients/           authored client templates (never generated output)
 deploy/litellm/    proxy hooks/, capability registry, config template, personas
 deploy/searxng/    search service definition
@@ -43,8 +43,8 @@ docs/              architecture, security, troubleshooting
 
 | Path | Owns |
 |---|---|
-| `profiles/<tier>.yaml` | capability → model, `context_input`, `max_output`, sampling, reasoning, keep-alive, persona, compaction |
-| `profiles/clients.yaml` | which capability each client surface uses — no model tuning |
+| `profiles/<tier>.toml` | capability → model, `context_input`, `max_output`, sampling, reasoning, keep-alive, persona, compaction |
+| `profiles/clients.toml` | which capability each client surface uses — no model tuning |
 | `deploy/litellm/registry.yaml` | intrinsic runtime capability: engine, context enforcement, tool support |
 
 `lib/policy.py` is the **one** reader for all of it. It fails closed:
