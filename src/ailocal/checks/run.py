@@ -18,6 +18,13 @@ outcome. They differ only in which checks they collect.
             Search is pinned to a free engine and spends NO external API quota.
             `--external-search` additionally issues one federated query, which
             DOES consume metered Brave allowance. Never use it in a loop.
+  security  Container supply-chain posture: every declared image pinned by
+            digest, the running image identical to the declared one, services
+            on loopback only, and provenance where a publisher signs.
+            `--check-updates` additionally asks upstream what exists; it never
+            pulls over a running service and never rewrites a pin.
+            Exit 0 pinned and current, 1 a real defect or an update to review,
+            2 degraded.
   doctor    validate + smoke plus host-machine guidance, with a remediation
             attached to every finding. Exit 0 healthy, 1 when the active tier
             cannot be resolved and diagnosis is REFUSED rather than reported
@@ -30,7 +37,7 @@ import pathlib
 import sys
 
 
-from ailocal.checks import FAIL, WARN, exit_code, render  # noqa: E402
+from ailocal.checks import BLOCKED, FAIL, WARN, exit_code, render  # noqa: E402
 from ailocal.checks import config as C  # noqa: E402
 from ailocal.checks import host as H  # noqa: E402
 from ailocal.checks import services as S  # noqa: E402
@@ -104,6 +111,26 @@ def _smoke(argv: list[str]) -> int:
     return code
 
 
+def _security(argv: list[str]) -> int:
+    print(f"{BOLD}Container supply chain{RESET}")
+    results = S.supply_chain_checks("--check-updates" in argv)
+    render(results, remediation=True)
+    print()
+    # An available update is not a defect, but a scheduled check must be able to
+    # tell "act now" from "something is broken", so both exit 1.
+    if any(r.status is FAIL for r in results):
+        print("\033[31mSECURITY: problems found\033[0m")
+        return 1
+    if any(r.name == "update" and r.status is WARN for r in results):
+        print("SECURITY: pinned and healthy — an upstream update is available")
+        return 1
+    if any(r.status in (WARN, BLOCKED) for r in results):
+        print("SECURITY: pinned and loopback-only; some checks degraded")
+        return 2
+    print("\033[32mSECURITY: all images pinned, no drift, loopback-only\033[0m")
+    return 0
+
+
 def _doctor(argv: list[str]) -> int:
     """0 healthy, 1 refuses (untrustworthy tier), 2 degraded findings.
 
@@ -155,7 +182,8 @@ def _doctor(argv: list[str]) -> int:
     return 2
 
 
-COMMANDS = {"validate": _validate, "smoke": _smoke, "doctor": _doctor}
+COMMANDS = {"validate": _validate, "smoke": _smoke, "doctor": _doctor,
+            "security": _security, "verify-session": H.verify_session}
 
 if __name__ == "__main__":
     if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:

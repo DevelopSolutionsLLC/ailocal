@@ -209,7 +209,7 @@ check(reg.group_of("some_unknown_tool") is None, "an unknown tool has no group")
 
 definite, ambiguous = reg.mutating_tools()
 check("Edit" in definite and "apply_patch" in definite,
-      "mutating tools come from the registry, not verify-session.py")
+      "mutating tools come from the registry, not the host fallback")
 check("Bash" in ambiguous,
       "Bash is AMBIGUOUS — it can legitimately be read-only")
 check(not (definite & ambiguous), "the two sets are disjoint")

@@ -29,7 +29,7 @@ LA_DIR = Path.home() / "Library" / "LaunchAgents"
 LOG_DIR = Path.home() / "Library" / "Logs" / "ailocal"
 MODEL_STORE = "/Users/Shared/ollama/models"
 AGENTS = ("com.ailocal.ollama", "com.ailocal.preload", "com.ailocal.litellm",
-          "com.ailocal.ollama-env")
+          "com.ailocal.ollama-env", "com.ailocal.update-check")
 
 #: Ollama's runtime environment, in one place. KEEP_ALIVE is the GLOBAL DEFAULT
 #: and governs only direct callers that send no per-request keep_alive — in
@@ -337,7 +337,7 @@ def _wait(predicate, attempts: int, delay: float) -> bool:
 # ── Ollama environment and login agents ─────────────────────────────────────
 
 def _write_agent(label: str, program: list[str], *, keep_alive: bool = False,
-                 env: dict | None = None) -> Path:
+                 env: dict | None = None, calendar: dict | None = None) -> Path:
     LA_DIR.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     plist = {"Label": label, "ProgramArguments": program, "RunAtLoad": True,
@@ -347,6 +347,12 @@ def _write_agent(label: str, program: list[str], *, keep_alive: bool = False,
         plist["EnvironmentVariables"] = env
     if keep_alive:
         plist.update(KeepAlive=True, ThrottleInterval=10, ProcessType="Interactive")
+    if calendar:
+        plist["StartCalendarInterval"] = calendar
+        plist["RunAtLoad"] = False
+        # launchd gives a job no interactive shell and a minimal PATH.
+        plist["EnvironmentVariables"] = {"PATH": "/usr/local/bin:/opt/homebrew/bin:"
+                                                 "/usr/bin:/bin:/usr/sbin:/sbin"}
     path = LA_DIR / f"{label}.plist"
     path.write_bytes(plistlib.dumps(plist))
     _bootout(label)
@@ -479,6 +485,52 @@ curl -fsS -m 300 "$O/api/generate" -d "{{\\"model\\":\\"$M\\",\\"keep_alive\\":$
     _write_agent("com.ailocal.preload", [str(preload)])
     ok(f"'{role}' preloads at login, resolved at run time")
     print(f"  Verify: launchctl list | grep ailocal   •   logs in {LOG_DIR}")
+    return 0
+
+
+def cmd_update_check(argv: list[str]) -> int:
+    """A weekly supply-chain check. Reports; never upgrades anything.
+
+    One scheduler for the machine, invoking each product's own check so that
+    logic stays with its owner. A generated job must never embed a checkout path
+    (ADR 009): moving the checkout would break it silently on someone else's
+    timetable, so the installed command is resolved absolutely or the install is
+    refused.
+    """
+    label = "com.ailocal.update-check"
+    if "--uninstall" in argv:
+        _bootout(label)
+        (LA_DIR / f"{label}.plist").unlink(missing_ok=True)
+        ok(f"weekly update check removed ({label})")
+        return 0
+
+    command = shutil.which("ailocal")
+    if not command:
+        raise SystemExit("  ailocal is not on PATH, so a scheduled job could only "
+                         "reference this checkout. Install the command first.")
+    state = policy.state_root()
+    state.mkdir(parents=True, exist_ok=True)
+    runner = state / "update-check.sh"
+    other = shutil.which("cadence") or ""
+    runner.write_text(f"""#!/bin/bash
+exec >"{state}/update-check.log" 2>&1
+echo "=== $(date -u +%FT%TZ) ==="
+rc=0
+"{command}" security --check-updates || rc=$?
+[ -x "{other}" ] && {{ "{other}" security --check-updates || rc=$?; }}
+echo "$(date -u +%FT%TZ) rc=$rc" > "{state}/update-check.status"
+# Notify ONLY when action is required. A quiet check stays quiet.
+[ "$rc" = 1 ] && /usr/bin/osascript -e 'display notification "A container update \
+is available for review. Run: ailocal security --check-updates" with title \
+"ailocal"' 2>/dev/null
+exit 0
+""")
+    runner.chmod(0o755)
+    _write_agent(label, ["/bin/bash", str(runner)],
+                 calendar={"Weekday": 1, "Hour": 10, "Minute": 0})
+    ok("weekly update check installed (Mondays 10:00, reports only)")
+    print(f"  state:  {state}/update-check.status")
+    print("  remove: ailocal update-check --uninstall")
     return 0
 
 
@@ -892,7 +944,8 @@ def cmd_install(argv: list[str]) -> int:
 
 
 COMMANDS = {"install": cmd_install, "models": cmd_models, "audit": cmd_audit,
-            "cleanup": cmd_cleanup, "autostart": cmd_autostart}
+            "cleanup": cmd_cleanup, "autostart": cmd_autostart,
+            "update-check": cmd_update_check}
 
 
 def main(argv: list[str]) -> int:

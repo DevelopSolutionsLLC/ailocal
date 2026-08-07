@@ -9,11 +9,13 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import shutil
 import socket
 import subprocess
 import urllib.error
 import urllib.request
 
+from .. import policy
 from . import BLOCKED, FAIL, PASS, WARN, CheckResult
 
 # One timeout policy. Callers may tighten or extend it for a specific call, but
@@ -520,3 +522,205 @@ def check_context_window(token: str, alias: str = "ailocal-completion") -> Check
                        "model_registrar likely failed; local models are being "
                        "silently truncated",
                        "ailocal sync && ailocal start")
+
+
+# ── container supply chain ──────────────────────────────────────────────────
+#
+# What a vulnerability scanner does not answer: is every declared image pinned
+# to an immutable digest, does the RUNNING image match the DECLARED one, and is
+# the service reachable off-host. A tag is not a pin — `main-stable` moved
+# 1.92.0 -> 1.93.0 under this project, and editing a compose file restarts
+# nothing, so a repository can look patched while the old image keeps serving.
+
+def declared_images() -> list[str]:
+    """Image references from the compose files, in declaration order."""
+    out = []
+    for compose in sorted(policy.data_root().glob("deploy/*/compose.yaml")):
+        for line in compose.read_text().splitlines():
+            stripped = line.strip()
+            if stripped.startswith("image:"):
+                ref = stripped.split(":", 1)[1].strip()
+                if ref and not ref.startswith("$"):
+                    out.append(ref)
+    return out
+
+
+def check_pinned(images: list[str]) -> list[CheckResult]:
+    if not images:
+        return [CheckResult("images", BLOCKED, "no images declared under deploy/")]
+    return [CheckResult("pin", PASS, f"pinned by digest: {i.split('@')[0]}")
+            if "@sha256:" in i else
+            CheckResult("pin", FAIL, f"NOT pinned (floating tag): {i}",
+                        remediation="pin the digest in deploy/*/compose.yaml")
+            for i in images]
+
+
+def _running_digest(repo: str) -> tuple[str, str]:
+    """(container name, running repo digest) for the first container of `repo`."""
+    for cid in _run(["docker", "ps", "-q"]).stdout.split():
+        image = _run(["docker", "inspect", cid,
+                      "--format", "{{.Config.Image}}"]).stdout.strip()
+        if not image.startswith(repo):
+            continue
+        name = _run(["docker", "inspect", cid,
+                     "--format", "{{.Name}}"]).stdout.strip().lstrip("/")
+        digests = _run(["docker", "inspect",
+                        _run(["docker", "inspect", cid,
+                              "--format", "{{.Image}}"]).stdout.strip(),
+                        "--format", "{{range .RepoDigests}}{{.}} {{end}}"]).stdout
+        for d in digests.split():
+            if d.startswith(f"{repo}@"):
+                return name, d.split("@", 1)[1]
+        return name, ""
+    return "", ""
+
+
+def check_no_drift(images: list[str]) -> list[CheckResult]:
+    """The running digest must be the declared one. They diverge silently."""
+    out = []
+    for image in images:
+        if "@sha256:" not in image:
+            continue
+        ref, want = image.split("@", 1)
+        repo = ref.split(":", 1)[0]
+        name, got = _running_digest(repo)
+        if not name:
+            out.append(CheckResult("drift", BLOCKED, f"{repo}: not running"))
+        elif not got:
+            out.append(CheckResult("drift", WARN,
+                                   f"{name}: running image has no repo digest"))
+        elif got == want:
+            out.append(CheckResult("drift", PASS,
+                                   f"{name} runs the declared digest ({want[7:19]})"))
+        else:
+            out.append(CheckResult("drift", FAIL,
+                                   f"{name} DRIFT — declared {want[7:19]}, "
+                                   f"running {got[7:19]}",
+                                   remediation="ailocal start"))
+    return out
+
+
+def check_loopback() -> list[CheckResult]:
+    """A package finding is only an exposure if something can reach it."""
+    out = []
+    for cid in _run(["docker", "ps", "-q"]).stdout.split():
+        name = _run(["docker", "inspect", cid,
+                     "--format", "{{.Name}}"]).stdout.strip().lstrip("/")
+        ports = _run(["docker", "port", cid]).stdout.strip()
+        if not ports:
+            out.append(CheckResult("reachability", PASS,
+                                   f"{name} publishes no ports"))
+            continue
+        exposed = [line.split()[-1] for line in ports.splitlines()
+                   if not line.split()[-1].startswith(("127.0.0.1:", "[::1]:"))]
+        out.append(CheckResult("reachability", PASS, f"{name} bound to loopback only")
+                   if not exposed else
+                   CheckResult("reachability", FAIL,
+                               f"{name} reachable off-host: {' '.join(exposed)}"))
+    return out
+
+
+def check_provenance(images: list[str]) -> list[CheckResult]:
+    """A digest proves the bytes did not change, not who published them.
+
+    Missing cosign degrades the report; it is never installed automatically.
+    `cosign triangulate` must NOT be used to prove existence — it only computes
+    the expected .sig tag from the digest and succeeds for unsigned images.
+    """
+    if not shutil.which("cosign"):
+        return [CheckResult("provenance", WARN,
+                            "cosign not installed — signatures cannot be verified",
+                            remediation="brew install cosign")]
+    out = []
+    for image in images:
+        repo = image.split("@")[0].split(":")[0]
+        tree = _run(["cosign", "tree", image], timeout=60).stdout
+        if "No Supply Chain Security Related Artifacts" in tree:
+            out.append(CheckResult("provenance", WARN,
+                                   f"{repo}: publisher signs nothing for this digest"))
+        elif "Signatures for an image" in tree:
+            # Presence is not validity: a real assertion needs the publisher's
+            # identity, which upstream does not document for these images.
+            out.append(CheckResult("provenance", PASS,
+                                   f"{repo}: signature published for this digest "
+                                   "(identity policy not configured)"))
+        else:
+            out.append(CheckResult("provenance", WARN,
+                                   f"{repo}: could not determine signature status"))
+    return out
+
+
+#: Upstream discovery per repository. Qdrant belongs to another product and is
+#: deliberately absent.
+def check_updates(images: list[str]) -> list[CheckResult]:
+    """Discovery only. Never pulls over a running service, never rewrites a pin.
+
+    Digest inequality alone does not mean "behind": the LiteLLM pin tracks
+    main-stable, which runs AHEAD of the newest tagged release, and comparing
+    digests only once proposed a downgrade as an update. Compare versions where
+    a version is knowable.
+    """
+    out = []
+    for image in images:
+        ref, cur = (image.split("@", 1) + [""])[:2]
+        repo = ref.split(":", 1)[0]
+        if repo == "ghcr.io/berriai/litellm":
+            try:
+                body = http_json("https://api.github.com/repos/BerriAI/"
+                                 "litellm/releases/latest", timeout=20)
+            except Unreachable:
+                body = {}
+            newest = (body or {}).get("tag_name") or ""
+            candidate = f"{repo}:{newest}"
+        elif repo == "searxng/searxng":
+            # Rolling `latest`, no semver releases — which is exactly why it
+            # must stay digest-pinned.
+            newest, candidate = "latest", "searxng/searxng:latest"
+        else:
+            out.append(CheckResult("update", BLOCKED,
+                                   f"{repo}: no upstream discovery strategy"))
+            continue
+        if not newest:
+            out.append(CheckResult("update", BLOCKED,
+                                   f"{repo}: could not reach upstream (offline?)"))
+            continue
+        remote = _run(["docker", "buildx", "imagetools", "inspect", candidate,
+                       "--format", "{{.Manifest.Digest}}"], timeout=60).stdout.strip()
+        pinned_version = _litellm_pinned_version() if "litellm" in repo else ""
+        if pinned_version and newest.lstrip("v")[:1].isdigit():
+            newer = sorted([pinned_version, newest.lstrip("v")],
+                           key=lambda v: [int(x) for x in v.split(".") if x.isdigit()])
+            if newer[-1] == pinned_version:
+                out.append(CheckResult("update", PASS,
+                                       f"{repo} is current ({pinned_version}, at or "
+                                       f"ahead of newest release {newest})"))
+                continue
+        if remote and remote == cur:
+            out.append(CheckResult("update", PASS, f"{repo} is current ({newest})"))
+        else:
+            out.append(CheckResult("update", WARN,
+                                   f"{repo}: {newest} available for review",
+                                   remediation="edit the digest in "
+                                               "deploy/*/compose.yaml, then "
+                                               "ailocal start && ailocal test"))
+    return out
+
+
+def _litellm_pinned_version() -> str:
+    compose = policy.data_root() / "deploy" / "litellm" / "compose.yaml"
+    for line in compose.read_text().splitlines() if compose.is_file() else []:
+        if "AILOCAL_LITELLM_VERSION=" in line:
+            return line.split("AILOCAL_LITELLM_VERSION=", 1)[1].strip().strip('"')
+    return ""
+
+
+def supply_chain_checks(check_update: bool = False) -> list[CheckResult]:
+    if not docker_available():
+        return [CheckResult("docker", BLOCKED,
+                            "docker not installed — cannot assess container posture")]
+    images = declared_images()
+    results = check_pinned(images) + check_no_drift(images) + check_loopback() \
+        + check_provenance(images)
+    if check_update:
+        results += check_updates(images)
+    return results
