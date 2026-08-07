@@ -39,8 +39,8 @@ sessions short, diffs small, and claims verifiable. Follow it literally.
 - Any shell script you touch: run `bash -n <script>` before calling it done.
 - Config changes: `ailocal sync` must produce zero diff after
   regeneration if the active profile changed.
-- Prefer `ailocal doctor` (0=healthy, 1=profile unresolved, 2=degraded) and
-  `ailocal smoke` as final sanity checks when touching runtime
+- Prefer `ailocal check` (0=healthy, 1=something failed) as the final sanity
+  check when touching runtime
   config.
 - If verification fails twice, stop and report the failure instead of
   guessing at another fix.

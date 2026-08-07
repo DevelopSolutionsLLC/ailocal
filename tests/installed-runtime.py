@@ -138,8 +138,7 @@ def main() -> None:
           "the effective profile is generated")
     r = ran("profile", "profile", "active-tier", allow_nonzero=False)
     check(r.stdout.strip() == "64gb", "the active tier reads back from managed state")
-    ran("validate", "validate")
-    ran("doctor", "doctor")
+    ran("check", "check")
 
     if want_stack:
         _suite.section("THE STACK COMES UP FROM MANAGED ASSETS")

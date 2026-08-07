@@ -1,7 +1,7 @@
-"""Structured results shared by validate, smoke and doctor.
+"""The one result type, the one renderer and the one outcome rule.
 
-A check returns a CheckResult; the public commands decide how to render it and
-what the outcome means. No registration or discovery: a check is a function.
+A check returns a CheckResult; `ailocal check` collects them, renders them and
+exits on them. No registration or discovery: a check is a function.
 """
 
 from __future__ import annotations
@@ -66,16 +66,17 @@ _MARK = {PASS: ("\033[32m✓\033[0m", 1), FAIL: ("\033[31m✗\033[0m", 2),
          SKIP: ("\033[2m—\033[0m", 1)}
 
 
-def render(results, *, verbose: bool = False, remediation: bool = False) -> None:
-    """Print results. `remediation` is doctor's mode; validate and smoke omit it."""
+def render(results) -> None:
+    """Print results. Anything that is not a pass carries its fix and goes to
+    stderr, so a caller redirecting stdout still sees what is wrong."""
     for r in results:
         mark, stream = _MARK[r.status]
-        out = sys.stdout if stream == 1 or not remediation else sys.stderr
+        out = sys.stdout if stream == 1 else sys.stderr
         print(f"  {mark} {r.summary}", file=out)
-        if r.detail and (verbose or r.status in (FAIL, WARN, BLOCKED)):
+        if r.detail and r.status in (FAIL, WARN, BLOCKED):
             for line in r.detail.splitlines():
                 print(f"      {line}", file=out)
-        if remediation and r.remediation and r.status is not PASS:
+        if r.remediation and r.status is not PASS:
             for line in r.remediation.splitlines():
                 print(f"      → {line}", file=out)
 

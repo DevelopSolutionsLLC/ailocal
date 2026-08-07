@@ -93,7 +93,7 @@ def classification_checks() -> None:
 
     # One implementation per primitive, not one per caller.
     for prim in ("served_aliases", "model_info", "ollama_installed",
-                 "container_state", "http_json", "port_open"):
+                 "container_state", "http_json", "proxy_healthy"):
         check(callable(getattr(S, prim, None)), f"services owns {prim}()")
 
 
@@ -134,10 +134,10 @@ def search_quota_checks() -> None:
     check(S.FREE_ENGINE_NAME == "wikipedia",
           f"the pinned engine is free ({S.FREE_ENGINE_NAME})")
 
-    # check_searxng is what doctor runs: it must not hit /search at all.
+    # check_searxng is the reachability probe: it must not hit /search at all.
     body = src.split("def check_searxng(")[1].split("def check_searxng_query(")[0]
     check("/config" in body and "/search?" not in body,
-          "doctor's reachability check queries no engine (uses /config)")
+          "the reachability check queries no engine (uses /config)")
 
     # The federated path exists but must be reachable only through the flag.
     check(callable(getattr(S, "check_searxng_external", None)),
@@ -163,39 +163,35 @@ def search_quota_checks() -> None:
 
 
 def exits_checks() -> None:
-    """doctor's three states, and the two-state contract of validate/smoke."""
+    """`ailocal check` has two states: clean, or something failed."""
     import subprocess
 
-    def run(mode: str, env: dict | None = None, args: list[str] | None = None) -> int:
-        """validate / smoke / doctor are modes of one package module."""
+    def run(env: dict | None = None, args: list[str] | None = None) -> int:
         e = {**os.environ, **(env or {}),
              "PYTHONPATH": str(REPO / "src") + os.pathsep + os.environ.get("PYTHONPATH", "")}
         return subprocess.run(
-            ["python3", "-m", "ailocal.checks.run", mode, *(args or [])],
-            capture_output=True, text=True, timeout=600, env=e).returncode
+            ["python3", "-m", "ailocal.checks.run", "check", *(args or [])],
+            capture_output=True, text=True, timeout=900, env=e).returncode
 
-    check(run("doctor") == 0, "doctor exits 0 on a healthy stack")
-    check(run("doctor", {"AILOCAL_PROXY": "http://127.0.0.1:1"}) == 2,
-          "doctor exits 2 when checks fail (degraded)")
+    check(run() == 0, "check exits 0 on a healthy stack")
+    check(run({"AILOCAL_PROXY": "http://127.0.0.1:1"}) == 1,
+          "check exits 1 when the proxy is unreachable")
 
     marker = P.active_profile_path()
     original = marker.read_text()
     try:
         marker.write_text("999gb\n")
-        rc = run("doctor")
-        check(rc == 1, f"doctor exits 1 when the tier is unresolvable (got {rc})")
-        check(run("validate") == 1, "validate fails on an unresolvable tier")
+        rc = run()
+        check(rc == 1, f"check exits 1 when the tier is unresolvable (got {rc})")
     finally:
         marker.write_text(original)
 
-    check(run("validate") == 0, "validate exits 0 once restored")
-    # The defining property: deterministic validation needs no running stack.
-    check(run("validate", {"AILOCAL_PROXY": "http://127.0.0.1:1",
-                              "OLLAMA_HOST": "http://127.0.0.1:1",
-                              "AILOCAL_LITELLM_CONTAINER": "ailocal-absent"}) == 0,
-          "validate exits 0 with the whole stack unreachable")
-    check(run("smoke", {"AILOCAL_PROXY": "http://127.0.0.1:1"}) == 1,
-          "smoke exits 1 when the proxy is unreachable")
+    check(run() == 0, "check exits 0 once restored")
+
+    # The defining property of the configuration layer: it needs no stack.
+    from ailocal.checks import exit_code
+    check(exit_code(C.deterministic_checks()) == 0,
+          "the configuration layer passes with the stack untouched")
 
 
 SECTIONS = {"deterministic": deterministic_checks,

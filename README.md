@@ -60,10 +60,13 @@ model — answer `y` when prompted, or run `ailocal autostart` later.
 ## Verify
 
 ```bash
-ailocal doctor      # health, with a fix for anything wrong
-ailocal smoke       # bounded runtime check: one real model response
-ailocal validate    # configuration consistency; works with the stack stopped
+ailocal check       # is ailocal configured and working?
 ```
+
+One command answers it, end to end: configuration consistency, the running
+containers, every served capability, one real model response, image pinning,
+the installed client configs and the host machine. Anything that is not right
+prints with the command that fixes it.
 
 Then start a session:
 
@@ -101,7 +104,7 @@ The ones you need first:
 ailocal install     bootstrap the stack
 ailocal start       bring the proxy and models up
 ailocal status      live model status by capability
-ailocal doctor      is everything ready and working?
+ailocal check       is everything ready and working?
 ailocal stop        bring it down
 ```
 

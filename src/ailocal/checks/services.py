@@ -11,7 +11,6 @@ import os
 import pathlib
 import re
 import shutil
-import socket
 import subprocess
 import urllib.error
 import urllib.request
@@ -103,15 +102,6 @@ def proxy_healthy(timeout: int = CONNECT_TIMEOUT) -> bool:
         http_json(f"{PROXY}/health/liveliness", timeout=timeout)
         return True
     except Unreachable:
-        return False
-
-
-def port_open(host: str, port: int, timeout: int = CONNECT_TIMEOUT) -> bool:
-    """Bounded TCP reachability, without spawning curl."""
-    try:
-        with socket.create_connection((host, port), timeout=timeout):
-            return True
-    except OSError:
         return False
 
 
@@ -242,14 +232,6 @@ def check_container(name: str = CONTAINER) -> CheckResult:
                            remediation=f"docker logs {name} --tail=50")
     return CheckResult("container", PASS, f"{name} running"
                        + (f" ({health})" if health else ""))
-
-
-def check_proxy_port() -> CheckResult:
-    host, _, port = PROXY.rsplit("//", 1)[-1].partition(":")
-    if port_open(host, int(port or 80)):
-        return CheckResult("proxy-port", PASS, f"proxy reachable at {host}:{port}")
-    return CheckResult("proxy-port", FAIL, f"proxy not reachable at {host}:{port}",
-                       remediation="ailocal start")
 
 
 def check_proxy_health() -> CheckResult:
@@ -439,7 +421,7 @@ def check_brave_key_configured() -> CheckResult:
 def check_searxng_external() -> CheckResult:
     """OPT-IN ONLY. A federated search that reaches paid engines.
 
-    Reached exclusively through `ailocal smoke --external-search`. Never call
+    Reached exclusively through `ailocal check --external-search`. Never call
     this from doctor, smoke's default path, the gate, install validation or any
     stress loop: each call spends a metered Brave query.
     """
@@ -482,8 +464,8 @@ def check_search_tool_registered() -> CheckResult:
 def check_context_window(token: str, alias: str = "ailocal-completion") -> CheckResult:
     """An oversized prompt must be rejected, not silently truncated.
 
-    Opt-in (`ailocal smoke --deep`): costly, and without enforcement the request
-    returns 200 with a garbage answer.
+    Without enforcement the request returns 200 with a garbage answer, so this
+    is worth the one large bounded request it costs.
     """
     filler = "the quick brown fox jumps over the lazy dog. " * 6000
     try:

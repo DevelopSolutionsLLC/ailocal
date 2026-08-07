@@ -1,34 +1,31 @@
 #!/usr/bin/env python3
-"""Entry point behind `ailocal validate`, `ailocal smoke` and `ailocal doctor`.
+"""Entry point behind `ailocal check` — the one answer to "is ailocal
+configured and working?".
 
-All three are the same shape: collect CheckResults, render them, exit on the
-outcome. They differ only in which checks they collect.
+One engine: collect CheckResults from every layer, render them through the one
+renderer, exit on the one rule. There are no modes. Every finding carries its
+fix.
 
-  validate  Deterministic consistency, from files on disk. Runs with LiteLLM
-            and Ollama stopped, makes no inference request and mutates
-            nothing, so a configuration check never depends on a service.
-            Optional `--profile <tier>`. Exit 0 clean, 1 if any check failed;
-            Docker being unavailable blocks the mounted-config comparison
-            rather than failing the run.
-  smoke     Bounded runtime verification of a running stack: containers, proxy
-            health, served aliases, advertised geometry, Ollama inventory, one
-            bounded model response, search. Every call carries a timeout.
-            Exit 0 clean, 1 if a required check failed; absent search degrades
-            the report without failing it.
-            Search is pinned to a free engine and spends NO external API quota.
-            `--external-search` additionally issues one federated query, which
-            DOES consume metered Brave allowance. Never use it in a loop.
-  security  Container supply-chain posture: every declared image pinned by
-            digest, the running image identical to the declared one, services
-            on loopback only, and provenance where a publisher signs.
-            `--check-updates` additionally asks upstream what exists; it never
-            pulls over a running service and never rewrites a pin.
-            Exit 0 pinned and current, 1 a real defect or an update to review,
-            2 degraded.
-  doctor    validate + smoke plus host-machine guidance, with a remediation
-            attached to every finding. Exit 0 healthy, 1 when the active tier
-            cannot be resolved and diagnosis is REFUSED rather than reported
-            against an assumed configuration, 2 degraded.
+  configuration  Deterministic consistency read from files on disk. Opens no
+                 socket, so it reports the same thing with the stack stopped.
+  runtime        Containers, proxy health, served aliases, advertised
+                 geometry, Ollama inventory, one bounded model response,
+                 search. Every call carries a timeout.
+  supply chain   Every declared image pinned by digest, the running image
+                 identical to the declared one, services on loopback only,
+                 provenance where a publisher signs.
+  installation   Client configs, login services and the port they claim.
+  host           Machine-level guidance: .env permissions, tooling, the model
+                 store, residency and parallelism.
+
+Exit 0 when nothing failed, 1 otherwise. A warning is advisory and does not
+fail the run; an unresolvable active tier does, because diagnosing against an
+assumed tier reports on a configuration the machine is not running.
+
+Two flags, both opt-in because both reach the network beyond the local stack:
+`--updates` asks upstream what image versions exist (it never pulls and never
+rewrites a pin), and `--external-search` issues one federated query, which
+DOES consume metered Brave allowance. Never use it in a loop.
 """
 
 from __future__ import annotations
@@ -42,33 +39,12 @@ import sys
 import time
 
 
-from ailocal.checks import BLOCKED, FAIL, WARN, exit_code, render  # noqa: E402
+from ailocal.checks import FAIL, WARN, render  # noqa: E402
 from ailocal.checks import config as C  # noqa: E402
 from ailocal.checks import host as H  # noqa: E402
 from ailocal.checks import services as S  # noqa: E402
 
 BOLD, RESET = "\033[1;36m", "\033[0m"
-
-
-def _validate(argv: list[str]) -> int:
-    tier = None
-    if "--profile" in argv:
-        i = argv.index("--profile")
-        tier = argv[i + 1] if i + 1 < len(argv) else None
-    if "--runtime" in argv:
-        print("  note: --runtime moved to `ailocal smoke` "
-              "(validate is deterministic and needs no running stack)",
-              file=sys.stderr)
-
-    print(f"{BOLD}Deterministic validation{RESET}"
-          + (f" — profile {tier}" if tier else ""))
-    results = C.deterministic_checks(tier)
-    render(results)
-    code = exit_code(results)
-    print()
-    print("\033[32mVALIDATE: OK\033[0m" if code == 0
-          else "\033[31mVALIDATE: FAILED\033[0m")
-    return code
 
 
 def _expected() -> tuple[list[str], dict[str, int], list[str]]:
@@ -92,99 +68,59 @@ def _expected() -> tuple[list[str], dict[str, int], list[str]]:
     return aliases, geometry, sorted(set(backends))
 
 
-def _smoke(argv: list[str]) -> int:
-    alias = next((a for a in argv if not a.startswith("-")), "ailocal-fast")
-    token = S.master_key()
-    aliases, geometry, backends = _expected()
-
-    print(f"{BOLD}Runtime smoke{RESET}")
-    results = [S.check_docker(), S.check_container(), S.check_proxy_port(),
-               S.check_proxy_health(), S.check_ollama(),
-               S.check_models_present(backends)]
-    results += S.check_aliases(token, aliases)
-    results += S.check_geometry(token, geometry)
-    results += [S.check_generation(token, alias), S.check_searxng(),
-                S.check_searxng_query(), S.check_search_tool_registered()]
-    if "--external-search" in argv:
-        results.append(S.check_searxng_external())
-    if "--deep" in argv:
-        results.append(S.check_context_window(token))
-    render(results)
-    code = exit_code(results)
-    print()
-    print("\033[32mSMOKE: OK\033[0m" if code == 0 else "\033[31mSMOKE: FAILED\033[0m")
-    return code
-
-
-def _security(argv: list[str]) -> int:
-    print(f"{BOLD}Container supply chain{RESET}")
-    results = S.supply_chain_checks("--check-updates" in argv)
-    render(results, remediation=True)
-    print()
-    # An available update is not a defect, but a scheduled check must be able to
-    # tell "act now" from "something is broken", so both exit 1.
-    if any(r.status is FAIL for r in results):
-        print("\033[31mSECURITY: problems found\033[0m")
-        return 1
-    if any(r.name == "update" and r.status is WARN for r in results):
-        print("SECURITY: pinned and healthy — an upstream update is available")
-        return 1
-    if any(r.status in (WARN, BLOCKED) for r in results):
-        print("SECURITY: pinned and loopback-only; some checks degraded")
-        return 2
-    print("\033[32mSECURITY: all images pinned, no drift, loopback-only\033[0m")
-    return 0
-
-
-def _doctor(argv: list[str]) -> int:
-    """0 healthy, 1 refuses (untrustworthy tier), 2 degraded findings.
-
-    Exit 1 is a refusal, not a failure count: diagnosing against an assumed
-    tier would report on a configuration the machine is not running.
-    """
+def _check(argv: list[str]) -> int:
+    """0 when nothing failed, 1 otherwise."""
     from ailocal import policy as P
+    from ailocal import install
 
     try:
         tier = P.resolve_active_tier()
         arch = P.resolve_role(tier, "architecture")
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         print("  \033[31m✗\033[0m cannot resolve the active profile — refusing to "
               "report on an assumed tier", file=sys.stderr)
-        print(f"      {getattr(exc, 'code', type(exc).__name__)}: {exc}", file=sys.stderr)
+        print(f"      {getattr(exc, 'code', type(exc).__name__)}: {exc}",
+              file=sys.stderr)
         return 1
 
     token = S.master_key()
     aliases, geometry, backends = _expected()
+    results: list = []
 
-    print(f"{BOLD}Configuration{RESET}")
-    results = C.deterministic_checks()
-    render(results, remediation=True)
+    def section(heading: str, checks: list) -> None:
+        print(f"{BOLD}{heading}{RESET}")
+        render(checks)
+        results.extend(checks)
+        print()
 
-    print(f"\n{BOLD}Runtime{RESET}")
-    runtime = [S.check_docker(), S.check_container(),
-               S.check_litellm_version(), S.check_proxy_health(),
-               S.check_ollama(), S.check_models_present(backends)]
+    section("Configuration", C.deterministic_checks())
+
+    runtime = [S.check_docker(), S.check_container(), S.check_litellm_version(),
+               S.check_proxy_health(), S.check_ollama(),
+               S.check_models_present(backends)]
     runtime += S.check_aliases(token, aliases)
-    runtime += [S.check_searxng(), S.check_brave_key_configured(),
+    runtime += S.check_geometry(token, geometry)
+    runtime += [S.check_generation(token), S.check_context_window(token),
+                S.check_searxng(),
+                S.check_searxng_query(), S.check_brave_key_configured(),
                 S.check_search_tool_registered()]
-    render(runtime, remediation=True)
+    if "--external-search" in argv:
+        runtime.append(S.check_searxng_external())
+    section("Runtime", runtime)
 
-    print(f"\n{BOLD}Host{RESET}")
-    host = H.doctor_only_checks(arch["active"], arch["context_input"])
-    render(host, remediation=True)
+    section("Supply chain", S.supply_chain_checks("--updates" in argv))
+    section("Installation", install.audit())
+    section("Host", H.doctor_only_checks(arch["active"], arch["context_input"]))
 
-    # Degraded means a real failure. Warnings are advisory -- a cold model or a
-    # misplaced store is expensive, not broken -- and match the previous
-    # contract, where only an error marked the run unhealthy.
-    failures = [r for r in results + runtime + host if r.status is FAIL]
-    warnings = [r for r in results + runtime + host if r.status is WARN]
-    print()
-    if not failures:
-        note = f" ({len(warnings)} advisory warning(s))" if warnings else ""
-        print(f"▶ DOCTOR: OK — ailocal looks healthy{note}")
-        return 0
-    print(f"▶ DOCTOR: DEGRADED — {len(failures)} failing check(s) above", file=sys.stderr)
-    return 2
+    failures = [r for r in results if r.status is FAIL]
+    warnings = [r for r in results if r.status is WARN]
+    if failures:
+        print(f"\033[31mCHECK: {len(failures)} failing check(s) above\033[0m",
+              file=sys.stderr)
+        return 1
+    note = f" ({len(warnings)} advisory warning(s))" if warnings else ""
+    print(f"\033[32mCHECK: OK\033[0m{note}")
+    return 0
 
 
 # ── the regression gate ─────────────────────────────────────────────────────
@@ -373,11 +309,14 @@ def _hooks_import(repo: pathlib.Path) -> tuple[int, str]:
 
 
 def _audit_runs(repo: pathlib.Path) -> tuple[int, str]:
-    """Exit 3 means actionable findings, which is a normal working state. Only
-    the audit itself breaking fails the gate."""
-    r = subprocess.run([sys.executable, "-m", "ailocal.install", "audit"],
-                       cwd=repo, capture_output=True, text=True)
-    return (1, r.stdout + r.stderr) if r.returncode == 1 else (0, "")
+    """Findings are a normal working state. Only the audit itself breaking
+    fails the gate."""
+    from ailocal import install
+    try:
+        install.audit()
+    except Exception as exc:  # noqa: BLE001
+        return 1, f"{type(exc).__name__}: {exc}"
+    return 0, ""
 
 
 def _gate(argv: list[str]) -> int:
@@ -434,9 +373,7 @@ def _gate(argv: list[str]) -> int:
     return 0
 
 
-COMMANDS = {"validate": _validate, "smoke": _smoke, "doctor": _doctor,
-            "security": _security,
-            "test": _gate}
+COMMANDS = {"check": _check, "test": _gate}
 
 
 def main(argv: list[str]) -> int:

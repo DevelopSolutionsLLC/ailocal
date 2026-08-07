@@ -541,7 +541,7 @@ rc=0
 echo "$(date -u +%FT%TZ) rc=$rc" > "{state}/update-check.status"
 # Notify ONLY when action is required. A quiet check stays quiet.
 [ "$rc" = 1 ] && /usr/bin/osascript -e 'display notification "A container update \
-is available for review. Run: ailocal security --check-updates" with title \
+is available for review. Run: ailocal check --updates" with title \
 "ailocal"' 2>/dev/null
 exit 0
 """)
@@ -730,49 +730,56 @@ def _write_env(assume_yes: bool) -> None:
 # anything git tracks, and any container not named ailocal-*.
 
 def audit() -> list:
-    """Read-only. Returns findings; never deletes, moves or rewrites anything."""
-    findings: list = []
+    """Read-only. Returns CheckResults; never deletes, moves or rewrites
+    anything. A finding's `detail` is the path it is about, which is what
+    cleanup acts on."""
+    from .checks import CheckResult, SKIP, WARN, passed
+
+    results: list = []
 
     def flag(klass, item, location, action):
-        findings.append((klass, item, str(location), action))
-        print(f"  {klass} {item}\n      location: {location}\n      action:   {action}")
+        results.append(CheckResult(klass.lower(), WARN, f"{klass} {item}",
+                                   str(location), action))
+
+    def fine(summary):
+        results.append(passed("install", summary))
+
+    def note(summary):
+        results.append(CheckResult("install", SKIP, summary))
 
     cfg = policy.deployed_client_root()
-    step("Clients")
     for name, probe, fix in (("claude", cfg / "claude" / ".claude.json", "claude"),
                              ("codex", cfg / "codex" / "config.toml", "codex")):
         if probe.is_file():
-            ok(f"{name:8} {probe.parent}")
+            fine(f"{name:8} {probe.parent}")
         else:
             flag("MISSING", f"{name} local config", probe, f"run ailocal clients {fix}")
     configure = cfg / "configure.zsh"
     if configure.is_file() and "CLAUDE_CONFIG_DIR" in configure.read_text():
-        ok("isolation  configure.zsh sets CLAUDE_CONFIG_DIR")
+        fine("isolation  configure.zsh sets CLAUDE_CONFIG_DIR")
     else:
         flag("DUPLICATE", "claude-local may share the cloud config root", configure,
              "re-run ailocal clients claude")
     if "gethnet.litellm-connector-copilot" in _out("code", "--list-extensions").lower():
-        ok("vscode   connector extension installed")
+        fine("vscode   connector extension installed")
     elif _has("code"):
         flag("MISSING", "VS Code connector extension", "VS Code", "run ailocal vscode")
 
-    step("Installation state")
     backups = policy.state_root() / "backups"
     count = len(list(backups.iterdir())) if backups.is_dir() else 0
     if count > 20:
         flag("STALE", f"{count} files in {backups}", backups, "prune the oldest")
     else:
-        ok(f"state backups   {count} file(s)")
+        fine(f"state backups   {count} file(s)")
 
-    step("Login services (launchd)")
     for label in ("com.ailocal.ollama", "com.ailocal.ollama-env", "com.ailocal.preload"):
         plist = LA_DIR / f"{label}.plist"
         if not plist.is_file():
-            dim(f"{label} not installed")
+            note(f"{label} not installed")
         elif label.endswith(("-env", "preload")):
-            ok(f"{label} installed (one-shot: not-running is correct)")
+            fine(f"{label} installed (one-shot: not-running is correct)")
         elif "state = running" in _out("launchctl", "print", f"gui/{os.getuid()}/{label}"):
-            ok(f"{label} running")
+            fine(f"{label} running")
         else:
             flag("STALE", f"{label} is installed but not running", plist,
                  f"launchctl bootstrap gui/{os.getuid()} '{plist}'")
@@ -793,29 +800,22 @@ def audit() -> list:
         flag("UNMANAGED", f"port 11434 held by pid {holder}, not agent pid {agent}",
              "a competing Ollama instance", "quit the Ollama menu-bar app")
     else:
-        ok(f"port 11434 owned by the managed LaunchAgent (pid {holder})")
+        fine(f"port 11434 owned by the managed LaunchAgent (pid {holder})")
 
-    print()
-    if findings:
-        warn(f"{len(findings)} actionable finding(s). Nothing was modified.")
-        print("     ailocal cleanup            # dry run\n"
-              "     ailocal cleanup --apply    # backs up first")
-    else:
-        ok("No actionable findings.")
-    return findings
-
-
-def cmd_audit(argv: list[str]) -> int:
-    return 3 if audit() else 0
+    return results
 
 
 def cmd_cleanup(argv: list[str]) -> int:
     """Act on the audit's findings. A dry run is the default: a cleanup tool
     whose default is destructive is a trap. Nothing is removed without a backup.
     """
+    from .checks import WARN, render
+
     apply = "--apply" in argv
     include_notes = "--include-notes" in argv
-    findings = audit()
+    results = audit()
+    render(results)
+    findings = [r for r in results if r.status is WARN]
     if not findings:
         return 0
     stamp = f"{datetime.now(timezone.utc):%Y%m%d-%H%M%S}"
@@ -823,8 +823,9 @@ def cmd_cleanup(argv: list[str]) -> int:
     did = held = 0
 
     step(f"Cleanup — {'applying' if apply else 'DRY RUN, nothing will be modified'}")
-    for klass, item, location, action in findings:
-        path = Path(location)
+    for r in findings:
+        klass, item, path = r.name.upper(), r.summary, Path(r.detail or "")
+        action = r.remediation or ""
         if klass != "STALE":
             # Duplicates, missing pieces and unmanaged ports need a human: picking
             # a winner automatically is the guess that breaks a working setup.
@@ -938,7 +939,7 @@ def cmd_install(argv: list[str]) -> int:
 
     cmd_models([])
     from .checks import run as checks_run
-    checks_run.main(["doctor"])
+    checks_run.main(["check"])
 
     # Deploying into a user's client roots is never implied by --yes.
     step("Client configs (optional)")
@@ -954,11 +955,11 @@ def cmd_install(argv: list[str]) -> int:
 
     step("Done")
     print(f"  LiteLLM proxy is ready at {runtime.proxy_url()}")
-    print("  Verify a real request:  ailocal smoke")
+    print("  Verify a real request:  ailocal check")
     return 0
 
 
-COMMANDS = {"install": cmd_install, "models": cmd_models, "audit": cmd_audit,
+COMMANDS = {"install": cmd_install, "models": cmd_models,
             "cleanup": cmd_cleanup, "autostart": cmd_autostart,
             "update-check": cmd_update_check}
 

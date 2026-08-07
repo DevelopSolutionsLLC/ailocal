@@ -31,7 +31,7 @@ pip install -e .
 ## Validate
 
 ```sh
-ailocal validate    # deterministic; needs no running stack
+ailocal check       # the whole installation, one report
 ailocal test        # the regression gate
 ```
 
