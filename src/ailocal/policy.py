@@ -161,11 +161,6 @@ def active_profile_path(state=None) -> Path:
     return state_root(state) / "active-profile"
 
 
-def effective_profile_path(state=None) -> Path:
-    """The generated, resolved profile every consumer reads."""
-    return state_root(state) / "litellm" / "effective-profile.json"
-
-
 def client_policy_path(repo_root=None) -> Path:
     return config_root(repo_root) / "profiles" / "clients.toml"
 

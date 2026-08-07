@@ -33,11 +33,13 @@ RESOURCES = REPO / "src" / "ailocal" / "resources"
 # assets and a suite must exercise the ones it is editing.
 #
 # AILOCAL_CONFIG is deliberately NOT set. The checkout is not a config root. It
-# happens to have profiles/ at its top level, which is what made pointing the
+# used to carry profiles/ at its top level, which is what made pointing the
 # policy root at it look reasonable, but the config root also owns `.env` — so
 # the override quietly asserted that a secrets file belongs in the checkout, and
 # `ailocal check` failed under the suite the moment one was not there. Suites
-# read the operator's real config root, exactly as the product does.
+# read the operator's real config root, exactly as the product does. The shipped
+# profiles now live beside the other shipped assets under RESOURCES, so the
+# checkout no longer resembles a config root at all.
 #
 # Set, not overwritten: an isolated run (tests/installed-runtime.py) points this
 # somewhere else on purpose.

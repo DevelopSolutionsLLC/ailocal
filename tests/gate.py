@@ -138,7 +138,7 @@ def _fixed_point(repo: pathlib.Path) -> tuple[int, str]:
 #: Everything the repository root is allowed to track. A generated artifact
 #: here means a root lost its owner — see policy.deployed_client_root().
 ROOT_ALLOWED = {".gitignore", "AGENTS.md", "LICENSE", "README.md",
-                "pyproject.toml", "docs", "profiles", "src", "tests"}
+                "pyproject.toml", "docs", "src", "tests"}
 
 
 def _root_is_clean(repo: pathlib.Path) -> tuple[int, str]:
@@ -148,12 +148,19 @@ def _root_is_clean(repo: pathlib.Path) -> tuple[int, str]:
     committed; the untracked check catches the mechanism that put it there,
     which is a root resolving to the checkout. .gitignore cannot be the test:
     it would hide exactly the failure this is looking for.
+
+    The boundary is the INDEX, not HEAD. A gate developers run before committing
+    has to judge what they are about to commit: reading HEAD both fails a
+    correct staged change until it lands and passes a bad staged root addition
+    because HEAD is still clean. Index plus the untracked check below covers
+    every root entry that exists before the commit.
     """
-    tracked = subprocess.run(["git", "ls-tree", "--name-only", "HEAD"],
+    tracked = subprocess.run(["git", "ls-files"],
                              cwd=repo, capture_output=True, text=True)
     if tracked.returncode:
         return 1, "could not list the tracked root"
-    extra = sorted(set(tracked.stdout.split()) - ROOT_ALLOWED)
+    extra = sorted({p.split("/", 1)[0] for p in tracked.stdout.split()}
+                   - ROOT_ALLOWED)
     if extra:
         return 1, ("tracked at the repository root but not a project concept: "
                    + ", ".join(extra))

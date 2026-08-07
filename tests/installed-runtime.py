@@ -62,8 +62,13 @@ def main() -> None:
     check(r.returncode == 0, "the package installs", r.stderr[-400:])
     check(ailocal.is_file(), "the console script is installed")
 
+    # PYTHONPATH goes too: importing harness put the CHECKOUT's src on it, and
+    # the real checkout outlives the copy this suite deletes. Leaving it in
+    # would let the "isolated" installation import the working tree and report
+    # success for the one thing this suite is here to disprove.
     env = {k: v for k, v in os.environ.items()
-           if not k.startswith(("AILOCAL_", "XDG_", "COMPOSE_"))}
+           if not k.startswith(("AILOCAL_", "XDG_", "COMPOSE_"))
+           and k != "PYTHONPATH"}
     env.update({
         "HOME": str(home), "PATH": f"{venv / 'bin'}:{env.get('PATH', '')}",
         # docker compose is a CLI PLUGIN discovered under $HOME/.docker, so an
@@ -73,7 +78,11 @@ def main() -> None:
         "XDG_CONFIG_HOME": str(box / "xdg-config"),
         "XDG_DATA_HOME": str(box / "xdg-data"),
         "XDG_STATE_HOME": str(box / "xdg-state"),
-        "AILOCAL_CONFIG": str(cfg), "AILOCAL_DATA": str(data),
+        # AILOCAL_DATA is deliberately NOT set. The data root must resolve to
+        # the INSTALLED package's own resources — that the assets travel inside
+        # the wheel is the property this suite exists to prove, and an override
+        # pointing at an empty directory would prove the opposite.
+        "AILOCAL_CONFIG": str(cfg),
         "AILOCAL_STATE": str(state),
         "COMPOSE_PROJECT_NAME": PROJECT,
         "AILOCAL_LITELLM_CONTAINER": f"{PROJECT}-litellm",
@@ -89,14 +98,19 @@ def main() -> None:
     r = run([str(venv / "bin" / "python3"), "-c",
              "from ailocal import install, policy;"
              "install.provision(install.distribution_source(),"
-             " policy.config_root(), policy.data_root(), policy.state_root())"],
+             " policy.config_root(), policy.state_root());"
+             "print(policy.data_root())"],
             env)
     check(r.returncode == 0, "assets provision into the managed roots",
           r.stderr[-400:])
+    installed_data = Path(r.stdout.strip()) if r.returncode == 0 else data
+    check(str(venv) in str(installed_data),
+          "the data root IS the installed package, not a checkout")
     check((cfg / "profiles" / "64gb.toml").is_file(),
           "profiles ship in the wheel and land in the config root")
-    check((data / "deploy" / "litellm" / "hooks" / "tool_gateway.py").is_file(),
-          "the proxy hooks ship in the wheel and land in the data root")
+    check((installed_data / "deploy" / "litellm" / "hooks"
+           / "tool_gateway.py").is_file(),
+          "the proxy hooks ship in the wheel and are read from it")
     (state / "active-profile").write_text("64gb\n")
     # .env is user configuration and is never shipped; synthesize one so the
     # isolated stack has a key of its own rather than borrowing production's.
@@ -129,20 +143,17 @@ def main() -> None:
 
     r = ran("help", "help", allow_nonzero=False)
     check("local model runtime" in r.stdout, "help renders from the installed parser")
-    # sync before profile: the effective profile is generated state, and a fresh
-    # installation has none until the generator has run once.
-    ran("sync", "sync", allow_nonzero=False)
-    check((state / "litellm" / "config.yaml").is_file(),
-          "sync generates into the managed state root")
-    check((state / "litellm" / "effective-profile.json").is_file(),
-          "the effective profile is generated")
     r = ran("profile", "profile", "active-tier", allow_nonzero=False)
     check(r.stdout.strip() == "64gb", "the active tier reads back from managed state")
     ran("check", "check")
 
     if want_stack:
         _suite.section("THE STACK COMES UP FROM MANAGED ASSETS")
+        # `start` is the only thing that regenerates, so this is the first point
+        # at which generated state exists at all.
         ran("start", "start", timeout=600)
+        check((state / "litellm" / "config.yaml").is_file(),
+              "start generates into the managed state root")
         import time
         ok = False
         for _ in range(40):

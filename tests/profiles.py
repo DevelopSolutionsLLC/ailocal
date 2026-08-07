@@ -41,7 +41,7 @@ check = _suite.check
 
 def parse(tier):
     """Capability -> field map, straight from the policy owner's reader."""
-    path = REPO / "profiles" / f"{tier}.toml"
+    path = RESOURCES / "profiles" / f"{tier}.toml"
     return P.load_profile_file(path), path.read_text()
 
 
@@ -420,7 +420,7 @@ def resolver_checks() -> None:
     # Behavioural, not textual: typed values must survive generation without a
     # string round-trip, and the generator must own no scalar parser of its own.
     _sm = load_sync()
-    _models = _sm.load_models_yaml(REPO / "profiles" /
+    _models = _sm.load_models_yaml(RESOURCES / "profiles" /
                                    f"{P.active_tier()}.toml")
     _pref = _models["completion"]["preferred"]
     check(isinstance(_pref, list),
@@ -649,8 +649,9 @@ def hardware_checks() -> None:
 
     for tier, primary in (("16gb", "qwen3.5:4b"), ("32gb", "qwen3.5:9b")):
         check(primary in readme, f"README names {tier}'s primary model ({primary})")
-    check("qwen2.5-coder:1.5b" in readme,
-          "README names the small-tier completion model")
+    # The inline-completion model is deliberately NOT in the README: it is a
+    # detail of a capability the user never selects, and the README documents
+    # what a user operates, not every model a profile names.
     check("16 GB unified memory minimum" in readme,
           "README states the real minimum, not a 64 GB requirement")
     check("85 GB" not in readme,
