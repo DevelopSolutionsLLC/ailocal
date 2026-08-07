@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import re
 import shutil
 import socket
 import subprocess
@@ -75,28 +76,24 @@ def master_key() -> str:
     key sends LiteLLM to a key database that does not exist here, and the fault
     surfaces as "No connected db" rather than as a credential error.
     """
-    if os.environ.get("LITELLM_MASTER_KEY"):
-        return os.environ["LITELLM_MASTER_KEY"]
-    from ailocal import policy as _pc
     # .env is user configuration; clients/env.sh is an installed asset. Neither
     # is found by walking up from this file once the package is installed.
-    for path in (_pc.config_root() / ".env",
-                 _pc.data_root() / "clients" / "env.sh"):
-        if path.is_file():
-            for line in path.read_text().splitlines():
-                line = line.strip().lstrip("export ").strip()
-                if line.startswith("LITELLM_MASTER_KEY="):
-                    return line.split("=", 1)[1].strip().strip("\"'")
-    for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+    dotenv = policy.config_root() / ".env"
+    env_sh = policy.data_root() / "clients" / "env.sh"
+    files = {p: p.read_text() for p in (dotenv, env_sh) if p.is_file()}
+    # (variable, files to search) in strict precedence order. The environment
+    # outranks every file for the master key AND for both client keys, so a
+    # shell-exported OPENAI_API_KEY still wins over an installed env.sh.
+    for var, paths in (("LITELLM_MASTER_KEY", (dotenv, env_sh)),
+                       ("ANTHROPIC_API_KEY", ()), ("OPENAI_API_KEY", ()),
+                       ("ANTHROPIC_API_KEY", (env_sh,)),
+                       ("OPENAI_API_KEY", (env_sh,))):
         if os.environ.get(var):
             return os.environ[var]
-    env = _pc.data_root() / "clients" / "env.sh"
-    if env.is_file():
-        for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
-            for line in env.read_text().splitlines():
-                line = line.strip().lstrip("export ").strip()
-                if line.startswith(f"{var}="):
-                    return line.split("=", 1)[1].strip().strip("\"'")
+        for path in paths:
+            key = _key_from(files.get(path, ""), var)
+            if key:
+                return key
     raise RuntimeError("no LiteLLM API key found — is the stack installed?")
 
 
@@ -418,28 +415,20 @@ def check_searxng_query() -> CheckResult:
 
 def check_brave_key_configured() -> CheckResult:
     """Report whether a Brave key is present WITHOUT spending a query."""
-    import os
-    import pathlib as _pl
-    import sys as _sys
     override = os.environ.get("AILOCAL_SEARXNG_SETTINGS")
-    if override:
-        settings = _pl.Path(override)
-    else:
-        # The state root has one owner; do not re-derive it here.
-        _sys.path.insert(0, str(_pl.Path(__file__).resolve().parent.parent))
-        from ailocal import policy as _pc
-        settings = _pc.state_root() / "searxng" / "settings.yml"
+    # The state root has one owner; do not re-derive it here.
+    settings = (pathlib.Path(override) if override
+                else policy.state_root() / "searxng" / "settings.yml")
     if not settings.is_file():
         return CheckResult("brave-key", BLOCKED, "rendered SearXNG settings not readable")
     text = settings.read_text(errors="replace")
-    import re as _re
-    m = _re.search(r"- name:\s*braveapi(.*?)(?=\n  - name:|\Z)", text, _re.S)
+    m = re.search(r"- name:\s*braveapi(.*?)(?=\n  - name:|\Z)", text, re.S)
     if not m:
         return CheckResult("brave-key", PASS, "braveapi engine not configured")
     body = m.group(1)
-    km = _re.search(r"api_key:\s*(\S+)", body)
+    km = re.search(r"api_key:\s*(\S+)", body)
     configured = bool(km) and km.group(1) not in ('""', "''", "null", "~")
-    inactive = bool(_re.search(r"(inactive|disabled):\s*true", body))
+    inactive = bool(re.search(r"(inactive|disabled):\s*true", body))
     if not configured:
         return CheckResult("brave-key", PASS, "braveapi present, no key configured")
     return CheckResult("brave-key", PASS,
