@@ -26,7 +26,6 @@ import json
 import os
 import time
 import uuid
-from pathlib import Path
 
 from litellm.integrations.custom_logger import CustomLogger
 
@@ -203,7 +202,6 @@ _PROCESS_GENERATION = f"pg-{int(time.time())}-{os.getpid()}"
 # Availability reasons, so a null is never ambiguous. "Not measured" and "measured
 # as zero" must never look alike.
 UNAVAILABLE_NO_HOOK = "not_exposed_by_litellm_hook"
-UNAVAILABLE_NOT_STREAMED = "non_streaming_request"
 UNAVAILABLE_NO_BACKEND_REPLY = "no_backend_response"
 
 # Completion-side availability. A null completion field has four distinct causes
@@ -496,6 +494,7 @@ class RequestTrace(CustomLogger):
                       or (data or {}).get("_backend_model")
         except Exception:
             backend = None
+        components = _token_components(data)
         return {
             "capability": capability,
             "client": client,
@@ -536,8 +535,8 @@ class RequestTrace(CustomLogger):
             "disconnect_owner": st.get("disconnect_owner"),
             "disconnect_owner_availability": (
                 None if st.get("disconnect_owner") else "not_determinable"),
-            **_token_components(data),
-            **_context_budget(self.registry, data, _token_components(data)),
+            **components,
+            **_context_budget(self.registry, data, components),
         }
 
     # ── lifecycle ───────────────────────────────────────────────────────────
@@ -686,51 +685,6 @@ class RequestTrace(CustomLogger):
             })
             self._write(rec)
             emit(rec)
-
-    async def async_post_call_success_hook(self, data, user_api_key_dict, response):
-        if not self.dir:
-            return response
-        try:
-            st = self._state(data) or {}
-            rec = self._base(data)
-            finish = None
-            stop = None
-            try:
-                choices = getattr(response, "choices", None) or []
-                if choices:
-                    finish = getattr(choices[0], "finish_reason", None)
-                stop = getattr(response, "stop_reason", None)
-            except Exception:
-                pass
-            usage = getattr(response, "usage", None)
-            # Same accumulator shape as the streaming path, so ONE consumer can
-            # read both record kinds. Non-streaming semantics are unchanged:
-            # these are the identical values from the identical attributes, now
-            # carrying an explicit reason when they are absent.
-            acc = {
-                "finish_reason": finish,
-                "stop_reason": stop,
-                "prompt_tokens": getattr(usage, "prompt_tokens", None),
-                "completion_tokens": getattr(usage, "completion_tokens", None),
-            }
-            rec.update({
-                "phase": "success",
-                "total_ms": round((time.time() - st.get("t_start", time.time()))
-                                  * 1000, 1),
-                "outcome": "success",
-                "stream_completed_normally": True,
-                "stream_interrupted": False,
-                "stream_interrupt_type": None,
-                "configured_num_predict": (
-                    ((data or {}).get("litellm_params") or {}).get("num_predict")),
-                "effective_num_predict": None,
-                "effective_num_predict_availability": UNAVAILABLE_NO_HOOK,
-                **_completion_fields(acc, saw_any_event=True),
-            })
-            self._write(rec)
-        except Exception as exc:
-            emit({"event": "trace_success_failed", "error": str(exc)})
-        return response
 
     async def async_log_success_event(self, kwargs, response_obj, start_time,
                                       end_time):
