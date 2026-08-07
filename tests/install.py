@@ -39,8 +39,6 @@ def main() -> None:
     check((cfg / "profiles" / "clients.toml").is_file(),
           "config root receives client policy")
     check((state / I.MANIFEST_NAME).is_file(), "a manifest is recorded")
-    check(not (data / "benchmarks").exists(),
-          "benchmarks are not installed into the data root")
     check(not list(data.glob(".staging-*")), "no staging tree survives a success")
     check(not list(data.glob(".rollback-*")), "no rollback tree survives a success")
     check(not (data / "profiles").exists(),

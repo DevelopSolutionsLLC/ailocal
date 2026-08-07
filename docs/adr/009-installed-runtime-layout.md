@@ -61,7 +61,6 @@ ${XDG_STATE_HOME:-~/.local/state}/ailocal/
     active-profile
     generated/            config.yaml, capabilities.json, effective-profile.json
     captures/
-    benchmark/
 ```
 
 The source checkout becomes a development input, not part of a running
@@ -139,19 +138,6 @@ guarantee `ailocal sync` already provides for generated state:
 A partially replaced `deploy/` tree — new compose file against old hooks — is
 the specific outcome this prevents. `ailocal doctor` reports a `.staging-*` or
 `.rollback` directory that outlived its transaction.
-
-### Benchmarks are developer-only
-
-Benchmarks are a developer utility: they never modify a profile, and they are
-not part of install, update or the regression gate.
-
-Consequently benchmark assets are **not installed** — not into the data root and
-not as package data — and there is **no public `ailocal benchmark` command**. A
-command dispatching through the data root would resolve a path that provisioning
-never creates, which is exactly what it did until the assets moved. They live in
-`tests/benchmarks/` and are invoked directly from a checkout. Should benchmarks
-ever become an end-user capability, their assets move under the data root and
-this paragraph is superseded.
 
 **Profile format is deferred to ADR 010** and is not decided here. It is a
 separate question with a separate blast radius, and coupling it to packaging

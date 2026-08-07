@@ -456,8 +456,7 @@ def cmd_metrics(argv: list[str]) -> int:
     if "hook_overhead_ms" in s:
         o = s["hook_overhead_ms"]
         print(f"\nHOOK OVERHEAD  median {o['median']} ms | p95 {o['p95']} ms | "
-              f"max {o['max']} ms\n  hook only; end-to-end latency is "
-              "ailocal benchmark gateway")
+              f"max {o['max']} ms\n  hook only; not end-to-end latency")
 
     print()
     for label, key in (("clients", "clients"), ("model classes", "model_classes"),

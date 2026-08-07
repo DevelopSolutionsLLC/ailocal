@@ -128,13 +128,6 @@ def deployed_client_root() -> Path:
     return _xdg("XDG_CONFIG_HOME", ".config") / "ailocal"
 
 
-def benchmark_tooling_root() -> Path:
-    """Third-party benchmark tooling: the lm-eval venv and the RULER checkout.
-
-    XDG data rather than state: installed artifacts, not machine state."""
-    return _xdg("XDG_DATA_HOME", ".local", "share") / "ailocal" / "benchmark"
-
-
 def profiles_dir(repo_root=None) -> Path:
     return config_root(repo_root) / "profiles"
 
@@ -365,7 +358,7 @@ def resolve_role(tier: str, role: str, repo_root=None, _data=None) -> dict:
            "enabled": bool(active)
                       and active.lower() not in ("none", "false", "disabled"),
            **geometry(cfg.get("context_input"), cfg.get("max_output"))}
-    # `context` is an alias for total_context, read by benchmark cross-tier
+    # `context` is an alias for total_context, read by cross-tier
     # planning and status. Derived, never configured.
     out["context"] = out["total_context"]
     for f in OPTIONAL_ROLE_FIELDS:

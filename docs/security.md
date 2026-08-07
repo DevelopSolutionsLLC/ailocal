@@ -43,8 +43,7 @@ copy is written to the state root. Being outside Git's tree makes committing it
 impossible rather than merely discouraged.
 
 No secret appears in the generation manifest, in generated artifacts, in logs,
-or in benchmark evidence. Benchmark capture redacts key-shaped content before
-persisting it.
+or in captured evidence, which redacts key-shaped content before persisting.
 
 ---
 
@@ -70,7 +69,7 @@ tree and cannot introduce a secret into a commit.
 
 Generated output is disposable: deleting `$AILOCAL_STATE` and re-running
 `ailocal sync` fully recovers it. Nothing of value is stored only there except
-capture and benchmark history.
+capture history.
 
 ---
 
@@ -85,7 +84,7 @@ The proxy container sees only what it needs:
 | `/app/generated` | read-only | generated proxy configuration |
 | `/app/captures` | writable | the only path the proxy may write |
 
-Profiles, client templates, benchmark files and the repository itself are not
+Profiles, client templates and the repository itself are not
 mounted. SearXNG receives its rendered settings read-only and one authored
 limiter policy.
 

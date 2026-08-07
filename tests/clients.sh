@@ -78,25 +78,6 @@ check $(grep -q 'claude "${_model_args\[@\]}" "$@"' "$tpl" && echo 0 || echo 1) 
   "--model args reach the claude invocation"
 check $([ -z "$(AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE= zsh -c "source '$CONFIGURE'; typeset -p _model_args" 2>/dev/null)" ] && echo 0 || echo 1) \
   "no override adds no --model argument (defaults untouched)"
-# The proxy log is the only authority on which model actually ran. Asserted here
-# as a capability; the benchmark calls it live before every candidate.
-# Asserted through the IMPORT surface, not by grepping a file: what matters is
-# that the capability exists, not where it lives.
-check $(python3 -c "
-import sys, inspect
-sys.path.insert(0, '$ROOT_DIR/tests/benchmarks'); sys.path.insert(0, '$ROOT_DIR/src')
-import suite as B
-assert callable(B.served_models_since)
-" >/dev/null 2>&1 && echo 0 || echo 1) \
-  "harness can read served aliases from the proxy log"
-check $(python3 -c "
-import sys, inspect
-sys.path.insert(0, '$ROOT_DIR/tests/benchmarks'); sys.path.insert(0, '$ROOT_DIR/src')
-import suite as B
-assert 'INVALID_ROUTING' in inspect.getsource(B.verify_routing)
-" >/dev/null 2>&1 && echo 0 || echo 1) \
-  "routing mismatch is classified INVALID_ROUTING, not warned about"
-
 # The override block is hand-maintained and MUST live outside the spliced region,
 # or generation.py would erase it on the next regeneration.
 tpl="$RESOURCES/clients/configure.template.zsh"
