@@ -113,7 +113,7 @@ Upgrade behavior, stated explicitly:
   a file whose digest has diverged is user-edited, is left untouched, and is
   reported. Provenance, not location, decides.
 - **How new default keys reach existing installations.** They do not arrive by
-  file replacement. `ailocal validate` already rejects unknown fields and
+  file replacement. `ailocal check` already rejects unknown fields and
   fails closed on missing ones; it gains the inverse check — a shipped default
   key absent from a user-edited profile is reported with the value that would
   apply. The operator merges deliberately. Silent key injection into an edited
@@ -136,7 +136,7 @@ guarantee `ailocal sync` already provides for generated state:
    On failure during the swap, restore from `.rollback` and report.
 
 A partially replaced `deploy/` tree — new compose file against old hooks — is
-the specific outcome this prevents. `ailocal doctor` reports a `.staging-*` or
+the specific outcome this prevents. `ailocal check` reports a `.staging-*` or
 `.rollback` directory that outlived its transaction.
 
 **Profile format is deferred to ADR 010** and is not decided here. It is a
@@ -158,7 +158,7 @@ Costs and new obligations:
 - Three roots must be resolved by one owner. `lib/policy.py` currently owns
   policy-path resolution; that role extends to config, data, and state roots,
   and nothing else may compute them.
-- A stale data root can disagree with installed code. `ailocal doctor` must
+- A stale data root can disagree with installed code. `ailocal check` must
   report the installed version against the data-root manifest version.
 - `AILOCAL_ROOT` disappears as a public concept. Every consumer in the
   dependency map below changes with it.
@@ -189,7 +189,7 @@ sufficient reason to make a Git checkout a permanent runtime contract.
 
 *Transitional support:* `AILOCAL_DEV_ROOT` may point at a checkout so developers
 can run uninstalled. It is opt-in, absent from `ailocal help`, and reported by
-`ailocal doctor` when set. **Removal criteria:** deleted once (1) `ailocal
+`ailocal check` when set. **Removal criteria:** deleted once (1) `ailocal
 install` provisions all three roots from a package with no checkout present,
 (2) the gate passes against an installed package with the checkout moved aside,
 and (3) the migration path in Phase 5 has run once on a real installation. It is

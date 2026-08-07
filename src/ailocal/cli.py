@@ -14,10 +14,7 @@ import sys
 COMMANDS: dict[str, tuple[str, tuple]] = {
     "install":        ("ailocal.install", ("install",)),
     "status":         ("ailocal.runtime", ("status",)),
-    "doctor":         ("ailocal.checks.run", ("doctor",)),
-    "validate":       ("ailocal.checks.run", ("validate",)),
-    "smoke":          ("ailocal.checks.run", ("smoke",)),
-    "security":       ("ailocal.checks.run", ("security",)),
+    "check":          ("ailocal.checks.run", ("check",)),
     "test":           ("ailocal.checks.run", ("test",)),
 
     "sync":           ("ailocal.generation", ()),
@@ -28,7 +25,6 @@ COMMANDS: dict[str, tuple[str, tuple]] = {
     "clients":        ("ailocal.clients", ()),
     "vscode":         ("ailocal.clients", ("--vscode-only",)),
     "models-install": ("ailocal.install", ("models",)),
-    "audit":          ("ailocal.install", ("audit",)),
     "cleanup":        ("ailocal.install", ("cleanup",)),
     "autostart":      ("ailocal.install", ("autostart",)),
     "update-check":   ("ailocal.install", ("update-check",)),
@@ -46,11 +42,10 @@ INTERNAL = frozenset({"trace", "metrics", "update-check"})
 #: exactly once; the gate asserts it.
 GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("bootstrap the stack",        ("install",)),
-    ("inspect",                    ("status", "doctor", "validate", "smoke")),
-    ("container supply chain",     ("security",)),
+    ("inspect",                    ("status", "check")),
     ("lifecycle",                  ("start", "stop", "update", "sync")),
     ("deploy",                     ("clients", "vscode", "models-install")),
-    ("installation",               ("audit", "cleanup", "teardown")),
+    ("installation",               ("cleanup", "teardown")),
     ("host setup",                 ("autostart",)),
     ("the regression gate",        ("test",)),
     ("the active profile",         ("profile",)),

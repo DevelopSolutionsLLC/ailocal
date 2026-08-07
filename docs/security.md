@@ -57,7 +57,7 @@ or in captured evidence, which redacts key-shaped content before persisting.
 | `$AILOCAL_STATE/backups/` | `0700` | pre-replacement copies may contain secrets |
 | `.env` | `0600` expected | every credential |
 
-Verify with `ailocal doctor`, which reports `.env` readable by other users.
+Verify with `ailocal check`, which reports `.env` readable by other users.
 
 ---
 
@@ -98,12 +98,15 @@ what runs without a commit:
 - `ghcr.io/berriai/litellm@sha256:a1745e62…`
 - `searxng/searxng@sha256:79c2be18…`
 
-`ailocal doctor` gates the running build against the
+`ailocal check` gates the running build against the
 validated version, and the regression gate fails if they diverge.
 
-`ailocal security` scans the pinned images and reports known findings. It exits
-`0` clean, `1` on a finding that must be addressed, `2` degraded when it could
-not complete a check — an absent scanner is not a pass.
+`ailocal check` includes the supply chain: every image pinned by digest, the
+running image identical to the declared one, loopback-only binding, and
+provenance where a publisher signs. `ailocal check --updates` additionally asks
+upstream what exists; it never pulls over a running service and never rewrites
+a pin. A check that could not complete reports as such — an absent scanner is
+not a pass.
 
 **Upgrading an image** means changing the digest, re-running the scan, running
 the full gate, and confirming the proxy still serves every alias with the

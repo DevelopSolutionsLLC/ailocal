@@ -746,7 +746,7 @@ def cmd_update(argv: list[str]) -> int:
     step("Validating health post-update")
     wait_ready(20)
     from .checks import run as checks_run
-    if checks_run.main(["doctor"]):
+    if checks_run.main(["check"]):
         warn("Health check reported issues after update.")
         print("  Check logs: docker logs ailocal-litellm --tail=50")
         return 1

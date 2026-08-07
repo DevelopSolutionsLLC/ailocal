@@ -4,7 +4,7 @@ Symptom lookup. Each entry states what you see, how to confirm the cause, and
 what to do. System design is in [architecture.md](architecture.md); normal
 operation is in the README and `ailocal help`.
 
-Start with `ailocal doctor` — it reports health with a fix for anything wrong,
+Start with `ailocal check` — it reports health with a fix for anything wrong,
 and exits `0` healthy, `1` when it cannot resolve the active profile and refuses
 to guess, `2` degraded.
 
@@ -43,7 +43,7 @@ generated file was hand-edited.
 **Verify**
 
 ```sh
-ailocal validate            # deterministic; works with the stack stopped
+ailocal check               # the configuration section reports drift
 ailocal sync --check        # non-zero if generated output has drifted
 ```
 
@@ -76,7 +76,7 @@ curl -fsS "${OLLAMA_HOST:-http://127.0.0.1:11434}/api/tags" >/dev/null && echo u
 
 ```sh
 ollama serve      # or open Ollama.app
-ailocal doctor
+ailocal check
 ```
 
 If Ollama listens elsewhere, export `OLLAMA_HOST` — it is the only variable that
@@ -93,7 +93,7 @@ redirects it, for every subsystem.
 **Verify**
 
 ```sh
-ailocal smoke     # names every missing model
+ailocal check     # names every missing model
 ```
 
 **Fix**
@@ -115,8 +115,8 @@ silently truncating.
 **Verify**
 
 ```sh
-ailocal validate                        # advertised geometry matches the profile
-ailocal smoke --deep                    # confirms rejection is enforced
+ailocal check     # advertised geometry matches the profile, and an
+                  # oversized prompt is rejected rather than truncated
 ```
 
 **Fix** — use a larger capability (`ailocal-architecture`), or raise
@@ -138,7 +138,7 @@ misses the KV cache.
 **Verify**
 
 ```sh
-ailocal doctor    # reports whether the model is resident and whether a
+ailocal check     # reports whether the model is resident and whether a
                   # generation is still running from a disconnected client
 ```
 
@@ -217,7 +217,7 @@ rendered settings.
 **Verify**
 
 ```sh
-ailocal doctor    # reports whether LiteLLM can reach the SearXNG JSON API
+ailocal check     # reports whether LiteLLM can reach the SearXNG JSON API
 ```
 
 **Fix**
@@ -244,7 +244,7 @@ default because they degrade under sustained use and fail with CAPTCHAs.
 **Verify**
 
 ```sh
-ailocal validate    # compares generated against deployed
+ailocal check       # compares generated against deployed
 ```
 
 **Fix**

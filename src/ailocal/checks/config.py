@@ -1,6 +1,6 @@
 """Deterministic checks: source, generated and deployed configuration.
 
-Every check answers from files on disk, so `ailocal validate` runs with the
+Every check answers from files on disk, so this layer of `ailocal check` runs with the
 stack stopped. Docker is consulted only to compare the mounted config against
 the repository copy; when it is absent that check reports BLOCKED and the rest
 of validation continues.
@@ -350,7 +350,7 @@ def check_generated_in_sync() -> CheckResult:
 
 
 def deterministic_checks(tier: str | None = None) -> list[CheckResult]:
-    """Everything `ailocal validate` runs. No live service calls."""
+    """The configuration layer of `ailocal check`. No live service calls."""
     results: list[CheckResult] = [check_active_tier()]
     results += check_profiles_parse()
     results += check_capabilities_declare_backends(tier)
