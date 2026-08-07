@@ -43,7 +43,7 @@ services:
       SEARXNG_BIND_ADDRESS: 0.0.0.0
       SEARXNG_PORT: 8080
       SEARXNG_BASE_URL: http://localhost:8080/
-      # Generated into .env by install.sh. SearXNG refuses to start without a
+      # Generated into .env by `ailocal install`. SearXNG refuses to start without a
       # real secret; never ship the placeholder from settings.yml.
       SEARXNG_SECRET: ${SEARXNG_SECRET}
     volumes:
