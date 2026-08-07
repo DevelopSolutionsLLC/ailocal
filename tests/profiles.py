@@ -833,9 +833,8 @@ def policy_checks() -> None:
     # No production consumer may CONSTRUCT a policy path. Prose, prompts and
     # remediation text may name the file; only code that builds the path is a
     # second owner.
-    prod = [q for q in (REPO / "lib").rglob("*.py")
-            if "/tests/" not in str(q) and q.name != "policy.py"]
-    prod += [q for q in (REPO / "lib").rglob("*.sh") if "/tests/" not in str(q)]
+    prod = [q for q in (REPO / "src").rglob("*.py")
+            if "/resources/" not in str(q) and q.name != "policy.py"]
     # Path CONSTRUCTION only: a quoted path that is the whole value, or a
     # pathlib join. Remediation sentences and prompts name the file in prose and
     # are not a second owner.
@@ -849,12 +848,13 @@ def policy_checks() -> None:
                 continue
             if build.search(line):
                 offenders.append(q.name); break
+    check(bool(prod), f"the ownership scan reaches production code ({len(prod)} files)")
     check(not offenders, "no production file constructs a policy path",
           ", ".join(sorted(set(offenders))))
 
     # The validator must not execute the generator to read policy.
     cfg = (REPO / "src" / "ailocal" / "checks" / "config.py").read_text()
-    check("sync-models.py" not in cfg or "spec_from_file_location" not in cfg,
+    check("spec_from_file_location" not in cfg,
           "validation does not load the generator to read policy")
 
     # The command surface has ONE owner: cli.py's tables. Help used to be a

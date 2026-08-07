@@ -138,7 +138,7 @@ re-running `ailocal sync` is a supported repair.
 | [docs/architecture.md](docs/architecture.md) | how the pieces fit together |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | symptoms and fixes |
 | [docs/security.md](docs/security.md) | secrets, permissions, exposure |
-| [benchmarks/README.md](benchmarks/README.md) | reproducing model comparisons |
+| [tests/benchmarks/README.md](tests/benchmarks/README.md) | reproducing model comparisons |
 | [AGENTS.md](AGENTS.md) | contributing and agent operating rules |
 
 ## License

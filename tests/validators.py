@@ -150,12 +150,16 @@ def search_quota_checks() -> None:
           "nothing calls the federated search outside that flag")
 
     # No default caller anywhere may reach it.
-    for name in ("test-all.sh", "src/ailocal/install.py", "src/ailocal/clients.py"):
-        path = REPO / "lib" / name if (REPO / "lib" / name).exists() else REPO / name
-        if path.exists():
-            check("check_searxng_external" not in path.read_text()
-                  and "--external-search" not in path.read_text(),
-                  f"{name} never triggers the federated search")
+    # Every production module, not a hand-listed few: a new caller must not be
+    # able to reach the metered search by appearing in a file nobody listed.
+    callers = [q for q in (REPO / "src").rglob("*.py")
+               if "/resources/" not in str(q) and q.name != "services.py"
+               and q.name != "run.py"]
+    check(bool(callers), f"the quota scan reaches production code ({len(callers)} files)")
+    for path in callers:
+        check("check_searxng_external" not in path.read_text()
+              and "--external-search" not in path.read_text(),
+              f"{path.name} never triggers the federated search")
 
     # The query the default path issues must name exactly one engine.
     check(S.FREE_ENGINE_QUERY.strip().startswith("!"),

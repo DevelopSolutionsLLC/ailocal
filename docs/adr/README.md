@@ -39,6 +39,6 @@ A superseded record remains in the repository and links to its replacement.
 
 Use an ADR for architecture, ownership, compatibility boundaries, or a
 costly-to-reverse technical choice. Use `docs/troubleshooting.md` for
-operational symptoms and fixes, `benchmarks/README.md` for reproducibility, and
+operational symptoms and fixes, `tests/benchmarks/README.md` for reproducibility, and
 Git history for routine implementation detail. Do not preserve session
 narratives in an ADR.
