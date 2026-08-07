@@ -9,10 +9,6 @@
 *.crt
 *.cer
 
-# The one generated file that lands inside the checkout. Everything else
-# generation produces lives under $AILOCAL_STATE, outside the tree.
-.github/copilot-instructions.md
-
 # Guard only: runtime state belongs in $AILOCAL_STATE. These stay so a script
 # that regresses to a repo-relative path cannot commit runtime state.
 /data/

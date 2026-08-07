@@ -24,7 +24,7 @@ from ailocal.checks.services import (  # noqa: E402  service access has one owne
     OLLAMA, PROXY as LITELLM, _key_from, master_key as api_key,
     proxy_healthy as litellm_healthy,
 )
-from evidence import REPO, capture_litellm_log, runtime_dir, state_dir
+from evidence import REPO, RESOURCES, capture_litellm_log, runtime_dir, state_dir
 
 
 ALIAS_PREFIX = "bench-"
@@ -254,8 +254,8 @@ def restore() -> dict:
 
 
 def _compose(args: list, extra=None):
-    files = ["-f", str(REPO / "deploy/litellm/compose.yaml"),
-             "-f", str(REPO / "deploy/searxng/compose.yaml")]
+    files = ["-f", str(RESOURCES / "deploy/litellm/compose.yaml"),
+             "-f", str(RESOURCES / "deploy/searxng/compose.yaml")]
     for f in (extra or []):
         files += ["-f", str(f)]
     from ailocal import policy

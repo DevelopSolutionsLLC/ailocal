@@ -7,21 +7,10 @@ that same table, which is the only way the two cannot drift.
 from __future__ import annotations
 
 import json
-import os
 import sys
-from pathlib import Path
-
-BASH = "/bin/bash"
-
-
-def _root() -> Path:
-    """Where the deploy assets live: the data root, and nothing else."""
-    from . import policy
-    return policy.data_root()
 
 
 #: command -> (implementing module, fixed args, forwards argv)
-PY, SH = "py", "sh"
 COMMANDS: dict[str, tuple[str, tuple, bool]] = {
     "install":        ("ailocal.install", ("install",), True),
     "status":         ("ailocal.runtime", ("status",), True),
@@ -49,15 +38,6 @@ COMMANDS: dict[str, tuple[str, tuple, bool]] = {
     "verify-session": ("ailocal.checks.run", ("verify-session",), True),
 }
 
-#: Nested surfaces: `ailocal <command> <target> [args]`.
-NESTED: dict[str, dict[str, tuple]] = {
-    "benchmark": {
-        "models":  (PY, "benchmarks/models.py"),
-        "planner": (PY, "benchmarks/planner.py"),
-        "gateway": (SH, "benchmarks/gateway.sh"),
-    },
-}
-
 #: Dispatched but NOT advertised. These are single-purpose developer and
 #: host-setup tools with no documented user workflow: they stay reachable
 #: because deleting a working diagnostic is not a simplification, but they do
@@ -79,7 +59,6 @@ GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("installation",               ("audit", "cleanup", "teardown")),
     ("host setup",                 ("autostart",)),
     ("the regression gate",        ("test",)),
-    ("developer benchmarks",       ("benchmark",)),
     ("the active profile",         ("profile",)),
 )
 
@@ -87,37 +66,20 @@ GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
 def _usage() -> str:
     rows = []
     for heading, names in GROUPS:
-        shown = [f"{n} <{'|'.join(NESTED[n])}>" if n in NESTED else n
-                 for n in names]
-        rows.append((" | ".join(shown), heading))
+        rows.append((" | ".join(names), heading))
     width = max(len(left) for left, _ in rows) + 2
     return "\n".join(["ailocal — local model runtime", ""]
                      + [f"  {left:<{width}}{heading}" for left, heading in rows])
 
 
 def _call(module: str, args) -> int:
-    """A package command runs in THIS process: it is a function, not a program."""
+    """A package command runs in THIS process: it is a function, not a program.
+
+    Every command is a module of this package, so there is one dispatch
+    mechanism and no second interpreter to choose.
+    """
     import importlib
     return importlib.import_module(module).main([str(a) for a in args])
-
-
-def _exec_script(kind: str, target: Path, args) -> None:
-    """Replace this process for a data-root script, so signals pass through.
-
-    Benchmarks import `ailocal` for every path they resolve, so the package has
-    to be importable from wherever THIS module was loaded -- site-packages when
-    installed, the checkout's src/ when not.
-    """
-    pkg_parent = str(Path(__file__).resolve().parents[1])
-    existing = os.environ.get("PYTHONPATH", "")
-    os.environ["PYTHONPATH"] = (f"{pkg_parent}{os.pathsep}{existing}"
-                                if existing else pkg_parent)
-    if not target.exists():
-        sys.exit(f"ailocal: missing implementation {target}\n"
-                 f"Set AILOCAL_DATA to the installed data root.")
-    argv = ([BASH, str(target)] if kind == SH
-            else [sys.executable, str(target)]) + [str(a) for a in args]
-    os.execv(argv[0], argv)
 
 
 #: `ailocal profile <query>`. Scalars print bare so `$(...)` captures them
@@ -189,16 +151,6 @@ def main(argv: list[str] | None = None) -> int:
 
     if cmd in HANDLERS:
         return HANDLERS[cmd](argv)
-
-    if cmd in NESTED:
-        targets = NESTED[cmd]
-        target = argv.pop(0) if argv else "help"
-        if target not in targets:
-            print(f"usage: ailocal {cmd} <{'|'.join(targets)}> [options]",
-                  file=sys.stderr)
-            return 0 if target in ("help", "-h", "--help") else 2
-        kind, rel = targets[target]
-        _exec_script(kind, _root() / rel, argv)
 
     if cmd not in COMMANDS:
         print(f"ailocal: unknown command '{cmd}' — run 'ailocal help'",

@@ -12,6 +12,7 @@ when it was installed.
 from __future__ import annotations
 
 import hashlib
+import importlib.resources
 import json
 import os
 import plistlib
@@ -95,25 +96,35 @@ def _tree(root: Path, component: str) -> dict:
 
 
 def distribution_source() -> Path:
-    """The tree being installed FROM. Never guessed.
+    """The tree being installed FROM: the package's own resources.
 
-    Under an installed console script there is no checkout above this module,
-    and a guess there silently provisions an empty tree while reporting success.
+    Shipped assets travel inside the wheel, so this exists under a pipx install
+    with no checkout anywhere on the machine. It is a real directory rather than
+    a Traversable because provision() copies whole trees; ailocal is never
+    installed from a zipimport, and asserting that is better than pretending to
+    support it.
     """
-    root = Path(__file__).resolve().parents[2]
+    root = Path(str(importlib.resources.files("ailocal"))) / "resources"
     if all((root / c).is_dir() for c in DATA_COMPONENTS):
         return root
-    raise SystemExit(
-        "install: no distribution to install from. Run `ailocal install` from a\n"
-        "checkout, or pass --from <checkout>.")
+    raise SystemExit(f"install: the package carries no resources at {root}; "
+                     "the installation is incomplete.")
 
 
 def provision(source: Path, config: Path, data: Path, state: Path) -> dict:
     """Install assets. Raises rather than half-applying."""
     for p in (config, data, state):
         p.mkdir(parents=True, exist_ok=True)
-    if config == source or data == source:
-        raise SystemExit("install: refusing to install a checkout over itself.")
+    # Refuse to copy a component onto itself. Compared RESOLVED and per
+    # component, because the shipped defaults are reachable by more than one
+    # path: a checkout exposes profiles/ at the root AND inside the resource
+    # tree, and a directory-level comparison misses that.
+    for c in DATA_COMPONENTS + CONFIG_COMPONENTS:
+        dest = (data if c in DATA_COMPONENTS else config) / c
+        if dest.exists() and (source / c).resolve() == dest.resolve():
+            raise SystemExit(
+                f"install: {dest} is the shipped source itself; refusing to "
+                "install a tree over itself.")
 
     try:
         manifest = json.loads((state / MANIFEST_NAME).read_text())
@@ -857,14 +868,13 @@ def cmd_cleanup(argv: list[str]) -> int:
 
 # ── install ─────────────────────────────────────────────────────────────────
 
-USAGE = """usage: ailocal install [--yes] [--profile <16gb|32gb|64gb|128gb>] [--from DIR]
+USAGE = """usage: ailocal install [--yes] [--profile <16gb|32gb|64gb|128gb>]
 
 Bootstraps the stack: prerequisites, assets, .env, profile selection,
 generation, models, services and client configuration. Idempotent.
 
   --yes              unattended; also enables production autostart
   --profile <tier>   override the tier detected from installed memory
-  --from <dir>       the distribution to install from (default: this checkout)
 """
 
 
@@ -881,7 +891,7 @@ def cmd_install(argv: list[str]) -> int:
     _install_prerequisites(assume_yes)
 
     step("Installing assets")
-    source = Path(_opt(argv, "--from") or distribution_source())
+    source = distribution_source()
     report = provision(source, policy.config_root(), policy.data_root(),
                        policy.state_root())
     ok(f"data {policy.data_root()}: {', '.join(DATA_COMPONENTS)}")

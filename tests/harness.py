@@ -20,6 +20,9 @@ import tempfile
 import types
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
+#: The ONE copy of every shipped default. A checkout run points both managed
+#: roots here, so tests read exactly the bytes a wheel carries.
+RESOURCES = REPO / "src" / "ailocal" / "resources"
 
 # ── the one test environment owner ──────────────────────────────────────────
 # A suite under test runs against the WORKING TREE, and policy.py resolves the
@@ -31,7 +34,7 @@ REPO = pathlib.Path(__file__).resolve().parent.parent
 # Set, not overwritten: an isolated run (tests/installed-runtime.py) points these
 # somewhere else on purpose.
 os.environ.setdefault("AILOCAL_CONFIG", str(REPO))
-os.environ.setdefault("AILOCAL_DATA", str(REPO))
+os.environ.setdefault("AILOCAL_DATA", str(RESOURCES))
 if str(REPO / "src") not in sys.path:
     sys.path.insert(0, str(REPO / "src"))
 # Subprocesses launched by a suite need the same declaration.

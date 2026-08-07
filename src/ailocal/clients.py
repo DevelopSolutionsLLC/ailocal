@@ -435,14 +435,6 @@ def _copilot_instructions() -> None:
                     dest / "session-primer.md")
     info("Copilot instruction files deployed to ~/.copilot/instructions/")
 
-    # Repo-level Copilot instructions are GENERATED, so the capability table
-    # cannot drift from the profile. Only meaningful when the data root IS a
-    # checkout.
-    if (data / ".git").exists():
-        (data / ".github").mkdir(exist_ok=True)
-        shutil.copyfile(state / "clients/copilot/repo-instructions.md",
-                        data / ".github" / "copilot-instructions.md")
-        info(".github/copilot-instructions.md generated")
 
 
 def _continue_config(key: str) -> None:

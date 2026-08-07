@@ -56,7 +56,7 @@ def run_lm_eval(alias: str, task: str, limit: int, out_dir: Path,
            "--log_samples",
            # Our corrected task definitions (extraction only; datasets, tests
            # and metrics remain lm-eval's).
-           "--include_path", str(REPO / "benchmarks" / "tasks"),
+           "--include_path", str(REPO / "tests" / "benchmarks" / "tasks"),
            "--output_path", str(out_dir)]
     if limit:
         cmd += ["--limit", str(limit)]

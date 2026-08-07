@@ -38,12 +38,15 @@ except ImportError:
     sys.modules["litellm.integrations.custom_logger"] = _clog
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Every path below is overridden by env when this runs INSIDE the container,
+# where the checkout does not exist. These defaults are the host fallback.
+RESOURCES = os.path.join(ROOT, "src", "ailocal", "resources")
 GATEWAY = os.environ.get("AILOCAL_GATEWAY_MODULE",
-                         os.path.join(ROOT, "deploy/litellm/hooks/tool_gateway.py"))
+                         os.path.join(RESOURCES, "deploy/litellm/hooks/tool_gateway.py"))
 REG_PY = os.environ.get("AILOCAL_REGISTRY_MODULE",
-                        os.path.join(ROOT, "deploy/litellm/hooks/capability_registry.py"))
+                        os.path.join(RESOURCES, "deploy/litellm/hooks/capability_registry.py"))
 REG_YAML = os.environ.get("AILOCAL_REGISTRY",
-                          os.path.join(ROOT, "deploy/litellm/registry.yaml"))
+                          os.path.join(RESOURCES, "deploy/litellm/registry.yaml"))
 CAPS = os.environ.get("AILOCAL_CAPABILITIES_JSON",
                       "/app/generated/capabilities.json")
 CONF = os.environ.get("AILOCAL_CONFIG_PATH",

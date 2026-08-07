@@ -28,8 +28,8 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "benchmarks"))
-from harness import REPO, Suite, load_module  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent / "benchmarks"))
+from harness import RESOURCES, REPO, Suite, load_module  # noqa: E402
 from ailocal import policy as P
 
 PROFILES = ("16gb", "32gb", "64gb", "128gb")
@@ -234,14 +234,14 @@ def resolver_checks() -> None:
 
     # Only policy.py may derive a root from XDG or ~/.local. Anything else is a
     # second owner that drifts the moment one of them moves.
-    for path in sorted(REPO.glob("benchmarks/*.py")):
+    for path in sorted(REPO.glob("tests/benchmarks/*.py")):
         if path.name == "policy.py":
             continue
         body = path.read_text()
         check("XDG_STATE_HOME" not in body and "XDG_CONFIG_HOME" not in body
               and "XDG_DATA_HOME" not in body,
               f"{path.name} does not resolve an XDG root itself")
-    bench = (REPO / "benchmarks" / "suite.py").read_text()
+    bench = (REPO / "tests" / "benchmarks" / "suite.py").read_text()
     check("re.finditer" not in bench.split("def parse_profile")[1].split("def ")[0],
           "benchmark's parse_profile no longer parses YAML itself")
 
@@ -468,7 +468,7 @@ def resolver_checks() -> None:
         b = {r: {"active": c["model"], "context": c["context"], "enabled": c["enabled"]}
              for r, c in tiers[t]["roles"].items()}
         check(a == b, f"{t}: benchmark cross-tier == generated data")
-    bsrc = (REPO / "benchmarks" / "suite.py").read_text()
+    bsrc = (REPO / "tests" / "benchmarks" / "suite.py").read_text()
     check("effective_tiers" in bsrc and "re.finditer" not in
           bsrc.split("def parse_profile")[1].split("def ")[0],
           "benchmark parse_profile reads generated data, parses no YAML")
@@ -868,7 +868,7 @@ def policy_checks() -> None:
     listed = [n for _, names in cli.GROUPS for n in names]
     check(len(listed) == len(set(listed)), "no command is listed twice in help",
           ", ".join(sorted({n for n in listed if listed.count(n) > 1})))
-    dispatchable = set(cli.COMMANDS) | set(cli.NESTED) | set(cli.HANDLERS)
+    dispatchable = set(cli.COMMANDS) | set(cli.HANDLERS)
     check(set(listed) == dispatchable - cli.INTERNAL,
           "help lists every public command, and nothing it cannot dispatch",
           f"help-only={sorted(set(listed) - dispatchable)} "
@@ -887,8 +887,6 @@ def policy_checks() -> None:
                 missing.append(f"{name} -> {module} has no main(argv)")
         except ImportError as exc:
             missing.append(f"{name} -> {module}: {exc}")
-    missing += [f"{c} {t} -> {rel}" for c, ts in cli.NESTED.items()
-                for t, (_, rel) in ts.items() if not (REPO / rel).exists()]
     check(not missing, "every command resolves to a real implementation",
           "; ".join(missing))
 
