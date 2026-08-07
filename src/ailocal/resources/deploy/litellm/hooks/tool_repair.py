@@ -1,30 +1,20 @@
 """
 tool_repair.py — generic recovery of malformed tool calls from local models.
 
-Local models routinely "drift" out of the structured tool-call format their
-runtime expects, and the runtime's parser then hands the whole call back as
-plain assistant text. The agent client is waiting for a tool_call that never
-arrives, so the loop stalls (this is the "Codex hangs until I type continue"
-symptom).
+When a model omits the opening <tool_call> tag, Ollama's parser hands the whole
+call back as plain assistant text; the client waits for a tool_call that never
+arrives and the loop stalls. UNFIXED upstream: ollama/ollama#16686, with #16693
+open and stale and #16732 closed unmerged. block/goose#6883 is the same bug in
+another framework, fixed the same client-side way.
 
-Affected models go from mostly-failing to 8/8 tool calls with repair enabled;
-models with working native tool calls are untouched because the hook never fires.
-
-Upstream: a known, UNFIXED runtime bug. ollama/ollama#16686 (parser drops tool
-calls when the model omits the opening <tool_call> tag) describes this exact
-failure; #16693 proposes a fix, open and stale; #16732 was closed unmerged.
-block/goose#6883 is the same bug from another agent framework, fixed the same
-client-side way.
-
-NOT A QWEN HACK. Deliberately model-agnostic: it recognises *formats*, never
-model names. Keep this module even if #16686 is fixed — it is a general
-compatibility layer, costs ~0.1-0.2 ms, and does nothing when native tool
-calls work.
+Model-agnostic by construction: it recognises FORMATS, never model names. Keep
+it even if #16686 lands — it costs ~0.1-0.2 ms and never fires when native tool
+calls work. [REAL] affected models go from mostly-failing to 8/8 tool calls.
 
 SAFETY MODEL
 ------------
-The dangerous failure is fabricating a tool call that the model never made, so
-every rule below biases toward doing nothing:
+Fabricating a call the model never made is the dangerous failure, so every rule
+biases toward doing nothing:
   - only runs when the response carries NO native tool_calls
   - fenced/inline code is stripped first, so documentation examples that merely
     *show* tool syntax can never become executable calls
@@ -47,20 +37,14 @@ from litellm.integrations.custom_logger import CustomLogger
 
 log = logging.getLogger("tool_repair")
 
-# Set AILOCAL_TOOL_REPAIR_DEBUG=1 to emit attribution records to container stdout.
 # print(), not log.info(): LiteLLM filters third-party loggers, so log.info() is
-# invisible in `docker logs` — which previously made it impossible to tell whether
-# a working tool call came from NATIVE parsing or from this repair layer.
+# invisible in `docker logs`. AILOCAL_TOOL_REPAIR_DEBUG=1 enables it.
 AILOCAL_DEBUG = os.environ.get("AILOCAL_TOOL_REPAIR_DEBUG") == "1"
 
 
 def attribute(**fields):
-    """One machine-parseable line per tool-bearing response.
-
-    Answers the question behavioural tests cannot: how often is the model
-    producing native tool calls vs. how often is this layer rescuing it?
-    Silent unless AILOCAL_TOOL_REPAIR_DEBUG=1, so normal logs stay clean.
-    """
+    """One machine-parseable line per tool-bearing response: native tool call,
+    or rescued here? Silent unless AILOCAL_TOOL_REPAIR_DEBUG=1."""
     if not AILOCAL_DEBUG:
         return
     try:
@@ -383,28 +367,15 @@ def responses_fence_candidate(text, declared_tools, ctx=None):
     REJECT  trailing content after the fence, multiple fences, multiple objects,
             malformed JSON, undeclared tools, invalid or missing required args
 
-    Prose is NOT inspected. An earlier draft required a bare fence on the theory
-    that "a fence wrapped in prose is an illustration" — but the two are
-    structurally identical ("I will execute a command to read the file." vs
-    "Here is what this would look like:"), so separating them means classifying
-    intent from natural language. This layer is a capability adapter, not an
-    intent classifier, and no reference implementation does that:
+    Prose is NOT inspected. "I will execute a command" and "here is what this
+    would look like" are structurally identical, so separating them means
+    classifying intent from natural language — this is a capability adapter, not
+    an intent classifier. vLLM's Llama parser does the same and is looser still
+    (it needs neither a fence nor a single object).
 
-      vLLM's Llama tool parser "only extracts JSON content and ignores any
-      surrounding plain text" (docs.vllm.ai/en/stable/features/tool_calling/)
-      llama.cpp prevents the problem instead, via GBNF grammar-constrained
-      decoding — the better answer, unavailable to us through Ollama+Responses
-      llm-toolcall-proxy uses model-specific structured tags
-
-    We remain stricter than vLLM: it needs neither a fence nor a single object.
-
-    ACCEPTED TRADEOFF: a model that *illustrates* a declared tool with valid
-    arguments in a terminal fence will have it executed. Bounded by the checks
-    below — declared tools only, schema-valid, never invented arguments.
-
-    Argument validation is delegated to _validate(), so the shared safety rules
-    (declared tools only, schema-checked, never invent a required argument)
-    remain authoritative.
+    ACCEPTED TRADEOFF: a model that ILLUSTRATES a declared tool with valid
+    arguments in a terminal fence will have it executed. Bounded by _validate():
+    declared tools only, schema-checked, never an invented argument.
     """
     if not text or not declared_tools:
         return _reject("no_text_or_tools", ctx=ctx)
@@ -695,32 +666,18 @@ class ToolRepair(CustomLogger):
     def _fix_anthropic_sse_stop_reason(raw, state):
         """Repair stop_reason on the Anthropic SSE byte stream.
 
-        THE BUG (LiteLLM, 100% reproducible on Ollama streaming):
-
-            ollama chunk 0:  done=false, tool_calls=[...]
-            ollama chunk 1:  done=true,  done_reason="stop", tool_calls=None
-
+        UPSTREAM BUG, 100% reproducible on Ollama streaming. Ollama emits
+        tool_calls in one chunk and done=true in the NEXT, but
         llms/ollama/chat/transformation.py only applies its tool_calls override
-        when tool_calls are present in the SAME chunk as done=True:
+        when both land in the same chunk (the LiteLLM #18922 fix). So
+        finish_reason stays "stop", the Anthropic adapter maps it to end_turn,
+        and the client sees a turn holding a tool_use block that claims to be
+        finished — Claude Code does not execute the tool.
 
-            if chunk["done"] is True:
-                finish_reason = chunk.get("done_reason") or "stop"
-                if tool_calls is not None:          # <- None here, always
-                    finish_reason = "tool_calls"
-
-        Ollama never puts them there, so finish_reason stays "stop", the Anthropic
-        adapter faithfully maps stop -> end_turn, and the client sees a turn that
-        contains a tool_use block but claims to be finished. Claude Code therefore
-        does NOT execute the tool — the "hang until I type continue" symptom.
-
-        The existing override cites LiteLLM #18922, which it only fixes for the
-        same-chunk case; it misses Ollama's chunk ordering entirely.
-
-        This is provider-agnostic: it keys off a tool_use block actually appearing
-        in the stream, not off any model or provider name. It rewrites exactly one
-        field, on exactly one event, and only when a tool_use block was seen.
-        Each yielded chunk is one complete SSE event (see
-        adapters/streaming_iterator.py:793), so no cross-chunk buffering is needed.
+        Provider-agnostic: it keys off a tool_use block appearing in the stream,
+        never a model or provider name, and rewrites exactly one field on
+        exactly one event. Each yielded chunk is one complete SSE event, so no
+        cross-chunk buffering is needed.
 
         Returns replacement bytes, or None to pass the chunk through untouched.
         """

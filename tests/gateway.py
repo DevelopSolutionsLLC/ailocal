@@ -95,7 +95,9 @@ def load_helpers():
     self-contained by design.
     """
     src = TRACE.read_text()
-    start = src.index("# ── E1: schema version, process generation, token components")
+    # Anchored on CODE, never on a comment banner: a prose edit must not be able
+    # to break a behavioural test.
+    start = src.index("EVENT_VERSION = ")
     end = src.index("def emit(record):")   # helpers end where emit begins
     ns: dict = {}
     exec("import json, os, time\n" + src[start:end], ns)
@@ -109,8 +111,7 @@ def load_completion_helpers():
     litellm installed, which is what lets them run in the gate.
     """
     src = TRACE.read_text()
-    e1 = src[src.index("# \u2500\u2500 E1: schema version, process generation, token components"):
-             src.index("def emit(record):")]
+    e1 = src[src.index("EVENT_VERSION = "):src.index("def emit(record):")]
     fns = src[src.index("def _completion_fields(acc, saw_any_event):"):
               src.index("def _load_registry():")]
     ns: dict = {}

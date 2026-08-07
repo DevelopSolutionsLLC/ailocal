@@ -2,38 +2,23 @@
 persona_injector.py — LiteLLM proxy pre-call hook that gives each role its baked
 "Opus-like" persona, on EVERY client (Claude Code, Codex, Continue, Copilot).
 
-Why a hook and not just an Ollama Modelfile SYSTEM: a Modelfile SYSTEM is only a
-DEFAULT — Ollama uses it only when the request carries no system message. Every
-coding client sends its own system prompt, which overrides the baked persona
-(verified through the proxy: the persona vanished the moment a client system
-message was present). This hook merges the persona INTO whatever system message
-the client sends, so the persona voice survives alongside the client's task
-instructions.
+A hook, not an Ollama Modelfile SYSTEM: a Modelfile SYSTEM applies only when the
+request carries no system message, and every coding client sends its own. This
+merges the persona INTO the client's system message so both survive.
 
-Mechanism (documented): a CustomLogger with async_pre_call_hook, registered via
-  litellm_settings:
-    callbacks: persona_injector.proxy_handler_instance
+TWO ROUTES, TWO INJECTION POINTS — the whole reason this is not one branch:
+  /v1/chat/completions  the system prompt is a role:system entry in
+                        data["messages"]
+  /v1/messages          it is the TOP-LEVEL data["system"] field (string or
+                        content blocks), NOT in messages[]
+
+Registered as a CustomLogger async_pre_call_hook.
 Ref: https://docs.litellm.ai/docs/proxy/call_hooks
 
-Two request shapes, two injection points (both verified to reach the backend on
-LiteLLM 1.92.0 — the async_pre_call_hook bypass of issue #27518 was against
-v1.83.10 and no longer applies here):
-  - OpenAI  (/v1/chat/completions, call_type completion/acompletion/...): the system
-    prompt lives in data["messages"] as a role:system entry — merge the persona there.
-  - Anthropic (/v1/messages, call_type anthropic_messages — the route Claude Code
-    uses): the system prompt lives in the TOP-LEVEL data["system"] field (a string or
-    a list of content blocks), NOT in messages[] — merge the persona into data["system"].
-
-Instruction source of truth: deploy/litellm/instructions/<capability>.md (a shared _core.md
-plus a per-capability enhancer), mounted read-only at $AILOCAL_INSTRUCTIONS_DIR. The
-same files document the Claude Code persona (clients/AGENTS.md), so the text
-lives in one place. ("persona" is retained for the hook/mechanism name; the files
-themselves are capability instruction profiles, not personalities.)
-
-A capability with no <capability>.md gets _core.md alone (or nothing, where the
-capability has no persona at all). Currently that is `fast`, `completion` and
-`embeddings`: the small/FIM/embedding tiers stay lean by design. Adding a file
-is the only step needed to give one an enhancer — no code change.
+Text comes from instructions/<capability>.md (shared _core.md plus a
+per-capability enhancer), mounted read-only at $AILOCAL_INSTRUCTIONS_DIR. A
+capability with no file gets _core.md alone; adding a file is the only step
+needed to give one an enhancer, with no code change.
 """
 
 import glob

@@ -41,17 +41,13 @@ def _say(msg):
 # check looks it up WITH the provider prefix. The lookup raises, the router
 # swallows it, and the whole max_input_tokens validation block is skipped — so an
 # oversized prompt is forwarded unvalidated and silently truncated. The config's
-# own `model_info:` block cannot fix this; the router merges it after the lookup
+# own `model_info:` block cannot fix this: the router merges it after the lookup
 # that throws.
 #
-# Register generated models under the exact prefixed key at startup so pre-call
-# admission checks stay active. Public litellm namespace only — no fork, no
-# vendored patch. The key is whatever `litellm_params.model` says, verbatim, so
-# nothing here is provider-specific; deployments LiteLLM already maps are left
-# alone and genuine upstream pricing is never overridden.
-#
-# Remove when upstream resolves the registration/lookup mismatch: the self-check
-# below then reports every model "already mapped".
+# Registering under the exact prefixed key keeps pre-call admission active.
+# Public litellm namespace only, no vendored patch; the key is whatever
+# `litellm_params.model` says, verbatim, so nothing is provider-specific.
+# DELETE when the self-check below reports every model "already mapped".
 
 
 def _load_model_list():
@@ -177,21 +173,16 @@ def register_local_models():
 #
 #     INFO: 172.18.0.1:58848 - "HEAD /api/hello HTTP/1.1" 404 Not Found
 #
-# The probe originates in the client. Only its HEAD call site reads
-# ANTHROPIC_BASE_URL and reaches this proxy; its two GET call sites read the
-# client's built-in base and do not. GET is served anyway — it costs nothing, and
-# a client build that redirects either onto ANTHROPIC_BASE_URL then gets a 200
-# rather than a fresh 404.
+# Only the client's HEAD call site reads ANTHROPIC_BASE_URL and reaches here;
+# GET is served anyway because it costs nothing.
 #
-# HONEST SCOPE. This removes the 404 and makes the probe succeed. The call site
-# that arrives here discards its result, so this route is NOT proven to be what
-# silences any particular in-terminal API warning.
+# HONEST SCOPE: this removes the 404. The call site discards its result, so the
+# route is NOT proven to silence any particular in-terminal warning.
 #
-# CONSTRAINTS. No model invocation, no router lookup, no backend call. No auth
-# dependency: it is a reachability probe sent before/without credentials, and it
-# discloses nothing — a fixed empty 200. Deliberately NOT a redirect to
-# /health/liveliness: a probe answer must not be confused with real health state.
-# Idempotent, and touches nothing under /v1/*.
+# CONSTRAINTS: no model invocation, no router lookup, no backend call, and no
+# auth dependency — it is a pre-credential reachability probe answered with a
+# fixed empty 200. Not a redirect to /health/liveliness: a probe answer must not
+# be confused with real health state. Touches nothing under /v1/*.
 
 #: Path -> methods. Keep this table tiny and boring: every entry is a static 200
 #: with an empty body, and anything needing real logic does not belong here.
@@ -259,29 +250,22 @@ def register_compat_routes():
 
 
 # ── Anthropic streaming success-logging guard ───────────────────────────────
-# THE BUG (upstream; present in LiteLLM 1.93.0 and 1.94.1). A streamed
-# /v1/messages request carrying a web-search tool makes LiteLLM's own success
-# logging raise. Reproduces with plain curl, no client involved:
+# UPSTREAM BUG, present in LiteLLM 1.93.0 and 1.94.1 (see BerriAI/litellm#27091
+# for the earlier patch to the same method). The websearch path hands a fake
+# stream iterator to _handle_anthropic_messages_response_logging, which
+# validates it as an AnthropicResponse and raises. Non-blocking — the client
+# still gets the stream — but it emits an ERROR traceback per request, which
+# buries real errors.
 #
-#     POST /v1/messages   stream: true   tools: [{"type": "web_search_20250305",
-#                                                 "name": "web_search"}]
-#       -> 3 x "LiteLLM.Success_Call Error: 1 validation error for AnthropicResponse"
+# REPRO, no client involved:
+#     POST /v1/messages  stream: true  tools: [{"type": "web_search_20250305",
+#                                               "name": "web_search"}]
+#       -> 3 x "Success_Call Error: 1 validation error for AnthropicResponse"
 #     the same request with stream: false -> 0 errors
 #
-# The websearch path converts the stream and hands a fake stream iterator to
-# _handle_anthropic_messages_response_logging, which validates it as an
-# AnthropicResponse and raises. Upstream patched that method once before for
-# unhandled types (BerriAI/litellm#27091) and missed this one.
-#
-# Non-blocking: the client still receives the full stream, only LiteLLM's own
-# success/spend logging is skipped. The cost is an ERROR traceback per streamed
-# web-search request, which buries real errors in a log audit.
-#
-# SELF-RETIRING. The guard no-ops if the installed method already handles the
-# type, so an upstream fix disables it and the boot line reports
-# `skipped:`/`already patched`. Re-read the installed method after any upgrade.
-# Delete this section once the curl repro above is clean with the module removed
-# from `litellm_settings.callbacks`.
+# SELF-RETIRING: no-ops if the installed method already handles the type. DELETE
+# this section once the repro above is clean with the module removed from
+# `litellm_settings.callbacks`.
 
 PATCH_MARKER = "_ailocal_fake_stream_guard"
 
