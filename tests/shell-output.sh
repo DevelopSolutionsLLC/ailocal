@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Contract of the shared shell status helpers (lib/output.sh).
+# Contract of the shared shell status helpers (tests/harness.sh).
 #
 # Seventeen scripts render status through these, so a change here is a change
 # everywhere. The stream each helper writes to is part of the contract: callers
 # redirect stdout while expecting warnings and errors to remain visible.
 set -uo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/harness.sh"
-OUT="$ROOT_DIR/lib/output.sh"
+OUT="$ROOT_DIR/tests/harness.sh"
 
 echo "SHELL OUTPUT HELPERS"
-check $([ -f "$OUT" ] && echo 0 || echo 1) "lib/output.sh exists"
+check $([ -f "$OUT" ] && echo 0 || echo 1) "the shared helpers exist"
 
 # Sourcing must be inert and repeatable under every strict mode in use.
 bash -c "set -euo pipefail; . '$OUT'; . '$OUT'; info x" >/dev/null 2>&1
@@ -45,7 +45,7 @@ check $([ $? -ne 0 ] && echo 0 || echo 1) "has fails for a missing command"
 
 # One owner: only the documented exceptions may define these locally.
 strays=$(git -C "$ROOT_DIR" grep -lE '^\s*(info|step|banner|error|has)\(\)' -- '*.sh' \
-         | grep -v 'lib/output.sh' || true)
+         | grep -v 'tests/harness.sh' || true)
 check $([ -z "$strays" ] && echo 0 || echo 1) \
   "no script redefines a shared helper" "${strays:-}"
 

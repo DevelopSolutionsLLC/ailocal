@@ -234,7 +234,7 @@ def resolver_checks() -> None:
 
     # Only policy.py may derive a root from XDG or ~/.local. Anything else is a
     # second owner that drifts the moment one of them moves.
-    for path in sorted(REPO.glob("lib/**/*.py")) + sorted(REPO.glob("benchmarks/*.py")):
+    for path in sorted(REPO.glob("benchmarks/*.py")):
         if path.name == "policy.py":
             continue
         body = path.read_text()

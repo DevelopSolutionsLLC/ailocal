@@ -1,14 +1,8 @@
 """cli.py — the single public command surface.
 
 Dispatch is a TABLE, not a chain of branches: every command differs only by
-interpreter, target and fixed arguments, so the differences are data. The help
-text is rendered from that same table, which is the only way the two cannot
-drift -- three separate copies of the command list had already gone stale
-before this existed.
-
-Implementations still live under lib/ and are executed as subprocesses. ADR 009
-phases 7 onward move them into this package; until then this module owns the
-surface and nothing else.
+target and fixed arguments, so the differences are data. Help is rendered from
+that same table, which is the only way the two cannot drift.
 """
 from __future__ import annotations
 
@@ -21,12 +15,7 @@ BASH = "/bin/bash"
 
 
 def _root() -> Path:
-    """Where lib/ and the deploy assets live: the data root, and nothing else.
-
-    This used to walk up from __file__, which is only ever right inside a
-    checkout -- installed under site-packages it produced a path with no lib/
-    in it. policy.py owns every root; asking it is the whole point.
-    """
+    """Where the deploy assets live: the data root, and nothing else."""
     from . import policy
     return policy.data_root()
 
@@ -72,11 +61,6 @@ NESTED: dict[str, dict[str, tuple]] = {
         "planner": (PY, "benchmarks/planner.py"),
         "gateway": (SH, "benchmarks/gateway.sh"),
     },
-    "e2e": {
-        "claude": (SH, "lib/validate-claude-e2e.sh"),
-        "codex":  (SH, "lib/validate-codex-e2e.sh"),
-        "vscode": (SH, "lib/validate-vscode-e2e.sh"),
-    },
 }
 
 #: Dispatched but NOT advertised. These are single-purpose developer and
@@ -100,7 +84,6 @@ GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("deploy",                     ("clients", "vscode", "models-install")),
     ("installation",               ("audit", "cleanup", "teardown")),
     ("host setup",                 ("autostart",)),
-    ("diagnostics",                ("e2e",)),
     ("the regression gate",        ("test",)),
     ("developer benchmarks",       ("benchmark",)),
     ("the active profile",         ("profile",)),
@@ -134,7 +117,7 @@ def _exec(kind: str, target, args) -> None:
         os.execv(sys.executable, [sys.executable, "-m", str(target)] + tail)
     if not target.exists():
         sys.exit(f"ailocal: missing implementation {target}\n"
-                 f"Set AILOCAL_DATA to the directory containing lib/.")
+                 f"Set AILOCAL_DATA to the installed data root.")
     argv = ([BASH, str(target)] if kind == SH
             else [sys.executable, str(target)]) + tail
     os.execv(argv[0], argv)

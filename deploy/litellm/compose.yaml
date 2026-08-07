@@ -28,7 +28,7 @@ services:
     # Docs: https://docs.litellm.ai/docs/proxy/docker_quick_start
     #
     # Pinned by digest, not tag: a moving tag would change proxy behaviour without
-    # a commit. lib/check-litellm-version.sh gates the running build against
+    # a commit. `ailocal doctor` gates the running build against
     # the validated version.
     image: ghcr.io/berriai/litellm@sha256:a1745e629abfb17d434426ff48b115f54f4f4c4a0f5af241de569e93c63c411e
     container_name: ${AILOCAL_LITELLM_CONTAINER:-ailocal-litellm}
@@ -68,7 +68,7 @@ services:
       # Empty = no capture. Payloads contain tool schemas, not conversation.
       - AILOCAL_TOOL_GATEWAY_CAPTURE=${AILOCAL_TOOL_GATEWAY_CAPTURE:-}
       # session_observer.py — ledger of what each session asked for and which
-      # tools it called. Empty = off. Paired with lib/diagnostics/verify-session.py.
+      # tools it called. Empty = off. Paired with `ailocal verify-session`.
       - AILOCAL_SESSION_LEDGER=${AILOCAL_SESSION_LEDGER:-}
       # request_trace.py — one JSONL record per request. Empty = off.
       # The version this stack was VALIDATED against. `ailocal doctor` compares

@@ -36,10 +36,8 @@ check = _suite.check
 
 # Public validators. A network call in any of these must carry a timeout.
 # Repo-relative: these no longer share a directory now that the checks layer is
-# a package module and the e2e drivers are still shell under lib/.
-PUBLIC = ("src/ailocal/checks/run.py",
-          "lib/validate-claude-e2e.sh", "lib/validate-codex-e2e.sh",
-          "lib/validate-vscode-e2e.sh")
+# a package module and the E2E drivers are shell under tests/.
+PUBLIC = ("src/ailocal/checks/run.py", "tests/e2e.sh")
 
 
 def deterministic_checks() -> None:
@@ -201,28 +199,28 @@ def exits_checks() -> None:
 
 
 def e2e_checks() -> None:
-    """The E2E validators must be bounded and must not leak processes."""
+    """The E2E suite must be bounded and must not leak processes."""
     import subprocess
-    lib = REPO / "lib" / "e2e.sh"
-    check(lib.is_file(), "shared E2E process lifecycle exists")
-
-    for name in ("validate-claude-e2e.sh", "validate-codex-e2e.sh"):
-        src = (REPO / "lib" / name).read_text()
-        check("e2e.sh" in src, f"{name} uses the shared lifecycle")
-
+    suite = REPO / "tests" / "e2e.sh"
+    check(suite.is_file(), "the E2E suite exists")
+    src = suite.read_text()
+    check("e2e_run" in src and src.count("e2e_run()") == 1,
+          "one bounded-execution implementation, shared by every client")
     # Codex must stay honestly blocked: arriving content is not success.
-    codex = (REPO / "lib" / "validate-codex-e2e.sh").read_text()
-    check("BLOCKED_UPSTREAM_LITELLM_27442" in codex,
+    check("BLOCKED_UPSTREAM_LITELLM_27442" in src,
           "codex keeps its upstream-blocked classification")
 
     # A hung child is terminated and leaves nothing behind.
+    # A duration unique to this process: two concurrent suites sweeping the same
+    # literal pattern count each other's children and report a phantom stray.
+    nap = 29000 + os.getpid() % 900
     probe = (
-        f'. "{lib}"\n'
-        'e2e_run 4 /dev/null bash -c "sleep 297 & sleep 297"\n'
+        f'. "{suite}" 2>/dev/null\n'
+        f'e2e_run 4 /dev/null bash -c "sleep {nap} & sleep {nap}"\n'
         'echo "rc=$?"\n'
         'sleep 1\n'
-        'echo "strays=$(pgrep -f \'sleep 297\' | wc -l | tr -d \' \')"\n'
-        'pkill -f "sleep 297" 2>/dev/null || true\n')
+        f'echo "strays=$(pgrep -f \'sleep {nap}\' | wc -l | tr -d \' \')"\n'
+        f'pkill -f "sleep {nap}" 2>/dev/null || true\n')
     r = subprocess.run(["bash", "-c", probe], capture_output=True, text=True,
                        timeout=120)
     check("rc=124" in r.stdout, "a hung client is terminated at its budget",
