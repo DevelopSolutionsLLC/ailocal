@@ -905,15 +905,9 @@ def cmd_status(argv: list[str]) -> int:
     return 0
 
 
-def cmd_compose(argv: list[str]) -> int:
-    """Run one Compose subcommand against this composition: the single entry
-    point for anything outside this module that drives the stack directly."""
-    return compose(*argv, check=False).returncode
-
-
 COMMANDS = {"status": cmd_status, "start": cmd_start, "stop": cmd_stop,
             "update": cmd_update, "teardown": cmd_teardown,
-            "compose": cmd_compose, "trace": cmd_trace,
+            "trace": cmd_trace,
             "metrics": cmd_metrics}
 
 

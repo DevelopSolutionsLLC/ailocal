@@ -25,7 +25,6 @@ COMMANDS: dict[str, tuple[str, tuple]] = {
     "stop":           ("ailocal.runtime", ("stop",)),
     "update":         ("ailocal.runtime", ("update",)),
     "teardown":       ("ailocal.runtime", ("teardown",)),
-    "compose":        ("ailocal.runtime", ("compose",)),
     "clients":        ("ailocal.clients", ()),
     "vscode":         ("ailocal.clients", ("--vscode-only",)),
     "models-install": ("ailocal.install", ("models",)),
@@ -41,7 +40,7 @@ COMMANDS: dict[str, tuple[str, tuple]] = {
 #: with no documented user workflow. They stay reachable because deleting a
 #: working diagnostic is not a simplification, but they do not belong in the
 #: surface a new user reads.
-INTERNAL = frozenset({"trace", "metrics", "compose", "update-check"})
+INTERNAL = frozenset({"trace", "metrics", "update-check"})
 
 #: Help layout: (heading, [command...]). Every non-internal command appears
 #: exactly once; the gate asserts it.
