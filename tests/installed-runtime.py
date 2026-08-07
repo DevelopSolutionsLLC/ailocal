@@ -82,9 +82,15 @@ def main() -> None:
         "AILOCAL_SEARXNG_PORT": PORT_SEARXNG,
     })
 
-    r = run([str(ailocal), "provision", "--from", str(source), "--config", str(cfg),
-             "--data", str(data), "--state", str(state)], env)
-    check(r.returncode == 0, "assets provision into the managed roots", r.stderr[-400:])
+    # Provisioning is a step of `ailocal install`, not a command of its own, so
+    # the installed package's API is what a bootstrap actually calls here.
+    r = run([str(venv / "bin" / "python3"), "-c",
+             "from ailocal import install, policy;"
+             "install.provision(policy.Path(__import__('sys').argv[1]),"
+             " policy.config_root(), policy.data_root(), policy.state_root())",
+             str(source)], env)
+    check(r.returncode == 0, "assets provision into the managed roots",
+          r.stderr[-400:])
     (state / "active-profile").write_text("64gb\n")
     # .env is user configuration and is never shipped; synthesize one so the
     # isolated stack has a key of its own rather than borrowing production's.
