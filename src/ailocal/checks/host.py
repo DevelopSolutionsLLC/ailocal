@@ -54,10 +54,9 @@ def check_cli_tools() -> list[CheckResult]:
 def _models_dir() -> str:
     """Where the running daemon actually stores models.
 
-    The autostart LaunchAgent bakes OLLAMA_MODELS into its own environment and
-    never calls `launchctl setenv`; the env-only path does. Asking the running
-    process is correct under both, with setenv as the no-daemon fallback.
-    """
+    The autostart agent bakes OLLAMA_MODELS into its own environment; the
+    env-only path uses `launchctl setenv`. Asking the running process is correct
+    under both, with setenv as the no-daemon fallback."""
     pid = _run(["lsof", "-ti", ":11434"]).split("\n")[0]
     if pid:
         for tok in _run(["ps", "eww", "-p", pid]).split():
@@ -127,14 +126,10 @@ def doctor_only_checks(architecture_model: str, architecture_context: int) -> li
 
 
 # ── session verification ────────────────────────────────────────────────────
-#
-# Compares what a session CLAIMED to do against what changed on disk. Runs on
-# the host because the proxy container cannot see the repository: it pairs a
-# ledger from deploy/litellm/hooks/session_observer.py with the git delta.
-#
-# The failure it targets is not a wrong answer but a confident report of work
-# that did not happen. It does not claim causation — a delta proves the tree
-# changed while the session ran, not that the session caused it.
+# Pairs a ledger from deploy/litellm/hooks/session_observer.py with the git
+# delta, on the host because the container cannot see the repository. It targets
+# a confident report of work that did not happen, and claims no causation: a
+# delta proves the tree changed while the session ran, not that it caused it.
 
 #: Which tools mutate the tree is a registry fact (registry.yaml:mutating_tools).
 #: PyYAML is absent on the host, so the registry may be unreadable even when
@@ -163,11 +158,8 @@ def _mutating_sets() -> tuple[set, set, str]:
 
 
 def _git_state(repo: pathlib.Path) -> dict | None:
-    """Working-tree delta, or None when `repo` is not a git repository.
-
-    None rather than an empty delta: "not a repo" and "no changes" must not
-    look alike.
-    """
+    """Working-tree delta, or None when `repo` is not a git repository: "not a
+    repo" and "no changes" must not look alike."""
     def git(*args) -> str:
         r = subprocess.run(["git", *args], cwd=repo, capture_output=True,
                            text=True, timeout=120)
@@ -180,8 +172,6 @@ def _git_state(repo: pathlib.Path) -> dict | None:
     stat, staged = git("diff", "--stat"), git("diff", "--cached", "--stat")
     return {
         "changed_paths": len(lines),
-        # The porcelain status field is not reliably two characters wide, so a
-        # fixed slice eats the first character of the path.
         "paths": [l.split(None, 1)[-1] for l in lines[:15]],
         "untracked": sum(1 for l in lines if l.startswith("??")),
         "diff_stat": stat.splitlines()[-1] if stat else "",

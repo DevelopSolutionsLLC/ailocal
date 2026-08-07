@@ -72,12 +72,8 @@ def _extensions() -> list[str]:
 # ── shared mechanics ────────────────────────────────────────────────────────
 
 def backup(path: Path) -> bool:
-    """Timestamped copy, keeping the newest BACKUP_KEEP.
-
-    Unpruned backups turned the deployed roots into landfill — 43 stale copies
-    of one file in a day of iteration. Rollback only ever reaches for a recent
-    one.
-    """
+    """Timestamped copy, keeping the newest BACKUP_KEEP: rollback only ever
+    reaches for a recent one, and unpruned copies turn the roots into landfill."""
     if not path.is_file():
         return False
     dest = path.with_name(f"{path.name}.bak.{datetime.now():%Y%m%d_%H%M%S}")
@@ -171,9 +167,7 @@ def ensure_shell_sourcing(key: str) -> None:
     """The client home, the wrapper env, and two idempotent ~/.zshrc lines.
 
     Those two marker-commented lines are the ONLY footprint ailocal leaves in
-    the user's rc file; everything else lives under the config root, so
-    uninstalling is removing them plus that directory.
-    """
+    the user's rc file; uninstalling is removing them plus the config root."""
     step(f"Setting up {policy.deployed_client_root()}")
     cfg = policy.deployed_client_root()
     cfg.mkdir(parents=True, exist_ok=True)
@@ -207,9 +201,8 @@ def ensure_shell_sourcing(key: str) -> None:
 
     rc = Path(os.environ.get("ZDOTDIR") or Path.home()) / ".zshrc"
     if not rc.exists():
-        # A bare Mac simply has no rc file yet; skipping injection left the
-        # wrappers permanently unavailable and every "source ~/.zshrc" message
-        # below this point failing outright.
+        # A bare Mac has no rc file yet; skipping injection would leave the
+        # wrappers permanently unavailable.
         rc.touch()
         info(f"Created {rc} (none existed)")
     text = rc.read_text(encoding="utf-8")
@@ -296,12 +289,10 @@ def _write_json(path: Path, data, indent) -> None:
 def _provider_group(models_json: Path, dry: bool) -> None:
     """Write the provider group, preserving the SecretStorage key reference.
 
-    The group is a real file and can be written from a script. Only the API key
-    VALUE lives in SecretStorage and cannot be seeded from outside VS Code; the
-    file holds a reference to it, and discarding that reference would force the
-    user to re-enter the key for no reason. Individual model entries are not
-    written: the connector discovers them from the proxy's /model/info.
-    """
+    Only the API key VALUE lives in SecretStorage and cannot be seeded from
+    outside VS Code; the file holds a reference to it, and discarding that
+    reference forces the user to re-enter the key. Model entries are not
+    written: the connector discovers them from the proxy's /model/info."""
     vendor, name = "litellm-connector", "LiteLLM"
     try:
         existing = json.loads(models_json.read_text(encoding="utf-8")) or []
@@ -337,13 +328,11 @@ def _provider_group(models_json: Path, dry: bool) -> None:
 
 
 def _prune_deprecated(settings_json: Path, dry: bool) -> None:
-    """Remove settings VS Code no longer honours.
+    """Remove settings VS Code no longer honours: they make the config look
+    configured while doing nothing.
 
-    Leaving them is not harmless: they make the config look configured while
-    doing nothing, which is how a broken baseUrl went unnoticed. settings.json
-    permits comments and trailing commas, so a stripped copy is parsed to
-    INSPECT and the file is rewritten only when there is something to remove.
-    """
+    settings.json permits comments and trailing commas, so a stripped copy is
+    parsed to INSPECT and the file is rewritten only if something must go."""
     try:
         raw = settings_json.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -446,9 +435,9 @@ def _copilot_instructions() -> None:
                     dest / "session-primer.md")
     info("Copilot instruction files deployed to ~/.copilot/instructions/")
 
-    # Repo-level Copilot instructions are GENERATED: hand-maintaining them lets
-    # the capability table drift from the profile, and a VS Code agent then
-    # follows stale rows. Only meaningful when the data root IS a checkout.
+    # Repo-level Copilot instructions are GENERATED, so the capability table
+    # cannot drift from the profile. Only meaningful when the data root IS a
+    # checkout.
     if (data / ".git").exists():
         (data / ".github").mkdir(exist_ok=True)
         shutil.copyfile(state / "clients/copilot/repo-instructions.md",
@@ -462,10 +451,9 @@ def _continue_config(key: str) -> None:
     Chat/edit go through the proxy; autocomplete goes DIRECT to Ollama, because
     FIM through the proxy is unreliable (continuedev/continue#2907).
 
-    Conditional on the extension being present: writing a keyed config for
-    absent software is dead output and a needless place for a secret to sit.
-    Never installs Continue on the user's behalf; AILOCAL_CONTINUE=1 opts in.
-    """
+    Conditional on the extension being present: a keyed config for absent
+    software is a needless place for a secret to sit. AILOCAL_CONTINUE=1 opts
+    in; Continue is never installed on the user's behalf."""
     cfg = Path.home() / ".continue" / "config.json"
     present = (os.environ.get("AILOCAL_CONTINUE")
                or "continue.continue" in _extensions()
@@ -593,15 +581,13 @@ def target_claude(key: str) -> None:
 def lsp_baseline(root: Path, label: str) -> None:
     """The minimum local-client compatibility baseline ailocal owns.
 
-    The generated settings.json sets ENABLE_LSP_TOOL=1, but a plugin is what
-    puts a language server behind that tool; leaving that elsewhere means an
-    ailocal-only machine advertises a capability that cannot answer.
+    settings.json sets ENABLE_LSP_TOOL=1, but a plugin is what puts a language
+    server behind that tool, so without this an ailocal-only machine advertises
+    a capability that cannot answer.
 
-    ONE LANGUAGE, DELIBERATELY: Python, because this repository is Python and
-    its own agents edit it. Applied to the isolated root AND the user's own
-    ~/.claude — this is a plugin wiring up a binary the user already has, not
-    routing configuration, so the guarantee that cloud client CONFIG is never
-    touched still holds.
+    ONE LANGUAGE, DELIBERATELY: Python. Applied to the isolated root AND to
+    ~/.claude — this wires up a binary the user already has, not routing
+    configuration, so cloud client CONFIG is still never touched.
     """
     plugin = "pyright-lsp@claude-plugins-official"
     if not shutil.which("claude"):
@@ -622,9 +608,8 @@ def lsp_baseline(root: Path, label: str) -> None:
             return 1, ""
         return r.returncode, r.stdout
 
-    # `plugin install` does NOT enable. Checking only for presence let a
-    # DISABLED plugin report as "already present" forever, so claude-local
-    # silently had no working LSP with nothing to say so. Check enablement.
+    # `plugin install` does NOT enable, so presence alone is not enough: a
+    # disabled plugin would report "already present" forever.
     listing = claude("plugin", "list")[1]
     if plugin in listing:
         after = listing.split(plugin, 1)[1].splitlines()[:3]
@@ -680,10 +665,9 @@ def main(argv: list[str]) -> int:
     for name in selected:
         _TARGETS[name](key)
 
-    # Codex MCP is WITHHELD BY POLICY, not missing: Codex cannot dispatch
-    # namespaced tool names, so an MCP server there advertises a surface it
-    # cannot drive. An empty [mcp_servers.*] section is the correct outcome, and
-    # nothing here may invoke another tool's global MCP sync to "repair" it.
+    # Codex MCP is WITHHELD BY POLICY, not missing: an empty [mcp_servers.*]
+    # section is the correct outcome, and nothing here may invoke another
+    # tool's global MCP sync to "repair" it.
     info("Codex MCP intentionally withheld (Codex cannot dispatch namespaced tools)")
     info("  claude-local MCP registrations in .claude.json are preserved.")
 

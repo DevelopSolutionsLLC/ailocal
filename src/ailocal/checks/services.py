@@ -68,17 +68,12 @@ def _key_from(text: str, var: str) -> str:
 
 
 def master_key() -> str:
-    """The LiteLLM master key.
+    """The LiteLLM master key. Nothing outside this module resolves credentials.
 
-    Resolution order matters. clients/env.sh carries ANTHROPIC_API_KEY
-    and OPENAI_API_KEY for the CLIENTS, and those are not necessarily the master
-    key -- measured, they were 12-character placeholders while the running proxy
-    held a 51-character key. An unrecognised key sends LiteLLM to a key database
-    that does not exist here, so a credential fault surfaces as "No connected
-    db." The master key is resolved from its own sources first.
-
-    Callers must not construct this themselves; nothing outside this module
-    should know where credentials live.
+    Order matters: clients/env.sh carries ANTHROPIC_API_KEY and OPENAI_API_KEY
+    for the CLIENTS, which are not necessarily the master key. An unrecognised
+    key sends LiteLLM to a key database that does not exist here, and the fault
+    surfaces as "No connected db" rather than as a credential error.
     """
     if os.environ.get("LITELLM_MASTER_KEY"):
         return os.environ["LITELLM_MASTER_KEY"]
@@ -158,13 +153,9 @@ def container_file(path: str, name: str = CONTAINER) -> str | None:
 def check_litellm_version(name: str = CONTAINER) -> CheckResult:
     """The RUNNING LiteLLM must be the one that was validated.
 
-    `main-stable` floats. It moved under this project once: the runtime was
-    1.93.0 while the documentation claimed 1.92.0, so behaviour recorded as
-    verified had been verified against a version no longer running. The
-    installed distribution metadata is the evidence — litellm exposes no
-    __version__, and trusting the tag is what produced the drift. An
-    unverifiable version is a failure, not a pass.
-    """
+    `main-stable` floats, so the tag is not evidence; the installed distribution
+    metadata is (litellm exposes no __version__). An unverifiable version is a
+    failure, not a pass."""
     expected = _run(["docker", "exec", name, "printenv",
                      "AILOCAL_LITELLM_VERSION"]).stdout.strip()
     if not expected:
@@ -525,12 +516,10 @@ def check_context_window(token: str, alias: str = "ailocal-completion") -> Check
 
 
 # ── container supply chain ──────────────────────────────────────────────────
-#
 # What a vulnerability scanner does not answer: is every declared image pinned
 # to an immutable digest, does the RUNNING image match the DECLARED one, and is
-# the service reachable off-host. A tag is not a pin — `main-stable` moved
-# 1.92.0 -> 1.93.0 under this project, and editing a compose file restarts
-# nothing, so a repository can look patched while the old image keeps serving.
+# the service reachable off-host. Editing a compose file restarts nothing, so a
+# repository can look patched while the old image keeps serving.
 
 def declared_images() -> list[str]:
     """Image references from the compose files, in declaration order."""
@@ -656,10 +645,9 @@ def check_updates(images: list[str]) -> list[CheckResult]:
     """Discovery only. Never pulls over a running service, never rewrites a pin.
 
     Digest inequality alone does not mean "behind": the LiteLLM pin tracks
-    main-stable, which runs AHEAD of the newest tagged release, and comparing
-    digests only once proposed a downgrade as an update. Compare versions where
-    a version is knowable.
-    """
+    main-stable, which runs AHEAD of the newest tagged release, so a digest-only
+    comparison proposes a downgrade as an update. Compare versions where a
+    version is knowable."""
     out = []
     for image in images:
         ref, cur = (image.split("@", 1) + [""])[:2]

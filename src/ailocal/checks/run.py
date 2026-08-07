@@ -188,10 +188,9 @@ def _doctor(argv: list[str]) -> int:
 
 
 # ── the regression gate ─────────────────────────────────────────────────────
-#
-# "Could not run" is failure, never a skip. Several suites need PyYAML and the
-# registry, which exist only inside the proxy image; a host-only run would cover
-# a fraction of the behaviour and still print green.
+# "Could not run" is failure, never a skip: several suites need the registry and
+# PyYAML, which exist only inside the proxy image, so a host-only run would
+# cover a fraction of the behaviour and still print green.
 
 GATE_SLOW_S = int(os.environ.get("AILOCAL_GATE_SLOW_S", "10"))
 
@@ -216,8 +215,7 @@ def _gate_preconditions(repo: pathlib.Path) -> None:
         sys.exit(f"\n  {container} health is {health!r}, not healthy. Fix that "
                  "before trusting any result.")
     # Container health means the proxy PROCESS is up, not that the router serves
-    # /v1/models — which is what several checks need, and what a client wrapper
-    # fails closed on after 5s. 401 counts as ready: it proves the route answers.
+    # /v1/models. 401 counts as ready: it proves the route answers.
     for _ in range(60):
         try:
             S.http_json(f"{S.PROXY}/v1/models", timeout=5)
@@ -247,17 +245,10 @@ def _gate_suites(repo: pathlib.Path, full: bool) -> list:
                     "tests/tool-gateway-impl.py",
                     "AILOCAL_GATEWAY_MODULE=/app/config/hooks/tool_gateway.py")),
             ("persona injection", _suite(py, "tests/gateway.py", "persona")),
-            # Both directions: a repair layer that fires on a tutorial fence
-            # would execute commands the model never intended.
             ("tool-call repair (repairs real calls, refuses examples)",
              _suite(py, "tests/gateway.py", "repair")),
-            # The trace hook reads prompts, system text, tool definitions and
-            # results in order to measure them; each is a place a secret could
-            # enter a log.
             ("E1 trace schema, redaction and token reconciliation",
              _suite(py, "tests/gateway.py", "trace")),
-            # A candidate must not read the answer key, and the comparison must
-            # not measure one model twice.
             ("planner comparison (safe defaults, locking, blinding)",
              _suite(py, "tests/benchmark.py", "planner")),
             ("benchmark library (aliases, geometry, evidence, confinement)",
@@ -266,7 +257,6 @@ def _gate_suites(repo: pathlib.Path, full: bool) -> list:
              _suite(py, "tests/benchmark.py", "command")),
             ("benchmark runtime stages the generated config",
              _suite(py, "tests/benchmark.py", "runtime")),
-            # A leaked worktree per gate run accumulates.
             ("benchmark leaks no git worktree",
              _suite(py, "tests/benchmark.py", "worktree")),
             ("profile resolver (single reader, fail-closed, no 64gb default)",
@@ -279,7 +269,6 @@ def _gate_suites(repo: pathlib.Path, full: bool) -> list:
              _suite(py, "tests/lsp-baseline.py")),
         ]),
         ("INTEGRATION", [
-            # Dry-run only (stub `claude` on PATH, no inference).
             ("client role alias overrides (defaults intact, fails closed)",
              _suite("/bin/bash", "tests/clients.sh", "roles")),
             ("codex MCP is withheld (no grepai/lsp/github, no re-sync)",
@@ -292,12 +281,8 @@ def _gate_suites(repo: pathlib.Path, full: bool) -> list:
              _suite(py, "tests/suite-structure.py")),
             ("generation rolls back on partial failure (never mixed on disk)",
              _suite(py, "tests/generation-rollback.py")),
-            # Provisioning writes OUTSIDE the checkout, so "an edited profile is
-            # never overwritten" is what protects an operator's policy.
             ("install: provisioning, provenance and tier selection",
              _suite(py, "tests/install.py")),
-            # Claude Code sends Anthropic-shaped probes LiteLLM does not
-            # implement; asserts the probe answers AND that nothing else moved.
             ("client compatibility probes (/api/hello, no side effects)",
              _suite("/bin/bash", "tests/compat-routes.sh")),
         ]),
@@ -310,8 +295,6 @@ def _gate_suites(repo: pathlib.Path, full: bool) -> list:
             ("every registered hook imports inside the proxy image", _hooks_import),
             ("installers are idempotent",
              _suite("/bin/bash", "tests/idempotent-install.sh")),
-            # The audit exits 3 on actionable items; only exit 1 (the audit
-            # itself broke) fails the gate.
             ("installation audit runs cleanly", _audit_runs),
         ]),
     ]
@@ -383,8 +366,8 @@ def _timeouts_aligned(repo: pathlib.Path) -> tuple[int, str]:
 
 
 def _hooks_import(repo: pathlib.Path) -> tuple[int, str]:
-    """A registered-but-unimportable callback takes the container down at boot:
-    a sibling import that works on the host fails under LiteLLM's loader."""
+    """A registered-but-unimportable callback takes the container down at boot,
+    and a sibling import that works on the host fails under LiteLLM's loader."""
     program = (
         "import importlib.util, sys\n"
         "bad = []\n"

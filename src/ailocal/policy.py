@@ -6,10 +6,8 @@ active-profile marker in $AILOCAL_STATE selects a tier and HAS NO IMPLICIT
 DEFAULT. Policy is TOML because tomllib is in the standard library and rejects
 duplicate keys and duplicate tables outright (ADR 010).
 
-ONE READER, NO FALLBACK. A second implementation drifts, and the shape it drifts
-into is `cat active-profile 2>/dev/null || echo 64gb` — a suppressed read
-falling through to a hardcoded tier, which on a 32 GB machine pulls models that
-do not fit. So this module fails closed: a missing marker is an error.
+ONE READER, NO FALLBACK: this module fails closed, because a tier guessed on a
+32 GB machine pulls models that do not fit.
 """
 from __future__ import annotations
 
@@ -32,10 +30,8 @@ NON_ROLE_SECTIONS = ("compaction",)
 #: a value this module invents would not be one any generated config ever had.
 REQUIRED_ROLE_FIELDS = ("role", "active", "context_input")
 
-#: LEGACY. `context` meant the TOTAL window in production and the INPUT budget in
-#: the benchmark — the ambiguity behind the over-admission defect fixed in
-#: 23d2c19. It is now an error, not a fallback: a profile carrying it has not
-#: been migrated, and guessing which meaning was intended is how the two
+#: `context` was ambiguous — TOTAL window in one reader, INPUT budget in
+#: another. It is an error, not a fallback: guessing which was meant is how both
 #: interpretations survived side by side.
 LEGACY_CONTEXT_FIELD = "context"
 
@@ -65,11 +61,8 @@ ROLE_CONFIG_INVALID = "ROLE_CONFIG_INVALID"
 
 
 class ProfileError(Exception):
-    """Carries a CODE, never file contents.
-
-    Profiles are not secret, but an error string is the easiest place for
-    configuration to leak into a log that is pasted somewhere else. The code and
-    the offending key are enough to act on."""
+    """Carries a CODE and the offending key, never file contents: an error
+    string is the easiest place for configuration to leak into a pasted log."""
 
     def __init__(self, code: str, detail: str = ""):
         self.code = code
@@ -82,14 +75,10 @@ CLIENTS = ("claude", "codex", "continue", "compat")
 
 
 # ── the three roots (ADR 009) ───────────────────────────────────────────────
-# Installed code, user-editable configuration, installed data assets and
-# generated state have separate homes. These three functions are the ONLY
-# implementations of that resolution; nothing else may compute a root.
-#
-# Policy is XDG throughout, with an AILOCAL_* override per root. Config and data
-# still default to the checkout: ADR 009 phase 4 moves those defaults to the XDG
-# locations, and having the override path already in place keeps that a
-# one-line change per root rather than a second migration.
+# User-editable configuration, installed data assets and generated state have
+# separate homes, XDG throughout with an AILOCAL_* override per root. These
+# functions are the ONLY implementations of that resolution; nothing else may
+# compute a root.
 
 def _xdg(var: str, *fallback: str) -> Path:
     return Path(os.environ.get(var) or os.path.join(
@@ -101,8 +90,7 @@ def state_root(override_path=None) -> Path:
 
     One artifact -- the rendered SearXNG settings -- carries the Brave API key,
     and living outside Git's tree makes committing it impossible rather than
-    merely discouraged. All generated state shares that root so there is one
-    place to inspect, back up, repair and remove.
+    merely discouraged.
     """
     if override_path is not None:
         return Path(override_path)
@@ -135,19 +123,15 @@ def data_root(repo_root=None) -> Path:
 def deployed_client_root() -> Path:
     """Where generated client configuration is installed for clients to read.
 
-    Already the XDG config location; ADR 009 phase 4 makes config_root() resolve
-    here too, at which point the two converge. The shell surfaces spell this the
-    same way, so changing it means changing them together.
-    """
+    The shell surfaces spell this path themselves, so changing it means changing
+    them together."""
     return _xdg("XDG_CONFIG_HOME", ".config") / "ailocal"
 
 
 def benchmark_tooling_root() -> Path:
     """Third-party benchmark tooling: the lm-eval venv and the RULER checkout.
 
-    XDG data rather than the state root: these are installed artifacts, not
-    machine state, and re-downloading them costs hundreds of megabytes.
-    """
+    XDG data rather than state: installed artifacts, not machine state."""
     return _xdg("XDG_DATA_HOME", ".local", "share") / "ailocal" / "benchmark"
 
 
@@ -175,9 +159,7 @@ def client_policy_path(repo_root=None) -> Path:
 
 def _read_toml(path: Path, missing: str, invalid: str) -> dict:
     """Parse a policy file. tomllib rejects duplicate keys and duplicate tables,
-    which is the failure this fails closed on: a repeated section used to leave
-    only the last one, so a merge artefact changed the deployed model silently.
-    """
+    so a merge artefact cannot silently change the deployed model."""
     if not path.exists():
         raise ProfileError(missing, str(path))
     try:
@@ -220,8 +202,7 @@ def slot_problems(tier=None, repo_root=None) -> list:
 
     Returns (severity, message) pairs; "error" must fail generation, "warning"
     is a papercut. The rule lives here because it compares client policy against
-    profile geometry, and both are owned here -- the generator enforces it and
-    validation reports it, from one implementation.
+    profile geometry, and policy owns both.
     """
     import collections
 
@@ -313,11 +294,9 @@ def _validate_role(role: str, cfg) -> None:
         raise ProfileError(PROFILE_SCHEMA_INVALID,
                            f"{role} still uses legacy `context`; migrate to "
                            "context_input + max_output")
-    # UNKNOWN FIELDS ARE ERRORS, NOT NOISE. Only recognised keys were ever
-    # copied out, so `temprature: 0.1` parsed cleanly, was silently discarded,
-    # and the role ran at the default temperature -- a tuning value that reads
-    # as set in review and is not. Same for `topk`, `keepalive`, and any field
-    # a schema migration retires (`num_predict`).
+    # UNKNOWN FIELDS ARE ERRORS, NOT NOISE: only recognised keys are copied
+    # out, so `temprature = 0.1` would otherwise read as set in review while the
+    # role ran at the default.
     unknown = sorted(set(cfg) - _known_role_fields())
     if unknown:
         raise ProfileError(PROFILE_SCHEMA_INVALID,
@@ -334,8 +313,7 @@ def _validate_role(role: str, cfg) -> None:
         return                      # embedding route: no generation, no reserve
     if not isinstance(mo, int) or mo <= 0:
         # -1/-2 (Ollama infinite/fill) are rejected: an unbounded reserve makes
-        # admission uncomputable, which is how implementation ended up admitting
-        # its whole window.
+        # admission uncomputable.
         raise ProfileError(ROLE_CONFIG_INVALID,
                            f"{role}.max_output must be a positive integer")
 
@@ -348,12 +326,10 @@ def geometry(context_input, max_output):
         num_predict       = max_output                   -> backend ceiling
         max_input_tokens  = context_input                -> admission
 
-    Admission equals context_input BY CONSTRUCTION, so the over-admission class
-    of defect cannot recur: there is no second place to get it wrong.
-
-    max_output is the only ceiling that binds. Measured on LiteLLM 1.93.0
-    ollama_chat: a per-request max_tokens of 512 against an alias declaring
-    num_predict 32768 returned 4,199 tokens. Client limits are advisory here.
+    Admission equals context_input BY CONSTRUCTION, so there is no second place
+    to get over-admission wrong. max_output is the only ceiling that binds:
+    [REAL] a per-request max_tokens of 512 against an alias declaring
+    num_predict 32768 returned 4,199 tokens (LiteLLM 1.93.0, ollama_chat).
     """
     if not isinstance(context_input, int) or context_input <= 0:
         raise ProfileError(ROLE_CONFIG_INVALID, f"context_input={context_input!r}")
@@ -372,14 +348,13 @@ def geometry(context_input, max_output):
 def resolve_role(tier: str, role: str, repo_root=None, _data=None) -> dict:
     """One role's effective configuration.
 
-    `enabled` mirrors the benchmark's existing rule: no backend, or an explicit
-    disable, means the capability does not ship and must not be treated as
-    though it did."""
+    `enabled` is false when there is no backend or an explicit disable: the
+    capability does not ship and must not be treated as though it did.
+
+    `_data` lets a caller that has already parsed the profile pass it in, so
+    profile_summary() parses the file once rather than once per role."""
     if role in NON_ROLE_SECTIONS:
         raise ProfileError(ROLE_MISSING, f"{role} is not a capability role")
-    # `_data` lets a caller that has ALREADY parsed the profile pass it in.
-    # profile_summary() used to parse once for itself and then again inside
-    # this function for every role -- seven parses of the same file per call.
     data = load_profile(tier, repo_root) if _data is None else _data
     if role not in data:
         raise ProfileError(ROLE_MISSING, role)
@@ -390,9 +365,8 @@ def resolve_role(tier: str, role: str, repo_root=None, _data=None) -> dict:
            "enabled": bool(active)
                       and active.lower() not in ("none", "false", "disabled"),
            **geometry(cfg.get("context_input"), cfg.get("max_output"))}
-    # `context` is retained as an ALIAS for total_context so existing readers
-    # (benchmark cross-tier planning, status) keep working. It is derived, never
-    # configured.
+    # `context` is an alias for total_context, read by benchmark cross-tier
+    # planning and status. Derived, never configured.
     out["context"] = out["total_context"]
     for f in OPTIONAL_ROLE_FIELDS:
         out[f] = cfg.get(f)
@@ -412,11 +386,10 @@ def profile_summary(tier: str, repo_root=None) -> dict:
     }
 
 
-# ── runtime: read the GENERATED artifact, never the YAML ────────────────────
+# ── runtime: read the GENERATED artifact, never the profile ─────────────────
 # Everything after generation reads this. No consumer falls back to parsing a
-# profile: a fallback would silently resurrect the second parser this whole
-# change exists to remove, and would mask a stale generation instead of
-# reporting it.
+# profile: that would resurrect a second parser and mask a stale generation
+# instead of reporting it.
 EFFECTIVE_PROFILE_MISSING = "EFFECTIVE_PROFILE_MISSING"
 EFFECTIVE_PROFILE_STALE_TIER = "EFFECTIVE_PROFILE_STALE_TIER"
 EFFECTIVE_PROFILE_STALE_SOURCE = "EFFECTIVE_PROFILE_STALE_SOURCE"
@@ -433,9 +406,9 @@ def _sha(path: Path) -> str:
 def load_effective(repo_root=None, state=None) -> dict:
     """The generated effective profile, validated against its own inputs.
 
-    Staleness is DETECTED, not assumed away: the artifact records the hashes of
-    the profile and the active marker it was generated from, so editing either
-    without re-running sync is an error rather than a silently wrong runtime."""
+    Staleness is DETECTED: the artifact records the hashes of the profile and
+    the marker it came from, so editing either without re-running sync is an
+    error rather than a silently wrong runtime."""
     root = config_root(repo_root)
     path = effective_profile_path(state)
     if not path.exists():
@@ -467,9 +440,8 @@ def load_effective(repo_root=None, state=None) -> dict:
     if data.get("active_profile_sha256") and \
             _sha(marker) != data["active_profile_sha256"]:
         raise ProfileError(EFFECTIVE_PROFILE_STALE_TIER, "marker changed")
-    # EVERY normalized tier is checked, not just the active one: benchmark
-    # cross-tier planning reads them, and a stale 32gb block would otherwise be
-    # served silently on a 64gb machine.
+    # EVERY normalized tier is checked, not just the active one: cross-tier
+    # planning reads them all.
     for t, blk in (data.get("tiers") or {}).items():
         src = root / blk["source_profile"]
         if blk.get("source_profile_sha256") and _sha(src) != blk["source_profile_sha256"]:

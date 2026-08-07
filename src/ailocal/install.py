@@ -323,11 +323,9 @@ def _install_prerequisites(assume_yes: bool) -> None:
 
 
 def _accept_docker_license() -> None:
-    """Pre-seed the key Docker writes when you click Accept.
-
-    The file is user-owned, so this needs no sudo, and it is what keeps the
-    install non-interactive. Two spellings cover current and legacy versions.
-    """
+    """Pre-seed the key Docker writes when you click Accept: user-owned, so no
+    sudo, and it is what keeps the install non-interactive. Two spellings cover
+    current and legacy versions."""
     d = Path.home() / "Library" / "Group Containers" / "group.com.docker"
     d.mkdir(parents=True, exist_ok=True)
     for name, key in (("settings-store.json", "LicenseTermsVersion"),
@@ -387,10 +385,8 @@ def _migrate_model_store() -> None:
     """Move ~/.ollama/models into the shared store before repointing OLLAMA_MODELS.
 
     Repointing without migrating orphans what is already there: Ollama finds
-    nothing and silently re-downloads tens of gigabytes with the originals still
-    on disk. Same volume, so each move is a rename; one file at a time, so an
-    interruption leaves a resumable state.
-    """
+    nothing and silently re-downloads tens of gigabytes. Same volume, so each
+    move is a rename; one file at a time, so an interruption is resumable."""
     src, dst = Path.home() / ".ollama" / "models", Path(MODEL_STORE)
     if not src.is_dir() or not any(src.iterdir()) or src.resolve() == dst.resolve():
         return
@@ -479,9 +475,8 @@ def cmd_autostart(argv: list[str]) -> int:
                  env=OLLAMA_ENV)
     ok(f"ollama serve managed by launchd (env baked in, logs in {LOG_DIR})")
 
-    # The agent must never carry a baked model tag: it went on warming a model
-    # the profile had replaced, failing silently with nobody looking. Resolve
-    # through the installed command at run time.
+    # The agent must never carry a baked model tag, or it warms a model the
+    # profile has since replaced. Resolve through the command at run time.
     role = argv[argv.index("--model") + 1] if "--model" in argv else "architecture"
     agents_dir = policy.state_root() / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
@@ -508,12 +503,9 @@ curl -fsS -m 300 "$O/api/generate" -d "{{\\"model\\":\\"$M\\",\\"keep_alive\\":$
 def cmd_update_check(argv: list[str]) -> int:
     """A weekly supply-chain check. Reports; never upgrades anything.
 
-    One scheduler for the machine, invoking each product's own check so that
-    logic stays with its owner. A generated job must never embed a checkout path
-    (ADR 009): moving the checkout would break it silently on someone else's
-    timetable, so the installed command is resolved absolutely or the install is
-    refused.
-    """
+    One scheduler for the machine, invoking each product's own check. A
+    generated job must never embed a checkout path (ADR 009), so the installed
+    command is resolved absolutely or the install is refused."""
     label = "com.ailocal.update-check"
     if "--uninstall" in argv:
         _bootout(label)
@@ -573,9 +565,7 @@ def cmd_models(argv: list[str]) -> int:
     """Pull the model set for the active tier.
 
     Enabled capabilities only, deduplicated by tag, sized from what Ollama
-    reports and reduced by what is already on disk: a machine that already holds
-    the models needs no additional space and must not be rejected as if it did.
-    """
+    reports and reduced by what is already on disk."""
     if not _has("ollama"):
         raise SystemExit("  Ollama CLI not found. Install from https://ollama.ai/download")
     if not _out("ollama", "list"):
@@ -631,11 +621,8 @@ def _memory_gb() -> int:
 
 
 def tier_for_memory(gb: int) -> str | None:
-    """Never round up: a tier is chosen only when the machine has that memory.
-
-    Selecting at a fraction of the tier's name hands a machine models sized for
-    memory it does not have.
-    """
+    """Never round up: a tier is chosen only when the machine has that memory,
+    or it is handed models sized for memory it does not have."""
     return next((t for t in ("128gb", "64gb", "32gb", "16gb")
                  if gb >= int(t[:-2])), None)
 
@@ -724,13 +711,12 @@ def _write_env(assume_yes: bool) -> None:
 
 
 # ── the audit / cleanup pair ────────────────────────────────────────────────
+# Two configs per client are CORRECT: the cloud root stays separate from the
+# local one, so findings are CLASSIFIED rather than listed — flagging that pair
+# would push someone into deleting a working setup.
 #
-# Two configs per client are CORRECT here: ailocal keeps the cloud root separate
-# from the local one so both coexist. Flagging that pair would push someone into
-# deleting a working setup, so every finding is classified rather than listed.
-#
-# Out of scope by design: ~/.claude and ~/.codex, VS Code SecretStorage, anything
-# git tracks, and any container not named ailocal-*.
+# Out of scope by design: ~/.claude and ~/.codex, VS Code SecretStorage,
+# anything git tracks, and any container not named ailocal-*.
 
 def audit() -> list:
     """Read-only. Returns findings; never deletes, moves or rewrites anything."""
@@ -780,9 +766,8 @@ def audit() -> list:
             flag("STALE", f"{label} is installed but not running", plist,
                  f"launchctl bootstrap gui/{os.getuid()} '{plist}'")
 
-    # A process count does not prove ownership of the port: the GUI app can hold
-    # :11434 while the agent is unloaded, so the stack looks healthy until the
-    # app is quit and nothing managed restarts the backend.
+    # A process count does not prove ownership of the port: the GUI app can
+    # hold :11434 while the agent is unloaded.
     holder = next((l.split()[1] for l in
                    _out("lsof", "-nP", "-iTCP:11434", "-sTCP:LISTEN").splitlines()[1:]), "")
     agent = next((l.split()[0] for l in _out("launchctl", "list").splitlines()
@@ -922,8 +907,8 @@ def cmd_install(argv: list[str]) -> int:
     step("Configuring environment (.env)")
     _write_env(assume_yes)
 
-    # Generation must succeed before anything is pulled, and the plan below is
-    # rendered from the generated artifact so it cannot report stale numbers.
+    # Generation must succeed before anything is pulled; the plan below renders
+    # from the generated artifact, so it cannot report stale numbers.
     step("Generating configuration")
     from . import generation
     if generation.main([]):
