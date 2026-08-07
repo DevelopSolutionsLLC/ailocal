@@ -78,7 +78,7 @@ def _yes(prompt: str) -> bool:
 
 # ── provisioning ────────────────────────────────────────────────────────────
 
-DATA_COMPONENTS = ("lib", "deploy", "clients")
+DATA_COMPONENTS = ("deploy", "clients")
 CONFIG_COMPONENTS = ("profiles",)
 MANIFEST_NAME = "install-manifest.json"
 
@@ -193,6 +193,14 @@ def provision(source: Path, config: Path, data: Path, state: Path) -> dict:
             retired.append(rel)
         else:
             preserved.append(rel)
+
+    # A component that is no longer shipped is removed, not left to rot as a
+    # data root nobody writes to any more.
+    for stale in data.iterdir():
+        if stale.is_dir() and stale.name not in DATA_COMPONENTS \
+                and not stale.name.startswith("."):
+            if stale.name in ("lib",):
+                shutil.rmtree(stale)
 
     # Data components are replaced by RENAME, so a running container keeps its
     # bind mount on the unlinked old directory and sees an empty /app/config

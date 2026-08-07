@@ -42,6 +42,18 @@ skip() {   # skip <label> [reason]
 
 section() { printf '\n%s\n' "$1"; }
 
+# Status-line rendering. `error` does NOT exit: callers decide, and several
+# continue deliberately. Colour follows NO_COLOR and is dropped when stdout is
+# not a terminal.
+if [ -n "${NO_COLOR:-}" ] || [ ! -t 1 ]; then _O_BLUE='' _O_RESET=''
+else _O_BLUE=$'\033[1;34m' _O_RESET=$'\033[0m'; fi
+banner() { printf '%s==>%s %s\n' "$_O_BLUE" "$_O_RESET" "$*"; }
+step()   { echo; echo "▶ $*"; }
+info()   { echo "  ✓ $*"; }
+warn()   { echo "  ⚠ $*" >&2; }
+error()  { echo "  ✗ $*" >&2; }
+has()    { command -v "$1" >/dev/null 2>&1; }
+
 report() {  # report [suite-name]
   printf '\n'
   if [ "$_fails" -gt 0 ]; then

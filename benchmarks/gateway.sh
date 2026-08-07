@@ -50,7 +50,7 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$WORKDIR" "$OUT"
 printf 'print("the answer is 42")\n' > "$WORKDIR/sample.py"
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/output.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../tests/harness.sh"
 
 # This script flips a production setting. If it dies partway — a bad flag, a
 # Ctrl-C, an unhealthy proxy — it must not leave the proxy in a mode the

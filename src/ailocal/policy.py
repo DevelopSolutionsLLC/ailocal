@@ -404,9 +404,6 @@ def profile_summary(tier: str, repo_root=None) -> dict:
     data = load_profile(tier, repo_root)
     return {
         "tier": tier,
-        # Exposed so shell entry points never grep the YAML for it. lib/install.sh
-        # read `status:` with grep, which was the last profile-YAML read left in
-        # a shell script.
         "status": data.get("status") or "unknown",
         "disk_gb": data.get("disk_gb"),
         "compaction": data.get("compaction", {}),

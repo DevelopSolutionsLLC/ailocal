@@ -30,7 +30,7 @@ cd "$ROOT"
 INCLUDE_VSCODE=""
 [ "${1:-}" = "--include-vscode" ] && INCLUDE_VSCODE=1
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/output.sh"
+
 
 fingerprint() { # $1=label -> writes /tmp/ailocal-fp-$1.txt
   local out="/tmp/ailocal-fp-$1.txt"

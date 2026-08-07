@@ -88,7 +88,7 @@ def main() -> None:
     stale.unlink()
 
     _suite.section("DATA IS REPLACED WHOLESALE")
-    stray = data / "lib" / "not-shipped.sh"
+    stray = data / "deploy" / "not-shipped.sh"
     stray.write_text("# left behind by an older version\n")
     I.provision(REPO, cfg, data, state)
     check(not stray.exists(), "a file no longer shipped is gone after an upgrade")
