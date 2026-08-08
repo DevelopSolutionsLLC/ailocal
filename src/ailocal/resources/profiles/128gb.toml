@@ -57,7 +57,7 @@ active = "gemma4:26b-mlx"
   # Capabilities: tools YES, insert YES, thinking NO.
 reasoning = true
 context_input = 245760
-max_output = 8192
+max_output = 16384
 temperature = 0.1
 keep_alive = -1  # same physical model as architecture
 persona = true
@@ -74,7 +74,7 @@ role = "Code review"
 active = "gemma4:26b-mlx"
 reasoning = true  # thinking AND tools (deepseek had NO tools)
 context_input = 245760
-max_output = 4096
+max_output = 16384
 temperature = 0.2
 keep_alive = -1  # same physical model as architecture
 persona = true

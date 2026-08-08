@@ -14,18 +14,23 @@
 # (registry.yaml, runtime_engines.llama_cpp). Four roles sharing one backend must
 # declare an IDENTICAL total_context, or whichever loads the runner first
 # silently decides the window for the other three. The roles below differ in
-# context_input (90112 vs 94208) while max_output offsets it (8192 vs 4096) to
-# the same 98304 total: the split is a role boundary, the total is a runner
+# context_input (90112 vs 102400) while max_output offsets it (16384 vs 4096) to
+# the same 106496 total: the split is a role boundary, the total is a runner
 # constraint.
 #
 # THIS IS THE ONE TIER WHERE MEMORY, NOT LATENCY, SETS THE CEILING. KV is
 # allocated EAGERLY for the whole declared window and again per parallel slot.
 # [REAL] qwen3.5:4b costs ~22.7 KB per ctx-token; with OLLAMA_NUM_PARALLEL=2,
-# num_ctx 98304 holds ~7.0 GiB (weights ~2.8 GiB + 2 x 2.1 GiB KV) whether or not
-# it is used. Adding the FIM model and embeddings puts the tier near 8.9 GiB of
-# 16 GB, leaving macOS its share. num_ctx 131072 would cost ~8.5 GiB for the
+# num_ctx 106496 holds ~7.4 GiB (weights ~2.8 GiB + 2 x 2.3 GiB KV) whether or not
+# it is used. Adding the FIM model and embeddings puts the tier near 8.8 GiB of
+# 16 GB, leaving macOS its share. num_ctx 131072+ would cost ~8.5 GiB for the
 # primary alone and was rejected on that basis, NOT on model capability --
 # qwen3.5:4b supports 262144 natively.
+#
+# max_output 16384 is why the total is 106496 rather than 98304: an output
+# ceiling is charged eagerly here, so 8K of extra headroom costs ~370 MB even
+# when nothing generates that long. `fast` keeps 4096 -- it answers in a word or
+# two, and it is the role with documented runaway behaviour.
 #
 # num_predict is a generation CEILING, not an expected output length and not an
 # extra fixed allocation.
@@ -41,12 +46,12 @@ active = "qwen3.5:4b"
 preferred = ["qwen3.5:4b"]
 reasoning = true
 context_input = 90112
-max_output = 8192
+max_output = 16384
 temperature = 0.1
 keep_alive = "6h"
 persona = true
 purpose = ["architecture", "refactoring", "multi-step debugging", "design"]
-strengths = ["shared resident primary - no load/evict churn", "native tool calling", "88K context"]
+strengths = ["shared resident primary - no load/evict churn", "native tool calling", "88K input, 16K output"]
 weaknesses = ["smaller than the 64 GB tier's specialised models", "one backend serves four roles"]
 top_p = 0.9
 top_k = 20
@@ -58,7 +63,7 @@ active = "qwen3.5:4b"
 preferred = ["qwen3.5:4b"]
 reasoning = false
 context_input = 90112
-max_output = 8192
+max_output = 16384
 temperature = 0.1
 keep_alive = "6h"
 persona = true
@@ -75,7 +80,7 @@ active = "qwen3.5:4b"
 preferred = ["qwen3.5:4b"]
 reasoning = true
 context_input = 90112
-max_output = 8192
+max_output = 16384
 temperature = 0.2
 keep_alive = "6h"
 persona = true
@@ -93,7 +98,7 @@ active = "qwen3.5:4b"
   # classification tier that thinks past its budget returns empty content.
 reasoning = false
 preferred = ["qwen3.5:4b"]
-context_input = 94208
+context_input = 102400
 max_output = 4096
 temperature = 0.0
 keep_alive = "6h"
@@ -153,12 +158,17 @@ weaknesses = ["2048-token ceiling - chunk before embedding"]
 #    40,002 tok ->  56.2s ( 711 tok/s)
 #    70,002 tok -> 127.8s ( 548 tok/s)
 #
+# WHY THIS IS HIGHER THAN A COLD-PREFILL BUDGET ALONE WOULD ALLOW: an
+# interactive session grows incrementally and hits Ollama's prefix cache every
+# turn, so the full cold cost above is paid on session RESUME, not per turn.
+# Sizing the trigger for the resume case penalises every ordinary turn to protect
+# the rare one. 67,584 leaves 22,528 tokens of admissible input in reserve for the
+# compaction prompt, system instructions, tool schemas and persona injection.
+#
 # [UNVERIFIED] on 16 GB hardware, and this is the tier where that gap matters
-# most: a 16 GB Mac is the slowest GPU ailocal supports, so the same prompt costs
-# materially more there than the figures above. The trigger is raised only
-# modestly (45,875 -> 51,609) for that reason -- the ceiling moved much further
-# than the interactive threshold did, which is the intended split.
+# most: a 16 GB Mac is the slowest GPU ailocal supports, so a cold resume at this
+# depth will cost materially more there than the figures above suggest.
 [compaction]
-window = 73728  # effective window handed to the client's compactor
-pct = 70  # compact at this % of the window
-  # trigger: 51609 tokens
+window = 90112  # effective window handed to the client's compactor
+pct = 75  # compact at this % of the window
+  # trigger: 67584 tokens

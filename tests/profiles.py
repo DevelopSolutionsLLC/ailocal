@@ -467,8 +467,8 @@ def hardware_checks() -> None:
     # ── the agreed tier design ──────────────────────────────────────────────────
     print("\nTIER DESIGN")
     SHARED = ("architecture", "implementation", "review", "fast")
-    for tier, primary, total in (("16gb", "qwen3.5:4b", 98304),
-                                 ("32gb", "qwen3.5:9b", 131072)):
+    for tier, primary, total in (("16gb", "qwen3.5:4b", 106496),
+                                 ("32gb", "qwen3.5:9b", 139264)):
         caps, _ = PARSED[tier]
         check(all(caps[c].get("active") == primary for c in SHARED),
               f"{tier} shares {primary} across {', '.join(SHARED)}",
@@ -493,8 +493,8 @@ def hardware_checks() -> None:
               f"{tier} primary total_context is {total}", repr(totals))
         # num_predict is now DERIVED from max_output; the profile declares the
         # intent, not the backend parameter name.
-        check(caps["architecture"].get("max_output") == 8192,
-              f"{tier} primary output ceiling is 8192")
+        check(caps["architecture"].get("max_output") == 16384,
+              f"{tier} primary output ceiling is 16384")
         check(caps["completion"].get("active") == "qwen2.5-coder:1.5b",
               f"{tier} completion uses qwen2.5-coder:1.5b (native FIM)")
 
@@ -514,6 +514,23 @@ def hardware_checks() -> None:
     check(int(c64["architecture"]["context_input"]) + int(c64["architecture"]["max_output"])
           == 147456,
           "64gb architecture total_context is 147456")
+
+    # THE OUTPUT-CEILING POLICY, stated once so a future edit has to argue with
+    # it rather than drift past it. The reasoning tiers get 16384 on every tier:
+    # no model here caps num_predict below its context, so the ceiling is a
+    # policy choice, not a capability. `fast` and `completion` are the two
+    # deliberate exceptions -- fast answers in a word or two (and is the role
+    # with recorded runaway behaviour), completion is FIM and must stay short.
+    for tier in PROFILES:
+        caps, _ = PARSED[tier]
+        for cap in ("architecture", "implementation", "review"):
+            check(int(caps[cap]["max_output"]) == 16384,
+                  f"{tier}.{cap} output ceiling is 16384",
+                  f"got {caps[cap].get('max_output')}")
+        check(int(caps["fast"]["max_output"]) == 4096,
+              f"{tier}.fast stays at 4096 (classification, not generation)")
+        check(int(caps["completion"]["max_output"]) == 128,
+              f"{tier}.completion stays at 128 (FIM)")
 
     # No role may declare more than its model can actually hold. This is the
     # ceiling that stops a future raise from inventing capacity: every chat model
@@ -606,8 +623,8 @@ def hardware_checks() -> None:
     # profile's [compaction] block. Cold, not warm: a warm runner reports its
     # prefix cache, and a resumed session is exactly the case that has none.
     DANGER = {
-        "16gb":  55000,    # qwen3.5:4b   548 tok/s @ 70K, and the slowest GPU
-        "32gb":  70000,    # qwen3.5:9b   421 tok/s @ 70K
+        "16gb":  75000,    # qwen3.5:4b   548 tok/s @ 70K, and the slowest GPU
+        "32gb":  100000,   # qwen3.5:9b   421 tok/s @ 70K
         "64gb":  120000,   # gemma4-mlx   598 tok/s @ 137K
         "128gb": 145000,   # same model, same clock; more RAM buys no speed
     }

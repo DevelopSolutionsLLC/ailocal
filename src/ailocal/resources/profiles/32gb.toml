@@ -14,14 +14,16 @@
 # (registry.yaml, runtime_engines.llama_cpp). Four roles sharing one backend must
 # therefore declare an IDENTICAL total_context, or whichever role loads the
 # runner first silently decides the window for the other three. That is why the
-# roles below differ in context_input (122880 vs 126976) while max_output offsets
-# it (8192 vs 4096) to the same 131072 total -- the split is a role boundary, the
+# roles below differ in context_input (122880 vs 135168) while max_output offsets
+# it (16384 vs 4096) to the same 139264 total -- the split is a role boundary, the
 # total is a runner constraint. Raising one role alone would be a silent defect.
 #
 # KV IS ALLOCATED EAGERLY HERE, unlike the MLX tiers. [REAL] qwen3.5:9b costs
 # ~23.2 KB per ctx-token for the whole declared window, doubled by
-# OLLAMA_NUM_PARALLEL=2: num_ctx 131072 holds ~10.8 GiB (weights ~5.0 GiB + 2 x
-# 2.9 GiB KV) whether or not the window is used. Comfortable on 32 GB.
+# OLLAMA_NUM_PARALLEL=2: num_ctx 139264 holds ~11.2 GiB (weights ~5.0 GiB + 2 x
+# 3.1 GiB KV) whether or not the window is used. Comfortable on 32 GB. Note this
+# charges max_output too: 16384 of output headroom is ~380 MB even when nothing
+# generates that long. `fast` keeps 4096 -- it answers in a word or two.
 #
 # num_predict is a generation CEILING, not an expected output length and not an
 # extra fixed allocation.
@@ -37,12 +39,12 @@ active = "qwen3.5:9b"
 preferred = ["qwen3.5:9b"]
 reasoning = true
 context_input = 122880
-max_output = 8192
+max_output = 16384
 temperature = 0.1
 keep_alive = "6h"
 persona = true
 purpose = ["architecture", "refactoring", "multi-step debugging", "design"]
-strengths = ["shared resident primary - no load/evict churn", "native tool calling", "128K context"]
+strengths = ["shared resident primary - no load/evict churn", "native tool calling", "120K input, 16K output"]
 weaknesses = ["smaller than the 64 GB tier's specialised models", "one backend serves four roles"]
 top_p = 0.9
 top_k = 20
@@ -54,7 +56,7 @@ active = "qwen3.5:9b"
 preferred = ["qwen3.5:9b"]
 reasoning = false
 context_input = 122880
-max_output = 8192
+max_output = 16384
 temperature = 0.1
 keep_alive = "6h"
 persona = true
@@ -71,7 +73,7 @@ active = "qwen3.5:9b"
 preferred = ["qwen3.5:9b"]
 reasoning = true
 context_input = 122880
-max_output = 8192
+max_output = 16384
 temperature = 0.2
 keep_alive = "6h"
 persona = true
@@ -89,7 +91,7 @@ active = "qwen3.5:9b"
   # classification tier that thinks past its budget returns empty content.
 reasoning = false
 preferred = ["qwen3.5:9b"]
-context_input = 126976
+context_input = 135168
 max_output = 4096
 temperature = 0.0
 keep_alive = "6h"
@@ -149,16 +151,19 @@ weaknesses = ["2048-token ceiling - chunk before embedding"]
 #     7,113 tok ->  10.2s (699 tok/s)
 #    40,002 tok ->  74.8s (535 tok/s)
 #    70,002 tok -> 166.5s (421 tok/s)
-# Throughput DEGRADES with depth on this runner, unlike the MLX tiers. The
-# trigger below is ~160s of cold prefill at that curve. It is deliberately far
-# below the 122,880 ceiling: memory would allow compacting near 100K, and the
-# clock would not.
+# Throughput DEGRADES with depth on this runner, unlike the MLX tiers.
 #
-# [UNVERIFIED] on 32 GB hardware, and conservative for a reason: the numbers
-# above come from an M3 Max. A 32 GB Mac has fewer GPU cores and will prefill
-# the same prompt slower, so this trigger buys margin that cannot be measured
-# here. Re-measure on 32 GB before raising it further.
+# WHY THE TRIGGER IS NOT SET BY THAT CURVE ALONE: an interactive session grows
+# incrementally and hits Ollama's prefix cache every turn, so the full cold cost
+# is paid on session RESUME, not per turn. Sizing for resume penalises every
+# ordinary turn to protect the rare one. 91,750 leaves 31,130 tokens of
+# admissible input in reserve for the compaction prompt, system instructions,
+# tool schemas and persona injection.
+#
+# [UNVERIFIED] on 32 GB hardware: the numbers above come from an M3 Max, and a
+# 32 GB Mac has fewer GPU cores, so a cold resume at this depth costs more there.
+# Re-measure on 32 GB before raising it further.
 [compaction]
-window = 81920  # effective window handed to the client's compactor
-pct = 75  # compact at this % of the window
-  # trigger: 61440 tokens
+window = 114688  # effective window handed to the client's compactor
+pct = 80  # compact at this % of the window
+  # trigger: 91750 tokens

@@ -51,7 +51,7 @@ active = "gemma4:26b-mlx"
   # Capabilities: tools YES, insert YES, thinking NO.
 reasoning = true
 context_input = 131072
-max_output = 8192
+max_output = 16384
 temperature = 0.1
 keep_alive = -1  # same physical model as architecture
 persona = true
@@ -67,12 +67,12 @@ repeat_penalty = 1.0
 role = "Code review"
 active = "gemma4:26b-mlx"
 reasoning = true  # thinking AND tools (deepseek had NO tools)
-  # Full input, small output: a review must SEE an entire change, but it emits
-  # findings, not bulk code. max_output stays 4096 because nothing has been
-  # observed truncating at it -- the output ceiling is not a reason to shrink
-  # the input window, which is what previously held this role at 65,536.
+  # Full input AND full output. A review of a 128K change emits findings, not
+  # bulk code, so 4096 was rarely binding -- but the MLX runner allocates KV
+  # lazily, so an unused output ceiling costs nothing here, and a review that
+  # DOES have a lot to say should not be truncated mid-finding.
 context_input = 131072
-max_output = 4096
+max_output = 16384
 temperature = 0.2
 keep_alive = -1  # same physical model as architecture
 persona = true
