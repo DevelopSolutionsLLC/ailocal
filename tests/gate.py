@@ -263,6 +263,7 @@ def _audit_runs(repo: pathlib.Path) -> tuple[int, str]:
     from ailocal import install
     try:
         install.audit()
+        install.client_audit()
     except Exception as exc:  # noqa: BLE001
         return 1, f"{type(exc).__name__}: {exc}"
     return 0, ""

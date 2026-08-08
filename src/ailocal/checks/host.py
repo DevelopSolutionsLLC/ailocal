@@ -41,9 +41,11 @@ def check_env_file() -> CheckResult:
 
 def check_cli_tools() -> list[CheckResult]:
     out = []
-    for tool, fix in (("docker", "install Docker Desktop"),
-                      ("ollama", "brew install ollama"),
-                      ("jq", "brew install jq")):
+    # Only tools ailocal cannot work without. jq is deliberately absent: every
+    # use of it is guarded and falls back, so warning about it trained people to
+    # install something nothing needs.
+    for tool, fix in (("docker", "brew install --cask docker-desktop"),
+                      ("ollama", "brew install --cask ollama-app")):
         found = shutil.which(tool)
         out.append(CheckResult(f"cli:{tool}", PASS if found else WARN,
                                f"{tool} present" if found else f"{tool} CLI not found",
