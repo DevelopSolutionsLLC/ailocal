@@ -412,7 +412,9 @@ def check_brave_key_configured() -> CheckResult:
     configured = bool(km) and km.group(1) not in ('""', "''", "null", "~")
     inactive = bool(re.search(r"(inactive|disabled):\s*true", body))
     if not configured:
-        return CheckResult("brave-key", PASS, "braveapi present, no key configured")
+        return CheckResult("brave-key", PASS,
+                           "braveapi present, no key configured "
+                           "(optional; keyless search engines remain available)")
     return CheckResult("brave-key", PASS,
                        f"braveapi key configured (engine {'inactive' if inactive else 'ACTIVE'}); "
                        "default checks never query it")

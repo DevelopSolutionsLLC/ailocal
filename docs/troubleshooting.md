@@ -183,13 +183,17 @@ A non-zero count with search content in the answer confirms retrieval ran.
 
 ## Search returns nothing, or Brave fails
 
-**Likely cause** — SearXNG is not running, or the Brave key is absent from the rendered settings.
+**Likely cause** — SearXNG is not running. Brave is optional: with no key, ailocal renders the `braveapi` engine inactive and search falls back to the keyless engines, which is a supported configuration, not a fault.
 
 **Verify**
 
 ```sh
-ailocal check     # reports whether LiteLLM can reach the SearXNG JSON API
+ailocal check     # searxng: JSON API reachable from LiteLLM (no query issued)
+                  # searxng-query: one free-engine search really returned results
+                  # brave-key: whether braveapi is configured, and whether it is ACTIVE
 ```
+
+`brave-key` reads the rendered settings only — no default check ever spends a Brave query.
 
 **Fix**
 
@@ -197,9 +201,16 @@ ailocal check     # reports whether LiteLLM can reach the SearXNG JSON API
 ailocal start     # renders settings and starts the service
 ```
 
-Set `BRAVE_API_KEY` in `.env` and re-run `ailocal start` to re-render. The rendered file lives outside the repository at `$AILOCAL_STATE/searxng/settings.yml` and is never committed.
+To add or change the Brave key, edit the managed `.env` and restart:
 
-Search is deliberately coding-first: scraped general-web engines are disabled by default because they degrade under sustained use and fail with CAPTCHAs.
+```sh
+$EDITOR ~/.config/ailocal/.env    # set BRAVE_API=your-key
+ailocal start                     # re-renders the settings with the key
+```
+
+`.env` is yours: `ailocal install` will not overwrite an existing one, so the key survives upgrades. The rendered settings live at `$AILOCAL_STATE/searxng/settings.yml`, outside the repository, mode `0600`, and are never committed.
+
+Search is deliberately coding-first: scraped general-web engines are disabled because they degrade under sustained use and fail with CAPTCHAs. Brave's API-backed engine is how general-web coverage comes back.
 
 **Status** — configuration issue.
 

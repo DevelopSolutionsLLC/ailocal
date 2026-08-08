@@ -25,7 +25,7 @@ The threat model is a developer workstation: it protects against accidental expo
 | Secret | Lives in | Protection |
 |---|---|---|
 | `LITELLM_MASTER_KEY` | `.env` | gitignored; the only credential clients present |
-| `BRAVE_API` | `.env` | rendered into SearXNG settings at start |
+| `BRAVE_API` | `.env` (optional; empty disables the engine) | rendered into SearXNG settings at start |
 | `SEARXNG_SECRET` | `.env` | gitignored |
 | Rendered SearXNG settings | `$AILOCAL_STATE/searxng/settings.yml` | mode `0600`, **outside the checkout** |
 

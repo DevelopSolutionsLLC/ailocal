@@ -149,6 +149,21 @@ Any OpenAI- or Anthropic-compatible app also works directly: point it at `http:/
 
 Local models are capable everyday assistants, not frontier models. Expect strong routine work, not hosted Opus or GPT on the hardest problems.
 
+## Web search
+
+Web search works. `claude-local` can search the live web: the request is intercepted by the local proxy, executed against ailocal's own SearXNG instance, and the results go back to the model, which answers with sources.
+
+Claude Code may still display **0 searches** even when the answer is clearly sourced. That counter tracks Anthropic-hosted search, which never runs here; retrieval still happened.
+
+**Brave Search is optional.** Without a key, search uses the keyless engines and keeps working — a fresh install needs nothing. Adding a Brave API key turns on an API-backed general-web engine, which is more reliable than the keyless ones for broad questions:
+
+```bash
+$EDITOR ~/.config/ailocal/.env    # set BRAVE_API=your-key
+ailocal start                     # re-renders the search settings
+```
+
+The key stays in that file on your machine. It is never committed, never printed, and never leaves the local search container.
+
 ## Your Mac's profile
 
 ailocal measures your Mac's memory and chooses a profile automatically. You do not need to think about this to install or use it.
