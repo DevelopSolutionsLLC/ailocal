@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import sys
 
+from . import __version__
+
 
 #: command -> (implementing module, fixed args prepended to argv)
 COMMANDS: dict[str, tuple[str, tuple]] = {
@@ -40,8 +42,9 @@ def _usage() -> str:
     for heading, names in GROUPS:
         rows.append((" | ".join(names), heading))
     width = max(len(left) for left, _ in rows) + 2
-    return "\n".join(["ailocal — local model runtime", ""]
-                     + [f"  {left:<{width}}{heading}" for left, heading in rows])
+    return "\n".join([f"ailocal {__version__} — local model runtime", ""]
+                     + [f"  {left:<{width}}{heading}" for left, heading in rows]
+                     + ["", "  --version".ljust(width + 2) + "the installed version"])
 
 
 #: `ailocal profile <query>`. Scalars print bare so `$(...)` captures them
@@ -112,6 +115,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if cmd in ("help", "-h", "--help"):
         print(_usage())
+        return 0
+
+    # Answered here, beside help, rather than added to COMMANDS: both are
+    # questions about the CLI itself, not a module to dispatch to. Bare, so
+    # `$(ailocal --version)` is the version and nothing else — the first thing
+    # anyone asks for in a bug report.
+    if cmd in ("--version", "-V", "version"):
+        print(__version__)
         return 0
 
     # `profile` is a few lines over policy, answered here rather than given a
