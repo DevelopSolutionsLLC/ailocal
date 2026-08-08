@@ -467,16 +467,30 @@ def hardware_checks() -> None:
     # ── the agreed tier design ──────────────────────────────────────────────────
     print("\nTIER DESIGN")
     SHARED = ("architecture", "implementation", "review", "fast")
-    for tier, primary in (("16gb", "qwen3.5:4b"), ("32gb", "qwen3.5:9b")):
+    for tier, primary, total in (("16gb", "qwen3.5:4b", 98304),
+                                 ("32gb", "qwen3.5:9b", 131072)):
         caps, _ = PARSED[tier]
         check(all(caps[c].get("active") == primary for c in SHARED),
               f"{tier} shares {primary} across {', '.join(SHARED)}",
               {c: caps[c].get("active") for c in SHARED}.__repr__())
-        # After the geometry migration these declare INPUT, and total_context
-        # (= input + output) is what used to be called `context`.
-        check(all(int(caps[c]["context_input"]) + int(caps[c].get("max_output") or 0) == 65536
-                  for c in SHARED),
-              f"{tier} primary total_context is 65536")
+        # THE SHARED-RUNNER INVARIANT, and the reason it is an invariant rather
+        # than a coincidence: qwen3.5 runs on llama_cpp, where num_ctx is a fixed
+        # runner window chosen at FIRST LOAD and an over-long prompt is truncated
+        # from the FRONT with HTTP 200 and no error (registry.yaml,
+        # runtime_engines.llama_cpp). Four roles on one backend that declare
+        # different totals do not get different windows -- they get whichever
+        # role loaded the runner, and the others are silently clipped.
+        #
+        # So this asserts EQUALITY ACROSS ROLES first, and the tier's value
+        # second. Raising one role's context_input on its own is the exact defect
+        # this catches; context_input and max_output must move together.
+        totals = {c: int(caps[c]["context_input"]) + int(caps[c].get("max_output") or 0)
+                  for c in SHARED}
+        check(len(set(totals.values())) == 1,
+              f"{tier} roles sharing one llama_cpp runner declare ONE num_ctx",
+              repr(totals))
+        check(all(v == total for v in totals.values()),
+              f"{tier} primary total_context is {total}", repr(totals))
         # num_predict is now DERIVED from max_output; the profile declares the
         # intent, not the backend parameter name.
         check(caps["architecture"].get("max_output") == 8192,
@@ -484,18 +498,40 @@ def hardware_checks() -> None:
         check(caps["completion"].get("active") == "qwen2.5-coder:1.5b",
               f"{tier} completion uses qwen2.5-coder:1.5b (native FIM)")
 
-    # 64gb is the measured reference; 128gb must be its exact functional copy.
+    # 64gb is the measured reference. 128gb runs the SAME MODELS -- that is what
+    # makes the 64 GB measurements transferable -- but is no longer a byte copy:
+    # the per-token costs are identical, so the only thing more memory changes is
+    # how many tokens fit. Model identity and behaviour stay locked together;
+    # geometry is free to diverge upward.
     c64, _ = PARSED["64gb"]
     c128, _ = PARSED["128gb"]
     for cap in CAPABILITIES:
-        for field in ("active", "context_input", "max_output", "keep_alive", "temperature"):
+        for field in ("active", "keep_alive", "temperature"):
             check(c64[cap].get(field) == c128[cap].get(field),
                   f"128gb.{cap}.{field} equals 64gb",
                   f"64={c64[cap].get(field)!r} 128={c128[cap].get(field)!r}")
 
     check(int(c64["architecture"]["context_input"]) + int(c64["architecture"]["max_output"])
-          == 98304,
-          "64gb architecture total_context is 98304, not the stale 64K")
+          == 147456,
+          "64gb architecture total_context is 147456")
+
+    # No role may declare more than its model can actually hold. This is the
+    # ceiling that stops a future raise from inventing capacity: every chat model
+    # in every tier reports 262144 native context (`ollama show`), and
+    # nomic-embed-text reports 2048.
+    NATIVE = {"gemma4:26b-mlx": 262144, "qwen3.5:9b": 262144, "qwen3.5:4b": 262144,
+              "qwen3.5:2b": 262144, "qwen2.5-coder:3b-instruct-q4_K_M": 32768,
+              "qwen2.5-coder:1.5b": 32768, "nomic-embed-text": 2048}
+    for tier in PROFILES:
+        caps, _ = PARSED[tier]
+        for cap in CAPABILITIES:
+            model = caps[cap].get("active")
+            limit = NATIVE.get(model)
+            if not limit:
+                continue
+            tot = int(caps[cap]["context_input"]) + int(caps[cap].get("max_output") or 0)
+            check(tot <= limit,
+                  f"{tier}.{cap} num_ctx {tot} is within {model}'s native {limit}")
 
     # Capability must never DECREASE as memory grows.
     for cap in CAPABILITIES:
@@ -557,7 +593,24 @@ def hardware_checks() -> None:
     # motivates these numbers costs 13 minutes of GPU time to reproduce, so it is
     # measured once and recorded in docs/troubleshooting.md, not re-run in the gate.
     print("\nCOMPACTION")
-    DANGER = 55000   # measured: cold prefill passes ~5 min beyond roughly this point
+    # THE DANGER POINT IS A PROPERTY OF THE RUNNER, NOT A CONSTANT. A single
+    # 55000 applied to all four tiers came from the llama_cpp/GGUF backend and
+    # outlived it: the 64/128 GB tiers moved to the MLX runner, which prefills
+    # gemma4 at 598 tok/s cold at 137,233 tokens -- 88K costs 147s there, not the
+    # ~13 min the old figure assumed. Holding every tier to one number kept the
+    # MLX tiers compacting at less than half the context they can comfortably
+    # carry.
+    #
+    # Each budget below is the tokens reachable within roughly 200s of COLD
+    # prefill on that tier's own primary, from measurements recorded in the
+    # profile's [compaction] block. Cold, not warm: a warm runner reports its
+    # prefix cache, and a resumed session is exactly the case that has none.
+    DANGER = {
+        "16gb":  55000,    # qwen3.5:4b   548 tok/s @ 70K, and the slowest GPU
+        "32gb":  70000,    # qwen3.5:9b   421 tok/s @ 70K
+        "64gb":  120000,   # gemma4-mlx   598 tok/s @ 137K
+        "128gb": 145000,   # same model, same clock; more RAM buys no speed
+    }
     for tier in PROFILES:
         caps, _ = PARSED[tier]
         c = caps.get("compaction", {})
@@ -570,8 +623,9 @@ def hardware_checks() -> None:
         arch = int(caps["architecture"]["context_input"]) + int(caps["architecture"].get("max_output") or 0)
         check(trig < arch,
               f"{tier} compaction trigger ({trig}) is below the architecture max ({arch})")
-        check(trig < DANGER,
-              f"{tier} compacts ({trig}) BEFORE the measured cold-prefill danger zone")
+        check(trig < DANGER[tier],
+              f"{tier} compacts ({trig}) BEFORE its runner's measured "
+              f"cold-prefill danger zone ({DANGER[tier]})")
         # The point of compaction is to keep sessions out of that zone. A window set
         # ABOVE the model maximum would never fire before the model itself refused.
         check(win <= arch, f"{tier} compaction window ({win}) does not exceed the model max ({arch})")

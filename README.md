@@ -170,10 +170,10 @@ ailocal measures your Mac's memory and chooses a profile automatically. You do n
 
 | Memory | Main model | Context window | Models on disk |
 |---|---|---|---|
-| 16 GB | `qwen3.5:4b` | 64K | ~6 GB |
-| 32 GB | `qwen3.5:9b` | 64K | ~9 GB |
-| 64 GB | `gemma4:26b-mlx` | 96K | ~40 GB |
-| 128 GB | `gemma4:26b-mlx` | 96K | ~40 GB (not yet validated on hardware) |
+| 16 GB | `qwen3.5:4b` | 96K | ~6 GB |
+| 32 GB | `qwen3.5:9b` | 128K | ~9 GB |
+| 64 GB | `gemma4:26b-mlx` | 144K | ~40 GB |
+| 128 GB | `gemma4:26b-mlx` | 256K | ~40 GB (sized from model limits, not yet measured on hardware) |
 
 ailocal never picks a profile your machine cannot hold. To override it: `ailocal profile use 32gb`, then `ailocal start`.
 

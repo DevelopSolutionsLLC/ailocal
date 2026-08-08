@@ -10,22 +10,27 @@ disk_gb = 40
 
 # ── architecture — shared large-context coding/reasoning tier ─────────────────
 # The one big-context capability every client shares (Claude Code, Codex, VS Code):
-# design, deep reasoning, AND large interactive/agent prompts. 65536 num_ctx gives clients
-# a genuinely large input window; qwen3-coder:30b-a3b-q4_K_M supports 262144, so 128K is a future
-# "architecture-deep" capability, not this one (a resident -1 model carries its full KV,
-# so 64K is the balance between input capacity and permanent memory).
+# design, deep reasoning, AND large interactive/agent prompts.
+#
+# [REAL] gemma4:26b-mlx supports 262144 natively (`ollama show`). The MLX runner
+# allocates KV LAZILY -- measured identical resident size (16.01 GiB) when loaded
+# at num_ctx 16384, 98304, 147456 and 262144 -- so a large declared window costs
+# nothing until tokens actually occupy it, and KV then grows at 45.4 KB/token
+# (16.49 GiB at 7,785 tokens -> 22.09 GiB at 137,233, cold, nothing else resident).
+# A filled 147,456 window is therefore ~22.5 GiB of 64 GB. Memory is NOT the
+# binding constraint here; cold prefill latency is, and compaction owns that.
 [architecture]
 role = "Lead architect"
 active = "gemma4:26b-mlx"
 reasoning = true  # gpt-oss:20b HAS thinking; qwen3-coder did not
-context_input = 81920
+context_input = 131072
 max_output = 16384
 temperature = 0.1
 keep_alive = "6h"
 persona = true
 purpose = ["architecture", "complex refactoring", "multi-step debugging", "design", "repository-wide planning", "large interactive/agent prompts"]
-strengths = ["large 64K input window shared across clients", "holds a whole subsystem in view", "strong code generation"]
-weaknesses = ["slower", "higher resident memory (64K KV pinned)", "non-thinking (no <think> stream)"]
+strengths = ["128K input window shared across clients", "holds a whole subsystem in view", "strong code generation"]
+weaknesses = ["slower", "cold prefill of a full window costs minutes", "KV grows to ~22 GiB when the window is filled"]
 top_p = 0.9
 top_k = 20
 repeat_penalty = 1.0
@@ -35,13 +40,17 @@ repeat_penalty = 1.0
 role = "Daily coding"
 active = "gemma4:26b-mlx"
   # Same physical model as architecture, deliberately: this is a role boundary
-  # (persona, sampling, output ceiling), not a model boundary. The former
-  # "smaller footprint" rationale described qwen2.5-coder:14b, which this role
-  # has not used since gemma4 became active -- and it is what left context_input
-  # at 16,384 on a model architecture already drives at 81,920.
+  # (persona, sampling, output ceiling), not a model boundary.
+  #
+  # Same context_input as architecture, also deliberately. Context capacity and
+  # role semantics are different concerns: review and implementation benefit from
+  # seeing a whole change, and starving them of input bought nothing. The MLX
+  # runner enforces context per-request (registry.yaml), so three roles declaring
+  # three different num_ctx still share ONE resident copy of the weights -- the
+  # differing windows cost no extra memory.
   # Capabilities: tools YES, insert YES, thinking NO.
 reasoning = true
-context_input = 65536
+context_input = 131072
 max_output = 8192
 temperature = 0.1
 keep_alive = -1  # same physical model as architecture
@@ -58,7 +67,11 @@ repeat_penalty = 1.0
 role = "Code review"
 active = "gemma4:26b-mlx"
 reasoning = true  # thinking AND tools (deepseek had NO tools)
-context_input = 65536
+  # Full input, small output: a review must SEE an entire change, but it emits
+  # findings, not bulk code. max_output stays 4096 because nothing has been
+  # observed truncating at it -- the output ceiling is not a reason to shrink
+  # the input window, which is what previously held this role at 65,536.
+context_input = 131072
 max_output = 4096
 temperature = 0.2
 keep_alive = -1  # same physical model as architecture
@@ -83,7 +96,13 @@ preferred = ["qwen3.5:2b"]
   # emitted ~19k reasoning characters and returned EMPTY content within its
   # budget. This tier answers in a word or two and must not think itself out.
 reasoning = false
-context_input = 45056
+  # [REAL] qwen3.5:2b supports 262144 natively and is the cheapest model here by
+  # a wide margin: cold prefill 45.8s at 70,002 tokens (1529 tok/s, vs 598 tok/s
+  # for gemma4 at 137K). Unlike gemma4 this is a llama_cpp runner, which
+  # allocates KV EAGERLY for the whole declared window and again per parallel
+  # slot: ~11.6 KB per ctx-token x OLLAMA_NUM_PARALLEL=2, so num_ctx 131072 costs
+  # ~3.6 GiB resident whether or not it is used. Cheap enough to stop rationing.
+context_input = 126976
 max_output = 4096
 temperature = 0.0
 keep_alive = "20m"
@@ -92,7 +111,7 @@ keep_alive = "20m"
   # the file is enough to change that -- the injector needs no code change.
 persona = true
 purpose = ["task classification", "doc summarisation", "quick edits", "tool-driven lookups"]
-strengths = ["tiny footprint", "native tool calling", "very long context", "low latency"]
+strengths = ["tiny footprint", "native tool calling", "128K context", "fastest prefill of any tier model"]
 weaknesses = ["no FIM/insert - cannot do inline autocomplete", "weaker on large refactors"]
 top_p = 0.9
 top_k = 20
@@ -139,14 +158,24 @@ strengths = ["always-on", "tiny", "grepai calls it directly on :11434"]
 weaknesses = ["not a chat model"]
 
 # ── interactive compaction (client-native; ailocal does NOT summarise) ───────
-# Only `architecture` needs this. implementation/review cap at 24,576 and fast at
-# 49,152 -- their ENTIRE context sits below the cold-prefill danger zone, so they
-# cannot reach the failure and are deliberately left alone.
-#
 # window x pct is what the CLIENT compacts at; it is NOT a model limit. The model
-# maximum stays `architecture.context` above and remains available for deliberate
-# one-shot work. Cold prefill passes ~5 min at ~58K, 13 min at ~88K.
+# maximum stays `architecture.context_input` above and remains available for
+# deliberate one-shot work. These are the TWO SEPARATE KNOBS this tier turns:
+# context_input is sized by memory, compaction is sized by LATENCY.
+#
+# [REAL] Cold prefill, measured on 64 GB M3 Max with nothing else resident and
+# no shared prompt prefix (a warm runner reports its cache, not its cost):
+#   gemma4:26b-mlx    7,785 tok ->   6.6s (1188 tok/s)
+#                   137,233 tok -> 229.5s ( 598 tok/s)
+# The trigger below lands at ~186s of cold prefill, which is the point past which
+# a resumed session reads as hung. It replaces a 49,152 trigger justified by
+# "~5 min at ~58K, 13 min at ~88K" -- figures from the llama_cpp/GGUF backend
+# this tier no longer uses. At 598 tok/s, 88K is 147s, not 13 minutes.
+#
+# Reserve at the trigger: architecture admits 131,072, so compaction fires with
+# 19,661 input tokens still free for the compaction prompt, system instructions,
+# tool schemas and persona injection before the backend would refuse.
 [compaction]
-window = 65536  # effective window handed to the client's compactor
-pct = 75  # compact at this % of the window
-  # trigger: 49152 tokens
+window = 131072  # effective window handed to the client's compactor
+pct = 85  # compact at this % of the window
+  # trigger: 111411 tokens
