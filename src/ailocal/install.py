@@ -187,10 +187,24 @@ def provision(source: Path, config: Path, state: Path) -> dict:
 #: command -> how to get it. ailocal does not install other people's software:
 #: a package manager it did not choose, running as root, is not a thing this
 #: project should own. It states exactly what is missing and stops.
+#:
+#: A prerequisite is something with NO working code path when it is absent.
+#: That is the whole bar, and jq did not clear it. Its only runtime use is
+#: scratchpad-hook.sh, where both call sites are `command -v jq`-guarded and
+#: fall back to plain stdout — which is a SUPPORTED form, not a degradation:
+#: code.claude.com/docs/en/hooks states that for SessionStart, stdout on exit 0
+#: "is added as context that Claude can see and act on". Measured on a PATH
+#: with no jq at all: exit 0, clean stderr, usable context, scratchpad still
+#: created and still isolated per session (keyed by timestamp+pid rather than
+#: the client's session_id).
+#:
+#: The guarded fallback is the whole reason, and it holds on every macOS this
+#: project runs on. Apple bundling jq at /usr/bin since Sequoia is a
+#: convenience, NOT the justification: ailocal states no minimum macOS beyond
+#: Apple Silicon, which reaches back to Big Sur — well before that bundling.
 PREREQUISITES = (
     ("docker", "Docker Desktop", "brew install --cask docker-desktop"),
     ("ollama", "Ollama", "brew install --cask ollama-app"),
-    ("jq", "jq", "brew install jq"),
 )
 
 
@@ -550,6 +564,33 @@ def _write_env(assume_yes: bool) -> None:
 # Out of scope by design: ~/.claude and ~/.codex, VS Code SecretStorage,
 # anything git tracks, and any container not named ailocal-*.
 
+#: The one instruction for the one thing ailocal cannot do for you. Kept next to
+#: the check that emits it so the wording cannot drift from the README.
+VSCODE_KEY_STEPS = ("grep LITELLM_MASTER_KEY ~/.config/ailocal/.env\n"
+                    "then in VS Code: Copilot Chat → model picker → "
+                    "'Manage Models…' → LiteLLM → paste the key")
+
+
+def _vscode_provider_group():
+    """The connector's entry in chatLanguageModels.json, or None.
+
+    Read-only and side-effect free: it must never be the thing that creates the
+    user directory it is inspecting.
+    """
+    from . import clients
+
+    user_dir = clients._vscode_user_dir()
+    if user_dir is None:
+        return None
+    try:
+        groups = json.loads((user_dir / "chatLanguageModels.json")
+                            .read_text(encoding="utf-8")) or []
+    except (OSError, ValueError):
+        return None
+    return next((g for g in groups if isinstance(g, dict)
+                 and g.get("vendor") == "litellm-connector"), None)
+
+
 def _vscode_findings() -> list:
     """The VS Code side of "can a local model answer here?".
 
@@ -593,12 +634,15 @@ def _vscode_findings() -> list:
                    CheckResult("vscode-provider", WARN,
                                f"STALE connector baseUrl {have}, proxy is {want}",
                                str(models_json), "run ailocal clients vscode"))
-        out.append(passed("vscode-key", "vscode   API key reference present")
+        # The key VALUE lives in VS Code's SecretStorage, which no supported
+        # interface lets ailocal write — see the note on VSCODE_KEY_STEPS's use
+        # in client_audit. So this reports the state precisely and hands over
+        # the one manual step, rather than implying ailocal failed at something.
+        out.append(passed("vscode-key", "vscode   API key initialized")
                    if group.get("apiKey") else
                    CheckResult("vscode-key", WARN,
-                               "MISSING no API key reference; chat will 401",
-                               str(models_json),
-                               "Command Palette → 'Chat: Manage Language Models' → LiteLLM"))
+                               "vscode   API key not initialized; chat will 401",
+                               str(models_json), VSCODE_KEY_STEPS))
 
     settings = user_dir / "settings.json"
     text = settings.read_text(encoding="utf-8") if settings.is_file() else ""
@@ -610,6 +654,84 @@ def _vscode_findings() -> list:
                            f"local chat: {', '.join(bad)}",
                            str(settings), "run ailocal clients vscode"))
     return out
+
+
+def client_audit() -> list:
+    """The optional clients, one row each — its own `ailocal check` section.
+
+    Separate from audit() because it answers a different question. Everything
+    audit() reports is ailocal's own doing and a finding there is ailocal's
+    fault; a client is the USER's software, and the only useful thing to say
+    about an absent one is the command that installs it. Mixed into the
+    installation findings, "Codex CLI not installed" read like a defect.
+    """
+    from . import clients as _clients
+    from .checks import CheckResult, SKIP, WARN, passed
+
+    out: list = []
+    # deployed_client_root, NOT config_root: clients.py and generation.py both
+    # write here, and the two roots are the same directory only by default.
+    # Probing the policy root reported a healthy deployment as missing whenever
+    # AILOCAL_CONFIG was pointed elsewhere.
+    cfg = policy.deployed_client_root()
+    probes = {"claude": cfg / "claude" / ".claude.json",
+              "codex": cfg / "codex" / "config.toml",
+              "vscode": None}  # VS Code's own state is read below instead
+    # One cause, one row. A VS Code that has never been opened has no settings
+    # folder, so the connector probe and every provider finding below would fire
+    # too — three warnings for one thing to do. It also has to be decided BEFORE
+    # the probe: `code --list-extensions` creates the user directory as a side
+    # effect, which would make a read-only audit change the machine and mask the
+    # very state it just reported.
+    unlaunched = (_clients.present("vscode")
+                  and _clients._vscode_user_dir() is None)
+
+    for name in _clients.TARGETS:
+        label, how = _clients.CLIENTS[name]
+        probe = probes[name]
+        if not _clients.present(name):
+            out.append(CheckResult("client", SKIP,
+                                   f"{label:14} not installed (optional)",
+                                   remediation=how))
+        elif name == "vscode" and unlaunched:
+            out.append(CheckResult("client", WARN,
+                                   f"{label:14} installed but never opened",
+                                   "VS Code creates its settings folder on first launch",
+                                   "open VS Code once, then: ailocal clients vscode"))
+        elif name == "vscode" and not (_vscode_provider_group() or {}).get("apiKey"):
+            # NOT "configured": the provider can be perfectly written and the
+            # model picker still empty. VS Code keeps BYOK keys in SecretStorage,
+            # and neither the connector (7 commands, no key import, no URI
+            # handler, no env var) nor the `code` CLI (--add-mcp is the only
+            # non-interactive provisioning flag, and it is for MCP servers)
+            # exposes a supported way to seed it. The vendor's own alternative
+            # is a literal key in chatLanguageModels.json, which its docs warn
+            # against and which would trade Keychain for a 0644 file. So this
+            # step is a connector/VS Code boundary, not ailocal configuration,
+            # and saying so is more useful than a green tick that lies.
+            group = _vscode_provider_group()
+            out.append(CheckResult(
+                "client", WARN,
+                f"{label:14} " + ("provider configured; API key not initialized"
+                                  if group else "installed; provider not configured"),
+                None if group else "run ailocal clients vscode first",
+                VSCODE_KEY_STEPS if group else "ailocal clients vscode"))
+        elif probe is None or probe.is_file():
+            out.append(passed("client", f"{label:14} configured"))
+        else:
+            out.append(CheckResult("client", WARN,
+                                   f"{label:14} installed but not configured",
+                                   str(probe), f"ailocal clients {name}"))
+
+    if unlaunched or not _clients.present("vscode"):
+        return out
+    if "gethnet.litellm-connector-copilot" in _out("code", "--list-extensions").lower():
+        out.append(passed("client", "vscode   connector extension installed"))
+    elif _has("code"):
+        out.append(CheckResult("client", WARN,
+                               "MISSING VS Code connector extension", "VS Code",
+                               "ailocal clients vscode"))
+    return out + _vscode_findings()
 
 
 def audit() -> list:
@@ -630,26 +752,13 @@ def audit() -> list:
     def note(summary):
         results.append(CheckResult("install", SKIP, summary))
 
-    cfg = policy.config_root()
-    for name, probe, fix in (("claude", cfg / "claude" / ".claude.json", "claude"),
-                             ("codex", cfg / "codex" / "config.toml", "codex")):
-        if probe.is_file():
-            fine(f"{name:8} {probe.parent}")
-        else:
-            flag("MISSING", f"{name} local config", probe, f"run ailocal clients {fix}")
+    cfg = policy.deployed_client_root()
     configure = cfg / "configure.zsh"
     if configure.is_file() and "CLAUDE_CONFIG_DIR" in configure.read_text():
         fine("isolation  configure.zsh sets CLAUDE_CONFIG_DIR")
     else:
         flag("DUPLICATE", "claude-local may share the cloud config root", configure,
              "re-run ailocal clients claude")
-    if "gethnet.litellm-connector-copilot" in _out("code", "--list-extensions").lower():
-        fine("vscode   connector extension installed")
-    elif _has("code"):
-        flag("MISSING", "VS Code connector extension", "VS Code",
-                 "run ailocal clients vscode")
-    results += _vscode_findings()
-
     for label in ("com.ailocal.ollama", "com.ailocal.ollama-env", "com.ailocal.preload"):
         plist = LA_DIR / f"{label}.plist"
         if not plist.is_file():
@@ -756,17 +865,32 @@ def cmd_install(argv: list[str]) -> int:
     from .checks import run as checks_run
     checks_run.main(["check"])
 
-    # Deploying into a user's client roots is never implied by --yes.
+    # Deploying into a user's client roots is never implied by --yes: it edits
+    # ~/.zshrc and merges VS Code's settings.json, which is not something an
+    # unattended run should decide for someone.
     step("Client configs (optional)")
-    print("  ailocal can point Claude Code, Codex and VS Code at the local proxy.")
-    print("  ⚠ This backs up, then rewrites/merges existing client configs.")
-    targets = "" if assume_yes else _ask("Install which? [all|claude|codex|vscode, "
-                                         "Enter to skip]")
-    if targets:
-        from . import clients
-        clients.main([] if targets == "all" else targets.split())
+    from . import clients
+    detected = [n for n in clients.TARGETS if clients.present(n)]
+    print("  Supported clients are optional consumers of the proxy — ailocal")
+    print("  serves all three and requires none.")
+    for name in clients.TARGETS:
+        label = clients.CLIENTS[name][0]
+        print(f"    {'✓' if name in detected else '✗'} {label:14}"
+              f"{'installed' if name in detected else 'not installed'}")
+    clients.report_missing(clients.TARGETS)
+    if not detected:
+        ok("Nothing to configure. Install a client, then: ailocal clients")
+    elif assume_yes:
+        ok(f"Detected {', '.join(detected)} — not configured under --yes "
+           "(it edits ~/.zshrc and VS Code settings). Run: ailocal clients")
     else:
-        ok("Skipped — run later with: ailocal clients [claude|codex|vscode]")
+        print("\n  ⚠ Configuring backs up, then rewrites/merges existing client configs.")
+        targets = _ask(f"Configure which? [Enter for the detected "
+                       f"{', '.join(detected)} | a name | none]")
+        if targets == "none":
+            ok("Skipped — run later with: ailocal clients [claude|codex|vscode]")
+        else:
+            clients.main(targets.split())
 
     step("Done")
     print(f"  LiteLLM proxy is ready at {runtime.proxy_url()}")

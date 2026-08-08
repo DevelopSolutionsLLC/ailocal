@@ -103,6 +103,7 @@ def _check(argv: list[str]) -> int:
     section("Runtime", runtime)
 
     section("Supply chain", S.supply_chain_checks("--updates" in argv))
+    section("Clients", install.client_audit())
     section("Installation", install.audit())
     section("Host", H.doctor_only_checks(arch["active"], arch["context_input"]))
 

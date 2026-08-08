@@ -29,6 +29,51 @@ from . import policy, runtime
 BACKUP_KEEP = int(os.environ.get("BACKUP_KEEP", "5"))
 TARGETS = ("vscode", "codex", "claude")
 
+#: The three first-class clients are OPTIONAL CONSUMERS of the local proxy, not
+#: dependencies of it: the runtime serves every one of them and needs none. So
+#: each carries how to detect it and the exact supported command to get it, and
+#: `ailocal clients` with no argument configures only the ones that are here.
+#: ailocal does not install a client for you — same rule as PREREQUISITES in
+#: install.py, for the same reason.
+#:
+#: Commands verified against the vendors' own current documentation and against
+#: `brew info` (August 2026):
+#:   Claude Code  code.claude.com/docs/en/quickstart — Homebrew cask, or
+#:                curl -fsSL https://claude.ai/install.sh | bash
+#:   Codex CLI    Homebrew cask, or npm i -g @openai/codex
+#:   VS Code      Homebrew cask. Copilot Chat ships IN VS Code; there is no
+#:                separate extension to install and no subscription needed —
+#:                the connector serves BYOK models.
+CLIENTS: dict[str, tuple[str, str]] = {
+    "claude": ("Claude Code", "brew install --cask claude-code"),
+    "codex":  ("Codex CLI",   "brew install --cask codex"),
+    "vscode": ("VS Code",     "brew install --cask visual-studio-code"),
+}
+
+
+def present(name: str) -> bool:
+    """Is this client on the machine? Detection is the client's own artefact.
+
+    VS Code counts either way round: the `code` CLI without a user directory is
+    an installation that has never been launched, which install_vscode reports
+    precisely — treating it as absent would hide that.
+    """
+    if name == "vscode":
+        return shutil.which("code") is not None or _vscode_user_dir() is not None
+    return shutil.which({"claude": "claude", "codex": "codex"}[name]) is not None
+
+
+def report_missing(names) -> None:
+    """Name every absent client once, with the one command that installs it."""
+    absent = [n for n in names if not present(n)]
+    if not absent:
+        return
+    print("\n  Not installed (optional — ailocal runs without them):")
+    for n in absent:
+        label, how = CLIENTS[n]
+        print(f"    {label:14} {how}")
+    print("  Install any of them, then re-run: ailocal clients")
+
 CONNECTOR_EXT = "Gethnet.litellm-connector-copilot"
 
 #: One canonical proxy URL for every host client, owned by runtime. It is
@@ -314,11 +359,10 @@ def _provider_group(models_json: Path, dry: bool) -> None:
         info("provider group written, existing API key reference preserved "
              f"({carried[:28]}…)")
     else:
-        print(f"  {BOLD}{YELLOW}ACTION NEEDED{RESET} no API key reference found. "
-              "The key value lives in VS Code's")
-        print("     SecretStorage (Keychain) and cannot be written from a script.")
-        print("     Enter it ONCE:  Command Palette -> 'Chat: Manage Language "
-              "Models' -> LiteLLM")
+        # The instruction itself is printed once, by target_vscode, so this only
+        # reports the state it found.
+        print(f"  {BOLD}{YELLOW}ACTION NEEDED{RESET} provider written, but no API "
+              "key is initialized yet (see below).")
 
 
 def _prune_deprecated(settings_json: Path, dry: bool) -> None:
@@ -394,7 +438,12 @@ def install_vscode(argv: list[str]) -> int:
     if version:
         print(f"==> VS Code {version[0]}, user dir: {user_dir}")
     if user_dir is None:
-        warn("VS Code user directory not found — is VS Code installed?")
+        if shutil.which("code"):
+            warn("VS Code is installed but has never been launched, so it has no "
+                 "user directory yet.")
+            warn("  Open VS Code once, then: ailocal clients vscode")
+        else:
+            warn(f"VS Code not installed — {CLIENTS['vscode'][1]}")
         return 1
 
     installed = _extensions()
@@ -429,14 +478,24 @@ def _copilot_instructions() -> None:
 
 def target_vscode() -> None:
     step("Configuring VS Code Copilot Chat")
-    install_vscode([])
+    # install_vscode's failure is the answer, not a warning to walk past: with no
+    # VS Code there is nothing to read ~/.copilot/instructions, and printing the
+    # "enter your key in SecretStorage" ritual for absent software is an
+    # instruction the user cannot carry out.
+    if install_vscode([]):
+        return
     _copilot_instructions()
-    print("\n  Final step — enter the key ONCE (encrypted SecretStorage):")
-    print("    Copilot Chat → model picker → \"Manage Models…\" → "
-          "\"LiteLLM Connector\"")
-    print(f"      Base URL:  {BASE_URL}")
-    print("      API Key:   the LITELLM_MASTER_KEY from your .env")
-    print("  Then: Cmd+Shift+P → \"LiteLLM: Reload Models\".")
+    # One ritual, worded once. VS Code keeps model API keys in SecretStorage and
+    # exposes no supported way for another program to write there — not through
+    # the connector (no key-import command, no URI handler, no env var) and not
+    # through the `code` CLI. So this is the VS Code boundary, not a step ailocal
+    # forgot, and it says so rather than reading as a failure.
+    print("\n  ONE MANUAL STEP — VS Code keeps model keys in its own encrypted")
+    print("  storage, which no supported interface lets ailocal write.")
+    print("    grep LITELLM_MASTER_KEY ~/.config/ailocal/.env")
+    print("    Copilot Chat → model picker → \"Manage Models…\" → \"LiteLLM\" → "
+          "paste it")
+    print(f"  (base URL, if asked: {BASE_URL})")
     print("  Launcher: `ailocal-code [path]` opens the isolated 'ailocal' profile.")
 
 
@@ -469,8 +528,13 @@ def target_codex() -> None:
         warn("~/.codex/config.toml still exists — plain 'codex' keeps using it "
              "(cloud, unaffected).")
     if not shutil.which("codex"):
-        warn("codex binary not found on PATH")
+        warn(f"Codex CLI is not installed — {CLIENTS['codex'][1]}")
     print("  Launch with: codex-local exec 'say ok'  (source ~/.zshrc first)")
+    # Stated at deploy time, not only in the README: routing is correct here and
+    # the failure is upstream, so someone whose session hangs should not go
+    # looking for a mistake in this configuration.
+    print("  KNOWN UPSTREAM LIMIT: interactive sessions do not finish streaming")
+    print("    (BerriAI/litellm#27442). `codex-local exec` is unaffected.")
 
 
 # ── Claude Code ─────────────────────────────────────────────────────────────
@@ -600,7 +664,24 @@ def main(argv: list[str]) -> int:
             print(f"  ✗ Unknown target: {name!r}. Valid: {'  '.join(TARGETS)}",
                   file=sys.stderr)
             return 1
-    selected = selected or list(TARGETS)
+    # NAMED is a request and is honoured whether or not the client is here:
+    # writing a client home before installing the client is a legitimate order
+    # to do things in, and refusing it would break `ailocal clients codex` on a
+    # machine where Codex arrives next. UNNAMED is a question — "configure what
+    # I have" — so it answers with the clients actually present and names the
+    # rest instead of provisioning for software that does not exist.
+    if selected:
+        for name in selected:
+            if not present(name):
+                warn(f"{CLIENTS[name][0]} is not installed; configuring it anyway "
+                     f"as you asked for it by name ({CLIENTS[name][1]})")
+    else:
+        selected = [n for n in TARGETS if present(n)]
+        if not selected:
+            print("Targets: none — no supported client is installed.")
+            print("  The proxy itself is unaffected: ailocal start / check still work.")
+            report_missing(TARGETS)
+            return 0
     print(f"Targets: {' '.join(selected)}")
 
     # Every derived artifact first: deploying from stale generated state is how
@@ -619,6 +700,8 @@ def main(argv: list[str]) -> int:
     # tool's global MCP sync to "repair" it.
     info("Codex MCP intentionally withheld (Codex cannot dispatch namespaced tools)")
     info("  claude-local MCP registrations in .claude.json are preserved.")
+
+    report_missing(TARGETS)
 
     if not shutil.which("ailocal"):
         warn("ailocal is not on PATH. Install the command:  pipx install .")

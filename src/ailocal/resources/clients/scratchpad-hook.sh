@@ -11,6 +11,13 @@
 #
 # Must stay quiet on stderr and exit 0 even on partial failure — a noisy or failing
 # SessionStart hook degrades the session.
+#
+# jq is OPTIONAL here and is not an ailocal prerequisite. Every use below is
+# guarded: without it the scratchpad is keyed by timestamp+pid instead of the
+# client's session_id (still isolated per session), and the context is emitted
+# as plain stdout — a supported SessionStart form, not a fallback that merely
+# happens to work. Verified on a PATH containing no jq: exit 0, clean stderr,
+# context delivered, directory created.
 tool="${1:-session}"
 
 payload="$(cat 2>/dev/null || true)"

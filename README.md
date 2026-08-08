@@ -22,51 +22,128 @@ ailocal runs the coding tools you already use against models on your own
 machine. Nothing is sent to Anthropic or OpenAI, and there is nothing to pay
 per token.
 
-You do not configure any of it by hand. `ailocal install` detects your Mac,
-picks models that fit its memory, downloads them, starts the services, and
-writes the configuration for every supported client.
+**What it configures for you:** the models, the local API they are served on,
+and every supported client you have installed. You do not edit a config file by
+hand.
+
+**What it does not do:** install software. You install the prerequisites and
+whichever clients you want; ailocal detects what is present and configures it.
+
+**Supported clients** — all optional:
+
+- **Claude Code** — run `claude-local`
+- **Codex CLI** — run `codex-local`
+- **VS Code Copilot Chat** — pick an `ailocal-*` model in the chat model picker
 
 **Requirements:** macOS on Apple Silicon, 16 GB unified memory minimum.
 
-## Install
+---
+
+## 1. Install prerequisites
+
+If you do not have Homebrew, install it first from [brew.sh](https://brew.sh).
+
+**Docker Desktop and Ollama are required.** They run the models and the local
+API; ailocal cannot work without them.
 
 ```bash
-# 1 — prerequisites
-brew install jq pipx
 brew install --cask docker-desktop ollama-app
+```
 
-# 2 — install ailocal
+**Now open Docker Desktop and Ollama once, from your Applications folder.**
+Both need one manual launch before anything can use them.
+
+**pipx** is how you install ailocal, not something ailocal needs at runtime:
+
+```bash
+brew install pipx
+```
+
+You do not need to install Python or set up a virtual environment. Homebrew's
+`pipx` brings its own Python and keeps ailocal isolated for you.
+
+## 2. Install clients (optional)
+
+Install whichever you want to use, or none. You can add one later at any time.
+
+```bash
+brew install --cask claude-code           # Claude Code
+brew install --cask codex                 # Codex CLI
+brew install --cask visual-studio-code    # VS Code Copilot Chat
+```
+
+**If you install VS Code, open it once** — it creates its settings folder on
+first launch, and ailocal cannot configure it before that.
+
+ailocal works with no client at all: it still serves a local OpenAI- and
+Anthropic-compatible API at `http://127.0.0.1:4000` for any app you point at it.
+
+## 3. Install ailocal
+
+```bash
 pipx install git+https://github.com/DevelopSolutionsLLC/ailocal.git
-
-# 3 — configure everything
 ailocal install
+```
 
-# 4 — verify
+`ailocal install` measures your Mac, picks models that fit its memory,
+downloads them, starts the services, and configures the clients it finds. It
+will ask you before touching any client configuration.
+
+Expect a download of roughly 6–40 GB of models, depending on your Mac. Run it
+once; it is safe to re-run.
+
+## 4. Verify
+
+```bash
 ailocal check
 ```
 
-**Open Docker Desktop and Ollama once** after installing them — both need a
-first manual launch before anything can use them. `ailocal install` stops with a
-clear message naming anything that is missing.
+**Success is `CHECK: OK` on the last line.** The report is grouped by area; the
+**Clients** group shows what ailocal did with each supported client:
 
-You do not need to install Python or create a virtual environment. Homebrew's
-`pipx` brings its own Python, and pipx keeps ailocal in an isolated environment
-for you.
+```
+Clients
+  ✓ Claude Code    configured
+  — Codex CLI      not installed (optional)
+      → brew install --cask codex
+  ✓ VS Code        configured
+```
 
-Expect a download of roughly 6–40 GB of models, depending on your Mac.
+- `✓` — configured and working.
+- `—` — not installed. Not an error: ailocal left it alone. Install it and run
+  `ailocal clients` if you want it.
+- `⚠` — advisory. The line below it is the exact command that fixes it.
 
 ## Use it
 
-Open a new terminal, then:
+Open a **new** terminal, then:
 
 ```bash
 claude-local        # Claude Code, against your local models
 codex-local         # Codex CLI, against your local models
 ```
 
-**VS Code Copilot Chat** — ailocal configures the local provider during
-installation. Open VS Code and pick an `ailocal-*` model in the chat model
-picker.
+Installed a client after ailocal? Run `ailocal clients` and it picks it up.
+
+### VS Code: paste the key once
+
+ailocal configures everything on the VS Code side except the key itself. VS
+Code keeps model API keys in its own encrypted storage, and offers no supported
+way for another program to write to it — so this one step is yours. It is a
+limitation of the VS Code boundary, not something ailocal skipped.
+
+```bash
+grep LITELLM_MASTER_KEY ~/.config/ailocal/.env
+```
+
+Then in VS Code: Copilot Chat → model picker → **Manage Models…** → **LiteLLM**
+→ paste the key. The `ailocal-*` models appear in the picker right after.
+
+Until you do, `ailocal check` reports `VS Code   provider configured; API key
+not initialized` and repeats these two steps.
+
+Copilot Chat ships inside VS Code — there is no extension to install and no
+Copilot subscription needed.
 
 ## Everyday commands
 
@@ -77,6 +154,7 @@ picker.
 | `ailocal stop` | bring them down |
 | `ailocal status` | what is loaded right now |
 | `ailocal check` | is everything configured and working? |
+| `ailocal clients` | configure the supported clients you have installed |
 
 `ailocal check` answers the whole question end to end — configuration, running
 services, every model, and one real response — and prints the fixing command
