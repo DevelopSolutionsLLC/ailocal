@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ailocal"
-version = "0.1.0"
+version = "0.9.0"
 description = "Run Claude Code, Codex CLI and VS Code Copilot Chat against local models on Apple Silicon."
 readme = "README.md"
 license = "Apache-2.0"

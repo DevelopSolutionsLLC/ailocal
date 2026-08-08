@@ -114,6 +114,7 @@ def _gate_suites(repo: pathlib.Path, full: bool) -> list:
             ("installers are idempotent",
              ["/bin/bash", "tests/idempotent-install.sh"]),
             ("the repository root holds only project concepts", _root_is_clean),
+            ("the version is spelled the same in both places", _version_agrees),
             ("installation audit runs cleanly", _audit_runs),
             ("every read-only command actually runs", _readonly_commands_run),
         ]),
@@ -139,8 +140,31 @@ def _fixed_point(repo: pathlib.Path) -> tuple[int, str]:
 
 #: Everything the repository root is allowed to track. A generated artifact
 #: here means a root lost its owner — see policy.deployed_client_root().
-ROOT_ALLOWED = {".gitignore", "AGENTS.md", "LICENSE", "README.md",
-                "pyproject.toml", "docs", "src", "tests"}
+ROOT_ALLOWED = {".gitignore", "AGENTS.md", "CHANGELOG.md", "LICENSE",
+                "README.md", "RELEASING.md", "pyproject.toml",
+                "docs", "src", "tests"}
+
+
+def _version_agrees(repo: pathlib.Path) -> tuple[int, str]:
+    """From v0.9.0 the version is a published fact, and it is written twice: the
+    wheel takes pyproject's and everything at runtime reads __init__'s. Two
+    spellings means the number a user reports is not the number they installed.
+    """
+    def find(path: str, pattern: str) -> str:
+        m = re.search(pattern, (repo / path).read_text(encoding="utf-8"), re.M)
+        return m.group(1) if m else ""
+
+    project = find("pyproject.toml", r'^version = "([^"]+)"')
+    package = find("src/ailocal/__init__.py", r'^__version__ = "([^"]+)"')
+    if not project or not package:
+        return 1, f"could not read a version (pyproject={project!r} "\
+                  f"package={package!r})"
+    if project != package:
+        return 1, (f"pyproject.toml says {project}, "
+                   f"src/ailocal/__init__.py says {package}")
+    if f"## v{project}" not in (repo / "CHANGELOG.md").read_text(encoding="utf-8"):
+        return 1, f"CHANGELOG.md has no release notes for v{project}"
+    return 0, ""
 
 
 def _root_is_clean(repo: pathlib.Path) -> tuple[int, str]:
