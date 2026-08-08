@@ -1,19 +1,14 @@
 # Troubleshooting
 
-Symptom lookup. Each entry states what you see, how to confirm the cause, and
-what to do. System design is in [architecture.md](architecture.md); normal
-operation is in the README and `ailocal help`.
+Symptom lookup. Each entry states what you see, how to confirm the cause, and what to do. System design is in [architecture.md](architecture.md); normal operation is in the README and `ailocal help`.
 
-Start with `ailocal check` — it reports health with a fix for anything wrong,
-and exits `0` healthy, `1` when it cannot resolve the active profile and refuses
-to guess, `2` degraded.
+Start with `ailocal check` — it reports health with a fix for anything wrong, and exits `0` healthy, `1` when it cannot resolve the active profile and refuses to guess, `2` degraded.
 
 ---
 
 ## LiteLLM never becomes ready
 
-**Likely cause** — the container is crash-looping, usually a bad generated
-config or a callback that cannot be imported.
+**Likely cause** — the container is crash-looping, usually a bad generated config or a callback that cannot be imported.
 
 **Verify**
 
@@ -36,8 +31,7 @@ ailocal start     # regenerates the configuration, then restarts the stack
 
 ## Generated configuration is stale or invalid
 
-**Likely cause** — a profile or client policy changed without regenerating, or a
-generated file was hand-edited.
+**Likely cause** — a profile or client policy changed without regenerating, or a generated file was hand-edited.
 
 **Verify**
 
@@ -52,8 +46,7 @@ ailocal start     # regenerates and reloads the proxy
 ailocal clients   # redeploy client configuration
 ```
 
-Generated files live under `${AILOCAL_STATE:-~/.local/state/ailocal}`. Deleting
-that directory and re-running `ailocal start` is a supported recovery.
+Generated files live under `${AILOCAL_STATE:-~/.local/state/ailocal}`. Deleting that directory and re-running `ailocal start` is a supported recovery.
 
 **Status** — configuration issue.
 
@@ -76,8 +69,7 @@ ollama serve      # or open Ollama.app
 ailocal check
 ```
 
-If Ollama listens elsewhere, export `OLLAMA_HOST` — it is the only variable that
-redirects it, for every subsystem.
+If Ollama listens elsewhere, export `OLLAMA_HOST` — it is the only variable that redirects it, for every subsystem.
 
 **Status** — configuration issue.
 
@@ -105,9 +97,7 @@ ailocal install
 
 ## A request is rejected for exceeding the context window
 
-**Likely cause** — the prompt is larger than the capability admits. Each alias
-advertises `max_input_tokens = context_input`; the proxy rejects rather than
-silently truncating.
+**Likely cause** — the prompt is larger than the capability admits. Each alias advertises `max_input_tokens = context_input`; the proxy rejects rather than silently truncating.
 
 **Verify**
 
@@ -116,21 +106,15 @@ ailocal check     # advertised geometry matches the profile, and an
                   # oversized prompt is rejected rather than truncated
 ```
 
-**Fix** — use a larger capability (`ailocal-architecture`), or raise
-`context_input` in the profile and `ailocal start`. Do not raise it past what the
-machine can hold.
+**Fix** — use a larger capability (`ailocal-architecture`), or raise `context_input` in the profile and `ailocal start`. Do not raise it past what the machine can hold.
 
-**Status** — expected behaviour. A rejection is correct; silent truncation would
-not be.
+**Status** — expected behaviour. A rejection is correct; silent truncation would not be.
 
 ---
 
 ## An architecture request appears hung
 
-**Likely cause** — cold prefill, not a hang. Long-context evaluation on the
-large tier can take minutes while everything remains healthy, and it degrades
-super-linearly with prompt size: a session that was fast can stall once a turn
-misses the KV cache.
+**Likely cause** — cold prefill, not a hang. Long-context evaluation on the large tier can take minutes while everything remains healthy, and it degrades super-linearly with prompt size: a session that was fast can stall once a turn misses the KV cache.
 
 **Verify**
 
@@ -139,13 +123,9 @@ ailocal check     # reports whether the model is resident and whether a
                   # generation is still running from a disconnected client
 ```
 
-Memory and swap staying flat while the model is resident means it is working,
-not stuck.
+Memory and swap staying flat while the model is resident means it is working, not stuck.
 
-**Fix** — wait. `API_TIMEOUT_MS` is pinned to the proxy's own 900 s so the
-client and proxy give up together instead of the client abandoning a request
-the backend keeps servicing. To avoid the stall, keep sessions shorter or use a
-smaller capability for routine work.
+**Fix** — wait. `API_TIMEOUT_MS` is pinned to the proxy's own 900 s so the client and proxy give up together instead of the client abandoning a request the backend keeps servicing. To avoid the stall, keep sessions shorter or use a smaller capability for routine work.
 
 **Status** — hardware limitation.
 
@@ -153,8 +133,7 @@ smaller capability for routine work.
 
 ## Claude Code reports an API error after a long request
 
-**Likely cause** — the client gave up before the backend finished, leaving
-Ollama generating into a closed socket.
+**Likely cause** — the client gave up before the backend finished, leaving Ollama generating into a closed socket.
 
 **Verify**
 
@@ -162,8 +141,7 @@ Ollama generating into a closed socket.
 grep -a "client closing the connection" ~/.ollama/logs/server.log | tail -3
 ```
 
-**Fix** — ensure the deployed client config is current; `configure.zsh` pins
-`API_TIMEOUT_MS` to match the proxy.
+**Fix** — ensure the deployed client config is current; `configure.zsh` pins `API_TIMEOUT_MS` to match the proxy.
 
 ```sh
 ailocal start && ailocal clients
@@ -179,18 +157,15 @@ ailocal start && ailocal clients
 
 **Verify** — open a session and watch `docker logs -f ailocal-litellm`.
 
-**Fix** — none available locally. Configuration, routing, geometry and tool
-transport are validated; only interactive streaming is affected.
+**Fix** — none available locally. Configuration, routing, geometry and tool transport are validated; only interactive streaming is affected.
 
-**Status** — upstream, [BerriAI/litellm#27442](https://github.com/BerriAI/litellm/issues/27442).
-Do not work around it by rewriting LiteLLM behaviour locally.
+**Status** — upstream, [BerriAI/litellm#27442](https://github.com/BerriAI/litellm/issues/27442). Do not work around it by rewriting LiteLLM behaviour locally.
 
 ---
 
 ## Claude Code shows "0 searches" although search worked
 
-**Likely cause** — the search result block is dropped during upstream response
-serialisation. Retrieval succeeded; only the count is wrong.
+**Likely cause** — the search result block is dropped during upstream response serialisation. Retrieval succeeded; only the count is wrong.
 
 **Verify**
 
@@ -208,8 +183,7 @@ A non-zero count with search content in the answer confirms retrieval ran.
 
 ## Search returns nothing, or Brave fails
 
-**Likely cause** — SearXNG is not running, or the Brave key is absent from the
-rendered settings.
+**Likely cause** — SearXNG is not running, or the Brave key is absent from the rendered settings.
 
 **Verify**
 
@@ -223,12 +197,9 @@ ailocal check     # reports whether LiteLLM can reach the SearXNG JSON API
 ailocal start     # renders settings and starts the service
 ```
 
-Set `BRAVE_API_KEY` in `.env` and re-run `ailocal start` to re-render. The
-rendered file lives outside the repository at
-`$AILOCAL_STATE/searxng/settings.yml` and is never committed.
+Set `BRAVE_API_KEY` in `.env` and re-run `ailocal start` to re-render. The rendered file lives outside the repository at `$AILOCAL_STATE/searxng/settings.yml` and is never committed.
 
-Search is deliberately coding-first: scraped general-web engines are disabled by
-default because they degrade under sustained use and fail with CAPTCHAs.
+Search is deliberately coding-first: scraped general-web engines are disabled by default because they degrade under sustained use and fail with CAPTCHAs.
 
 **Status** — configuration issue.
 
@@ -257,8 +228,7 @@ ailocal clients vscode      # VS Code connector
 
 ## State-root permissions are wrong
 
-**Likely cause** — the runtime directory was created by another process, or
-permissions were changed by hand.
+**Likely cause** — the runtime directory was created by another process, or permissions were changed by hand.
 
 **Verify**
 
@@ -267,8 +237,7 @@ ls -ld "${AILOCAL_STATE:-$HOME/.local/state/ailocal}"
 ls -l  "${AILOCAL_STATE:-$HOME/.local/state/ailocal}/searxng/settings.yml"
 ```
 
-Expect `0700` on the root and `0600` on the rendered settings, which carry the
-Brave key.
+Expect `0700` on the root and `0600` on the rendered settings, which carry the Brave key.
 
 **Fix**
 
@@ -283,11 +252,9 @@ chmod 600 "${AILOCAL_STATE:-$HOME/.local/state/ailocal}/searxng/settings.yml"
 
 ## VS Code is configured but not answering
 
-**Likely cause** — the connector is installed but the model list was not
-refreshed, or the extension is absent.
+**Likely cause** — the connector is installed but the model list was not refreshed, or the extension is absent.
 
-**Verify** — open a Copilot chat and confirm the request appears in
-`docker logs ailocal-litellm`.
+**Verify** — open a Copilot chat and confirm the request appears in `docker logs ailocal-litellm`.
 
 **Fix**
 
@@ -297,18 +264,13 @@ ailocal clients vscode
 
 Then reload the VS Code window.
 
-**Status** — configuration issue. GUI submission cannot be automated, so the
-final step is manual.
+**Status** — configuration issue. GUI submission cannot be automated, so the final step is manual.
 
 ---
 
 ## The VS Code chat reply area is cramped
 
-**Likely cause** — not ailocal. VS Code 1.132 added an agent-sessions panel
-inside the chat view, which takes space from the conversation. Its settings are
-`chat.viewSessions.enabled` and `chat.viewSessions.orientation`
-(`stacked` puts the panel above the chat input; `sideBySide` puts it beside the
-chat when the view is wide enough). ailocal writes neither.
+**Likely cause** — not ailocal. VS Code 1.132 added an agent-sessions panel inside the chat view, which takes space from the conversation. Its settings are `chat.viewSessions.enabled` and `chat.viewSessions.orientation` (`stacked` puts the panel above the chat input; `sideBySide` puts it beside the chat when the view is wide enough). ailocal writes neither.
 
 **Fix** — in VS Code settings:
 
@@ -316,16 +278,13 @@ chat when the view is wide enough). ailocal writes neither.
 "chat.viewSessions.enabled": false
 ```
 
-**Status** — upstream behaviour, not a defect. Responses through the proxy are
-unaffected: reasoning arrives in `reasoning_content` and the answer in
-`content`, which is what the connector expects.
+**Status** — upstream behaviour, not a defect. Responses through the proxy are unaffected: reasoning arrives in `reasoning_content` and the answer in `content`, which is what the connector expects.
 
 ---
 
 ## A cosmetic warning appears at startup
 
-SearXNG logs a bot-detection line during boot. It is expected on a
-single-user local instance reached only from LiteLLM, and can be ignored.
+SearXNG logs a bot-detection line during boot. It is expected on a single-user local instance reached only from LiteLLM, and can be ignored.
 
 **Status** — cosmetic.
 
@@ -333,9 +292,6 @@ single-user local instance reached only from LiteLLM, and can be ignored.
 
 ## Notes on diagnosis
 
-**Do not infer a fixed startup-context baseline from a single provider-token
-reading.** Measure the actual request: conversation accumulation is not startup,
-and a figure taken mid-session will mislead any compaction analysis.
+**Do not infer a fixed startup-context baseline from a single provider-token reading.** Measure the actual request: conversation accumulation is not startup, and a figure taken mid-session will mislead any compaction analysis.
 
-**The 128 GB profile is unvalidated.** It mirrors the 64 GB policy. Treat its
-numbers as provisional until measured on 128 GB hardware.
+**The 128 GB profile is unvalidated.** It mirrors the 64 GB policy. Treat its numbers as provisional until measured on 128 GB hardware.
