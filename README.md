@@ -167,7 +167,7 @@ To upgrade: `pipx upgrade ailocal && ailocal start`.
 | Tool | Status |
 |---|---|
 | Claude Code | Fully supported — tools, web search, and Python language support |
-| VS Code Copilot Chat | Supported for chat and code completion |
+| VS Code Copilot | Supported for chat and code completion |
 | Codex CLI | Configured and routed correctly, but interactive sessions do not finish — an upstream bug ([BerriAI/litellm#27442](https://github.com/BerriAI/litellm/issues/27442)) |
 
 Any OpenAI- or Anthropic-compatible app also works directly: point it at
