@@ -1,15 +1,12 @@
 # Security
 
-What is protected, why, and how. Repairs are in
-[troubleshooting.md](troubleshooting.md); system structure is in
-[architecture.md](architecture.md).
+What is protected, why, and how. Repairs are in [troubleshooting.md](troubleshooting.md); system structure is in [architecture.md](architecture.md).
 
 ---
 
 ## Trust boundaries
 
-ailocal runs entirely on one machine. There is no multi-tenancy, no remote
-access, and no authentication beyond a single local key.
+ailocal runs entirely on one machine. There is no multi-tenancy, no remote access, and no authentication beyond a single local key.
 
 | Boundary | Protection |
 |---|---|
@@ -19,9 +16,7 @@ access, and no authentication beyond a single local key.
 | Proxy ↔ Ollama | Host loopback. Ollama has no authentication and must not be exposed. |
 | Repository ↔ runtime | Generated state lives outside the checkout, so a secret cannot be committed. |
 
-The threat model is a developer workstation: it protects against accidental
-exposure and accidental disclosure, not against a local attacker who already
-has the user's account.
+The threat model is a developer workstation: it protects against accidental exposure and accidental disclosure, not against a local attacker who already has the user's account.
 
 ---
 
@@ -34,16 +29,9 @@ has the user's account.
 | `SEARXNG_SECRET` | `.env` | gitignored |
 | Rendered SearXNG settings | `$AILOCAL_STATE/searxng/settings.yml` | mode `0600`, **outside the checkout** |
 
-**Why the rendered settings live outside the repository.** SearXNG has no
-environment interpolation for an engine's `api_key`: its settings loader
-supports a fixed allow-list of variables and no `${VAR}` substitution, so the
-Brave key cannot be passed the way `SEARXNG_SECRET` is. The tracked
-`resources/deploy/searxng/settings.yml` therefore carries a placeholder and the rendered
-copy is written to the state root. Being outside Git's tree makes committing it
-impossible rather than merely discouraged.
+**Why the rendered settings live outside the repository.** SearXNG has no environment interpolation for an engine's `api_key`: its settings loader supports a fixed allow-list of variables and no `${VAR}` substitution, so the Brave key cannot be passed the way `SEARXNG_SECRET` is. The tracked `resources/deploy/searxng/settings.yml` therefore carries a placeholder and the rendered copy is written to the state root. Being outside Git's tree makes committing it impossible rather than merely discouraged.
 
-No secret appears in the generation manifest, in generated artifacts, in logs,
-or in captured evidence, which redacts key-shaped content before persisting.
+No secret appears in the generation manifest, in generated artifacts, in logs, or in captured evidence, which redacts key-shaped content before persisting.
 
 ---
 
@@ -62,13 +50,9 @@ Verify with `ailocal check`, which reports `.env` readable by other users.
 
 ## Authored versus generated
 
-A tracked file is authored source or a template. It is never a runtime artifact
-that generation rewrites, which means generation cannot dirty the working
-tree and cannot introduce a secret into a commit.
+A tracked file is authored source or a template. It is never a runtime artifact that generation rewrites, which means generation cannot dirty the working tree and cannot introduce a secret into a commit.
 
-Generated output is disposable: deleting `$AILOCAL_STATE` and re-running
-`ailocal start` fully recovers it. Nothing of value is stored only there except
-capture history.
+Generated output is disposable: deleting `$AILOCAL_STATE` and re-running `ailocal start` fully recovers it. Nothing of value is stored only there except capture history.
 
 ---
 
@@ -83,44 +67,30 @@ The proxy container sees only what it needs:
 | `/app/generated` | read-only | generated proxy configuration |
 | `/app/captures` | writable | the only path the proxy may write |
 
-Profiles, client templates and the repository itself are not
-mounted. SearXNG receives its rendered settings read-only and one authored
-limiter policy.
+Profiles, client templates and the repository itself are not mounted. SearXNG receives its rendered settings read-only and one authored limiter policy.
 
 ---
 
 ## Supply chain
 
-Both images are pinned **by digest**, not by tag, so a moving tag cannot change
-what runs without a commit:
+Both images are pinned **by digest**, not by tag, so a moving tag cannot change what runs without a commit:
 
 - `ghcr.io/berriai/litellm@sha256:a1745e62…`
 - `searxng/searxng@sha256:79c2be18…`
 
-`ailocal check` gates the running build against the
-validated version, and the regression gate fails if they diverge.
+`ailocal check` gates the running build against the validated version, and the regression gate fails if they diverge.
 
-`ailocal check` includes the supply chain: every image pinned by digest, the
-running image identical to the declared one, loopback-only binding, and
-provenance where a publisher signs. `ailocal check --updates` additionally asks
-upstream what exists; it never pulls over a running service and never rewrites
-a pin. A check that could not complete reports as such — an absent scanner is
-not a pass.
+`ailocal check` includes the supply chain: every image pinned by digest, the running image identical to the declared one, loopback-only binding, and provenance where a publisher signs. `ailocal check --updates` additionally asks upstream what exists; it never pulls over a running service and never rewrites a pin. A check that could not complete reports as such — an absent scanner is not a pass.
 
-**Upgrading an image** means changing the digest, re-running the scan, running
-the full gate, and confirming the proxy still serves every alias with the
-expected geometry. A tag bump without a digest change is not an upgrade.
+**Upgrading an image** means changing the digest, re-running the scan, running the full gate, and confirming the proxy still serves every alias with the expected geometry. A tag bump without a digest change is not an upgrade.
 
 ---
 
 ## Commit attribution
 
-Commits carry one identity: the configured human author, with no assistant
-attribution trailers or session identifiers.
+Commits carry one identity: the configured human author, with no assistant attribution trailers or session identifiers.
 
-Session URLs are permanent public metadata that cannot be recalled once pushed
-— a force-push removes them from a branch, but the objects can remain reachable
-by SHA. The hook is the mechanical guarantee that a written rule is not.
+Session URLs are permanent public metadata that cannot be recalled once pushed — a force-push removes them from a branch, but the objects can remain reachable by SHA. The hook is the mechanical guarantee that a written rule is not.
 
 Commits carry one identity: the configured human author.
 
@@ -128,8 +98,6 @@ Commits carry one identity: the configured human author.
 
 ## Reporting
 
-Report a vulnerability privately to the maintainer rather than opening a public
-issue.
+Report a vulnerability privately to the maintainer rather than opening a public issue.
 
-Ownership: **DevelopSolutions, LLC**, Apache-2.0. Maintained by
-**Victor T. Chevalier**.
+Ownership: **DevelopSolutions, LLC**, Apache-2.0. Maintained by **Victor T. Chevalier**.

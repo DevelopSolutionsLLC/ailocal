@@ -1,11 +1,6 @@
 # Releasing ailocal
 
-From v0.9.0 onward, `main` is a public contract. Improving it is expected;
-changing it out from under an installed machine is not. Anything user-facing —
-CLI commands and flags, configuration layout, the install flow, generated client
-files, profile behaviour — needs a migration story, a release note, and the
-right version bump decided BEFORE it merges, not after someone's `ailocal check`
-turns red.
+From v0.9.0 onward, `main` is a public contract. Improving it is expected; changing it out from under an installed machine is not. Anything user-facing — CLI commands and flags, configuration layout, the install flow, generated client files, profile behaviour — needs a migration story, a release note, and the right version bump decided BEFORE it merges, not after someone's `ailocal check` turns red.
 
 ## What each bump means
 
@@ -39,8 +34,7 @@ turns red.
 - [ ] update `AGENTS.md` if the developer workflow changed
 - [ ] bump the version in BOTH `pyproject.toml` and `src/ailocal/__init__.py`
 
-Breaking changes are documented in the release notes. A breaking change that
-ships without one is a defect, whatever the version number says.
+Breaking changes are documented in the release notes. A breaking change that ships without one is a defect, whatever the version number says.
 
 ## Compatibility promise
 
