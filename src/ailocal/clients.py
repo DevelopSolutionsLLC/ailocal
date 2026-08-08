@@ -430,8 +430,23 @@ def _install_extension(ext: str, installed: list[str]) -> None:
         warn(f"{ext} install failed — install it from the Marketplace")
 
 
+#: install_vscode's three outcomes. ABSENT and FAILED are BOTH non-zero, so a
+#: caller that only asks "did this work?" keeps the old answer — but they are
+#: distinct, because "there is no VS Code here" is an expected end state and "a
+#: write into the user directory blew up" is a defect the caller must not
+#: silently swallow.
+VSCODE_OK = 0
+VSCODE_FAILED = 1
+VSCODE_ABSENT = 2
+
+
 def install_vscode(argv: list[str]) -> int:
-    """Configure VS Code for the local stack without hand-editing the UI."""
+    """Configure VS Code for the local stack without hand-editing the UI.
+
+    Returns VSCODE_OK, VSCODE_ABSENT (no VS Code, or never launched so it has
+    no user directory yet) or VSCODE_FAILED (VS Code is here and configuring it
+    did not work).
+    """
     dry = "--dry-run" in argv
     user_dir = _vscode_user_dir()
     version = (_code("--version") or "").splitlines()
@@ -444,7 +459,7 @@ def install_vscode(argv: list[str]) -> int:
             warn("  Open VS Code once, then: ailocal clients vscode")
         else:
             warn(f"VS Code not installed — {CLIENTS['vscode'][1]}")
-        return 1
+        return VSCODE_ABSENT
 
     installed = _extensions()
     if not dry:
@@ -453,14 +468,21 @@ def install_vscode(argv: list[str]) -> int:
         # in order to answer a chat turn.
         _install_extension(CONNECTOR_EXT, installed)
 
-    _provider_group(user_dir / "chatLanguageModels.json", dry)
-    _prune_deprecated(user_dir / "settings.json", dry)
-    if not dry:
-        _ensure_recommended(user_dir / "settings.json")
+    # A user directory that cannot be written is a real failure and says so.
+    # Reporting it as absence would send the caller down the "you have no VS
+    # Code" path for an editor that is sitting right there, half-configured.
+    try:
+        _provider_group(user_dir / "chatLanguageModels.json", dry)
+        _prune_deprecated(user_dir / "settings.json", dry)
+        if not dry:
+            _ensure_recommended(user_dir / "settings.json")
+    except OSError as exc:
+        warn(f"VS Code configuration failed under {user_dir}: {exc}")
+        return VSCODE_FAILED
 
     print("\n  NOT verifiable from a script, and not claimed: whether a VS Code")
     print("  CHAT TURN reaches the model. That needs the GUI — run")
-    return 0
+    return VSCODE_OK
 
 
 def _copilot_instructions() -> None:
@@ -481,8 +503,15 @@ def target_vscode() -> None:
     # install_vscode's failure is the answer, not a warning to walk past: with no
     # VS Code there is nothing to read ~/.copilot/instructions, and printing the
     # "enter your key in SecretStorage" ritual for absent software is an
-    # instruction the user cannot carry out.
-    if install_vscode([]):
+    # instruction the user cannot carry out. A CONFIGURATION FAILURE is a
+    # different thing and is not filed under the same silence: it is said out
+    # loud, because VS Code is here and half-configured.
+    outcome = install_vscode([])
+    if outcome == VSCODE_ABSENT:
+        return
+    if outcome != VSCODE_OK:
+        warn("VS Code configuration failed — Copilot instruction files and the "
+             "key step are skipped. Fix the above, then: ailocal clients vscode")
         return
     _copilot_instructions()
     # One ritual, worded once. VS Code keeps model API keys in SecretStorage and
@@ -660,10 +689,16 @@ _TARGETS = {"vscode": target_vscode, "codex": target_codex, "claude": target_cla
 def main(argv: list[str]) -> int:
     selected = [a for a in argv if not a.startswith("-")]
     for name in selected:
-        if name not in _TARGETS:
-            print(f"  ✗ Unknown target: {name!r}. Valid: {'  '.join(TARGETS)}",
-                  file=sys.stderr)
+        if name not in _TARGETS and name != "all":
+            print(f"  ✗ Unknown target: {name!r}. Valid: "
+                  f"{'  '.join(TARGETS)}  all", file=sys.stderr)
             return 1
+    # `all` is the EXPLICIT form of "every supported client", and it is a named
+    # request like any other: it configures the full list whether or not each
+    # client is on this machine. It is deliberately not what an EMPTY argv
+    # means — that stays "configure what I have".
+    if "all" in selected:
+        selected = list(TARGETS)
     # NAMED is a request and is honoured whether or not the client is here:
     # writing a client home before installing the client is a legitimate order
     # to do things in, and refusing it would break `ailocal clients codex` on a
