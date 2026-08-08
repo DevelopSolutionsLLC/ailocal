@@ -275,7 +275,7 @@ def _readonly_commands_run(repo: pathlib.Path) -> tuple[int, str]:
     `ailocal status` both once raised NameError on a helper deleted from under
     them, and every import-level check stayed green."""
     bad = []
-    for cmd in ("help", "status", "trace", "profile active-tier"):
+    for cmd in ("help", "--version", "status", "trace", "profile active-tier"):
         r = subprocess.run([sys.executable, "-m", "ailocal.cli", *cmd.split()],
                            cwd=repo, capture_output=True, text=True, timeout=120)
         if "Traceback" in r.stderr:
