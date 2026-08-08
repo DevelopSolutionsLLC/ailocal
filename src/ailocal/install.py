@@ -886,7 +886,7 @@ def cmd_install(argv: list[str]) -> int:
     else:
         print("\n  ⚠ Configuring backs up, then rewrites/merges existing client configs.")
         targets = _ask(f"Configure which? [Enter for the detected "
-                       f"{', '.join(detected)} | a name | none]")
+                       f"{', '.join(detected)} | a name | all | none]")
         if targets == "none":
             ok("Skipped — run later with: ailocal clients [claude|codex|vscode]")
         else:

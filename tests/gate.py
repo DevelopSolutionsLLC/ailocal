@@ -83,6 +83,8 @@ def _gate_suites(repo: pathlib.Path, full: bool) -> list:
              [py, "tests/profiles.py", "policy"]),
             ("hardware profiles (schema, tiers, dedup)",
              [py, "tests/profiles.py", "hardware"]),
+            ("client target selection (`all`, detected-only) and VS Code outcomes",
+             [py, "tests/client-targets.py"]),
             ("Python LSP baseline for claude-local (real documentSymbol)",
              [py, "tests/lsp-baseline.py"]),
         ]),
