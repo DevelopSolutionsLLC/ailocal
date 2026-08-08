@@ -82,4 +82,4 @@ Releases follow [RELEASING.md](RELEASING.md): from v0.9.0 the published interfac
 
 ## Markdown formatting
 
-Markdown is read rendered, not in an 80-column terminal. One paragraph per line, soft wrap, no hard wrapping — unlike the Python, and unlike commit messages. Code blocks, tables and lists keep their formatting.
+Write Markdown for rendered readers (GitHub, documentation sites, mobile apps), not 80-column terminals. Keep one paragraph per source line. Do not hard-wrap prose. Wrap code, shell commands, tables, lists, and other structured content only where their syntax requires it.
