@@ -13,10 +13,9 @@
 # TRUNCATED FROM THE FRONT with HTTP 200 and no error to the caller
 # (registry.yaml, runtime_engines.llama_cpp). Four roles sharing one backend must
 # declare an IDENTICAL total_context, or whichever loads the runner first
-# silently decides the window for the other three. The roles below differ in
-# context_input (90112 vs 102400) while max_output offsets it (16384 vs 4096) to
-# the same 106496 total: the split is a role boundary, the total is a runner
-# constraint.
+# silently decides the window for the other three. Each role's context_input is
+# therefore 106496 minus ITS OWN max_output: 90112 for the 16384 roles, 98304 for
+# the 8192 ones. The split is a role boundary; the total is a runner constraint.
 #
 # THIS IS THE ONE TIER WHERE MEMORY, NOT LATENCY, SETS THE CEILING. KV is
 # allocated EAGERLY for the whole declared window and again per parallel slot.
@@ -27,10 +26,10 @@
 # primary alone and was rejected on that basis, NOT on model capability --
 # qwen3.5:4b supports 262144 natively.
 #
-# max_output 16384 is why the total is 106496 rather than 98304: an output
-# ceiling is charged eagerly here, so 8K of extra headroom costs ~370 MB even
-# when nothing generates that long. `fast` keeps 4096 -- it answers in a word or
-# two, and it is the role with documented runaway behaviour.
+# An output ceiling is charged eagerly here, so it is spent where it earns its
+# keep: architecture and review get 16384 (long plans, long review reports),
+# implementation and fast get 8192. Because the tier total is fixed, a larger
+# ceiling is paid for out of that role's OWN input, not out of tier memory.
 #
 # num_predict is a generation CEILING, not an expected output length and not an
 # extra fixed allocation.
@@ -62,8 +61,8 @@ role = "Daily coding (shared primary)"
 active = "qwen3.5:4b"
 preferred = ["qwen3.5:4b"]
 reasoning = false
-context_input = 90112
-max_output = 16384
+context_input = 98304
+max_output = 8192
 temperature = 0.1
 keep_alive = "6h"
 persona = true
@@ -98,8 +97,8 @@ active = "qwen3.5:4b"
   # classification tier that thinks past its budget returns empty content.
 reasoning = false
 preferred = ["qwen3.5:4b"]
-context_input = 102400
-max_output = 4096
+context_input = 98304
+max_output = 8192
 temperature = 0.0
 keep_alive = "6h"
 persona = true
@@ -119,7 +118,10 @@ active = "qwen2.5-coder:1.5b"
 preferred = ["qwen2.5-coder:1.5b"]
 reasoning = false
 context_input = 3968
-max_output = 128
+  # max_output 512, raised from 128. A FIM suggestion is a few lines, not a
+  # paragraph, but 128 truncated multi-line completions mid-block. 512 is
+  # still far too small to be used as a chat role, which is the point.
+max_output = 512
 temperature = 0.1
   # Rotating, not pinned: self-unloads after 2h idle rather than staying resident
   # beside the primary indefinitely. ~1 GB footprint keeps this cheap to reload.
@@ -162,13 +164,21 @@ weaknesses = ["2048-token ceiling - chunk before embedding"]
 # interactive session grows incrementally and hits Ollama's prefix cache every
 # turn, so the full cold cost above is paid on session RESUME, not per turn.
 # Sizing the trigger for the resume case penalises every ordinary turn to protect
-# the rare one. 67,584 leaves 22,528 tokens of admissible input in reserve for the
+# the rare one. 67,891 leaves 22,221 tokens of admissible input in reserve for the
 # compaction prompt, system instructions, tool schemas and persona injection.
 #
 # [UNVERIFIED] on 16 GB hardware, and this is the tier where that gap matters
 # most: a 16 GB Mac is the slowest GPU ailocal supports, so a cold resume at this
 # depth will cost materially more there than the figures above suggest.
+#
+# THE TWO KNOBS, AND WHICH ONE CARRIES THE POLICY. `pct` is 85 on EVERY tier: a
+# uniform 15% reserve, so no tier quietly runs a different safety margin. `window`
+# is per-tier, because it encodes the one thing that genuinely differs -- how many
+# tokens this tier's runner can cold-prefill inside its latency budget. Setting
+# `window` to the role's full context_input and letting `pct` do the work would be
+# tidier and wrong: it would push this tier's trigger far past that budget on
+# hardware nobody has measured.
 [compaction]
-window = 90112  # effective window handed to the client's compactor
-pct = 75  # compact at this % of the window
-  # trigger: 67584 tokens
+window = 79872  # effective window handed to the client's compactor
+pct = 85  # compact at this % of the window
+  # trigger: 67891 tokens

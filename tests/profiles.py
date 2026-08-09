@@ -515,22 +515,39 @@ def hardware_checks() -> None:
           == 147456,
           "64gb architecture total_context is 147456")
 
-    # THE OUTPUT-CEILING POLICY, stated once so a future edit has to argue with
-    # it rather than drift past it. The reasoning tiers get 16384 on every tier:
-    # no model here caps num_predict below its context, so the ceiling is a
-    # policy choice, not a capability. `fast` and `completion` are the two
-    # deliberate exceptions -- fast answers in a word or two (and is the role
-    # with recorded runaway behaviour), completion is FIM and must stay short.
+    # THE OUTPUT-CEILING POLICY, by ROLE and identical on every tier. No model
+    # here caps num_predict below its context, so these are policy choices, not
+    # capabilities -- which is exactly why they belong in one asserted table
+    # rather than drifting per tier.
+    #
+    #   architecture 16384  long design documents
+    #   implementation 8192 large code generation without spending input budget
+    #   review       16384  long review reports
+    #   fast          8192  more than a word, still not a generation tier
+    #   completion     512  multi-line FIM suggestions; NOT a chat role
+    #
+    # On the llama_cpp tiers (16/32 GB) a role's ceiling is charged eagerly and
+    # the tier total is fixed, so a larger ceiling is paid for out of that role's
+    # OWN context_input -- see the shared-runner check above.
+    OUTPUT_POLICY = {"architecture": 16384, "implementation": 8192,
+                     "review": 16384, "fast": 8192, "completion": 512}
     for tier in PROFILES:
         caps, _ = PARSED[tier]
-        for cap in ("architecture", "implementation", "review"):
-            check(int(caps[cap]["max_output"]) == 16384,
-                  f"{tier}.{cap} output ceiling is 16384",
+        for cap, want in OUTPUT_POLICY.items():
+            check(int(caps[cap]["max_output"]) == want,
+                  f"{tier}.{cap} output ceiling is {want}",
                   f"got {caps[cap].get('max_output')}")
-        check(int(caps["fast"]["max_output"]) == 4096,
-              f"{tier}.fast stays at 4096 (classification, not generation)")
-        check(int(caps["completion"]["max_output"]) == 128,
-              f"{tier}.completion stays at 128 (FIM)")
+        check(caps["embeddings"].get("max_output") is None,
+              f"{tier}.embeddings declares no max_output (embedding route)")
+
+    # COMPACTION IS 85% EVERYWHERE. The window differs per tier because prefill
+    # cost does; the percentage does not, because nothing measured justifies a
+    # different one. An exception needs evidence recorded in the profile.
+    for tier in PROFILES:
+        caps, _ = PARSED[tier]
+        check(int(caps["compaction"]["pct"]) == 85,
+              f"{tier} compacts at the standard 85%",
+              f"got {caps['compaction'].get('pct')}")
 
     # No role may declare more than its model can actually hold. This is the
     # ceiling that stops a future raise from inventing capacity: every chat model

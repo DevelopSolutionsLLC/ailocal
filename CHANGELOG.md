@@ -10,14 +10,27 @@ Every profile carried context limits inherited from a model backend ailocal no l
 
 Context windows and output ceilings rise on every tier:
 
-| Tier | Input (was → now) | Output | Auto-compaction (was → now) |
-|---|---|---|---|
-| 16 GB | 57,344 → 90,112 | 8,192 → 16,384 | 45,875 → 67,584 |
-| 32 GB | 57,344 → 122,880 | 8,192 → 16,384 | 45,875 → 91,750 |
-| 64 GB | 81,920 → 131,072 | 16,384 | 49,152 → 111,411 |
-| 128 GB | 81,920 → 245,760 | 16,384 | 49,152 → 139,264 |
+| Tier | `architecture` input | Auto-compaction (was → now) |
+|---|---|---|
+| 16 GB | 57,344 → 90,112 | 45,875 → 67,891 |
+| 32 GB | 57,344 → 122,880 | 45,875 → 92,262 |
+| 64 GB | 81,920 → 131,072 | 49,152 → 111,411 |
+| 128 GB | 81,920 → 245,760 | 49,152 → 139,264 |
 
 `implementation` and `review` now get the same input window as `architecture` rather than roughly half of it. Context capacity and role identity are separate concerns; a review that cannot see a whole change is not a cheaper review.
+
+Every tier now compacts at a uniform **85%** of its window, so no tier runs a different safety margin. The window stays per-tier, because it encodes the one thing that genuinely differs: how many tokens that tier's runner can cold-prefill inside its latency budget.
+
+Output ceilings are now set by role rather than per tier, identically everywhere:
+
+| Role | Output | Why |
+|---|---|---|
+| `architecture` | 16,384 | long design documents |
+| `implementation` | 8,192 | large code generation without spending input budget |
+| `review` | 16,384 | long review reports |
+| `fast` | 4,096 → 8,192 | more than a word, still not a generation tier |
+| `completion` (FIM) | 128 → 512 | multi-line suggestions; 128 truncated mid-block |
+| `embeddings` | n/a | no generation route |
 
 ### Why the old numbers were wrong
 
@@ -40,8 +53,7 @@ The full model window remains available for deliberate one-shot work. Compaction
 ### Deliberately unchanged
 
 - **Embeddings** stay at 2,048. That is `nomic-embed-text`'s real maximum — it clips silently above it and still returns a valid vector. The model's own `num_ctx 8192` default parameter is misleading and should not be followed.
-- **Inline completion (FIM)** stays at 3,968 input / 128 output. The model supports 32,768, but there are no recorded requests and no installed consumer, so a larger window would buy nothing.
-- **The `fast` role** keeps a 4,096 output ceiling on every tier. It classifies and answers briefly; it is also the one role with recorded runaway-generation behaviour.
+- **Inline completion (FIM)** keeps its 3,968-token input. The model supports 32,768, but there are no recorded requests and no installed consumer, so a larger input window would buy nothing. Its output ceiling does rise to 512, because 128 truncated multi-line completions mid-block.
 
 ### Upgrading
 

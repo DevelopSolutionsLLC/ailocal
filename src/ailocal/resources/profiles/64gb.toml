@@ -51,7 +51,7 @@ active = "gemma4:26b-mlx"
   # Capabilities: tools YES, insert YES, thinking NO.
 reasoning = true
 context_input = 131072
-max_output = 16384
+max_output = 8192
 temperature = 0.1
 keep_alive = -1  # same physical model as architecture
 persona = true
@@ -68,9 +68,9 @@ role = "Code review"
 active = "gemma4:26b-mlx"
 reasoning = true  # thinking AND tools (deepseek had NO tools)
   # Full input AND full output. A review of a 128K change emits findings, not
-  # bulk code, so 4096 was rarely binding -- but the MLX runner allocates KV
-  # lazily, so an unused output ceiling costs nothing here, and a review that
-  # DOES have a lot to say should not be truncated mid-finding.
+  # bulk code -- but the MLX runner allocates KV lazily, so an unused output
+  # ceiling costs nothing here, and a review that DOES have a lot to say should
+  # not be truncated mid-finding. 16384 matches architecture for that reason.
 context_input = 131072
 max_output = 16384
 temperature = 0.2
@@ -100,10 +100,11 @@ reasoning = false
   # a wide margin: cold prefill 45.8s at 70,002 tokens (1529 tok/s, vs 598 tok/s
   # for gemma4 at 137K). Unlike gemma4 this is a llama_cpp runner, which
   # allocates KV EAGERLY for the whole declared window and again per parallel
-  # slot: ~11.6 KB per ctx-token x OLLAMA_NUM_PARALLEL=2, so num_ctx 131072 costs
-  # ~3.6 GiB resident whether or not it is used. Cheap enough to stop rationing.
+  # slot: ~11.6 KB per ctx-token x OLLAMA_NUM_PARALLEL=2, so num_ctx 135168 costs
+  # ~3.7 GiB resident whether or not it is used. Cheap enough to stop rationing.
+  # max_output 8192, not 16384: this tier stays concise by design.
 context_input = 126976
-max_output = 4096
+max_output = 8192
 temperature = 0.0
 keep_alive = "20m"
   # No deploy/litellm/instructions/fast.md on purpose: this tier gets _core.md only, so
@@ -111,7 +112,7 @@ keep_alive = "20m"
   # the file is enough to change that -- the injector needs no code change.
 persona = true
 purpose = ["task classification", "doc summarisation", "quick edits", "tool-driven lookups"]
-strengths = ["tiny footprint", "native tool calling", "128K context", "fastest prefill of any tier model"]
+strengths = ["tiny footprint", "native tool calling", "124K input, 8K output", "fastest prefill of any tier model"]
 weaknesses = ["no FIM/insert - cannot do inline autocomplete", "weaker on large refactors"]
 top_p = 0.9
 top_k = 20
@@ -129,7 +130,10 @@ role = "Autocomplete (standby)"
 active = "qwen2.5-coder:3b-instruct-q4_K_M"
 preferred = ["qwen2.5-coder:3b-instruct-q4_K_M", "qwen2.5-coder:1.5b"]
 context_input = 3968
-max_output = 128
+  # max_output 512, raised from 128. A FIM suggestion is a few lines, not a
+  # paragraph, but 128 truncated multi-line completions mid-block. 512 is
+  # still far too small to be used as a chat role, which is the point.
+max_output = 512
 temperature = 0.1
 keep_alive = "2h"
 purpose = ["inline completion", "FIM", "quick syntax fixes", "small transforms"]
@@ -175,6 +179,14 @@ weaknesses = ["not a chat model"]
 # Reserve at the trigger: architecture admits 131,072, so compaction fires with
 # 19,661 input tokens still free for the compaction prompt, system instructions,
 # tool schemas and persona injection before the backend would refuse.
+#
+# THE TWO KNOBS, AND WHICH ONE CARRIES THE POLICY. `pct` is 85 on EVERY tier: a
+# uniform 15% reserve, so no tier quietly runs a different safety margin. `window`
+# is per-tier, because it encodes the one thing that genuinely differs -- how many
+# tokens this tier's runner can cold-prefill inside its latency budget. Setting
+# `window` to the role's full context_input and letting `pct` do the work would be
+# tidier and wrong: it would push this tier's trigger far past that budget on
+# hardware nobody has measured.
 [compaction]
 window = 131072  # effective window handed to the client's compactor
 pct = 85  # compact at this % of the window

@@ -550,11 +550,15 @@ def regen_claude_settings(models, clients):
         f"Built-in slots remap: {slot_txt}.",
         "Launch with: claude-local",
     ]
-    # Client-native compaction. ailocal does NOT summarise conversations; it only
-    # tells Claude Code to compact EARLIER than it would for a hosted model, because
-    # a local backend's cold prompt eval is super-linear (measured: 85 s at 28K,
-    # 341 s at 58K, 789 s at 88K). Compacting before that zone is what keeps a long
-    # architecture session alive. The model maximum is unchanged and still available.
+    # Client-native compaction. ailocal does NOT summarise conversations and holds
+    # no conversation state; Claude Code does the compacting. What ailocal owns is
+    # the THRESHOLD, and it sets one earlier than a hosted model would use because
+    # a cold local prefill costs real time. The per-tier numbers and the runner
+    # they were measured against live in each profile's [compaction] block --
+    # deliberately not restated here, because a second copy is what let the
+    # previous figures (85 s at 28K, 341 s at 58K, 789 s at 88K) outlive the
+    # llama_cpp backend that produced them.
+    # The model maximum is unchanged and still available for one-shot work.
     win, pct = COMPACTION.get("window"), COMPACTION.get("pct")
     if win and pct:
         data.setdefault("env", {})["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = str(win)

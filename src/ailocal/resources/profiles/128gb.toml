@@ -57,7 +57,7 @@ active = "gemma4:26b-mlx"
   # Capabilities: tools YES, insert YES, thinking NO.
 reasoning = true
 context_input = 245760
-max_output = 16384
+max_output = 8192
 temperature = 0.1
 keep_alive = -1  # same physical model as architecture
 persona = true
@@ -99,14 +99,14 @@ preferred = ["qwen3.5:2b"]
   # budget. This tier answers in a word or two and must not think itself out.
 reasoning = false
 context_input = 253952
-max_output = 4096
+max_output = 8192
 temperature = 0.0
 keep_alive = "20m"
   # No deploy/litellm/instructions/fast.md on purpose: this tier gets _core.md only, so
   # every extra system-prompt token is a larger share of its small budget.
 persona = true
 purpose = ["task classification", "doc summarisation", "quick edits", "tool-driven lookups"]
-strengths = ["tiny footprint", "native tool calling", "full 248K window", "fastest prefill of any tier model"]
+strengths = ["tiny footprint", "native tool calling", "248K input, 8K output", "fastest prefill of any tier model"]
 weaknesses = ["no FIM/insert - cannot do inline autocomplete", "weaker on large refactors"]
 top_p = 0.9
 top_k = 20
@@ -124,7 +124,10 @@ role = "Autocomplete (standby)"
 active = "qwen2.5-coder:3b-instruct-q4_K_M"
 preferred = ["qwen2.5-coder:3b-instruct-q4_K_M", "qwen2.5-coder:1.5b"]
 context_input = 3968
-max_output = 128
+  # max_output 512, raised from 128. A FIM suggestion is a few lines, not a
+  # paragraph, but 128 truncated multi-line completions mid-block. 512 is
+  # still far too small to be used as a chat role, which is the point.
+max_output = 512
 temperature = 0.1
 keep_alive = "2h"
 purpose = ["inline completion", "FIM", "quick syntax fixes", "small transforms"]
@@ -164,6 +167,14 @@ weaknesses = ["not a chat model"]
 # roughly 233s of cold prefill, already at the edge of what reads as responsive.
 #
 # [UNVERIFIED] on 128 GB hardware. Re-measure before moving it further.
+#
+# THE TWO KNOBS, AND WHICH ONE CARRIES THE POLICY. `pct` is 85 on EVERY tier: a
+# uniform 15% reserve, so no tier quietly runs a different safety margin. `window`
+# is per-tier, because it encodes the one thing that genuinely differs -- how many
+# tokens this tier's runner can cold-prefill inside its latency budget. Setting
+# `window` to the role's full context_input and letting `pct` do the work would be
+# tidier and wrong: it would push this tier's trigger far past that budget on
+# hardware nobody has measured.
 [compaction]
 window = 163840  # effective window handed to the client's compactor
 pct = 85  # compact at this % of the window
