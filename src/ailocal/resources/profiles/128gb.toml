@@ -1,33 +1,47 @@
-# 128 GB profile — PENDING VALIDATION ON 128 GB HARDWARE.
+# 128 GB profile — model-limit sized; NOT MEASURED ON 128 GB HARDWARE.
 #
-# Values mirror the validated 64 GB policy; they are not a completed 128 GB
-# sizing recommendation. Do not raise them until a filled ~128K measurement is
-# taken on 128 GB hardware: MLX allocates KV lazily, so a model that loads
-# proves nothing, and a 64 GB machine would measure memory pressure instead.
+# This is no longer a copy of the 64 GB policy. It runs the same models, so the
+# per-token costs below are the 64 GB tier's REAL measurements; what 128 GB
+# changes is how many of those tokens fit at once.
+#
+# THREE LEVELS OF EVIDENCE, kept apart deliberately:
+#   MODEL-SUPPORTED   gemma4:26b-mlx and qwen3.5:2b both report 262144 native
+#                     context (`ollama show`). 245760 + 16384 = 262144 is the
+#                     model's own ceiling, not a chosen number.
+#   MEASURED (64 GB)  MLX allocates KV lazily at 45.4 KB per token in use, so a
+#                     filled 262,144 window costs ~27.5 GiB (weights ~16.15 GiB
+#                     + ~11.35 GiB KV). Two such sessions fit 128 GB with room;
+#                     they would not fit 64 GB, which is the ONLY reason this
+#                     tier goes higher than that one.
+#   UNVERIFIED        no 128 GB machine has run this. Nothing here is claimed as
+#                     hardware-validated.
+#
+# WHAT 128 GB DOES NOT BUY: prefill speed. It is the same model on the same class
+# of GPU, so cold prefill per token is unchanged and the compaction trigger below
+# is raised far less than the ceiling is. More memory means more concurrent
+# sessions and less eviction, not a faster clock.
 #
 # Engine behaviour is owned by deploy/litellm/registry.yaml.
-status = "pending-hardware-validation"
+status = "model-limit-sized"  # ceilings from real model limits; not measured on 128 GB hardware
 
 disk_gb = 40
 
 # ── architecture — shared large-context coding/reasoning tier ─────────────────
 # The one big-context capability every client shares (Claude Code, Codex, VS Code):
-# design, deep reasoning, AND large interactive/agent prompts. 65536 num_ctx gives clients
-# a genuinely large input window; qwen3-coder:30b-a3b-q4_K_M supports 262144, so 128K is a future
-# "architecture-deep" capability, not this one (a resident -1 model carries its full KV,
-# so 64K is the balance between input capacity and permanent memory).
+# design, deep reasoning, AND large interactive/agent prompts. This tier declares
+# gemma4's FULL native 262144 window; there is no larger setting to grow into.
 [architecture]
 role = "Lead architect"
 active = "gemma4:26b-mlx"
 reasoning = true  # gpt-oss:20b HAS thinking; qwen3-coder did not
-context_input = 81920
+context_input = 245760
 max_output = 16384
 temperature = 0.1
 keep_alive = "6h"
 persona = true
 purpose = ["architecture", "complex refactoring", "multi-step debugging", "design", "repository-wide planning", "large interactive/agent prompts"]
-strengths = ["large 64K input window shared across clients", "holds a whole subsystem in view", "strong code generation"]
-weaknesses = ["slower", "higher resident memory (64K KV pinned)", "non-thinking (no <think> stream)"]
+strengths = ["full 240K native input window", "holds a whole subsystem in view", "strong code generation"]
+weaknesses = ["slower", "cold prefill of a full window costs many minutes", "KV grows to ~27 GiB when filled"]
 top_p = 0.9
 top_k = 20
 repeat_penalty = 1.0
@@ -37,13 +51,12 @@ repeat_penalty = 1.0
 role = "Daily coding"
 active = "gemma4:26b-mlx"
   # Same physical model as architecture, deliberately: this is a role boundary
-  # (persona, sampling, output ceiling), not a model boundary. The former
-  # "smaller footprint" rationale described qwen2.5-coder:14b, which this role
-  # has not used since gemma4 became active -- and it is what left context_input
-  # at 16,384 on a model architecture already drives at 81,920.
+  # (persona, sampling, output ceiling), not a model boundary. Same input window
+  # too: the MLX runner enforces context per-request, so three roles declaring
+  # three different num_ctx still share ONE resident copy of the weights.
   # Capabilities: tools YES, insert YES, thinking NO.
 reasoning = true
-context_input = 65536
+context_input = 245760
 max_output = 8192
 temperature = 0.1
 keep_alive = -1  # same physical model as architecture
@@ -60,8 +73,8 @@ repeat_penalty = 1.0
 role = "Code review"
 active = "gemma4:26b-mlx"
 reasoning = true  # thinking AND tools (deepseek had NO tools)
-context_input = 65536
-max_output = 4096
+context_input = 245760
+max_output = 16384
 temperature = 0.2
 keep_alive = -1  # same physical model as architecture
 persona = true
@@ -85,15 +98,15 @@ preferred = ["qwen3.5:2b"]
   # emitted ~19k reasoning characters and returned EMPTY content within its
   # budget. This tier answers in a word or two and must not think itself out.
 reasoning = false
-context_input = 45056
-max_output = 4096
+context_input = 253952
+max_output = 8192
 temperature = 0.0
 keep_alive = "20m"
   # No deploy/litellm/instructions/fast.md on purpose: this tier gets _core.md only, so
   # every extra system-prompt token is a larger share of its small budget.
 persona = true
 purpose = ["task classification", "doc summarisation", "quick edits", "tool-driven lookups"]
-strengths = ["tiny footprint", "native tool calling", "very long context", "low latency"]
+strengths = ["tiny footprint", "native tool calling", "248K input, 8K output", "fastest prefill of any tier model"]
 weaknesses = ["no FIM/insert - cannot do inline autocomplete", "weaker on large refactors"]
 top_p = 0.9
 top_k = 20
@@ -111,7 +124,10 @@ role = "Autocomplete (standby)"
 active = "qwen2.5-coder:3b-instruct-q4_K_M"
 preferred = ["qwen2.5-coder:3b-instruct-q4_K_M", "qwen2.5-coder:1.5b"]
 context_input = 3968
-max_output = 128
+  # max_output 512, raised from 128. A FIM suggestion is a few lines, not a
+  # paragraph, but 128 truncated multi-line completions mid-block. 512 is
+  # still far too small to be used as a chat role, which is the point.
+max_output = 512
 temperature = 0.1
 keep_alive = "2h"
 purpose = ["inline completion", "FIM", "quick syntax fixes", "small transforms"]
@@ -140,14 +156,26 @@ strengths = ["always-on", "tiny", "grepai calls it directly on :11434"]
 weaknesses = ["not a chat model"]
 
 # ── interactive compaction (client-native; ailocal does NOT summarise) ───────
-# Only `architecture` needs this. implementation/review cap at 24,576 and fast at
-# 49,152 -- their ENTIRE context sits below the cold-prefill danger zone, so they
-# cannot reach the failure and are deliberately left alone.
+# window x pct is what the CLIENT compacts at; it is NOT a model limit. The
+# 245,760-token maximum above stays available for deliberate one-shot work.
 #
-# window x pct is what the CLIENT compacts at; it is NOT a model limit. The model
-# maximum stays `architecture.context` above and remains available for deliberate
-# one-shot work. functional copy of 64gb
+# RAISED FAR LESS THAN THE CEILING, ON PURPOSE. The ceiling tripled against the
+# 64 GB tier because memory allows it; this trigger moves from 111,411 to 139,264
+# because the CLOCK does not care how much memory the machine has. [REAL] gemma4
+# cold prefill measured at 598 tok/s at 137,233 tokens on 64 GB hardware, and a
+# 128 GB Mac runs the same model on the same class of GPU: the trigger below is
+# roughly 233s of cold prefill, already at the edge of what reads as responsive.
+#
+# [UNVERIFIED] on 128 GB hardware. Re-measure before moving it further.
+#
+# THE TWO KNOBS, AND WHICH ONE CARRIES THE POLICY. `pct` is 85 on EVERY tier: a
+# uniform 15% reserve, so no tier quietly runs a different safety margin. `window`
+# is per-tier, because it encodes the one thing that genuinely differs -- how many
+# tokens this tier's runner can cold-prefill inside its latency budget. Setting
+# `window` to the role's full context_input and letting `pct` do the work would be
+# tidier and wrong: it would push this tier's trigger far past that budget on
+# hardware nobody has measured.
 [compaction]
-window = 65536  # effective window handed to the client's compactor
-pct = 75  # compact at this % of the window
-  # trigger: 49152 tokens
+window = 163840  # effective window handed to the client's compactor
+pct = 85  # compact at this % of the window
+  # trigger: 139264 tokens

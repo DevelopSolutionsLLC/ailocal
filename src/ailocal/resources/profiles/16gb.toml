@@ -8,16 +8,39 @@
 # still differ — persona, sampling, reasoning and num_predict are per-capability —
 # they simply share a backend. One model resident, no swapping.
 #
-# CONTEXT IS A MAXIMUM, NOT A RESERVATION. context: 65536 is the largest prompt the
-# tier accepts. With OLLAMA_NUM_PARALLEL=2, Ollama divides a runner's context across
-# parallel sequences, so two simultaneous near-64K requests are NOT guaranteed —
-# they contend for the same KV budget. Sized for one large request plus one small
-# one, which is the real agent+completion pattern.
+# ONE SHARED num_ctx, NOT FOUR. qwen3.5 runs on the llama_cpp runner, where
+# num_ctx is a FIXED RUNNER WINDOW set at first load and an over-long prompt is
+# TRUNCATED FROM THE FRONT with HTTP 200 and no error to the caller
+# (registry.yaml, runtime_engines.llama_cpp). Four roles sharing one backend must
+# declare an IDENTICAL total_context, or whichever loads the runner first
+# silently decides the window for the other three. Each role's context_input is
+# therefore 106496 minus ITS OWN max_output: 90112 for the 16384 roles, 98304 for
+# the 8192 ones. The split is a role boundary; the total is a runner constraint.
+#
+# KV IS ALLOCATED EAGERLY HERE, for the whole declared window, so num_ctx is a
+# real memory commitment rather than a ceiling. [REAL] measured by loading
+# qwen3.5:4b at each window with a one-token prompt (nothing else resident):
+#     num_ctx  65536 -> 4.30 GiB      num_ctx 106496 -> 5.12 GiB
+# i.e. ~21 KB per ctx-token, and the +0.82 GiB between those two IS the cost of
+# this tier's context increase. That figure already includes whatever
+# OLLAMA_NUM_PARALLEL does; do not multiply it by the parallel count again.
+#
+# WHAT ACTUALLY CAPS THIS TIER IS LATENCY, NOT MEMORY. num_ctx 131072 would cost
+# only ~5.6 GiB and even the model's native 262144 only ~8.2 GiB, so memory would
+# permit far more. A 16 GB Mac has the slowest GPU ailocal supports, and a full
+# cold prefill at those depths costs minutes; 106496 is the largest window worth
+# offering on hardware nobody has measured. qwen3.5:4b supports 262144 natively.
+# With the FIM model and embeddings the tier sits near 6.5 GiB of 16 GB.
+#
+# An output ceiling is charged eagerly here, so it is spent where it earns its
+# keep: architecture and review get 16384 (long plans, long review reports),
+# implementation and fast get 8192. Because the tier total is fixed, a larger
+# ceiling is paid for out of that role's OWN input, not out of tier memory.
 #
 # num_predict is a generation CEILING, not an expected output length and not an
 # extra fixed allocation.
 #
-# Field meanings are documented in profiles/64gb.yaml, the reference schema.
+# Field meanings are documented in profiles/64gb.toml, the reference schema.
 # 16 GB is the minimum supported tier. Quality is below the larger tiers by design.
 status = "configuration-verified"  # schema, selection and size are tested; not measured on 16 GB hardware
 disk_gb = 6
@@ -27,13 +50,13 @@ role = "Lead architect (shared primary)"
 active = "qwen3.5:4b"
 preferred = ["qwen3.5:4b"]
 reasoning = true
-context_input = 57344
-max_output = 8192
+context_input = 90112
+max_output = 16384
 temperature = 0.1
 keep_alive = "6h"
 persona = true
 purpose = ["architecture", "refactoring", "multi-step debugging", "design"]
-strengths = ["shared resident primary - no load/evict churn", "native tool calling", "64K context"]
+strengths = ["shared resident primary - no load/evict churn", "native tool calling", "88K input, 16K output"]
 weaknesses = ["smaller than the 64 GB tier's specialised models", "one backend serves four roles"]
 top_p = 0.9
 top_k = 20
@@ -44,7 +67,7 @@ role = "Daily coding (shared primary)"
 active = "qwen3.5:4b"
 preferred = ["qwen3.5:4b"]
 reasoning = false
-context_input = 57344
+context_input = 98304
 max_output = 8192
 temperature = 0.1
 keep_alive = "6h"
@@ -61,8 +84,8 @@ role = "Code review (shared primary)"
 active = "qwen3.5:4b"
 preferred = ["qwen3.5:4b"]
 reasoning = true
-context_input = 57344
-max_output = 8192
+context_input = 90112
+max_output = 16384
 temperature = 0.2
 keep_alive = "6h"
 persona = true
@@ -80,8 +103,8 @@ active = "qwen3.5:4b"
   # classification tier that thinks past its budget returns empty content.
 reasoning = false
 preferred = ["qwen3.5:4b"]
-context_input = 61440
-max_output = 4096
+context_input = 98304
+max_output = 8192
 temperature = 0.0
 keep_alive = "6h"
 persona = true
@@ -101,7 +124,10 @@ active = "qwen2.5-coder:1.5b"
 preferred = ["qwen2.5-coder:1.5b"]
 reasoning = false
 context_input = 3968
-max_output = 128
+  # max_output 512, raised from 128. A FIM suggestion is a few lines, not a
+  # paragraph, but 128 truncated multi-line completions mid-block. 512 is
+  # still far too small to be used as a chat role, which is the point.
+max_output = 512
 temperature = 0.1
   # Rotating, not pinned: self-unloads after 2h idle rather than staying resident
   # beside the primary indefinitely. ~1 GB footprint keeps this cheap to reload.
@@ -131,14 +157,34 @@ strengths = ["tiny", "fast", "well-understood"]
 weaknesses = ["2048-token ceiling - chunk before embedding"]
 
 # ── interactive compaction (client-native; ailocal does NOT summarise) ───────
-# Only `architecture` needs this. implementation/review cap at 24,576 and fast at
-# 49,152 -- their ENTIRE context sits below the cold-prefill danger zone, so they
-# cannot reach the failure and are deliberately left alone.
+# window x pct is what the CLIENT compacts at; it is NOT a model limit. The
+# 90,112-token maximum above stays available for deliberate one-shot work.
 #
-# window x pct is what the CLIENT compacts at; it is NOT a model limit. The model
-# maximum stays `architecture.context` above and remains available for deliberate
-# one-shot work. config-verified, NOT measured on 16 GB hardware
+# [REAL] cold prefill of qwen3.5:4b, measured on 64 GB M3 Max, nothing else
+# resident, no shared prompt prefix:
+#     7,113 tok ->   6.6s (1077 tok/s)
+#    40,002 tok ->  56.2s ( 711 tok/s)
+#    70,002 tok -> 127.8s ( 548 tok/s)
+#
+# WHY THIS IS HIGHER THAN A COLD-PREFILL BUDGET ALONE WOULD ALLOW: an
+# interactive session grows incrementally and hits Ollama's prefix cache every
+# turn, so the full cold cost above is paid on session RESUME, not per turn.
+# Sizing the trigger for the resume case penalises every ordinary turn to protect
+# the rare one. 67,891 leaves 22,221 tokens of admissible input in reserve for the
+# compaction prompt, system instructions, tool schemas and persona injection.
+#
+# [UNVERIFIED] on 16 GB hardware, and this is the tier where that gap matters
+# most: a 16 GB Mac is the slowest GPU ailocal supports, so a cold resume at this
+# depth will cost materially more there than the figures above suggest.
+#
+# THE TWO KNOBS, AND WHICH ONE CARRIES THE POLICY. `pct` is 85 on EVERY tier: a
+# uniform 15% reserve, so no tier quietly runs a different safety margin. `window`
+# is per-tier, because it encodes the one thing that genuinely differs -- how many
+# tokens this tier's runner can cold-prefill inside its latency budget. Setting
+# `window` to the role's full context_input and letting `pct` do the work would be
+# tidier and wrong: it would push this tier's trigger far past that budget on
+# hardware nobody has measured.
 [compaction]
-window = 65536  # effective window handed to the client's compactor
-pct = 70  # compact at this % of the window
-  # trigger: 45875 tokens
+window = 79872  # effective window handed to the client's compactor
+pct = 85  # compact at this % of the window
+  # trigger: 67891 tokens

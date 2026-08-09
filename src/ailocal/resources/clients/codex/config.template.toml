@@ -81,8 +81,8 @@ base_url   = "http://localhost:4000/v1"
 env_key    = "OPENAI_API_KEY"
 wire_api   = "responses"
 
-# Local first-token latency is HIGH: a big repo prompt (~14K tokens) takes a 35B
-# model ~15-20s of prompt-processing before the first SSE byte. Codex otherwise
+# Local first-token latency is HIGH: a big repo prompt (~14K tokens) costs the
+# large tier ~15-20s of prompt-processing before the first SSE byte. Codex otherwise
 # gives up (~5s/attempt) and shows "Reconnecting... N/5 → high demand" — which is
 # NOT high demand, just a slow cold prompt. The proxy itself streams correctly
 # (verified: response.completed + [DONE] even with tool calls). These raise the
