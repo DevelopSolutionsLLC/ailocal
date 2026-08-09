@@ -40,6 +40,13 @@ python3 tests/installed-runtime.py --stack   # also start/status/stop
 
 DELIBERATELY OUT OF THE GATE. It builds a venv, installs the package and (with `--stack`) starts containers, which is minutes rather than the seconds the gate is held to. Run it whenever packaging, resources or provisioning change — it is the only check that proves the wheel needs no checkout, and it rotted unnoticed once precisely because nothing named it.
 
+```sh
+python3 tests/measure_geometry.py           # active tier
+python3 tests/measure_geometry.py --quick   # skip the slow cold-prefill probe
+```
+
+ALSO OUT OF THE GATE, AND NOT A BENCHMARK. The profiles justify their context and output geometry with measured numbers — KV bytes per context token, cold-prefill rate, resident size — and `resources/deploy/litellm/registry.yaml` says to revalidate after any Ollama or MLX upgrade. This is how that is carried out. It asserts nothing, keeps no history and has no thresholds: it prints what it measured, and a human decides whether the profile still holds. It stops and reloads models, so nothing may run beside it. Run it after an engine upgrade, after changing a model, or when bringing up a tier no one has measured.
+
 `src/ailocal/resources/deploy` and `.../clients` are read straight from the package, so editing them takes effect on the next `ailocal start` — there is no copy to refresh. Editing `profiles/` under `src/ailocal/resources` changes only the SHIPPED DEFAULT; the live policy is the copy in the config root, which `ailocal install` installs and thereafter preserves once you have edited it.
 
 ## Generated state
