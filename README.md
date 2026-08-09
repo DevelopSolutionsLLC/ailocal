@@ -177,6 +177,8 @@ ailocal measures your Mac's memory and chooses a profile automatically. You do n
 
 ailocal never picks a profile your machine cannot hold. To override it: `ailocal profile use 32gb`, then `ailocal start`.
 
+A long conversation compacts automatically before it reaches that window — your client does the compacting, and ailocal supplies the point at which it starts, sized to what your hardware can process without a long pause. The full window stays available for one-off large requests.
+
 To change which model a profile uses, edit the file in `~/.config/ailocal/profiles/` and run `ailocal start`. Your edits are preserved across upgrades.
 
 ## Documentation

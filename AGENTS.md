@@ -68,6 +68,7 @@ Only project-level concepts belong there: `src/`, `tests/`, `docs/`, and project
 - Never hand-edit or commit a generated file. Edit the profile.
 - One capability is one `model_list` entry named `ailocal-<capability>`, never a raw model tag.
 - Geometry is derived, never restated: `num_ctx = context_input + max_output`, `num_predict = max_output`, `max_input_tokens = context_input`.
+- ailocal holds no conversation state. It never summarises or rewrites a client's history; it generates the compaction *threshold* the client applies. See [docs/architecture.md](docs/architecture.md) for which component owns which half.
 - Codex receives no MCP configuration: it cannot dispatch namespaced tools, so an empty `[mcp_servers.*]` section is correct.
 - Python is standard library only.
 - Ports bind `127.0.0.1`. Never commit secrets.

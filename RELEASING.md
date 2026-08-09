@@ -27,7 +27,7 @@ From v0.9.0 onward, `main` is a public contract. Improving it is expected; chang
 ## Every release must
 
 - [ ] pass the full gate — `python3 tests/gate.py --full`
-- [ ] pass a clean install on a machine that has never run ailocal (see the v0.9.1 waiver below)
+- [ ] pass a clean install on a machine that has never run ailocal (still manual — see below)
 - [ ] pass `ailocal check`
 - [ ] include release notes in `CHANGELOG.md`
 - [ ] update `README.md` if installation changed
@@ -36,13 +36,13 @@ From v0.9.0 onward, `main` is a public contract. Improving it is expected; chang
 
 Breaking changes are documented in the release notes. A breaking change that ships without one is a defect, whatever the version number says.
 
-### Waived for v0.9.1 only: clean install on a never-used machine
+### The clean-install check: what it is now, and what should replace it
 
-v0.9.1 shipped without the never-run-ailocal check. No such machine was available, and `tests/installed-runtime.py` is not a substitute: it proves the wheel carries its own assets and needs no checkout, but it runs beside an existing installation and cannot prove first-run behaviour.
+**Current requirement — MANUAL.** A human installs onto a machine that has never run ailocal and confirms it comes up. Nothing in this repository automates it. `tests/installed-runtime.py` is the closest thing and is *not* a substitute: it proves the wheel carries its own assets and needs no checkout, but it runs beside an existing installation, so it cannot exercise first-run behaviour.
 
-The waiver covers that one release and expires with it. It is recorded here rather than left unstated, because a checklist item that is quietly skipped is indistinguishable from one that passed.
+Because it is manual, it is the one item that gets skipped. It was skipped for **v0.9.1** — no such machine was available. That is recorded here rather than left unstated, since a checklist item quietly skipped is indistinguishable from one that passed.
 
-**Before v0.9.2, replace the physical-machine requirement with an automated clean-state install gate** — fresh `HOME`/`XDG_*`/config roots, install from the built wheel, no repository checkout on the path, no prior generated state — and delete this waiver along with the manual item it excuses.
+**Future replacement — NOT YET BUILT.** The intended fix is an automated clean-state install gate: fresh `HOME`, `XDG_*` and config roots, install from the built wheel, no repository checkout anywhere on the path, no prior generated state, then assert the stack comes up. Nothing of this exists today; when it does, it replaces the manual item above and this section goes with it.
 
 ## Compatibility promise
 

@@ -839,8 +839,9 @@ def policy_checks() -> None:
           f"unlisted={sorted(dispatchable - set(listed))}")
     import importlib
 
-    # A package command must import AND expose the main(argv) the CLI calls; a
-    # benchmark target must exist as a file under the data root.
+    # A package command must import AND expose the main(argv) the CLI calls.
+    # (There is no longer a second kind: file-target commands went with the
+    # benchmark subsystem, and every entry is now a package command.)
     missing = []
     for name, (module, _) in cli.COMMANDS.items():
         try:

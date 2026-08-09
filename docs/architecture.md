@@ -108,6 +108,18 @@ External consumers read the deployed `integration-contract.json` from the client
 
 ---
 
+## Context and compaction: who owns what
+
+Three different components are involved, and conflating them leads to wrong conclusions about where conversation state lives.
+
+**ailocal owns the numbers, not the conversation.** It holds no conversation state, never summarises, and never rewrites a client's history. What it owns is geometry — `policy.geometry()` derives `total_context` (Ollama `num_ctx`), `num_predict`, and `max_input_tokens = context_input` from each profile — and the compaction *threshold* it hands to clients.
+
+**The clients compact.** Claude Code receives `CLAUDE_CODE_AUTO_COMPACT_WINDOW` and `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` in its generated settings; Codex receives `model_auto_compact_token_limit`, derived as `min(window × pct, context_input × pct)` because a fraction of the *total* window can exceed what the backend will admit and take an HTTP 400 before compaction could fire. Both come from one `[compaction]` block in `profiles/<tier>.toml`.
+
+**The engines enforce context, and they do not agree.** The MLX runner applies context per request; llama.cpp fixes it at load and truncates an over-long prompt from the front with HTTP 200 and no error. LiteLLM's `max_input_tokens` is the only layer that fails loudly. Engine behaviour is recorded in `resources/deploy/litellm/registry.yaml`; do not conflate it with client compaction.
+
+---
+
 ## Extension points
 
 **Add a model** — edit the capability's `active` in `profiles/<tier>.toml`, then `ailocal install`.

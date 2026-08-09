@@ -84,7 +84,7 @@ claude-local() {
   # Precedence (code.claude.com/docs/en/settings):
   #   --model  >  settings.json "model"  >  ANTHROPIC_DEFAULT_*_MODEL
   # Our settings.json pins model=ailocal-architecture, so the slot vars alone are
-  # silently outranked — a benchmark override propagated perfectly and served the
+  # silently outranked — an alias override propagated perfectly and served the
   # production model anyway. The architecture override therefore also passes
   # --model, the highest-priority supported mechanism. The slot rewrite below
   # still matters: it redirects the subagent/background tiers.
