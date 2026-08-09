@@ -26,6 +26,11 @@ from ailocal.checks import services as S
 #: spelled once.
 RES = "src/ailocal/resources"
 
+#: Bash suites cannot see sys.executable, and one of them regenerates real
+#: client configuration. Handing them this interpreter is what keeps them on the
+#: working tree instead of a separately installed `ailocal` on PATH.
+os.environ.setdefault("AILOCAL_PY", sys.executable)
+
 GATE_SLOW_S = int(os.environ.get("AILOCAL_GATE_SLOW_S", "10"))
 
 

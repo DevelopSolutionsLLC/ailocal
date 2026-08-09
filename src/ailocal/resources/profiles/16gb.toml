@@ -17,14 +17,20 @@
 # therefore 106496 minus ITS OWN max_output: 90112 for the 16384 roles, 98304 for
 # the 8192 ones. The split is a role boundary; the total is a runner constraint.
 #
-# THIS IS THE ONE TIER WHERE MEMORY, NOT LATENCY, SETS THE CEILING. KV is
-# allocated EAGERLY for the whole declared window and again per parallel slot.
-# [REAL] qwen3.5:4b costs ~22.7 KB per ctx-token; with OLLAMA_NUM_PARALLEL=2,
-# num_ctx 106496 holds ~7.4 GiB (weights ~2.8 GiB + 2 x 2.3 GiB KV) whether or not
-# it is used. Adding the FIM model and embeddings puts the tier near 8.8 GiB of
-# 16 GB, leaving macOS its share. num_ctx 131072+ would cost ~8.5 GiB for the
-# primary alone and was rejected on that basis, NOT on model capability --
-# qwen3.5:4b supports 262144 natively.
+# KV IS ALLOCATED EAGERLY HERE, for the whole declared window, so num_ctx is a
+# real memory commitment rather than a ceiling. [REAL] measured by loading
+# qwen3.5:4b at each window with a one-token prompt (nothing else resident):
+#     num_ctx  65536 -> 4.30 GiB      num_ctx 106496 -> 5.12 GiB
+# i.e. ~21 KB per ctx-token, and the +0.82 GiB between those two IS the cost of
+# this tier's context increase. That figure already includes whatever
+# OLLAMA_NUM_PARALLEL does; do not multiply it by the parallel count again.
+#
+# WHAT ACTUALLY CAPS THIS TIER IS LATENCY, NOT MEMORY. num_ctx 131072 would cost
+# only ~5.6 GiB and even the model's native 262144 only ~8.2 GiB, so memory would
+# permit far more. A 16 GB Mac has the slowest GPU ailocal supports, and a full
+# cold prefill at those depths costs minutes; 106496 is the largest window worth
+# offering on hardware nobody has measured. qwen3.5:4b supports 262144 natively.
+# With the FIM model and embeddings the tier sits near 6.5 GiB of 16 GB.
 #
 # An output ceiling is charged eagerly here, so it is spent where it earns its
 # keep: architecture and review get 16384 (long plans, long review reports),

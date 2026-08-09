@@ -30,6 +30,15 @@ cd "$ROOT"
 INCLUDE_VSCODE=""
 [ "${1:-}" = "--include-vscode" ] && INCLUDE_VSCODE=1
 
+# THE WORKING TREE'S CLI, not whatever `ailocal` PATH resolves to. This suite
+# regenerates real client configuration under ~/.config/ailocal, so a bare
+# `ailocal` picking up a separately installed copy (pipx, an older wheel) does
+# not merely test the wrong code -- it rewrites the operator's generated files
+# from THAT copy's bundled resources. The visible symptom was `ailocal check`
+# alternating between OK and "generated files have drifted" depending on whether
+# the gate had just run. AILOCAL_PY is exported by tests/gate.py.
+ailocal() { "${AILOCAL_PY:-python3}" -m ailocal.cli "$@"; }
+
 
 
 # Stale fingerprints from an earlier run must not survive into this one.

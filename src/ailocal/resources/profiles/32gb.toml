@@ -18,10 +18,14 @@
 # for the 16384 roles, 131072 for the 8192 ones. The split is a role boundary;
 # the total is a runner constraint. Raising one role alone is a silent defect.
 #
-# KV IS ALLOCATED EAGERLY HERE, unlike the MLX tiers. [REAL] qwen3.5:9b costs
-# ~23.2 KB per ctx-token for the whole declared window, doubled by
-# OLLAMA_NUM_PARALLEL=2: num_ctx 139264 holds ~11.2 GiB (weights ~5.0 GiB + 2 x
-# 3.1 GiB KV) whether or not the window is used. Comfortable on 32 GB. Note this
+# KV IS ALLOCATED EAGERLY HERE, unlike the MLX tiers, so num_ctx is a real memory
+# commitment. [REAL] measured by loading qwen3.5:9b at each window with a
+# one-token prompt (nothing else resident):
+#     num_ctx  65536 -> 6.59 GiB      num_ctx 139264 -> 8.06 GiB
+# ~21 KB per ctx-token; the +1.47 GiB between them IS this tier's context
+# increase, for a window that more than doubled. That figure already includes
+# whatever OLLAMA_NUM_PARALLEL does; do not multiply by the parallel count again.
+# With the FIM model and embeddings the tier sits near 9.5 GiB of 32 GB. Note this
 # charges max_output too, so the ceiling is spent where it earns its keep:
 # architecture and review get 16384 (long plans, long review reports),
 # implementation and fast get 8192. With the tier total fixed, a larger ceiling

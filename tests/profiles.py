@@ -243,7 +243,15 @@ def resolver_checks() -> None:
     # later. Source inspection, because asserting this behaviourally would mean
     # installing a real LaunchAgent.
     print("\nCLI IS USABLE FROM A SHELL AND FAILS NON-ZERO")
-    cli = ["ailocal", "profile"]
+    # THE INTERPRETER RUNNING THIS SUITE, not whatever `ailocal` PATH resolves to.
+    # A bare "ailocal" found the pipx-installed copy instead of the working tree:
+    # the suite then reported on a build nobody was editing, AND that older
+    # package regenerated client config into the operator's real
+    # ~/.config/ailocal from its own stale resources -- so `ailocal check`
+    # alternated between OK and DRIFT depending on whether the gate had just run.
+    # harness.py already declares that a suite runs against the WORKING TREE'S
+    # CODE; this is that declaration applied to the subprocess boundary.
+    cli = [sys.executable, "-m", "ailocal.cli", "profile"]
     r = subprocess.run(cli + ["active-tier"], capture_output=True, text=True)
     check(r.returncode == 0 and r.stdout.strip() in P.TIERS,
           f"active-tier prints a bare scalar ({r.stdout.strip()})")
