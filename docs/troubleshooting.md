@@ -229,8 +229,8 @@ ailocal check       # compares generated against deployed
 **Fix**
 
 ```sh
-ailocal clients     # claude, codex, continue, copilot
-ailocal clients vscode      # VS Code connector
+ailocal clients             # every client detected on this machine
+ailocal clients claude codex vscode   # or name them
 ```
 
 **Status** — configuration issue.

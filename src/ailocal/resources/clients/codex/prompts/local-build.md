@@ -7,7 +7,7 @@ Run this task through the full phase protocol from AGENTS.md, no shortcuts:
 
 Task: $ARGUMENTS
 
-1. PLAN: read the relevant files (targeted reads, not whole-file dumps) and
+1. PLAN: read the relevant files and
    output a numbered plan — files to touch, ordered steps (one file/concern
    each), risks, exact verification command per step. Show the plan and wait
    for my go-ahead before editing anything.
@@ -17,6 +17,3 @@ Task: $ARGUMENTS
 3. REVIEW: diff everything changed (`git diff`), check it against the build
    checklist in AGENTS.md, output `APPROVE` or `FIX REQUIRED` plus a numbered
    file:line fix list, and fix before declaring done.
-
-Keep context lean throughout: grep and ranged reads over full files,
-summarize long outputs instead of echoing them.

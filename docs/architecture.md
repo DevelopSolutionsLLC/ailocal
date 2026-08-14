@@ -94,7 +94,7 @@ The complete on-disk footprint of `ailocal install` (plus the optional `ailocal 
 | `searxng/settings.yml` | `runtime` | Rendered from the shipped template; carries the Brave key, parent dir 0700. *(start path)* |
 | `agents/preload.sh` | `install` | Program for the preload LaunchAgent. Resolves the model tag at run time so it can never warm a stale one. *(launchd path)* |
 
-Neither root is mode-restricted — both inherit the umask. The secrets are protected per file (`env`, `.env.local` at 0600) and by the deployed-client root's own 0700, not by the state root.
+The config root inherits the umask; the state root is `0700`, set when the generated environment is written, because it holds the master key. Secrets are protected per file as well (`env`, `.env.local` at 0600) and by the deployed-client root's own 0700, not by the state root.
 
 **Generated client config — `~/.config/ailocal` (`$AILOCAL_CLIENTS`)**
 
