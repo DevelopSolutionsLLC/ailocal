@@ -51,9 +51,11 @@ Verify with `ailocal check`, which reports either file readable by other users.
 
 ## Authored versus generated
 
-A tracked file is authored source or a template. It is never a runtime artifact that generation rewrites, which means generation cannot dirty the working tree and cannot introduce a secret into a commit.
-
-Generated output is disposable: deleting `$AILOCAL_STATE` and re-running `ailocal start` fully recovers it. Nothing of value is stored only there except capture history.
+Ownership of the four roots — who writes each, and what a delete recovers — is
+stated once, in [AGENTS.md](../AGENTS.md#generated-state). The security-relevant
+consequence: a tracked file is authored source or a template, never a runtime
+artifact that generation rewrites, so generation cannot dirty the working tree
+or introduce a secret into a commit.
 
 ---
 
@@ -89,11 +91,11 @@ Both images are pinned **by digest**, not by tag, so a moving tag cannot change 
 
 ## Commit attribution
 
-Commits carry one identity: the configured human author, with no assistant attribution trailers or session identifiers.
-
-Session URLs are permanent public metadata that cannot be recalled once pushed — a force-push removes them from a branch, but the objects can remain reachable by SHA. The hook is the mechanical guarantee that a written rule is not.
-
-Commits carry one identity: the configured human author.
+The rule and its rationale live in
+[AGENTS.md](../AGENTS.md#change-discipline). Note that enforcement is by
+convention: the repository ships no commit hook, deliberately — installing Git
+policy was removed from the product installer, because a user installing local
+inference did not ask for their Git configuration to change.
 
 ---
 

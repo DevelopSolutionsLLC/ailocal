@@ -46,7 +46,10 @@ os.environ.setdefault("AILOCAL_INSTRUCTIONS_DIR", "/nonexistent")   # _load_pers
 pi = load_module("persona_injector",
                  os.path.join(RESOURCES, "deploy/litellm/hooks/persona_injector.py"))
 inj = pi.PersonaInjector()
-inj.personas = {"implementation": "IMPL_XYZ", "architecture": "ARCH_XYZ", "review": "REV_XYZ"}
+# Core + optional per-role delta, exactly as the injector composes them.
+inj.core = ""
+inj.deltas = {"implementation": "IMPL_XYZ", "architecture": "ARCH_XYZ", "review": "REV_XYZ"}
+inj.persona_roles = {"implementation", "architecture", "review"}
 inj.alias = {"claude-sonnet-4-6": "ailocal-implementation"}
 P = "IMPL_XYZ"
 def hook(data, call_type):
@@ -86,6 +89,29 @@ import re
 import sys
 from pathlib import Path
 def persona_checks() -> None:
+    # THE COMPOSITION CONTRACT. `persona: true` in the profile is what grants a
+    # persona; a role-specific file is an optional delta on top. Inferring the
+    # grant from "does <role>.md exist" is what left `fast` — persona: true, no
+    # file — receiving no instructions at all, and what made a Markdown file
+    # created purely to satisfy the loader look like the fix.
+    saved = (inj.core, dict(inj.deltas), set(inj.persona_roles))
+    inj.core, inj.deltas = "CORE_XYZ", {"architecture": "ARCH_XYZ"}
+    inj.persona_roles = {"architecture", "fast"}
+    d = hook({"model": "ailocal-fast", "messages": [{"role": "user", "content": "hi"}]},
+             "acompletion")
+    check(d["messages"][0]["content"].strip() == "CORE_XYZ",
+          "persona-enabled capability with NO role file still receives _core alone")
+    d = hook({"model": "ailocal-architecture", "messages": [{"role": "user", "content": "hi"}]},
+             "acompletion")
+    c = d["messages"][0]["content"]
+    check("CORE_XYZ" in c and "ARCH_XYZ" in c and c.index("CORE_XYZ") < c.index("ARCH_XYZ"),
+          "a role file is appended to _core, not substituted for it")
+    d = hook({"model": "ailocal-completion", "messages": [{"role": "user", "content": "hi"}]},
+             "acompletion")
+    check(all("CORE_XYZ" not in (m.get("content") or "") for m in d["messages"]),
+          "a capability the profile gives no persona receives nothing, not _core")
+    inj.core, inj.deltas, inj.persona_roles = saved[0], saved[1], saved[2]
+
     d = hook({"model": "ailocal-implementation", "messages": [{"role": "user", "content": "hi"}]}, "acompletion")
     sys0 = d["messages"][0]
     check(sys0["role"] == "system" and sys0["content"].startswith(P),
@@ -110,10 +136,10 @@ def persona_checks() -> None:
           "anthropic: persona prepended as a text block to list system")
     d = hook({"model": "ailocal-completion", "messages": [{"role": "user", "content": "hi"}]}, "acompletion")
     check(all(m["role"] != "system" for m in d["messages"]),
-          "openai: no persona for a capability without a persona file (completion)")
+          "openai: no persona for a capability the profile grants none (completion)")
     d = hook({"model": "ailocal-completion", "messages": [{"role": "user", "content": "hi"}]}, "anthropic_messages")
     check("system" not in d,
-          "anthropic: no persona for a capability without a persona file (completion)")
+          "anthropic: no persona for a capability the profile grants none (completion)")
     d = hook({"model": "ailocal-implementation", "input": "x"}, "embeddings")
     check("system" not in d and "messages" not in d,
           "embeddings call_type: request passes through untouched")

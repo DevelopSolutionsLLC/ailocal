@@ -317,6 +317,12 @@ def write_caps_json(models):
             "context": ctx_of(info),
             "keep_alive": ka,
             "persistent": ka == "-1",
+            # The PROFILE decides which capabilities get a persona. The injector
+            # used to infer it from "does instructions/<name>.md exist", so a
+            # capability declaring persona = true with no role-specific file got
+            # nothing at all — not even the shared core — and only a file created
+            # solely to satisfy that inference could fix it.
+            "persona": bool(info.get("persona")),
             "purpose": flow_list(info.get("purpose")),
             "strengths": flow_list(info.get("strengths")),
             "weaknesses": flow_list(info.get("weaknesses")),

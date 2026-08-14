@@ -201,6 +201,10 @@ Three different components are involved, and conflating them leads to wrong conc
 
 ## Decisions
 
-Durable decisions and their consequences are in [adr/](adr/). This document describes the system as it is; history belongs to Git.
+Durable decisions and their consequences are in [adr/](adr/): the tool gateway
+and task classification (004), local and hosted models side by side (008), and
+host policy as TOML read by `tomllib` (010). Numbers are historical and are
+never reused; a gap is a decision recorded elsewhere or never taken. This
+document describes the system as it is; history belongs to Git.
 
 ---

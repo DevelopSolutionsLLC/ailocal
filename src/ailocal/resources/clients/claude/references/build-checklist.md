@@ -48,12 +48,12 @@ sessions short, diffs small, and claims verifiable. Follow it literally.
 
 ## Context discipline
 
-- Use targeted reads and grep instead of `cat`-ing entire large files.
-- Read only the line ranges relevant to the change.
+The proxy's shared operating instructions already cover targeted reads,
+stopping once you have enough evidence, and summarizing long output. The one
+rule that is specific to editing:
+
 - If a file changed outside this session (another process, another agent),
   re-read it before editing — don't trust a stale in-context copy.
-- Summarize long command output (test logs, diffs) instead of repeating it
-  verbatim back into context.
 <!-- claude-only -->
 - Keep each subagent handoff scoped to what that step needs, not the full
   task history.

@@ -15,10 +15,22 @@ TWO ROUTES, TWO INJECTION POINTS — the whole reason this is not one branch:
 Registered as a CustomLogger async_pre_call_hook.
 Ref: https://docs.litellm.ai/docs/proxy/call_hooks
 
-Text comes from instructions/<capability>.md (shared _core.md plus a
-per-capability enhancer), mounted read-only at $AILOCAL_INSTRUCTIONS_DIR. A
-capability with no file gets _core.md alone; adding a file is the only step
-needed to give one an enhancer, with no code change.
+COMPOSITION. The profile's `persona` flag decides WHO gets a persona; the
+instructions directory decides WHAT is added on top:
+
+    persona: true  ->  _core.md            (always)
+                       + <capability>.md   (only if that file exists)
+    persona: false ->  nothing
+
+The role delta is OPTIONAL. This docstring always claimed "a capability with no
+file gets _core.md alone", but the loader built its table by globbing the
+directory, so a capability with no file was absent from the table and received
+NOTHING. `fast` declared persona = true and silently got no instructions at all.
+The fix belongs here rather than in a new fast.md: a Markdown file whose only
+purpose is to satisfy a loader is not content.
+
+Mounted read-only at $AILOCAL_INSTRUCTIONS_DIR; flags read from the generated
+capabilities.json, which is the profile's own output.
 """
 
 import glob
@@ -31,6 +43,8 @@ log = logging.getLogger("persona_injector")
 
 INSTRUCTIONS_DIR = os.environ.get("AILOCAL_INSTRUCTIONS_DIR", "/app/instructions")
 CONFIG_PATH = os.environ.get("AILOCAL_CONFIG_PATH", "/app/generated/config.yaml")
+CAPS_JSON = os.environ.get("AILOCAL_CAPABILITIES_JSON",
+                           "/app/generated/capabilities.json")
 
 
 def _read(path):
@@ -41,21 +55,31 @@ def _read(path):
 
 
 def _load_personas():
-    """capability -> instruction text: the shared _core.md prepended to each curated
-    per-capability enhancer deploy/litellm/instructions/<capability>.md. Files whose name starts
-    with '_' are shared fragments, not capabilities."""
+    """capability -> instruction text. Files starting with '_' are shared
+    fragments, not capabilities. Returns (core, {role: delta})."""
     core = _read(os.path.join(INSTRUCTIONS_DIR, "_core.md"))
-    personas = {}
+    deltas = {}
     for path in glob.glob(os.path.join(INSTRUCTIONS_DIR, "*.md")):
         name = os.path.basename(path)
         if name.startswith("_"):
             continue
-        role = name[: -len(".md")]
         body = _read(path)
-        if not body:
-            continue
-        personas[role] = (core + "\n\n" + body).strip() if core else body
-    return personas
+        if body:
+            deltas[name[: -len(".md")]] = body
+    return core, deltas
+
+
+def _load_persona_flags():
+    """Capabilities the PROFILE says get a persona. An unreadable file yields an
+    empty set, which means no injection: adding a persona nobody asked for to a
+    4k-context completion model is worse than adding none."""
+    try:
+        import json
+        with open(CAPS_JSON, encoding="utf-8") as f:
+            caps = (json.load(f) or {}).get("capabilities") or []
+        return {c.get("name") for c in caps if c.get("persona")}
+    except Exception:
+        return set()
 
 
 def _load_alias_map():
@@ -73,8 +97,19 @@ def _load_alias_map():
 class PersonaInjector(CustomLogger):
     def __init__(self):
         super().__init__()
-        self.personas = _load_personas()
+        self.core, self.deltas = _load_personas()
+        self.persona_roles = _load_persona_flags()
         self.alias = _load_alias_map()
+
+    def persona_for(self, role):
+        """Core always, delta when there is one. None when the profile says this
+        capability has no persona."""
+        if role not in self.persona_roles:
+            return None
+        delta = self.deltas.get(role)
+        if not self.core:
+            return delta or None
+        return (self.core + "\n\n" + delta).strip() if delta else self.core
 
     def _role_for(self, model):
         # Resolve a compat alias (claude-*/gpt-*) to its ailocal-<cap> group, then strip the
@@ -125,7 +160,7 @@ class PersonaInjector(CustomLogger):
     def _inject(self, data, anthropic=False):
         model = data.get("model", "")
         role = self._role_for(model)
-        persona = self.personas.get(role)
+        persona = self.persona_for(role)
         route = "anthropic_messages" if anthropic else "openai"
         # Debug line for tracing alias/model → capability resolution. Visible when the proxy
         # runs with --detailed_debug (or the persona_injector logger set to DEBUG).

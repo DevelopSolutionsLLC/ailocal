@@ -18,8 +18,7 @@ Process:
 2. Check it against `~/.config/ailocal/claude/references/build-checklist.md`:
    read-before-edit evidence, diff size/scope, repo conventions, no secrets,
    127.0.0.1-only binding, verification evidence present and real.
-3. Read surrounding code only as needed to judge correctness — targeted
-   reads, not whole-file dumps.
+3. Read surrounding code as needed to judge correctness.
 
 Output format, nothing else:
 

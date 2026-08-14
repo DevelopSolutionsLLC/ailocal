@@ -527,6 +527,13 @@ def _copilot_instructions() -> None:
 
 
 
+# WHY THIS TEMPLATE IS MERGED AND NEVER OVERWRITTEN. The live
+# chatLanguageModels.json carries an `apiKey` field that is not a key but a
+# reference into VS Code's SecretStorage — `"${input:chat.lm.secret.-3031591c}"`.
+# The VALUE is Keychain-backed and no script can write it, so overwriting the
+# file would silently discard a key the user entered by hand and cannot restore
+# except through the UI. The shipped template therefore omits `apiKey` entirely
+# and the installer preserves whatever reference is already there.
 def target_vscode() -> None:
     step("Configuring VS Code Copilot Chat")
     # install_vscode's failure is the answer, not a warning to walk past: with no
