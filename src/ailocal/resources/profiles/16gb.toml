@@ -30,7 +30,7 @@
 # permit far more. A 16 GB Mac has the slowest GPU ailocal supports, and a full
 # cold prefill at those depths costs minutes; 106496 is the largest window worth
 # offering on hardware nobody has measured. qwen3.5:4b supports 262144 natively.
-# With the FIM model and embeddings the tier sits near 6.5 GiB of 16 GB.
+# With the FIM model the tier sits near 6.5 GiB of 16 GB.
 #
 # An output ceiling is charged eagerly here, so it is spent where it earns its
 # keep: architecture and review get 16384 (long plans, long review reports),
@@ -140,50 +140,7 @@ top_p = 0.9
 top_k = 20
 repeat_penalty = 1.0
 
-[embeddings]
-role = "Embeddings"
-active = "nomic-embed-text"
-  # ollama, NOT ollama_chat: LiteLLM has no embeddings route for the
-  # chat provider — /v1/embeddings against it returns 'Unmapped LLM provider'.
-provider = "ollama"
-preferred = ["nomic-embed-text"]
-  # 2048 is the model's REAL limit. Do not inherit a chat context here.
-context_input = 2048
-temperature = 0.0
-keep_alive = -1
-persona = false
-purpose = ["semantic search", "retrieval"]
-strengths = ["tiny", "fast", "well-understood"]
-weaknesses = ["2048-token ceiling - chunk before embedding"]
 
-# ── interactive compaction (client-native; ailocal does NOT summarise) ───────
-# window x pct is what the CLIENT compacts at; it is NOT a model limit. The
-# 90,112-token maximum above stays available for deliberate one-shot work.
-#
-# [REAL] cold prefill of qwen3.5:4b, measured on 64 GB M3 Max, nothing else
-# resident, no shared prompt prefix:
-#     7,113 tok ->   6.6s (1077 tok/s)
-#    40,002 tok ->  56.2s ( 711 tok/s)
-#    70,002 tok -> 127.8s ( 548 tok/s)
-#
-# WHY THIS IS HIGHER THAN A COLD-PREFILL BUDGET ALONE WOULD ALLOW: an
-# interactive session grows incrementally and hits Ollama's prefix cache every
-# turn, so the full cold cost above is paid on session RESUME, not per turn.
-# Sizing the trigger for the resume case penalises every ordinary turn to protect
-# the rare one. 67,891 leaves 22,221 tokens of admissible input in reserve for the
-# compaction prompt, system instructions, tool schemas and persona injection.
-#
-# [UNVERIFIED] on 16 GB hardware, and this is the tier where that gap matters
-# most: a 16 GB Mac is the slowest GPU ailocal supports, so a cold resume at this
-# depth will cost materially more there than the figures above suggest.
-#
-# THE TWO KNOBS, AND WHICH ONE CARRIES THE POLICY. `pct` is 85 on EVERY tier: a
-# uniform 15% reserve, so no tier quietly runs a different safety margin. `window`
-# is per-tier, because it encodes the one thing that genuinely differs -- how many
-# tokens this tier's runner can cold-prefill inside its latency budget. Setting
-# `window` to the role's full context_input and letting `pct` do the work would be
-# tidier and wrong: it would push this tier's trigger far past that budget on
-# hardware nobody has measured.
 [compaction]
 window = 79872  # effective window handed to the client's compactor
 pct = 85  # compact at this % of the window

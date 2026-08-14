@@ -55,8 +55,7 @@ def _expected() -> tuple[list[str], dict[str, int], list[str]]:
         if not cfg.get("enabled", True):
             continue
         aliases.append(f"ailocal-{role}")
-        if role != "embeddings":
-            geometry[f"ailocal-{role}"] = cfg["context_input"]
+        geometry[f"ailocal-{role}"] = cfg["context_input"]
         if cfg.get("active"):
             backends.append(cfg["active"])
     return aliases, geometry, sorted(set(backends))

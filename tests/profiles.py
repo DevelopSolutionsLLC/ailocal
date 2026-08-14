@@ -33,7 +33,7 @@ from ailocal import policy as P
 
 PROFILES = ("16gb", "32gb", "64gb", "128gb")
 CAPABILITIES = ("architecture", "implementation", "review",
-                "fast", "completion", "embeddings")
+                "fast", "completion")
 
 _suite = Suite()
 check = _suite.check
@@ -259,7 +259,7 @@ def resolver_checks() -> None:
                        capture_output=True, text=True)
     check(r.returncode == 0 and ":" in r.stdout,
           "role --field prints a bare scalar")
-    r = subprocess.run(cli + ["role", "embeddings", "--field", "top_p"],
+    r = subprocess.run(cli + ["role", "completion", "--field", "reasoning"],
                        capture_output=True, text=True)
     check(r.returncode == 0 and r.stdout.strip() == "",
           "an absent optional field prints empty, not the string 'None'")
@@ -306,29 +306,21 @@ def resolver_checks() -> None:
     # The regression this guards: the codex block read a key the geometry
     # migration deleted, so it silently never regenerated and kept stale values.
 
-    # Provider is a profile value, not a model-name sniff.
-    check(P.effective_role("embeddings").get("provider") == "ollama",
-          "embeddings declares provider: ollama in the profile")
-    # BEHAVIOURAL: a role declaring provider: ollama must get the ollama route
-    # even when the model is not called "nomic". A prose mention of the old
-    # conditional is not the defect — this is the third test in this suite to
-    # trip on its own explanatory comment.
+    # Provider is a profile value, not a model-name sniff. The embedding-route
+    # half of this test went with the embeddings capability; what remains is the
+    # regression that actually bit — a nomic-SHAPED model name must not force a
+    # non-chat route.
     _sm4 = load_sync()
-    blk = _sm4.gen_role_block("embeddings", {
-        "active": "some-other-embedder:1b", "provider": "ollama",
-        "context_input": 2048, "role": "E"})
-    check("model: ollama/some-other-embedder:1b" in blk,
-          "provider comes from the profile, not from the model name")
     blk = _sm4.gen_role_block("fast", {
         "active": "nomic-shaped-name:1b", "context_input": 100,
         "max_output": 10, "role": "F"})
     check("model: ollama_chat/nomic-shaped-name:1b" in blk,
-          "a nomic-SHAPED name no longer forces the embedding route")
+          "a nomic-SHAPED name no longer forces a non-chat route")
     cfg = (P.state_root() / "litellm" / "config.yaml").read_text()
-    check("model: ollama/nomic-embed-text" in cfg,
-          "embeddings still generates the ollama (non-chat) route")
+    check("ollama/nomic-embed-text" not in cfg,
+          "no embedding route is generated: ailocal no longer serves embeddings")
     check(cfg.count("model: ollama_chat/") == 5,
-          "the five chat roles still use ollama_chat")
+          "all five capabilities use ollama_chat")
 
     print("\nEXPLICIT CONTEXT AND OUTPUT GEOMETRY")
     for t in P.TIERS:
@@ -545,8 +537,10 @@ def hardware_checks() -> None:
             check(int(caps[cap]["max_output"]) == want,
                   f"{tier}.{cap} output ceiling is {want}",
                   f"got {caps[cap].get('max_output')}")
-        check(caps["embeddings"].get("max_output") is None,
-              f"{tier}.embeddings declares no max_output (embedding route)")
+
+    check("embeddings" not in P.ROLES,
+          "embeddings is not a capability role: no consumer ever called it, and "
+          "the only embedding client on the machine talks to Ollama directly")
 
     # COMPACTION IS 85% EVERYWHERE. The window differs per tier because prefill
     # cost does; the percentage does not, because nothing measured justifies a
@@ -577,21 +571,10 @@ def hardware_checks() -> None:
 
     # Capability must never DECREASE as memory grows.
     for cap in CAPABILITIES:
-        # embeddings has no max_output (embedding route, no generation).
         ctxs = [int(PARSED[t][0][cap]["context_input"])
                 + int(PARSED[t][0][cap].get("max_output") or 0) for t in PROFILES]
         check(ctxs[3] >= ctxs[2],
               f"128gb.{cap} context is not below 64gb", f"{ctxs[2]} -> {ctxs[3]}")
-
-
-    # ── embeddings ──────────────────────────────────────────────────────────────
-    print("\nEMBEDDINGS")
-    for tier in PROFILES:
-        caps, _ = PARSED[tier]
-        ctx = int(caps["embeddings"]["context_input"])
-        check(ctx <= 2048,
-              f"{tier} embeddings context within nomic-embed-text's real 2048 limit",
-              f"declares {ctx}")
 
 
     # ── deduplication ───────────────────────────────────────────────────────────
@@ -613,9 +596,9 @@ def hardware_checks() -> None:
         check(len(u) <= len(CAPABILITIES),
               f"{tier} unique models ({len(u)}) do not exceed capabilities ({len(CAPABILITIES)})")
 
-    check(len(unique_models("16gb")) == 3, "16gb resolves to 3 unique models",
+    check(len(unique_models("16gb")) == 2, "16gb resolves to 2 unique models",
           str(sorted(unique_models("16gb"))))
-    check(len(unique_models("32gb")) == 3, "32gb resolves to 3 unique models",
+    check(len(unique_models("32gb")) == 2, "32gb resolves to 2 unique models",
           str(sorted(unique_models("32gb"))))
     check(sorted(unique_models("64gb")) == sorted(unique_models("128gb")),
           "64gb and 128gb pull the identical model set, so their storage cost is equal")

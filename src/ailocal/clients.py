@@ -136,6 +136,45 @@ def backup(path: Path) -> bool:
     return True
 
 
+#: Files ailocal shipped BEFORE the manifest existed, named here because that is
+#: the only ownership proof available for them. `prompts/` was written with a
+#: plain copy, so retirement cannot ask a manifest what we wrote; declaring the
+#: exact names keeps the removal provable and leaves anything else alone.
+RETIRED_UNMANAGED = {"prompts": ("analyze-repo.md", "local-build.md")}
+
+
+def retire_managed_dir(dst: Path) -> None:
+    """Remove a directory ailocal used to ship and no longer does.
+
+    install_managed_dir() prunes by manifest, but only for directories it is
+    still called for. A tree that stops being shipped is never visited again, so
+    it sits on every already-installed machine forever — which is what the
+    planner/implementer/reviewer agents and the local-build commands would have
+    done. Ownership is proved the same way it is proved during install: the
+    manifest names what we wrote, and nothing else is touched, so a user's own
+    file in the same directory survives and keeps the directory alive.
+    """
+    manifest = dst / MANIFEST_NAME
+    names = (manifest.read_text().split() if manifest.is_file()
+             else list(RETIRED_UNMANAGED.get(dst.name, ())))
+    if not names:
+        return
+    for name in names:
+        target = dst / name
+        if target.is_symlink():
+            continue                      # someone else's link, not ours
+        if target.is_dir():
+            shutil.rmtree(target, ignore_errors=True)
+        else:
+            target.unlink(missing_ok=True)
+    manifest.unlink(missing_ok=True)
+    try:
+        dst.rmdir()                       # only when we emptied it
+        info(f"retired {dst}")
+    except OSError:
+        info(f"retired ailocal content in {dst} (other files kept)")
+
+
 def install_managed_dir(src: Path, dst: Path) -> None:
     """Copy a directory of managed files without taking ownership of it."""
     dst.mkdir(parents=True, exist_ok=True)
@@ -191,31 +230,6 @@ def _concat_shared(head: Path, checklist: Path, dest: Path,
         text = _CLAUDE_ONLY.sub("", text)
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(head.read_text(encoding="utf-8") + text, encoding="utf-8")
-
-
-#: Prompts whose BODY is identical across clients, mapped to the frontmatter
-#: keys only the Codex format has. These were two authored files saying the same
-#: thing in two wordings — a paraphrase is not a client difference, and the two
-#: copies were already drifting apart sentence by sentence.
-#:
-#: `local-build` is deliberately NOT here: the Claude version delegates to the
-#: planner/implementer/reviewer subagents and the Codex version runs the phases
-#: linearly in one agent, because Codex has no subagents. That is a real
-#: capability difference and stays two authored files.
-SHARED_PROMPTS = {"analyze-repo.md": {"argument-hint": '"[optional focus area]"'}}
-
-
-def _project_prompt(src: Path, dest: Path, extra: dict[str, str]) -> None:
-    """Write a client's copy of a shared prompt: one authored body, this
-    client's frontmatter. The projection is deploy-time and never committed, so
-    there is exactly one place to edit the prose."""
-    text = src.read_text(encoding="utf-8")
-    m = re.match(r"^---\n(.*?)\n---\n", text, re.S)
-    if not m:
-        dest.write_text(text, encoding="utf-8")
-        return
-    keys = m.group(1) + "".join(f"\n{k}: {v}" for k, v in extra.items())
-    dest.write_text(f"---\n{keys}\n---\n" + text[m.end():], encoding="utf-8")
 
 
 def _master_key() -> str:
@@ -582,15 +596,8 @@ def target_codex() -> None:
                    data / "clients/claude/references/build-checklist.md",
                    home / "AGENTS.md", claude_only=False)
     info(f"{home / 'AGENTS.md'} written (protocol + build checklist)")
+    retire_managed_dir(home / "prompts")
 
-    prompts = home / "prompts"
-    prompts.mkdir(exist_ok=True)
-    for src in sorted((data / "clients/codex/prompts").glob("*.md")):
-        shutil.copyfile(src, prompts / src.name)
-    for name, extra in SHARED_PROMPTS.items():
-        _project_prompt(data / "clients/claude/commands" / name,
-                        prompts / name, extra)
-    info("prompts/ written")
 
     if (Path.home() / ".codex" / "config.toml").is_file():
         warn("~/.codex/config.toml still exists — plain 'codex' keeps using it "
@@ -622,11 +629,18 @@ def target_claude() -> None:
     # settings.json is written here by generation; it carries no secret, because
     # the key reaches Claude through the claude-local wrapper's process-scoped
     # env, never through a file.
-    for name in ("agents", "commands", "references"):
-        install_managed_dir(policy.data_root() / "clients/claude" / name,
-                            home / name)
-    info(f"{home}/{{agents,commands,references}} written "
-         "(external overlays preserved)")
+    # NO agents OR commands. ailocal shipped planner/implementer/reviewer/
+    # search/tester and a local-build workflow — generic software-engineering
+    # roles that describe no local-inference fact. Measured: native Claude
+    # matched or beat that workflow on the same tasks, and a local runtime has
+    # no business teaching a client how to plan, implement or review. What
+    # ailocal uniquely knows reaches the model through the injected persona and
+    # the capability catalog, not through a role roster.
+    retire_managed_dir(home / "agents")
+    retire_managed_dir(home / "commands")
+    install_managed_dir(policy.data_root() / "clients/claude/references",
+                        home / "references")
+    info(f"{home}/references written (external overlays preserved)")
 
     # .claude.json holds this root's MCP registrations and real session state:
     # seed onboarding only when absent, never rewrite.

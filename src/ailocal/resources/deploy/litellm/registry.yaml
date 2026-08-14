@@ -331,24 +331,7 @@ model_classes:
       warmup: true
       notes: "FIM/autocomplete only. Never map a conversational alias here."
 
-  local_embeddings:
-    match_capabilities: [embeddings]
-    supports_tools: false
-    supports_mcp: false
-    supports_parallel_tools: false
-    supports_structured_output: false
-    supports_reasoning: false
-    preferred_groups: []
-    denied_groups: []
-    routing_hints:
-      warmup: true
-      notes: "Infrastructure: Cadence's semantic index depends on this."
 
-  # ── Frontier / cloud: forward untouched ───────────────────────────────────
-  # Deliberately last and deliberately passthrough. These have large context and
-  # drive orchestration tools well; trimming their payload would remove
-  # capability for no benefit. Listed so the gateway stays correct if a cloud
-  # fallback is ever enabled, rather than filtering a frontier model by accident.
   frontier_passthrough:
     match_models: ["claude-*-2024*", "claude-*-2025*", "gpt-4*", "gpt-5*",
                    "o1*", "o3*", "*sonnet-4*", "*opus-4*"]

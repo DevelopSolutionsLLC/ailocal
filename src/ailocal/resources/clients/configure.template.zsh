@@ -35,7 +35,7 @@ claude-local() {
   fi
   # CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: on launch, Claude Code GETs
   # $ANTHROPIC_BASE_URL/v1/models and adds every LiteLLM model (ailocal-architecture,
-  # ailocal-implementation, ailocal-review, ailocal-completion, ailocal-embeddings) to
+  # ailocal-implementation, ailocal-review, ailocal-completion) to
   # the /model picker ("From gateway"), alongside the built-in tier entries. The
   # ANTHROPIC_DEFAULT_*_MODEL vars remap those built-in slots onto real
   # capabilities so the default model AND Claude Code's silent background/summary

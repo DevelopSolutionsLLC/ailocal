@@ -19,9 +19,28 @@ TIERS = ("16gb", "32gb", "64gb", "128gb")
 
 #: Capability roles. `compaction` is a CLIENT tuning knob, not a capability: it
 #: has no model and must never be published as one.
-ROLES = ("architecture", "implementation", "review", "fast", "completion",
-         "embeddings")
-NON_ROLE_SECTIONS = ("compaction",)
+#:
+#: `embeddings` was one of these and is not any more. ailocal provisioned
+#: nomic-embed-text, published an `ailocal-embeddings` alias and warmed the
+#: model — and nothing ever called it. The only embedding consumer on the
+#: machine talks to Ollama directly (grepai's embedder is configured
+#: `provider: ollama, endpoint: http://localhost:11434`), so the alias was a
+#: capability ailocal advertised, provisioned and kept resident for no reader.
+#: Embedding ownership belongs to whoever indexes; Ollama is the shared
+#: prerequisite underneath both.
+ROLES = ("architecture", "implementation", "review", "fast", "completion")
+#: Sections that may appear in a profile and are NOT capabilities.
+#:
+#: `embeddings` is here because it USED to be one. Profiles live in the
+#: user-owned config root, where ailocal replaces a shipped default only while
+#: it still matches the digest recorded at install — so removing the section
+#: from the shipped profiles does NOT remove it from a machine that already
+#: installed them. Without this entry, generation on every existing install
+#: fails closed with "embeddings declares no max_output", because the section is
+#: present and no longer has a schema. Recognising it here keeps those profiles
+#: valid, publishes no alias for it, and leaves the user's file untouched: their
+#: config is theirs to edit, and a retired section is inert, not invalid.
+NON_ROLE_SECTIONS = ("compaction", "embeddings")
 
 #: Required on EVERY role, because every consumer reads them. Everything else is
 #: optional and returns None when absent -- no defaults are injected here, since

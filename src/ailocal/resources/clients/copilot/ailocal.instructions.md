@@ -14,7 +14,6 @@ API calls are made. Models are exposed as capability names — never use backend
 | `review` | code review, bug and security detection |
 | `fast` | quick reasoning where latency matters more than depth |
 | `completion` | small completions and IDE autocomplete (FIM) |
-| `embeddings` | semantic search only — never for chat |
 
 Backend model, context budget and which capabilities exist come from the active
 profile and the generated catalog, which are authoritative. They are deliberately

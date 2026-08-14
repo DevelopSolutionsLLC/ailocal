@@ -1,60 +1,31 @@
-# Build checklist — local-model coding sessions
+# Working against a local model
 
-Local 32B models degrade past ~32-64K effective context. This checklist keeps
-sessions short, diffs small, and claims verifiable. Follow it literally.
+Everything here exists because the model is LOCAL. Generic engineering practice
+— read before editing, small diffs, match existing conventions, don't refactor
+unrelated code — is not repeated: current coding models already do it, and the
+shared operating instructions the proxy injects cover the rest.
 
-## Before editing
+## Context
 
-- Read the target file in this session before touching it. Never edit from
-  memory of an earlier turn or a different session.
-- Find existing patterns in the file/module first: naming, error handling,
-  logging style, indentation. Match them; do not invent new conventions.
-- Check callers: grep for the function/variable/config key you're about to
-  change so you know who depends on it before you change its shape.
-- For generated files (`litellm/config.yaml`, `model_catalog.json`,
-  backend names in README/AGENTS.md), edit the source (`profiles/<tier>.toml`)
-  and regenerate — never hand-edit generated output.
-
-## While editing
-
-- One file, one concern per change. Keep diffs small enough to review in one
-  pass.
-- Reuse repo helpers instead of rewriting them (`info/warn/step/backup` in
-  shell scripts, stdlib only in Python).
-- No drive-by refactors. If you notice unrelated issues, note them, don't
-  fix them in the same diff.
-- Never commit `.env` files or secrets of any kind.
-- Any service/port binding must be `127.0.0.1` only — never `0.0.0.0`.
-- Shell scripts: `set -euo pipefail` at the top; no skipped hooks
-  (`--no-verify`, `--no-gpg-sign`) unless explicitly told to.
-- Commits carry one identity: no assistant attribution trailers or
-  session identifiers.
-- Never `git push` without explicit approval.
+Local models degrade well before their advertised window. Keep sessions short
+and diffs small; a session that was fast can stall once a turn misses the KV
+cache. Prefer targeted reads and summaries over whole files, and start a fresh
+session rather than growing one past the point where responses slow down.
 
 ## Verification
 
-- Run the actual build/test/lint command for what you changed — do not
-  assert success without running something.
-- Paste the real command output (or a faithful summary of it), not a
-  guessed result.
-- Any shell script you touch: run `bash -n <script>` before calling it done.
-- Config changes: regeneration must produce zero diff after
-  regeneration if the active profile changed.
-- Prefer `ailocal check` (0=healthy, 1=something failed) as the final sanity
-  check when touching runtime
-  config.
-- If verification fails twice, stop and report the failure instead of
-  guessing at another fix.
+- Run the real command; paste the real output. A local model asked to predict a
+  result will produce a plausible one.
+- Shell scripts: `bash -n <script>` before calling it done.
+- After changing a profile or any generated config, regenerate and confirm the
+  regeneration produces **zero diff**.
+- `ailocal check` (0 healthy, 1 unresolved profile, 2 degraded) is the final
+  sanity check when runtime configuration changed.
+- If verification fails twice, stop and report. Local models loop on a failing
+  approach more readily than hosted ones.
 
-## Context discipline
+## Secrets
 
-The proxy's shared operating instructions already cover targeted reads,
-stopping once you have enough evidence, and summarizing long output. The one
-rule that is specific to editing:
-
-- If a file changed outside this session (another process, another agent),
-  re-read it before editing — don't trust a stale in-context copy.
-<!-- claude-only -->
-- Keep each subagent handoff scoped to what that step needs, not the full
-  task history.
-<!-- /claude-only -->
+Never commit `.env*` or a key. The generated environment lives in
+`$AILOCAL_STATE/env` and your own keys in `~/.config/ailocal/.env.local`;
+neither belongs in a diff.

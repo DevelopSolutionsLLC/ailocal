@@ -123,6 +123,13 @@ def load_models_yaml(path):
         models[section] = dict(fields)
     models.pop("disk_gb", None)
     COMPACTION.update(models.pop("compaction", {}))
+    # policy owns which sections are NOT capabilities. This used to name
+    # `compaction` and nothing else, so any other non-capability section reached
+    # the geometry check and failed the whole generation — which is exactly what
+    # a retired `[embeddings]` section did on every already-installed machine,
+    # where profiles live in the user's config root and are not rewritten.
+    for section in _pc.NON_ROLE_SECTIONS:
+        models.pop(section, None)
     return models
 
 
@@ -166,31 +173,11 @@ def gen_role_block(role, info):
     backend = backend_of(info)
     ka = norm_keep_alive(info.get("keep_alive"))
 
-    # Provider comes from the profile; never from the role or model name.
-    provider = (info.get("provider") or "").strip() or "ollama_chat"
-    if provider == "ollama":
-        # `ollama`, NOT `ollama_chat`: LiteLLM has no embeddings route for the
-        # chat provider, and /v1/embeddings against it returns "Unmapped LLM
-        # provider for this endpoint".
-        lines = [
-            f"  - model_name: {mn(role)}",
-            f"    litellm_params:",
-            f"      model: {provider}/{backend}",
-            f"      api_base: os.environ/OLLAMA_URL",
-            f"      num_ctx: {num_ctx}",
-        ]
-        if ka is not None:
-            lines.append(f"      keep_alive: {ka}")
-        lines += [
-            f"    model_info:",
-            f"      mode: embedding",
-            f"      max_tokens: {num_ctx}",
-            f"      input_cost_per_token: 0",
-            f"      output_cost_per_token: 0",
-            f"      cache_creation_input_token_cost: 0",
-            f"      cache_read_input_token_cost: 0",
-        ]
-        return "\n".join(lines) + "\n"
+    # Every remaining capability is conversational, so the provider is
+    # `ollama_chat`. The `ollama` branch that used to live here existed only to
+    # emit an embedding route (`mode: embedding`) for a capability nothing
+    # called; it went with the capability. No profile declares `provider`.
+    provider = "ollama_chat"
 
     reasoning = bool(info.get("reasoning"))
     parallel  = not reasoning
@@ -431,8 +418,6 @@ def regen_catalog(models):
     entries = []
     prio = 10
     for name, info in models.items():
-        if name == "embeddings":
-            continue
         backend = backend_of(info)
         num_ctx = ctx_of(info)
         role = info.get("role", name)

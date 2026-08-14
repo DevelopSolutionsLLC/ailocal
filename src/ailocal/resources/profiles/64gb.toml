@@ -143,50 +143,7 @@ top_p = 0.9
 top_k = 20
 repeat_penalty = 1.0
   # Low temperature: answers must be reproducible across runs.
-# ── embeddings — semantic retrieval (INFRASTRUCTURE) ─────────────────────────
-[embeddings]
-role = "Semantic retrieval"
-active = "nomic-embed-text"
-  # ollama, NOT ollama_chat: LiteLLM has no embeddings route for the
-  # chat provider — /v1/embeddings against it returns 'Unmapped LLM provider'.
-provider = "ollama"
-  # 2048 is nomic-embed-text's REAL maximum. Measured: it silently CLIPS above this
-  # and still returns a valid 768-dim vector, so 8192 advertised 4x the true capacity
-  # and produced successful-looking embeddings of truncated text. Two inputs sharing
-  # a prefix and differing only past the boundary embed BYTE-IDENTICALLY (cosine
-  # 1.0000000000); a control differing inside the prefix does not (0.9833).
-context_input = 2048
-keep_alive = -1
-purpose = ["semantic search", "memory", "retrieval for grepai"]
-strengths = ["always-on", "tiny", "grepai calls it directly on :11434"]
-weaknesses = ["not a chat model"]
 
-# ── interactive compaction (client-native; ailocal does NOT summarise) ───────
-# window x pct is what the CLIENT compacts at; it is NOT a model limit. The model
-# maximum stays `architecture.context_input` above and remains available for
-# deliberate one-shot work. These are the TWO SEPARATE KNOBS this tier turns:
-# context_input is sized by memory, compaction is sized by LATENCY.
-#
-# [REAL] Cold prefill, measured on 64 GB M3 Max with nothing else resident and
-# no shared prompt prefix (a warm runner reports its cache, not its cost):
-#   gemma4:26b-mlx    7,785 tok ->   6.6s (1188 tok/s)
-#                   137,233 tok -> 229.5s ( 598 tok/s)
-# The trigger below lands at ~186s of cold prefill, which is the point past which
-# a resumed session reads as hung. It replaces a 49,152 trigger justified by
-# "~5 min at ~58K, 13 min at ~88K" -- figures from the llama_cpp/GGUF backend
-# this tier no longer uses. At 598 tok/s, 88K is 147s, not 13 minutes.
-#
-# Reserve at the trigger: architecture admits 131,072, so compaction fires with
-# 19,661 input tokens still free for the compaction prompt, system instructions,
-# tool schemas and persona injection before the backend would refuse.
-#
-# THE TWO KNOBS, AND WHICH ONE CARRIES THE POLICY. `pct` is 85 on EVERY tier: a
-# uniform 15% reserve, so no tier quietly runs a different safety margin. `window`
-# is per-tier, because it encodes the one thing that genuinely differs -- how many
-# tokens this tier's runner can cold-prefill inside its latency budget. Setting
-# `window` to the role's full context_input and letting `pct` do the work would be
-# tidier and wrong: it would push this tier's trigger far past that budget on
-# hardware nobody has measured.
 [compaction]
 window = 131072  # effective window handed to the client's compactor
 pct = 85  # compact at this % of the window
