@@ -193,6 +193,31 @@ def _concat_shared(head: Path, checklist: Path, dest: Path,
     dest.write_text(head.read_text(encoding="utf-8") + text, encoding="utf-8")
 
 
+#: Prompts whose BODY is identical across clients, mapped to the frontmatter
+#: keys only the Codex format has. These were two authored files saying the same
+#: thing in two wordings — a paraphrase is not a client difference, and the two
+#: copies were already drifting apart sentence by sentence.
+#:
+#: `local-build` is deliberately NOT here: the Claude version delegates to the
+#: planner/implementer/reviewer subagents and the Codex version runs the phases
+#: linearly in one agent, because Codex has no subagents. That is a real
+#: capability difference and stays two authored files.
+SHARED_PROMPTS = {"analyze-repo.md": {"argument-hint": '"[optional focus area]"'}}
+
+
+def _project_prompt(src: Path, dest: Path, extra: dict[str, str]) -> None:
+    """Write a client's copy of a shared prompt: one authored body, this
+    client's frontmatter. The projection is deploy-time and never committed, so
+    there is exactly one place to edit the prose."""
+    text = src.read_text(encoding="utf-8")
+    m = re.match(r"^---\n(.*?)\n---\n", text, re.S)
+    if not m:
+        dest.write_text(text, encoding="utf-8")
+        return
+    keys = m.group(1) + "".join(f"\n{k}: {v}" for k, v in extra.items())
+    dest.write_text(f"---\n{keys}\n---\n" + text[m.end():], encoding="utf-8")
+
+
 def _master_key() -> str:
     from . import runtime
     key = runtime.env_value("LITELLM_MASTER_KEY")
@@ -494,8 +519,10 @@ def _copilot_instructions() -> None:
     _concat_shared(data / "clients/copilot/ailocal.instructions.md",
                    data / "clients/claude/references/build-checklist.md",
                    dest / "ailocal.instructions.md", claude_only=False)
-    shutil.copyfile(data / "clients/copilot/session-primer.md",
-                    dest / "session-primer.md")
+    # ONE instruction file. session-primer.md was deployed beside this one with
+    # the same `applyTo: "**"`, so both loaded on every turn and stated the
+    # terminal protocol twice — in two wordings, which is worse than once.
+    (dest / "session-primer.md").unlink(missing_ok=True)
     info("Copilot instruction files deployed to ~/.copilot/instructions/")
 
 
@@ -553,6 +580,9 @@ def target_codex() -> None:
     prompts.mkdir(exist_ok=True)
     for src in sorted((data / "clients/codex/prompts").glob("*.md")):
         shutil.copyfile(src, prompts / src.name)
+    for name, extra in SHARED_PROMPTS.items():
+        _project_prompt(data / "clients/claude/commands" / name,
+                        prompts / name, extra)
     info("prompts/ written")
 
     if (Path.home() / ".codex" / "config.toml").is_file():

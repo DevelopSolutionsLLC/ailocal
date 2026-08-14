@@ -7,15 +7,19 @@ applyTo: "**"
 You are connected to local Ollama models via a LiteLLM proxy at `http://localhost:4000`. No cloud
 API calls are made. Models are exposed as capability names — never use backend model names directly.
 
-| Capability | Backend | Purpose |
-|---|---|---|
-| `architecture` | gemma4:26b-mlx | Architecture, complex refactor, multi-step debug, design (80k in) |
-| `implementation` | gemma4:26b-mlx | Implementation, features, tests, everyday refactoring (64k in) |
-| `review` | gemma4:26b-mlx | Code review, bug & security detection (64k in) |
-| `completion` | qwen2.5-coder:3b | Fast small tasks; IDE autocomplete (FIM) (4k) |
-| `embeddings` | nomic-embed-text | Semantic search only — not for chat |
+| Capability | Use it for |
+|---|---|
+| `architecture` | design, complex refactor, multi-step debugging |
+| `implementation` | everyday coding, features, tests |
+| `review` | code review, bug and security detection |
+| `fast` | quick reasoning where latency matters more than depth |
+| `completion` | small completions and IDE autocomplete (FIM) |
+| `embeddings` | semantic search only — never for chat |
 
-No installed model emits `<think>` — there is no reasoning tier right now.
+Backend model, context budget and which capabilities exist come from the active
+profile and the generated catalog, which are authoritative. They are deliberately
+not written here: an earlier copy of that table drifted three context budgets and
+omitted a whole capability, and nothing could tell.
 
 The proxy speaks both OpenAI (`/v1/chat/completions`) and Anthropic (`/v1/messages`) formats.
 
@@ -62,3 +66,10 @@ apt-get install -y package
 kills VS Code's own extension host and the litellm-connector — it disconnects your model
 and freezes the session. To stop a stuck server, target its port or PID only:
 `lsof -ti tcp:PORT | xargs kill`. Never blanket-match `node`.
+
+**Chaining.** `step1 && step2` inline; detach a long chain as a unit, still with
+no `exit`: `(step1 && step2) > /tmp/run.log 2>&1 &`, then read the log in a
+follow-up call.
+
+**Run inline, no detach needed:** `git status`, `git diff | cat`, `docker ps`,
+`ls -la`, `cat file.txt`.

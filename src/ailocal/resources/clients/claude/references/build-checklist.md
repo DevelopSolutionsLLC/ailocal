@@ -27,7 +27,8 @@ sessions short, diffs small, and claims verifiable. Follow it literally.
 - Any service/port binding must be `127.0.0.1` only — never `0.0.0.0`.
 - Shell scripts: `set -euo pipefail` at the top; no skipped hooks
   (`--no-verify`, `--no-gpg-sign`) unless explicitly told to.
-- No Claude commit attribution in this repo — Victor's identity only.
+- Commits carry one identity: no assistant attribution trailers or
+  session identifiers.
 - Never `git push` without explicit approval.
 
 ## Verification

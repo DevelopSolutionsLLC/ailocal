@@ -114,7 +114,7 @@ Same directory as the policy root by default, different owner and lifecycle: thi
 | `~/Library/Logs/ailocal/*.log` | launchd | stdout/stderr of the agents above. *(launchd path)* |
 | `/Users/Shared/ollama/models` | `install` | Shared model store, group-writable + setgid. Existing `~/.ollama/models` is *moved* here (rename, one file at a time) before `OLLAMA_MODELS` is repointed. *(launchd path)* |
 | `~/.zshrc` | `clients` | Exactly two marker-commented lines (`# ailocal-configure` first, `# ailocal-finalize` last), inserted idempotently after a timestamped backup. |
-| `~/.copilot/instructions/{ailocal.instructions.md,session-primer.md}` | `clients vscode` | |
+| `~/.copilot/instructions/ailocal.instructions.md` | `clients vscode` | The one Copilot instruction file: local-stack facts, terminal protocol, and the shared build checklist appended. |
 | VS Code `User/chatLanguageModels.json`, `User/settings.json` | `clients vscode` | Merges the `litellm-connector` provider group and prunes deprecated/harmful settings. The API **key** is not written: it lives in VS Code SecretStorage, which no supported interface lets ailocal touch — that one step stays manual. |
 
 `~/.zshrc` is created if absent and backed up (`.zshrc.bak.<timestamp>`, newest 3 kept) before either line is inserted.

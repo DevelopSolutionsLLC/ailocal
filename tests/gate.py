@@ -88,6 +88,8 @@ def _gate_suites(repo: pathlib.Path, full: bool) -> list:
              [py, "tests/profiles.py", "policy"]),
             ("hardware profiles (schema, tiers, dedup)",
              [py, "tests/profiles.py", "hardware"]),
+            ("instruction duplication (one always-on file, no authored model facts)",
+             [py, "tests/instruction-duplication.py"]),
             ("environment ownership (two owners, precedence, migration fails closed)",
              [py, "tests/env-ownership.py"]),
             ("client target selection (`all`, detected-only) and VS Code outcomes",

@@ -4,7 +4,7 @@ description: >
   Runs tests/linters/build for a change and reports results. Delegate here to
   verify work without spending the main model's context on long command output —
   it returns pass/fail + only the relevant failing lines.
-# sonnet tier → implementation (gemma4:26b-mlx): capable enough to interpret failures.
+# sonnet tier → the `implementation` capability: capable enough to interpret failures.
 model: sonnet
 tools: ["Read", "Grep", "Glob", "Bash"]
 ---
