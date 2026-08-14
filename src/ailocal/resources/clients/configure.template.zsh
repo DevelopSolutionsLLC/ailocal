@@ -22,11 +22,15 @@ fi
 
 claude-local() {
   local cfg="${XDG_CONFIG_HOME:-$HOME/.config}/ailocal"
+  # ONE OWNER FOR THE KEY. This used to read `$cfg/env`, a projection holding a
+  # second copy of the master key; a rotation left it stale while it still
+  # looked authoritative. Read the canonical generated file; derive the URL.
+  local state="${AILOCAL_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/ailocal}"
   local base key
-  base=$(grep '^AILOCAL_BASE_URL=' "$cfg/env" 2>/dev/null | cut -d= -f2-)
-  key=$(grep '^AILOCAL_API_KEY=' "$cfg/env" 2>/dev/null | cut -d= -f2-)
-  if [[ -z "$base" || -z "$key" ]]; then
-    echo "claude-local: ${cfg}/env missing or incomplete — run ailocal clients claude" >&2
+  key=$(grep '^LITELLM_MASTER_KEY=' "$state/env" 2>/dev/null | cut -d= -f2-)
+  base="${AILOCAL_PROXY:-http://127.0.0.1:${AILOCAL_LITELLM_PORT:-4000}}"
+  if [[ -z "$key" ]]; then
+    echo "claude-local: no key in ${state}/env — run ailocal install" >&2
     return 1
   fi
   # CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: on launch, Claude Code GETs
@@ -140,11 +144,15 @@ claude-local() {
 
 codex-local() {
   local cfg="${XDG_CONFIG_HOME:-$HOME/.config}/ailocal"
+  # ONE OWNER FOR THE KEY. This used to read `$cfg/env`, a projection holding a
+  # second copy of the master key; a rotation left it stale while it still
+  # looked authoritative. Read the canonical generated file; derive the URL.
+  local state="${AILOCAL_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/ailocal}"
   local base key
-  base=$(grep '^AILOCAL_BASE_URL=' "$cfg/env" 2>/dev/null | cut -d= -f2-)
-  key=$(grep '^AILOCAL_API_KEY=' "$cfg/env" 2>/dev/null | cut -d= -f2-)
-  if [[ -z "$base" || -z "$key" ]]; then
-    echo "codex-local: ${cfg}/env missing or incomplete — run ailocal clients codex" >&2
+  key=$(grep '^LITELLM_MASTER_KEY=' "$state/env" 2>/dev/null | cut -d= -f2-)
+  base="${AILOCAL_PROXY:-http://127.0.0.1:${AILOCAL_LITELLM_PORT:-4000}}"
+  if [[ -z "$key" ]]; then
+    echo "codex-local: no key in ${state}/env — run ailocal install" >&2
     return 1
   fi
   CODEX_HOME="$cfg/codex" OPENAI_API_KEY="$key" OPENAI_BASE_URL="$base/v1" command codex "$@"

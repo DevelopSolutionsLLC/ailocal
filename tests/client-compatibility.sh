@@ -29,7 +29,7 @@ cd "$ROOT"
 dc() { "$ROOT/ailocal" compose "$@"; }
 
 PROXY="${AILOCAL_PROXY:-http://127.0.0.1:4000}"
-ENV_FILE="$(ailocal profile config-root)/.env"
+ENV_FILE="$(ailocal profile state-root)/env"
 KEY="$(grep -E '^LITELLM_MASTER_KEY=' "$ENV_FILE" 2>/dev/null | cut -d= -f2-)"
 [ -n "$KEY" ] || { echo "No LITELLM_MASTER_KEY in $ENV_FILE"; exit 1; }
 

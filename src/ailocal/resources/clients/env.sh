@@ -16,24 +16,29 @@
 #   Sets AILOCAL_BASE_URL as the single source of truth for the LiteLLM proxy.
 #   Then derives all SDK-specific variables (OPENAI_*, ANTHROPIC_*) from it.
 
-# ── Source of truth: AILOCAL_BASE_URL / AILOCAL_API_KEY ──────────────────────
-# Prefer the installed config dir (written by `ailocal clients`); fall back
-# to the repo .env for a dev checkout that hasn't run the installer yet.
+# ── Source of truth: the canonical generated master key ──────────────────────
+# ONE OWNER. This used to read `~/.config/ailocal/env`, a projection holding a
+# SECOND copy of the master key under a different name — which a key rotation
+# would leave stale while it still looked authoritative. The generated state
+# file is the key's only home; the base URL is derived, not stored.
 
-CFG_ENV="${XDG_CONFIG_HOME:-$HOME/.config}/ailocal/env"
-AILOCAL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." 2>/dev/null && pwd)"
-REPO_ENV_FILE="$AILOCAL_DIR/.env"
+STATE_ENV="${AILOCAL_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/ailocal}/env"
+USER_ENV="${AILOCAL_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/ailocal}/.env.local"
 
-if [ -f "$CFG_ENV" ]; then
-  AILOCAL_BASE_URL_VAL=$(grep '^AILOCAL_BASE_URL=' "$CFG_ENV" | cut -d= -f2-)
-  LITELLM_KEY=$(grep '^AILOCAL_API_KEY=' "$CFG_ENV" | cut -d= -f2-)
-elif [ -f "$REPO_ENV_FILE" ]; then
-  AILOCAL_BASE_URL_VAL="http://localhost:4000"
-  LITELLM_KEY=$(grep '^LITELLM_MASTER_KEY=' "$REPO_ENV_FILE" | cut -d= -f2-)
-else
-  echo "⚠  No ailocal env found at $CFG_ENV or $REPO_ENV_FILE"
-  echo "   Run: ailocal clients   (or ailocal install first)"
+if [ ! -f "$STATE_ENV" ]; then
+  echo "⚠  No ailocal environment at $STATE_ENV"
+  echo "   Run: ailocal install"
   return 1 2>/dev/null || exit 1
+fi
+LITELLM_KEY=$(grep '^LITELLM_MASTER_KEY=' "$STATE_ENV" | cut -d= -f2-)
+
+# The user file may override the port the proxy is reached on; it never holds
+# the key.
+AILOCAL_BASE_URL_VAL="${AILOCAL_PROXY:-http://127.0.0.1:${AILOCAL_LITELLM_PORT:-4000}}"
+if [ -f "$USER_ENV" ]; then
+  _override=$(grep '^AILOCAL_BASE_URL=' "$USER_ENV" | cut -d= -f2-)
+  [ -n "$_override" ] && AILOCAL_BASE_URL_VAL="$_override"
+  unset _override
 fi
 
 if [ -z "$LITELLM_KEY" ]; then

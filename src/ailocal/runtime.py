@@ -68,7 +68,10 @@ BRAVE_PLACEHOLDER = "__BRAVE_API_KEY__"
 
 
 def env_file() -> Path:
-    return policy.config_root() / ".env"
+    """The GENERATED environment. Kept as a name because callers ask "where do
+    the secrets live"; ownership and precedence belong to `environment`."""
+    from . import environment
+    return environment.generated_file()
 
 
 def searxng_settings() -> Path:
@@ -81,17 +84,13 @@ def proxy_url() -> str:
 
 
 def env_value(name: str) -> str:
-    """Read one key out of .env. Values may carry one layer of quotes."""
-    path = env_file()
-    if not path.is_file():
-        return ""
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.startswith(f"{name}="):
-            v = line.split("=", 1)[1].strip()
-            if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
-                v = v[1:-1]
-            return v
-    return ""
+    """The EFFECTIVE value: user override first, then generated state.
+
+    This used to read one file and stop, which is why a user override could not
+    exist: there was only ever one file to override.
+    """
+    from . import environment
+    return environment.value(name)
 
 
 def render_searxng_settings() -> None:
@@ -147,8 +146,13 @@ def render_searxng_settings() -> None:
 def compose_argv(args) -> list[str]:
     data = policy.data_root()
     argv = ["docker", "compose", "--project-directory", str(data)]
-    if env_file().is_file():
-        argv += ["--env-file", str(env_file())]
+    # Generated state first, user overrides second: Compose applies repeated
+    # --env-file in order and the last definition of a name wins. That ordering
+    # IS the ownership model — it is the only reason a user file can override
+    # anything ailocal generated.
+    from . import environment
+    for f in environment.env_files():
+        argv += ["--env-file", str(f)]
     argv += ["-f", str(data / "deploy" / "litellm" / "compose.yaml"),
              "-f", str(data / "deploy" / "searxng" / "compose.yaml")]
     return argv + [str(a) for a in args]
@@ -379,7 +383,7 @@ def _preflight() -> None:
     step("Pre-flight checks")
     if not env_file().is_file():
         raise _fail(f"{env_file()} not found. Run ailocal install first.")
-    ok(".env present")
+    ok("environment present")
     if subprocess.run(["docker", "ps"], capture_output=True).returncode != 0:
         raise _fail("Docker daemon is not running. Start Docker Desktop and retry.")
     ok("Docker daemon running")

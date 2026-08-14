@@ -27,16 +27,30 @@ def _run(cmd: list[str], timeout: int = INSPECT_TIMEOUT) -> str:
 
 
 def check_env_file() -> CheckResult:
-    env = P.config_root() / ".env"
-    if not env.is_file():
-        return CheckResult("env", WARN, ".env not found",
+    """Both environment owners: the generated secrets and the user's file.
+
+    This checked one path because there used to be one file. Reporting only the
+    generated half would leave the user's provider keys unwatched — and they are
+    the half a human edits, so they are the half whose mode gets loosened.
+    """
+    from .. import environment
+    generated = environment.generated_file()
+    if not generated.is_file():
+        return CheckResult("env", WARN, f"{generated.name} not found",
                            remediation="ailocal install")
-    mode = env.stat().st_mode & 0o077
-    if mode:
-        return CheckResult("env", WARN, ".env is readable by other users",
-                           f"mode {oct(env.stat().st_mode & 0o777)}",
-                           "chmod 600 .env")
-    return CheckResult("env", PASS, ".env present")
+    loose = [p for p in (generated, environment.user_file())
+             if p.is_file() and p.stat().st_mode & 0o077]
+    if loose:
+        return CheckResult("env", WARN, "environment file readable by other users",
+                           ", ".join(f"{p}: {oct(p.stat().st_mode & 0o777)}"
+                                     for p in loose),
+                           "chmod 600 " + " ".join(str(p) for p in loose))
+    if environment.needs_migration():
+        return CheckResult("env", WARN,
+                           "a legacy mixed .env is still present",
+                           str(environment.legacy_file()),
+                           "ailocal install   (migrates it into the two owners)")
+    return CheckResult("env", PASS, "environment present (generated + user)")
 
 
 def check_cli_tools() -> list[CheckResult]:

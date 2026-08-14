@@ -24,9 +24,9 @@ The threat model is a developer workstation: it protects against accidental expo
 
 | Secret | Lives in | Protection |
 |---|---|---|
-| `LITELLM_MASTER_KEY` | `.env` | gitignored; the only credential clients present |
-| `BRAVE_API` | `.env` (optional; empty disables the engine) | rendered into SearXNG settings at start |
-| `SEARXNG_SECRET` | `.env` | gitignored |
+| `LITELLM_MASTER_KEY` | `$AILOCAL_STATE/env` (generated) | gitignored; the only credential clients present |
+| `BRAVE_API` | `.env.local` (yours; optional, empty disables the engine) | rendered into SearXNG settings at start |
+| `SEARXNG_SECRET` | `$AILOCAL_STATE/env` (generated) | gitignored |
 | Rendered SearXNG settings | `$AILOCAL_STATE/searxng/settings.yml` | mode `0600`, **outside the checkout** |
 
 **Why the rendered settings live outside the repository.** SearXNG has no environment interpolation for an engine's `api_key`: its settings loader supports a fixed allow-list of variables and no `${VAR}` substitution, so the Brave key cannot be passed the way `SEARXNG_SECRET` is. The tracked `resources/deploy/searxng/settings.yml` therefore carries a placeholder and the rendered copy is written to the state root. Being outside Git's tree makes committing it impossible rather than merely discouraged.
@@ -42,9 +42,10 @@ No secret appears in the generation manifest, in generated artifacts, in logs, o
 | `$AILOCAL_STATE` | `0700` | contains credentials and machine state |
 | `$AILOCAL_STATE/active-profile` | `0600` | selects what the machine runs |
 | `$AILOCAL_STATE/searxng/settings.yml` | `0600` | carries the Brave key |
-| `.env` | `0600` expected | every credential |
+| `$AILOCAL_STATE/env` | `0600` expected | the generated secrets |
+| `.env.local` | `0600` expected | your provider keys |
 
-Verify with `ailocal check`, which reports `.env` readable by other users.
+Verify with `ailocal check`, which reports either file readable by other users.
 
 ---
 

@@ -75,9 +75,11 @@ def master_key() -> str:
     key sends LiteLLM to a key database that does not exist here, and the fault
     surfaces as "No connected db" rather than as a credential error.
     """
-    # .env is user configuration; clients/env.sh is an installed asset. Neither
-    # is found by walking up from this file once the package is installed.
-    dotenv = policy.config_root() / ".env"
+    # The generated environment holds the master key; clients/env.sh is an
+    # installed asset. Neither is found by walking up from this file once the
+    # package is installed.
+    from .. import environment
+    dotenv = environment.generated_file()
     env_sh = policy.data_root() / "clients" / "env.sh"
     files = {p: p.read_text() for p in (dotenv, env_sh) if p.is_file()}
     # (variable, files to search) in strict precedence order. The environment

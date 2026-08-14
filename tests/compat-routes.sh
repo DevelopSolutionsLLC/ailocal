@@ -24,10 +24,10 @@ ROOT="$ROOT_DIR"
 cd "$ROOT"
 
 PROXY="${AILOCAL_PROXY:-http://127.0.0.1:4000}"
-# The config root's .env, not a checkout-relative one. .env has not lived in the
-# checkout for a long time; this only ever passed on a working tree that still
-# had a stray copy, and a fresh clone has none.
-ENV_FILE="$(ailocal profile config-root)/.env"
+# The GENERATED environment under the state root, not a checkout-relative file
+# and no longer the config root: the master key is ailocal's own state, and the
+# config root holds only what the user authored.
+ENV_FILE="$(ailocal profile state-root)/env"
 KEY="$(grep -E '^LITELLM_MASTER_KEY=' "$ENV_FILE" 2>/dev/null | cut -d= -f2-)"
 [ -n "$KEY" ] || { echo "No LITELLM_MASTER_KEY in $ENV_FILE"; exit 1; }
 

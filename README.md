@@ -113,7 +113,7 @@ Installed a client after ailocal? Run `ailocal clients` and it picks it up.
 ailocal configures everything on the VS Code side except the key itself. VS Code keeps model API keys in its own encrypted storage, and offers no supported way for another program to write to it — so this one step is yours. It is a limitation of the VS Code boundary, not something ailocal skipped.
 
 ```bash
-grep LITELLM_MASTER_KEY ~/.config/ailocal/.env
+grep LITELLM_MASTER_KEY ~/.local/state/ailocal/env
 ```
 
 Then in VS Code: Copilot Chat → model picker → **Manage Models…** → **LiteLLM** → paste the key. The `ailocal-*` models appear in the picker right after.
@@ -145,7 +145,7 @@ To upgrade: `pipx upgrade ailocal && ailocal start`.
 | VS Code Copilot | Supported for chat and code completion |
 | Codex CLI | Configured and routed correctly, but interactive sessions do not finish — an upstream bug ([BerriAI/litellm#27442](https://github.com/BerriAI/litellm/issues/27442)) |
 
-Any OpenAI- or Anthropic-compatible app also works directly: point it at `http://127.0.0.1:4000` with the key from `~/.config/ailocal/.env`.
+Any OpenAI- or Anthropic-compatible app also works directly: point it at `http://127.0.0.1:4000` with the key in `~/.local/state/ailocal/env`.
 
 Local models are capable everyday assistants, not frontier models. Expect strong routine work, not hosted Opus or GPT on the hardest problems.
 
@@ -158,7 +158,7 @@ Claude Code may still display **0 searches** even when the answer is clearly sou
 **Brave Search is optional.** Without a key, search uses the keyless engines and keeps working — a fresh install needs nothing. Adding a Brave API key turns on an API-backed general-web engine, which is more reliable than the keyless ones for broad questions:
 
 ```bash
-$EDITOR ~/.config/ailocal/.env    # set BRAVE_API=your-key
+$EDITOR ~/.config/ailocal/.env.local    # set BRAVE_API=your-key
 ailocal start                     # re-renders the search settings
 ```
 

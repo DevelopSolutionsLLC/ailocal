@@ -201,14 +201,14 @@ ailocal check     # searxng: JSON API reachable from LiteLLM (no query issued)
 ailocal start     # renders settings and starts the service
 ```
 
-To add or change the Brave key, edit the managed `.env` and restart:
+To add or change the Brave key, edit your `.env.local` and restart:
 
 ```sh
-$EDITOR ~/.config/ailocal/.env    # set BRAVE_API=your-key
+$EDITOR ~/.config/ailocal/.env.local    # set BRAVE_API=your-key
 ailocal start                     # re-renders the settings with the key
 ```
 
-`.env` is yours: `ailocal install` will not overwrite an existing one, so the key survives upgrades. The rendered settings live at `$AILOCAL_STATE/searxng/settings.yml`, outside the repository, mode `0600`, and are never committed.
+`.env.local` is yours: `ailocal install` creates it once and never writes it again, so your keys survive every upgrade. ailocal's own generated secrets live separately, in `$AILOCAL_STATE/env`. The rendered settings live at `$AILOCAL_STATE/searxng/settings.yml`, outside the repository, mode `0600`, and are never committed.
 
 Search is deliberately coding-first: scraped general-web engines are disabled because they degrade under sustained use and fail with CAPTCHAs. Brave's API-backed engine is how general-web coverage comes back.
 

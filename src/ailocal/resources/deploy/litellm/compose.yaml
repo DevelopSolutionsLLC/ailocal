@@ -50,7 +50,9 @@ services:
       - searxng
     environment:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
-      - OLLAMA_URL=${OLLAMA_URL}
+      # Defaulted HERE, not persisted in a file: the value is a constant of the
+      # deployment, and only a user who differs from it needs to say so.
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
       # Optional cloud fallback — disabled unless you add a key AND uncomment a
       # cloud-backed model block in the generated config.yaml.
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}

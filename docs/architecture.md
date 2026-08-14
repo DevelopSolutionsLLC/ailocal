@@ -42,19 +42,32 @@ $AILOCAL_STATE/                 what LiteLLM mounts, plus the marker (inherits u
 │   └── capabilities.json       capability → backend, context (read by the hooks)
 ├── searxng/
 │   └── settings.yml            rendered; carries the Brave key, mode 0600
+├── env                         GENERATED. the master key and SearXNG secret, mode 0600
 ├── agents/preload.sh           the login LaunchAgent's program
 └── captures/                   writable by the proxy; opt-in payload capture
 
 ~/.config/ailocal/              ── authored policy AND generated client config, mode 0700 ──
 ├── profiles/                   AUTHORED. yours to edit; ailocal preserves edits
-├── .env                        AUTHORED. the master key, mode 0600
+├── .env.local                  YOURS. provider keys and overrides, mode 0600
 ├── integration-contract.json   published facts for external consumers
 ├── configure.zsh               shell integration
 ├── claude/settings.json
 └── codex/{config,plan.config,review.config}.toml, model_catalog.json
 ```
 
-Deleting either root and re-running `ailocal start` recovers everything generated. Deleting `profiles/` or `.env` does not: those are authored.
+Deleting either root and re-running `ailocal start` recovers everything generated. Deleting `profiles/` or `.env.local` does not: those are yours.
+
+The environment has exactly two owners and one precedence — generated state, then your overrides:
+
+```
+~/.local/state/ailocal/env    ailocal's, generated    LITELLM_MASTER_KEY, SEARXNG_SECRET
+        +
+~/.config/ailocal/.env.local  yours                   provider keys, overrides — WINS
+        =
+effective environment         loaded in that order by every consumer
+```
+
+They were one file, `~/.config/ailocal/.env`, holding both. That is why upgrading it meant offering to destroy your keys. `ailocal install` migrates a legacy file automatically, keeps the generated secrets byte-for-byte, and never rotates a key.
 
 ---
 
@@ -67,12 +80,13 @@ The complete on-disk footprint of `ailocal install` (plus the optional `ailocal 
 | Path | Written by | Notes |
 |---|---|---|
 | `profiles/*.toml`, `profiles/clients.toml` | `install` | The only thing `provision()` copies. Replaced only when the file still matches the digest recorded at install time; anything you edited is preserved, anything you deleted stays deleted, anything no longer shipped is retired. |
-| `.env` | `install` | Generated `LITELLM_MASTER_KEY` and `SEARXNG_SECRET`, mode 0600. Never overwritten unattended. |
+| `.env.local` | `install` | Created empty if absent, then **never written again**. Your provider keys and any override of a code default. Mode 0600. |
 
 **State root — `~/.local/state/ailocal` (`$AILOCAL_STATE`)**
 
 | Path | Written by | Notes |
 |---|---|---|
+| `env` | `install` | Generated `LITELLM_MASTER_KEY` and `SEARXNG_SECRET`, mode 0600. Regenerated only when absent — never on upgrade, because the key is embedded in every generated client config. |
 | `install-manifest.json` | `install` | Digests of what was *shipped* (never of what is on disk) — the provenance that makes edit-preserving upgrades possible. |
 | `active-profile` | `install` | The selected tier; the sole writer is `select_tier()`. |
 | `litellm/config.yaml`, `litellm/capabilities.json` | `generation` | Bind-mounted into the proxy container. |
@@ -80,14 +94,14 @@ The complete on-disk footprint of `ailocal install` (plus the optional `ailocal 
 | `searxng/settings.yml` | `runtime` | Rendered from the shipped template; carries the Brave key, parent dir 0700. *(start path)* |
 | `agents/preload.sh` | `install` | Program for the preload LaunchAgent. Resolves the model tag at run time so it can never warm a stale one. *(launchd path)* |
 
-Neither root is mode-restricted — both inherit the umask. The secrets are protected per file (`.env`, `env` at 0600) and by the deployed-client root's own 0700, not by the state root.
+Neither root is mode-restricted — both inherit the umask. The secrets are protected per file (`env`, `.env.local` at 0600) and by the deployed-client root's own 0700, not by the state root.
 
 **Generated client config — `~/.config/ailocal` (`$AILOCAL_CLIENTS`)**
 
 Same directory as the policy root by default, different owner and lifecycle: this is disposable and rewritten on every start.
 
 - `integration-contract.json` — the machine-readable seam external tooling reads
-- `configure.zsh` (generated), `finalize.zsh`, `scratchpad-hook.sh`, `compact-hook.sh` (copied, 0755), `env` (base URL + key, 0600)
+- `configure.zsh` (generated), `finalize.zsh`, `scratchpad-hook.sh`, `compact-hook.sh` (copied, 0755)
 - `claude/` — `settings.json`, `.claude.json` (seeded only if absent), and `agents/`, `commands/`, `references/` installed as *managed* directories (each carrying a `.ailocal-managed` manifest): a marker-delimited block appended by another tool is carried across the overwrite, and a symlink is never written through
 - `claude/plugins/` and `claude/backups/` — **not written by ailocal**, but created *inside this root* by the `claude` binary that `lsp_baseline()` invokes. Registering the marketplace clones `anthropics/claude-plugins-official` here (~6 MB observed) and the CLI rewrites the `.claude.json` it was just seeded with, keeping a timestamped backup. Worth knowing before assuming everything under this root is ailocal-generated.
 - `codex/` — `config.toml`, `plan.config.toml`, `review.config.toml`, `model_catalog.json`, `AGENTS.md`, `prompts/*.md`

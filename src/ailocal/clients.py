@@ -198,7 +198,7 @@ def _master_key() -> str:
     key = runtime.env_value("LITELLM_MASTER_KEY")
     if not key:
         raise SystemExit(
-            "  ✗ LITELLM_MASTER_KEY not set in .env — run ailocal install first")
+            "  ✗ LITELLM_MASTER_KEY is not set — run ailocal install first")
     return key
 
 
@@ -224,10 +224,12 @@ def ensure_shell_sourcing(key: str) -> None:
     cfg.mkdir(parents=True, exist_ok=True)
     cfg.chmod(0o700)
 
-    env_path = cfg / "env"
-    env_path.write_text(f"AILOCAL_BASE_URL={BASE_URL}\nAILOCAL_API_KEY={key}\n")
-    env_path.chmod(0o600)
-    info(f"{env_path} written (chmod 600)")
+    # NO KEY PROJECTION HERE. This used to write `env` holding AILOCAL_API_KEY,
+    # a second copy of the master key that a rotation would leave stale while
+    # still looking authoritative. env.sh reads the canonical generated file
+    # instead: one owner, and nothing to keep in sync.
+    from . import environment
+    environment.legacy_projection().unlink(missing_ok=True)
 
     data = policy.data_root()
     shutil.copyfile(data / "clients" / "finalize.zsh", cfg / "finalize.zsh")
@@ -521,7 +523,7 @@ def target_vscode() -> None:
     # forgot, and it says so rather than reading as a failure.
     print("\n  ONE MANUAL STEP — VS Code keeps model keys in its own encrypted")
     print("  storage, which no supported interface lets ailocal write.")
-    print("    grep LITELLM_MASTER_KEY ~/.config/ailocal/.env")
+    print("    grep LITELLM_MASTER_KEY ~/.local/state/ailocal/env")
     print("    Copilot Chat → model picker → \"Manage Models…\" → \"LiteLLM\" → "
           "paste it")
     print(f"  (base URL, if asked: {BASE_URL})")
