@@ -17,7 +17,7 @@
 # each, named ailocal-<capability>. Compat names (claude-*, gpt-*) that clients
 # hard-code become model_group_alias entries pointing at those groups, so there
 # is no local/* namespace and one backend per capability. Personas are injected
-# at request time by persona_injector.py, so compat names inherit them.
+# at request time, so compat names inherit them.
 #
 # Reference: https://docs.litellm.ai/docs/proxy/configs
 model_list:
@@ -75,9 +75,6 @@ litellm_settings:
   telemetry: false                  # no anonymous phone-home
   drop_params: true                 # strip params Ollama doesn't understand
   set_verbose: false
-  # persona_injector merges each role's baked "Opus-like" persona into the
-  # client's system message (a Modelfile SYSTEM alone is overridden whenever the
-  # client sends its own system prompt). See deploy/litellm/hooks/persona_injector.py.
   # Callback modules are resolved RELATIVE TO THE CONFIG FILE unless given an
   # absolute path. The generated config lives under the runtime mount and the
   # hooks under the authored one, so these are absolute by necessity.
@@ -98,7 +95,6 @@ litellm_settings:
     # empty 200 on the live FastAPI app — no model call, no router lookup, and
     # nothing under /v1/* or the health routes is touched. See the module
     # docstring for the three client call sites and what this does NOT prove.
-    - /app/config/hooks/persona_injector.proxy_handler_instance
     # Translates reasoning_effort -> Ollama's native `think`. LiteLLM 1.93.0
     # accepts reasoning_effort and drops it unmapped (BerriAI/litellm#15059):
     # measured `high` overlaps `none` entirely, so the control does nothing.

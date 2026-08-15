@@ -58,7 +58,6 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       # persona_injector.py reads the baked instruction files from here.
-      - AILOCAL_INSTRUCTIONS_DIR=/app/config/instructions
       # tool_gateway.py — tool-payload measurement / filtering.
       #   off    (default) hook returns immediately, nothing measured or changed
       #   report measure and log; NEVER mutates the request
@@ -89,7 +88,7 @@ services:
       - AILOCAL_CONFIG_PATH=/app/generated/config.yaml
     volumes:
       # The whole authored LiteLLM subsystem: hooks/, registry.yaml,
-      # instructions/ and the config template. One mount, one owner.
+      # hooks/ and the config template. One mount, one owner.
       - ./deploy/litellm:/app/config:ro
       # Generated runtime state, from $AILOCAL_STATE. Mounted as a DIRECTORY,
       # not as single files: generation replaces each file, and a single-file

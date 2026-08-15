@@ -42,6 +42,22 @@ ROLES = ("architecture", "implementation", "review", "fast", "completion")
 #: config is theirs to edit, and a retired section is inert, not invalid.
 NON_ROLE_SECTIONS = ("compaction", "embeddings")
 
+#: Fields a profile may still declare that no longer mean anything.
+#:
+#: Same reason as the retired sections above: profiles live in the user's config
+#: root and are not rewritten, so a field removed from the shipped profiles
+#: stays on every installed machine. Unknown fields are a hard error by design
+#: — `temprature = 0.1` must not read as set — so a retired field has to be
+#: recognised explicitly or it takes the whole profile down. Accepted and
+#: ignored; the user's file is theirs to tidy.
+#:
+#: `persona` selected a per-capability system prompt. The prompt content was
+#: measured to make a toolless model hallucinate tool calls, and its minimal
+#: replacement produced no measurable difference through a real client, so the
+#: injector and its instruction files were removed and the flag now decides
+#: nothing.
+RETIRED_ROLE_FIELDS = ("persona",)
+
 #: Required on EVERY role, because every consumer reads them. Everything else is
 #: optional and returns None when absent -- no defaults are injected here, since
 #: a value this module invents would not be one any generated config ever had.
@@ -57,12 +73,11 @@ LEGACY_CONTEXT_FIELD = "context"
 #:   temperature/top_p/top_k/repeat_penalty -> None; omitted from generated params
 #:   num_predict    -> DERIVED from max_output by geometry(); never configured
 #:   keep_alive     -> None; omitted, Ollama default applies
-#:   persona        -> None; treated as no persona injection
 #:   preferred/purpose/strengths/weaknesses -> [] (documentation only)
 OPTIONAL_ROLE_FIELDS = ("provider", "max_output", "reasoning", "temperature",
                         "top_p", "top_k",
                         "repeat_penalty", "keep_alive",
-                        "persona", "preferred", "purpose", "strengths",
+                        "preferred", "purpose", "strengths",
                         "weaknesses")
 
 CLIENT_POLICY_MISSING = "CLIENT_POLICY_MISSING"
@@ -324,7 +339,7 @@ def _validate_role(role: str, cfg) -> None:
     # UNKNOWN FIELDS ARE ERRORS, NOT NOISE: only recognised keys are copied
     # out, so `temprature = 0.1` would otherwise read as set in review while the
     # role ran at the default.
-    unknown = sorted(set(cfg) - _known_role_fields())
+    unknown = sorted(set(cfg) - _known_role_fields() - set(RETIRED_ROLE_FIELDS))
     if unknown:
         raise ProfileError(PROFILE_SCHEMA_INVALID,
                            f"{role} declares unknown field(s): {', '.join(unknown)}")

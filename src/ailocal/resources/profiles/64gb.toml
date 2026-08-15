@@ -27,7 +27,6 @@ context_input = 131072
 max_output = 16384
 temperature = 0.1
 keep_alive = "6h"
-persona = true
 purpose = ["architecture", "complex refactoring", "multi-step debugging", "design", "repository-wide planning", "large interactive/agent prompts"]
 strengths = ["128K input window shared across clients", "holds a whole subsystem in view", "strong code generation"]
 weaknesses = ["slower", "cold prefill of a full window costs minutes", "KV grows to ~22 GiB when the window is filled"]
@@ -54,7 +53,6 @@ context_input = 131072
 max_output = 8192
 temperature = 0.1
 keep_alive = -1  # same physical model as architecture
-persona = true
 purpose = ["implementation", "features", "refactoring", "tests", "shell", "python", "typescript"]
 strengths = ["fast", "low memory", "excellent everyday code generation"]
 weaknesses = ["architecture", "repository-wide planning"]
@@ -75,7 +73,6 @@ context_input = 131072
 max_output = 16384
 temperature = 0.2
 keep_alive = -1  # same physical model as architecture
-persona = true
 purpose = ["code review", "bug detection", "security review", "alternative solutions"]
 strengths = ["careful analysis", "security awareness", "concrete findings"]
 weaknesses = ["slower than the implementation tier", "not for bulk generation"]
@@ -110,7 +107,6 @@ keep_alive = "20m"
   # No deploy/litellm/instructions/fast.md on purpose: this tier gets _core.md only, so
   # every extra system-prompt token is a larger share of its small budget. Adding
   # the file is enough to change that -- the injector needs no code change.
-persona = true
 purpose = ["task classification", "doc summarisation", "quick edits", "tool-driven lookups"]
 strengths = ["tiny footprint", "native tool calling", "124K input, 8K output", "fastest prefill of any tier model"]
 weaknesses = ["no FIM/insert - cannot do inline autocomplete", "weaker on large refactors"]

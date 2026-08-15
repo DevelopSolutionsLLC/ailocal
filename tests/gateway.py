@@ -1,20 +1,14 @@
 #!/usr/bin/env python3
-"""Gateway-side request handling: persona injection, tool-call repair, traces.
+"""Gateway-side request handling: tool-call repair.
 
-Three sections, separately addressable so the gate reports them as distinct
-behaviours:
-
-  persona   server-side persona injection across the OpenAI and Anthropic
-            dialects, including compat aliases and idempotency.
   repair    recovery of fenced JSON tool calls, and the harder direction --
             refusing to fire on tutorial examples.
-  trace     E1 request-trace schema, redaction, and token reconciliation.
 
-Each section owns its statements; module level holds only imports, the litellm
-import shims, loaded modules and fixtures. Sections are independent, emit no
-checks at import, and may run in any order.
+Persona injection was the other section; the mechanism it covered is gone (see
+the note below). The docstring also advertised a `trace` section that was never
+in SECTIONS.
 
-Usage: gateway.py [persona|repair|trace]   (default: all)
+Usage: gateway.py [repair]   (default: all)
 """
 from __future__ import annotations
 
@@ -27,33 +21,14 @@ from harness import RESOURCES, REPO, Suite, load_module  # noqa: E402
 _suite = Suite()
 check = _suite.check
 
-# ── persona ─────────────────────────────────────────────────────────────
-import asyncio
-import importlib.util
-import os
-import sys
-import types
-_clog = types.ModuleType("litellm.integrations.custom_logger")
-class _CustomLogger:            # minimal stand-in for CustomLogger
-    def __init__(self, *a, **k): pass
-_clog.CustomLogger = _CustomLogger
-sys.modules["litellm"] = types.ModuleType("litellm")
-sys.modules["litellm.integrations"] = types.ModuleType("litellm.integrations")
-sys.modules["litellm.integrations.custom_logger"] = _clog
-from pathlib import Path
-ROOT = str(REPO)
-os.environ.setdefault("AILOCAL_INSTRUCTIONS_DIR", "/nonexistent")   # _load_personas → {} (we override)
-pi = load_module("persona_injector",
-                 os.path.join(RESOURCES, "deploy/litellm/hooks/persona_injector.py"))
-inj = pi.PersonaInjector()
-# Core + optional per-role delta, exactly as the injector composes them.
-inj.core = ""
-inj.deltas = {"implementation": "IMPL_XYZ", "architecture": "ARCH_XYZ", "review": "REV_XYZ"}
-inj.persona_roles = {"implementation", "architecture", "review"}
-inj.alias = {"claude-sonnet-4-6": "ailocal-implementation"}
-P = "IMPL_XYZ"
-def hook(data, call_type):
-    return asyncio.run(inj.async_pre_call_hook(None, None, data, call_type))
+# ── (persona injection removed) ────────────────────────────────────────
+# The injector merged a per-capability system prompt into every request. Its
+# content was measured twice: the 34-line version made a toolless model invent
+# <call:ls_tree>/<call:read_file> and fail to finish; the 12-line replacement
+# produced no measurable difference through claude-local WITH tools (identical
+# answers and tool counts on two tasks, 416 vs 454 words on a third). A
+# subsystem delivering an unmeasurable effect is not a subsystem worth having,
+# so the hook, the instruction files and the profile flag are gone.
 
 # ── repair ──────────────────────────────────────────────────────────────
 import os
@@ -88,71 +63,6 @@ import json
 import re
 import sys
 from pathlib import Path
-def persona_checks() -> None:
-    # THE COMPOSITION CONTRACT. `persona: true` in the profile is what grants a
-    # persona; a role-specific file is an optional delta on top. Inferring the
-    # grant from "does <role>.md exist" is what left `fast` — persona: true, no
-    # file — receiving no instructions at all, and what made a Markdown file
-    # created purely to satisfy the loader look like the fix.
-    saved = (inj.core, dict(inj.deltas), set(inj.persona_roles))
-    inj.core, inj.deltas = "CORE_XYZ", {"architecture": "ARCH_XYZ"}
-    inj.persona_roles = {"architecture", "fast"}
-    d = hook({"model": "ailocal-fast", "messages": [{"role": "user", "content": "hi"}]},
-             "acompletion")
-    check(d["messages"][0]["content"].strip() == "CORE_XYZ",
-          "persona-enabled capability with NO role file still receives _core alone")
-    d = hook({"model": "ailocal-architecture", "messages": [{"role": "user", "content": "hi"}]},
-             "acompletion")
-    c = d["messages"][0]["content"]
-    check("CORE_XYZ" in c and "ARCH_XYZ" in c and c.index("CORE_XYZ") < c.index("ARCH_XYZ"),
-          "a role file is appended to _core, not substituted for it")
-    d = hook({"model": "ailocal-completion", "messages": [{"role": "user", "content": "hi"}]},
-             "acompletion")
-    check(all("CORE_XYZ" not in (m.get("content") or "") for m in d["messages"]),
-          "a capability the profile gives no persona receives nothing, not _core")
-    inj.core, inj.deltas, inj.persona_roles = saved[0], saved[1], saved[2]
-
-    d = hook({"model": "ailocal-implementation", "messages": [{"role": "user", "content": "hi"}]}, "acompletion")
-    sys0 = d["messages"][0]
-    check(sys0["role"] == "system" and sys0["content"].startswith(P),
-          "openai: persona inserted as system when none present")
-    d = hook({"model": "ailocal-implementation",
-              "messages": [{"role": "system", "content": "CLIENT_SYS"}, {"role": "user", "content": "hi"}]}, "acompletion")
-    c = d["messages"][0]["content"]
-    check(P in c and "CLIENT_SYS" in c and c.index(P) < c.index("CLIENT_SYS"),
-          "openai: persona prepended to existing system, client text preserved")
-    d = hook({"model": "claude-sonnet-4-6", "messages": [{"role": "user", "content": "hi"}]}, "anthropic_messages")
-    check(d.get("system") == P and all(m["role"] != "system" for m in d["messages"]),
-          "anthropic: persona set as top-level system when absent (compat alias resolved)")
-    d = hook({"model": "claude-sonnet-4-6", "system": "CLIENT_SYS",
-              "messages": [{"role": "user", "content": "hi"}]}, "anthropic_messages")
-    check(isinstance(d["system"], str) and d["system"].startswith(P) and "CLIENT_SYS" in d["system"],
-          "anthropic: persona prepended to string system, client text preserved")
-    d = hook({"model": "claude-sonnet-4-6", "system": [{"type": "text", "text": "CLIENT_SYS"}],
-              "messages": [{"role": "user", "content": "hi"}]}, "anthropic_messages")
-    blocks = d["system"]
-    check(isinstance(blocks, list) and blocks[0].get("text") == P
-          and any(b.get("text") == "CLIENT_SYS" for b in blocks[1:]),
-          "anthropic: persona prepended as a text block to list system")
-    d = hook({"model": "ailocal-completion", "messages": [{"role": "user", "content": "hi"}]}, "acompletion")
-    check(all(m["role"] != "system" for m in d["messages"]),
-          "openai: no persona for a capability the profile grants none (completion)")
-    d = hook({"model": "ailocal-completion", "messages": [{"role": "user", "content": "hi"}]}, "anthropic_messages")
-    check("system" not in d,
-          "anthropic: no persona for a capability the profile grants none (completion)")
-    d = hook({"model": "ailocal-implementation", "input": "x"}, "embeddings")
-    check("system" not in d and "messages" not in d,
-          "embeddings call_type: request passes through untouched")
-    data = {"model": "ailocal-implementation", "messages": [{"role": "user", "content": "hi"}]}
-    hook(data, "acompletion"); hook(data, "acompletion")
-    hook(data, "acompletion"); hook(data, "acompletion")
-    check(data["messages"][0]["content"].count(P) == 1, "openai: injection is idempotent (no doubling)")
-    data = {"model": "claude-sonnet-4-6", "system": "CLIENT_SYS", "messages": [{"role": "user", "content": "hi"}]}
-    hook(data, "anthropic_messages"); hook(data, "anthropic_messages")
-    hook(data, "anthropic_messages"); hook(data, "anthropic_messages")
-    check(data["system"].count(P) == 1, "anthropic: injection is idempotent (no doubling)")
-    print()
-
 
 def repair_checks() -> None:
     print("\nMUST REPAIR — the reply IS the call")
@@ -204,7 +114,7 @@ def repair_checks() -> None:
     check(calls is None, "empty content -> no crash")
 
 
-SECTIONS = {"persona": persona_checks, "repair": repair_checks}
+SECTIONS = {"repair": repair_checks}
 
 if __name__ == "__main__":
     which = sys.argv[1] if len(sys.argv) > 1 else None

@@ -79,7 +79,6 @@ def _gate_suites(repo: pathlib.Path, full: bool) -> list:
              ["/bin/bash", "tests/in-container.sh",
                     "tests/tool-gateway-impl.py",
                     "AILOCAL_GATEWAY_MODULE=/app/config/hooks/tool_gateway.py"]),
-            ("persona injection", [py, "tests/gateway.py", "persona"]),
             ("tool-call repair (repairs real calls, refuses examples)",
              [py, "tests/gateway.py", "repair"]),
             ("profile resolver (single reader, fail-closed, no 64gb default)",
@@ -262,7 +261,7 @@ def _hooks_import(repo: pathlib.Path) -> tuple[int, str]:
     program = (
         "import importlib.util, sys\n"
         "bad = []\n"
-        "for name in ['persona_injector','reasoning_router','startup',"
+        "for name in ['reasoning_router','startup',"
         "'tool_repair','tool_gateway','capability_registry']:\n"
         "    try:\n"
         "        spec = importlib.util.spec_from_file_location("

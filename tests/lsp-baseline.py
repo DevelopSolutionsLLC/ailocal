@@ -31,7 +31,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from harness import RESOURCES, REPO, Suite
 ROOT = Path.home() / ".config" / "ailocal" / "claude"
-PROBE = RESOURCES / "deploy" / "litellm" / "hooks" / "persona_injector.py"
+#: Any substantial Python file with importable symbols works; this one is
+#: chosen because it is stable and always shipped.
+PROBE = RESOURCES / "deploy" / "litellm" / "hooks" / "tool_gateway.py"
 
 _suite = Suite()
 check = _suite.check
