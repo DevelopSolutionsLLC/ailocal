@@ -8,8 +8,13 @@
 # overwritten.
 #
 # NO [mcp_servers.*] BLOCKS, BY POLICY. codex-local intentionally has no grepai
-# MCP, no LSP MCP and no GitHub MCP: Codex cannot dispatch namespaced tool
-# names, so an MCP server here advertises a surface it cannot drive. ailocal
+# MCP, no LSP MCP and no GitHub MCP. TWO layers block it, and they are recorded
+# separately in Cadence's client-capabilities.yaml rather than competing as one
+# explanation: the TRANSPORT layer (LiteLLM strips type:"namespace" before the
+# local backend) and the CLIENT layer (Codex's router refuses both the bare and
+# the mcp__-prefixed name — openai/codex#20652, version-scoped, not a property
+# of Codex). Either alone is sufficient, so an MCP server here advertises a
+# surface it cannot drive. ailocal
 # used to re-run `cadence mcp sync` after this rewrite to put them back --
 # that behaviour was removed. An empty MCP section is the correct state.
 model_auto_compact_token_limit = 0
