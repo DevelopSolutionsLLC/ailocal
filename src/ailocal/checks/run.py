@@ -88,7 +88,7 @@ def _check(argv: list[str]) -> int:
 
     section("Configuration", C.deterministic_checks())
 
-    runtime = [S.check_docker(), S.check_container(), S.check_litellm_version(),
+    runtime = [S.check_docker(), S.check_container(), S.check_config_mount(), S.check_litellm_version(),
                S.check_proxy_health(), S.check_ollama(),
                S.check_models_present(backends)]
     runtime += S.check_aliases(token, aliases)

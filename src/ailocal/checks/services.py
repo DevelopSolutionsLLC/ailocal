@@ -236,6 +236,46 @@ def check_container(name: str = CONTAINER) -> CheckResult:
                        + (f" ({health})" if health else ""))
 
 
+def check_config_mount(name: str = CONTAINER) -> CheckResult:
+    """The container can still SEE the hooks it was started with.
+
+    `/app/config` is bind-mounted from the INSTALLED package's resources
+    directory. Reinstalling the package — `pipx install --force`, an upgrade,
+    anything that recreates the venv — replaces that directory, and the running
+    container keeps holding the old inode, which is now empty.
+
+    [REAL] Observed here: after a reinstall, `docker exec ... ls /app/config`
+    returned nothing while `docker ps` said "Up 20 minutes (healthy)" and
+    /health/liveliness answered 200. Python had already imported the hooks at
+    boot, so the proxy kept serving from memory — and nothing anywhere said that
+    the files behind tool filtering, system transport and tool repair were gone.
+    The next restart would have loaded an empty callback list instead.
+
+    Cheap and deterministic: one `ls`. Remediation is a restart, which
+    re-resolves the bind path.
+    """
+    r = _run(["docker", "exec", name, "ls", "/app/config/hooks"])
+    # A replaced mount shows up two ways depending on when it is caught: an
+    # empty listing, or `ls` failing outright with "No such file or directory".
+    # Both are the same fault, so both must FAIL. WARN is kept for a genuinely
+    # inconclusive result — docker unreachable, exec refused — where
+    # check_container is the one that should be speaking.
+    gone = ("no such file" in (r.stderr or "").lower()
+            or "no such file" in (r.stdout or "").lower())
+    if r.returncode != 0 and not gone:
+        return CheckResult("config-mount", WARN,
+                           "could not read /app/config/hooks in the container",
+                           r.stderr.strip()[:200] or None)
+    if gone or not r.stdout.strip():
+        return CheckResult(
+            "config-mount", FAIL,
+            "/app/config is EMPTY in the running container — it is serving stale "
+            "in-memory hooks; a reinstall replaced the mounted directory",
+            remediation=f"docker restart {name}")
+    return CheckResult("config-mount", PASS,
+                       f"container sees {len(r.stdout.split())} hook file(s)")
+
+
 def check_proxy_health() -> CheckResult:
     if not proxy_healthy():
         return CheckResult("proxy-health", FAIL, "LiteLLM /health/liveliness failed",

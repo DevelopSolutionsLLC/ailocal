@@ -1,11 +1,31 @@
 """reasoning_router.py — translate `reasoning_effort` into Ollama's native `think`.
 
-LiteLLM accepts `reasoning_effort` and drops it without mapping it onto a backend
-control, so the parameter has no measurable effect on output — BerriAI/litellm#15059,
-still open on 1.93.0, and why registry.yaml warns that per-request effort levels
-are UNRELIABLE. Ollama's native `think` is honoured, and LiteLLM forwards it
-verbatim. This translates the parameter clients send into the one the backend
-honours.
+RETIREMENT CANDIDATE — the reason this was written is no longer true.
+
+It said LiteLLM accepts `reasoning_effort` and drops it unmapped
+(BerriAI/litellm#15059, "still open on 1.93.0"). That issue was fixed by
+BerriAI/litellm#15465, merged October 2025, and the mapping IS present in the
+pinned 1.93.0 image, in `llms/ollama/chat/transformation.py` — for a
+non-`gpt-oss` model it does:
+
+    optional_params["think"] = value in {"low", "medium", "high"}
+
+Upstream therefore already turns thinking ON. What it does not do is preserve
+the LEVEL: low, medium and high all collapse to boolean True. This hook maps
+them to Ollama's graded string form instead, and maps `minimal` to "low" where
+upstream maps it to False.
+
+[APPROX] That remaining difference has no measured effect on the model we run.
+Against gemma4:26b-mlx directly, `think: true`, `think: "high"` and
+`think: "low"` were all accepted without error and produced thinking blocks of
+61, 71 and 79 characters — no ordering, no signal. n=1 per level on one trivial
+prompt: too thin to delete a hook on, which is why this is a candidate rather
+than a removal.
+
+DELETE THIS FILE when an A/B on a reasoning-heavy prompt shows graded and
+boolean `think` are indistinguishable on the active model — or immediately if
+Ollama is confirmed to coerce a non-boolean `think` to truthy for models without
+graded support, since that makes the two provably identical.
 
 It does not decide how hard to think, only translate an explicit request. An
 automatic task->effort classifier belongs in registry.yaml beside the existing

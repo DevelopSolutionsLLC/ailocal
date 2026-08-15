@@ -95,11 +95,13 @@ litellm_settings:
     # empty 200 on the live FastAPI app — no model call, no router lookup, and
     # nothing under /v1/* or the health routes is touched. See the module
     # docstring for the three client call sites and what this does NOT prove.
-    # Translates reasoning_effort -> Ollama's native `think`. LiteLLM 1.93.0
-    # accepts reasoning_effort and drops it unmapped (BerriAI/litellm#15059):
-    # measured `high` overlaps `none` entirely, so the control does nothing.
-    # `think` IS forwarded and IS monotonic. An explicit `think` in the request
-    # wins, so a manual override always beats this translation.
+    # Translates reasoning_effort -> Ollama's native `think`. RETIREMENT
+    # CANDIDATE: the premise (litellm#15059, reasoning_effort dropped unmapped)
+    # was fixed by litellm#15465 and the mapping is present in 1.93.0. Upstream
+    # collapses low/medium/high to boolean True; this preserves the level, and
+    # [APPROX] that difference showed no signal on gemma4. See the module
+    # docstring for the A/B that would retire it. An explicit `think` in the
+    # request still wins, so a manual override beats this translation.
     - /app/config/hooks/reasoning_router.proxy_handler_instance
     # Restores the client's interleaved system messages. LiteLLM's Anthropic
     # /v1/messages -> OpenAI adapter branches only on role user/assistant, so a
