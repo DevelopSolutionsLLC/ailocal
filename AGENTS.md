@@ -31,6 +31,18 @@ ailocal check           # the whole installation, one report
 python3 tests/gate.py   # the regression gate
 ```
 
+The gate runs ShellCheck over the shell this repository ships and tests with, and
+**skips that check when ShellCheck is absent** so the gate stays runnable without
+it. Install it to get the check instead of the skip:
+
+```sh
+brew install shellcheck
+```
+
+It runs at `warning` severity — the note level here is almost entirely style and
+would bury a real finding. `.zsh` is excluded because ShellCheck does not
+implement zsh; those files stay covered by `zsh -n`.
+
 The gate imports `ailocal`, so it runs under the interpreter the package is installed into — the activated `.venv` above. A pipx installation puts the command on PATH but not the module on the host interpreter's import path, so run the gate from the venv.
 
 ```sh

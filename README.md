@@ -52,6 +52,17 @@ brew install pipx
 
 You do not need to install Python or set up a virtual environment. Homebrew's `pipx` brings its own Python and keeps ailocal isolated for you.
 
+**pyright** is optional, and only matters if you use Claude Code. It is the one
+language server ailocal wires up, so that the isolated `claude-local` profile can
+answer "where is this defined" instead of re-reading whole files:
+
+```bash
+brew install pyright
+```
+
+Without it, `ailocal clients claude` reports it and everything else still works.
+ailocal installs no other language server — see [Language servers](#language-servers).
+
 ## 2. Install clients (optional)
 
 Install whichever you want to use, or none. You can add one later at any time.
@@ -148,6 +159,30 @@ To upgrade: `pipx upgrade ailocal && ailocal start`.
 Any OpenAI- or Anthropic-compatible app also works directly: point it at `http://127.0.0.1:4000` with the key in `~/.local/state/ailocal/env`.
 
 Local models are capable everyday assistants, not frontier models. Expect strong routine work, not hosted Opus or GPT on the hardest problems.
+
+## Language servers
+
+Claude Code has a built-in LSP tool — nothing to switch on. What it needs is a
+language server behind it, and that takes **two halves**: the server binary, and
+the official plugin that tells Claude Code to use it. A plugin on its own
+configures the integration; it does not install the binary.
+
+ailocal does exactly one language: it installs `pyright-lsp` from Anthropic's
+official marketplace into the roots it creates, so `claude-local` has a working
+floor. Anything beyond Python is yours to add, and it is two commands:
+
+```bash
+brew install typescript-language-server   # or gopls, bash-language-server, llvm…
+claude plugin install typescript-lsp@claude-plugins-official
+```
+
+Anthropic maintains plugins for TypeScript, Go, C/C++, Bash and others. Use those
+rather than hand-rolling an LSP config — and add a language only when you work in
+it, since every server is a process Claude Code starts.
+
+To check a server is genuinely working, ask for something only it can answer — a
+definition or a reference — rather than trusting that the plugin is listed.
+Installed, configured, and answering are three different states.
 
 ## Web search
 
