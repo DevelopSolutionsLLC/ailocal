@@ -664,9 +664,11 @@ def target_claude() -> None:
 def lsp_baseline(root: Path, label: str) -> None:
     """The minimum local-client compatibility baseline ailocal owns.
 
-    settings.json sets ENABLE_LSP_TOOL=1, but a plugin is what puts a language
-    server behind that tool, so without this an ailocal-only machine advertises
-    a capability that cannot answer.
+    The LSP tool is built into Claude Code and needs no enabling; ENABLE_LSP_TOOL
+    was the gate before 2.0.74 and settings.json no longer writes it. What the
+    tool still needs is a language server behind it, which is what a plugin
+    provides — without this an ailocal-only machine advertises a capability that
+    cannot answer.
 
     ONE LANGUAGE, DELIBERATELY: Python. Applied to the isolated root AND to
     ~/.claude — this wires up a binary the user already has, not routing

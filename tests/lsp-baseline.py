@@ -9,7 +9,7 @@ This asserts the ailocal half, and nothing else. It does NOT check TypeScript, G
 or C — those are Cadence's, and asserting them here would create a second owner.
 
 WHY IT DRIVES THE SERVER DIRECTLY. Presence is not capability: a plugin can be
-installed, ENABLE_LSP_TOOL can be set, and the tool can still answer nothing
+installed, the tool can be listed, and it can still answer nothing
 because the server binary is missing or cannot initialize. So this speaks LSP to
 pyright-langserver over stdio and requires a real document-scoped answer about a
 real file in this repository. Tool listing is not acceptance.
@@ -62,12 +62,20 @@ def read(proc) -> dict | None:
 def main() -> int:
     print("ailocal minimum LSP baseline (Python, claude-local)")
 
-    # 1. the isolated root has the tool switched on
+    # 1. the isolated root exists and carries no obsolete LSP gate.
+    #
+    # [REAL] The LSP tool is built into Claude Code 2.1.224 and needs nothing
+    # switched on: hosted ~/.claude/settings.json sets no ENABLE_LSP_TOOL, and a
+    # documentSymbol request in that session returns real pyright output.
+    # ENABLE_LSP_TOOL was the gate before 2.0.74 and no longer appears in the
+    # changelog. This now asserts we do NOT write it again — a dead flag in
+    # generated config reads like a live requirement to the next maintainer.
     settings = ROOT / "settings.json"
     if settings.exists():
         env = (json.loads(settings.read_text()).get("env") or {})
-        check(env.get("ENABLE_LSP_TOOL") == "1",
-              f"ENABLE_LSP_TOOL=1 in the isolated root ({env.get('ENABLE_LSP_TOOL')})")
+        check("ENABLE_LSP_TOOL" not in env,
+              "no obsolete ENABLE_LSP_TOOL in the isolated root "
+              f"({env.get('ENABLE_LSP_TOOL')})")
     else:
         check(False, f"{settings} exists")
 
@@ -145,7 +153,6 @@ def main() -> int:
     if rc:
         print("\nRepair: ailocal clients claude")
     return rc
-    return 0
 
 
 if __name__ == "__main__":

@@ -45,6 +45,15 @@ LITELLM_CONFIG   = _LITELLM_OUT / "config.yaml"
 CAPS_JSON      = _LITELLM_OUT / "capabilities.json"
 CLAUDE_SETTINGS_TPL = _DATA / "clients/claude/settings.template.json"
 CLAUDE_SETTINGS = _CLIENTS / "claude/settings.json"
+
+#: settings.json `env` keys ailocal once wrote and now removes on regeneration.
+#: [REAL] ENABLE_LSP_TOOL was the pre-2.0.74 gate for the LSP tool, which is
+#: built in as of Claude Code 2.1.224: hosted ~/.claude/settings.json sets it
+#: nowhere and a documentSymbol request there returns real pyright output. A
+#: dead flag left in generated config reads like a live requirement.
+RETIRED_CLAUDE_ENV = {
+    "ENABLE_LSP_TOOL": "the LSP tool is built into Claude Code since 2.0.74",
+}
 CODEX_HOME     = _CLIENTS / "codex"
 CODEX_TPL        = _DATA / "clients/codex/config.template.toml"
 CODEX_PLAN_TPL   = _DATA / "clients/codex/plan.config.template.toml"
@@ -551,6 +560,17 @@ def regen_claude_settings(models, clients):
         data["//"].append(
             f"Auto-compaction: window {win} x {pct}% = {int(win)*int(pct)//100} tokens "
             f"(profile-owned). NOT the model limit - architecture keeps its full context.")
+    # Retire keys ailocal used to write. `env` merges live-over-template so that
+    # Claude Code's own additions survive regeneration — which also means simply
+    # deleting a key from the template never reaches an existing install: it
+    # would sit in every settings.json already on disk forever. Removal has to be
+    # stated, not implied.
+    for key, why in RETIRED_CLAUDE_ENV.items():
+        if key in (data.get("env") or {}):
+            data["env"].pop(key)
+            data["//"].append(f"Removed {key}: {why}")
+    if data.get("env") == {}:
+        data.pop("env")
     stage(CLAUDE_SETTINGS, json.dumps(data, indent=2) + "\n")
     return True
 
