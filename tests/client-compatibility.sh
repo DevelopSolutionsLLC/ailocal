@@ -23,7 +23,7 @@
 set -uo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/harness.sh"
 ROOT="$ROOT_DIR"
-cd "$ROOT"
+cd "$ROOT" || exit 1
 # The composition has one owner; drive it through the command, not a
 # second definition of the Compose invocation.
 dc() { "$ROOT/ailocal" compose "$@"; }

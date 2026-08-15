@@ -25,7 +25,7 @@
 set -uo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/harness.sh"
 ROOT="$ROOT_DIR"
-cd "$ROOT"
+cd "$ROOT" || exit 1
 
 INCLUDE_VSCODE=""
 [ "${1:-}" = "--include-vscode" ] && INCLUDE_VSCODE=1

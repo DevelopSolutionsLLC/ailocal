@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Shared mechanics for the shell test suites. Source it; do not execute it.
 #
 # Six suites carried their own reporting in two dialects -- check(cond,label)
@@ -13,6 +14,8 @@
 
 ROOT_DIR="${ROOT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 # The ONE copy of every shipped default, spelled once for every shell suite.
+# Read by the suites that source this file, never here.
+# shellcheck disable=SC2034
 RESOURCES="$ROOT_DIR/src/ailocal/resources"
 _fails=0
 _passes=0
@@ -75,5 +78,5 @@ temp_dir() {  # temp_dir -> prints the path
   _harness_tmp="$_harness_tmp $d"
   printf '%s' "$d"
 }
-_harness_cleanup() { [ -n "$_harness_tmp" ] && rm -rf $_harness_tmp; return 0; }
+_harness_cleanup() { [ -n "$_harness_tmp" ] && rm -rf "$_harness_tmp"; return 0; }
 trap _harness_cleanup EXIT

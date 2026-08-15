@@ -21,7 +21,7 @@
 set -uo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/harness.sh"
 ROOT="$ROOT_DIR"
-cd "$ROOT"
+cd "$ROOT" || exit 1
 
 PROXY="${AILOCAL_PROXY:-http://127.0.0.1:4000}"
 # The GENERATED environment under the state root, not a checkout-relative file

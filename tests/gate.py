@@ -15,6 +15,7 @@ import ast
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -118,6 +119,8 @@ def _gate_suites(repo: pathlib.Path, full: bool) -> list:
             ("generation is a fixed point", _fixed_point),
             ("litellm runtime matches the validated version", _version_current),
             ("all shell scripts parse (bash -n)", _shell_parses),
+            ("shell passes ShellCheck (warning+, skipped if absent)",
+             _shellcheck_clean),
             ("all python modules parse", _python_parses),
             ("client timeout is not below the proxy timeout", _timeouts_aligned),
             ("every registered hook imports inside the proxy image", _hooks_import),
@@ -227,6 +230,36 @@ def _shell_parses(repo: pathlib.Path) -> tuple[int, str]:
             if r.returncode:
                 bad.append(f"{f.name}: {r.stderr.strip()}")
     return (1, "\n".join(bad)) if bad else (0, "")
+
+
+def _shellcheck_clean(repo: pathlib.Path) -> tuple[int, str]:
+    """ShellCheck at warning severity over the bash we ship and test with.
+
+    SKIPPED, not failed, when shellcheck is absent: it is a developer tool, and
+    a contributor without it must still be able to run the gate. The README
+    carries `brew install shellcheck`.
+
+    `-x` follows `. harness.sh`, without which every suite reports SC1091 for a
+    file that is right there. Severity stops at `warning` deliberately — the
+    note level is largely style (SC2015, SC2016, SC2181) and turning it on
+    would bury a real finding in forty opinions.
+
+    .zsh is excluded because ShellCheck does not implement zsh; running it
+    there reports POSIX complaints about valid zsh. Those files are covered by
+    `zsh -n` in _shell_parses.
+    """
+    if not shutil.which("shellcheck"):
+        return 0, "SKIP: shellcheck not installed (brew install shellcheck)"
+    findings = []
+    for pattern in ("tests/**/*.sh", f"{RES}/clients/*.sh",
+                    f"{RES}/deploy/**/*.sh"):
+        for f in sorted(repo.glob(pattern)):
+            r = subprocess.run(
+                ["shellcheck", "-x", "--severity=warning", "-f", "gcc", str(f)],
+                capture_output=True, text=True, cwd=repo)
+            if r.stdout.strip():
+                findings.append(r.stdout.strip())
+    return (1, "\n".join(findings)) if findings else (0, "")
 
 
 def _python_parses(repo: pathlib.Path) -> tuple[int, str]:

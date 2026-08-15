@@ -36,35 +36,35 @@ run() { env "$@" PATH="$STUB:$PATH" zsh -c "source '$CONFIGURE' >/dev/null 2>&1;
 echo "client role alias overrides"
 
 out="$(run AILOCAL_UNUSED=1)"
-check $([ "$(grep -c '^OPUS=ailocal-architecture$' <<<"$out")" = 1 ] && echo 0 || echo 1) \
+check "$([ "$(grep -c '^OPUS=ailocal-architecture$' <<<"$out")" = 1 ] && echo 0 || echo 1)" \
   "no override: architecture slot keeps its production alias" "$out"
-check $([ "$(grep -c '^SONNET=ailocal-implementation$' <<<"$out")" = 1 ] && echo 0 || echo 1) \
+check "$([ "$(grep -c '^SONNET=ailocal-implementation$' <<<"$out")" = 1 ] && echo 0 || echo 1)" \
   "no override: implementation slot unchanged" "$out"
-check $([ "$(grep -c '^HAIKU=ailocal-fast$' <<<"$out")" = 1 ] && echo 0 || echo 1) \
+check "$([ "$(grep -c '^HAIKU=ailocal-fast$' <<<"$out")" = 1 ] && echo 0 || echo 1)" \
   "no override: fast slot unchanged" "$out"
-check $([ "$(grep -c '^FABLE=ailocal-review$' <<<"$out")" = 1 ] && echo 0 || echo 1) \
+check "$([ "$(grep -c '^FABLE=ailocal-review$' <<<"$out")" = 1 ] && echo 0 || echo 1)" \
   "no override: review slot unchanged" "$out"
 
 # A production alias is used as the "valid" target so the test needs no
 # temporary alias and no LiteLLM mutation.
 out="$(run AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE=ailocal-review)"
-check $([ "$(grep -c '^OPUS=ailocal-review$' <<<"$out")" = 1 ] && echo 0 || echo 1) \
+check "$([ "$(grep -c '^OPUS=ailocal-review$' <<<"$out")" = 1 ] && echo 0 || echo 1)" \
   "valid override reaches the client command environment" "$out"
-check $([ "$(grep -c '^SONNET=ailocal-implementation$' <<<"$out")" = 1 ] && echo 0 || echo 1) \
+check "$([ "$(grep -c '^SONNET=ailocal-implementation$' <<<"$out")" = 1 ] && echo 0 || echo 1)" \
   "overriding architecture leaves implementation untouched" "$out"
-check $([ "$(grep -c '^HAIKU=ailocal-fast$' <<<"$out")" = 1 ] && echo 0 || echo 1) \
+check "$([ "$(grep -c '^HAIKU=ailocal-fast$' <<<"$out")" = 1 ] && echo 0 || echo 1)" \
   "overriding architecture leaves fast untouched" "$out"
-check $([ "$(grep -c '^FABLE=ailocal-review$' <<<"$out")" = 1 ] && echo 0 || echo 1) \
+check "$([ "$(grep -c '^FABLE=ailocal-review$' <<<"$out")" = 1 ] && echo 0 || echo 1)" \
   "overriding architecture leaves review untouched" "$out"
 
 # Fail closed. Falling back to production here would silently measure the
 # production model while reporting the candidate's name.
 out="$(run AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE=bench-does-not-exist)"; rc=$?
-check $([ "$rc" != 0 ] && echo 0 || echo 1) \
+check "$([ "$rc" != 0 ] && echo 0 || echo 1)" \
   "unknown override fails before launching the client" "rc=$rc"
-check $([ "$(grep -c '^OPUS=' <<<"$out")" = 0 ] && echo 0 || echo 1) \
+check "$([ "$(grep -c '^OPUS=' <<<"$out")" = 0 ] && echo 0 || echo 1)" \
   "unknown override never reaches the client at all" "$out"
-check $(grep -q "not served by LiteLLM" <<<"$out" && echo 0 || echo 1) \
+check "$(grep -q "not served by LiteLLM" <<<"$out" && echo 0 || echo 1)" \
   "unknown override explains itself on stderr" "$out"
 
 # OUTCOME, not configuration. The previous suite proved the slot variable reached
@@ -73,11 +73,14 @@ check $(grep -q "not served by LiteLLM" <<<"$out" && echo 0 || echo 1) \
 # precedence (code.claude.com/docs/en/settings):
 #   --model > settings.json "model" > ANTHROPIC_DEFAULT_*_MODEL
 tpl="$RESOURCES/clients/configure.template.zsh"
-check $(grep -q -- '--model "$AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE"' "$tpl" && echo 0 || echo 1) \
+check "$(grep -q -- '--model "$AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE"' "$tpl" && echo 0 || echo 1)" \
   "architecture override passes --model, the highest-precedence mechanism"
-check $(grep -q 'claude "${_model_args\[@\]}" "$@"' "$tpl" && echo 0 || echo 1) \
+check "$(grep -q 'claude "${_model_args\[@\]}" "$@"' "$tpl" && echo 0 || echo 1)" \
   "--model args reach the claude invocation"
-check $([ -z "$(AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE= zsh -c "source '$CONFIGURE'; typeset -p _model_args" 2>/dev/null)" ] && echo 0 || echo 1) \
+# An empty value as a command prefix is the point: it proves the default path
+# survives the variable being set-but-empty. Not a malformed assignment.
+# shellcheck disable=SC1007
+check "$([ -z "$(AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE= zsh -c "source '$CONFIGURE'; typeset -p _model_args" 2>/dev/null)" ] && echo 0 || echo 1)" \
   "no override adds no --model argument (defaults untouched)"
 # The override block is hand-maintained and MUST live outside the spliced region,
 # or generation.py would erase it on the next regeneration.
@@ -85,9 +88,9 @@ tpl="$RESOURCES/clients/configure.template.zsh"
 gen_begin=$(grep -n "BEGIN GENERATED claude slots" "$tpl" | cut -d: -f1)
 gen_end=$(grep -n "END GENERATED claude slots" "$tpl" | cut -d: -f1)
 ovr=$(grep -n "_ailocal_ovr=(" "$tpl" | cut -d: -f1)
-check $([ -n "$ovr" ] && [ "$ovr" -gt "$gen_end" ] && echo 0 || echo 1) \
+check "$([ -n "$ovr" ] && [ "$ovr" -gt "$gen_end" ] && echo 0 || echo 1)" \
   "override logic sits outside the generated region" "ovr=$ovr gen=$gen_begin-$gen_end"
-check $([ "$(grep -c 'AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE' "$CONFIGURE")" -ge 1 ] && echo 0 || echo 1) \
+check "$([ "$(grep -c 'AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE' "$CONFIGURE")" -ge 1 ] && echo 0 || echo 1)" \
   "override logic survives generation.py regeneration"
 }
 
@@ -96,11 +99,11 @@ GEN="$(_config_root)/codex/config.toml"
 
 echo "CODEX MCP IS WITHHELD"
 
-check $([ -f "$GEN" ] && echo 0 || echo 1) "generated codex config exists"
+check "$([ -f "$GEN" ] && echo 0 || echo 1)" "generated codex config exists"
 
 # 1. The generated artifact carries no MCP server blocks.
 n=$(grep -cE '^\[mcp_servers' "$GEN" 2>/dev/null || true)
-check $([ "${n:-0}" -eq 0 ] && echo 0 || echo 1) \
+check "$([ "${n:-0}" -eq 0 ] && echo 0 || echo 1)" \
   "generated codex config declares zero [mcp_servers.*] blocks (found ${n:-0})"
 
 # 2. The DEPLOYED artifact, if this machine has one, also carries none. This is
@@ -108,12 +111,12 @@ check $([ "${n:-0}" -eq 0 ] && echo 0 || echo 1) \
 DEPLOYED="${XDG_CONFIG_HOME:-$HOME/.config}/ailocal/codex/config.toml"
 if [ -f "$DEPLOYED" ]; then
   d=$(grep -cE '^\[mcp_servers' "$DEPLOYED" 2>/dev/null || true)
-  check $([ "${d:-0}" -eq 0 ] && echo 0 || echo 1) \
+  check "$([ "${d:-0}" -eq 0 ] && echo 0 || echo 1)" \
     "deployed codex config declares zero [mcp_servers.*] blocks (found ${d:-0})"
   # Named servers, in case a future template nests them differently.
   for srv in grepai lsp github; do
     h=$(grep -cE "^\[mcp_servers\.${srv}" "$DEPLOYED" 2>/dev/null || true)
-    check $([ "${h:-0}" -eq 0 ] && echo 0 || echo 1) \
+    check "$([ "${h:-0}" -eq 0 ] && echo 0 || echo 1)" \
       "deployed codex config has no ${srv} MCP server"
   done
 else
@@ -125,25 +128,25 @@ fi
 #    actually keeps Codex clean rather than luck about what Cadence holds.
 IC="$ROOT_DIR/src/ailocal/clients.py"
 inv=$(grep -cE '^[^#]*cadence[[:space:]]+mcp[[:space:]]+sync' "$IC" 2>/dev/null || true)
-check $([ "${inv:-0}" -eq 0 ] && echo 0 || echo 1) \
+check "$([ "${inv:-0}" -eq 0 ] && echo 0 || echo 1)" \
   "clients.py does not invoke 'cadence mcp sync' (found ${inv:-0})"
 
 # 4. …and no other ailocal script does either.
 other=$(grep -rlE '^[^#]*cadence[[:space:]]+mcp[[:space:]]+sync' "$ROOT_DIR/scripts" 2>/dev/null \
         | grep -v "$(basename "$0")" || true)
-check $([ -z "$other" ] && echo 0 || echo 1) \
+check "$([ -z "$other" ] && echo 0 || echo 1)" \
   "no ailocal script re-applies Cadence MCP registrations (${other:-none})"
 
 # 5. Absence of Codex MCP must not be reported as a failure.
 warned=$(grep -cE 'warn .*codex.*no MCP|may have no MCP servers' "$IC" 2>/dev/null || true)
-check $([ "${warned:-0}" -eq 0 ] && echo 0 || echo 1) \
+check "$([ "${warned:-0}" -eq 0 ] && echo 0 || echo 1)" \
   "an empty Codex MCP section is not warned about (found ${warned:-0})"
 
 # 6. claude-local's registrations are preserved, not owned: .claude.json must be
 #    protected rather than rewritten. Withholding MCP from Codex must not become
 #    an excuse to strip Claude's.
 pres=$(grep -cE '\.claude\.json' "$IC" 2>/dev/null || true)
-check $([ "${pres:-0}" -ge 1 ] && echo 0 || echo 1) \
+check "$([ "${pres:-0}" -ge 1 ] && echo 0 || echo 1)" \
   "clients.py still preserves .claude.json (claude-local MCP survives)"
 
 
@@ -160,24 +163,24 @@ echo "INTEGRATION CONTRACT MATCHES GENERATED CLIENTS"
 CONTRACT="$(_config_root)/integration-contract.json"
 if [ -f "$CONTRACT" ] && command -v jq >/dev/null 2>&1; then
   cfg_codex=$(jq -r '.compatibility.codex_mcp_lsp.configured' "$CONTRACT")
-  check $([ "$cfg_codex" = "false" ] && echo 0 || echo 1) \
+  check "$([ "$cfg_codex" = "false" ] && echo 0 || echo 1)" \
     "contract reports codex_mcp_lsp.configured=false (got $cfg_codex)"
 
   exec_codex=$(jq -r '.compatibility.codex_mcp_lsp.execution' "$CONTRACT")
-  check $([ "$exec_codex" = "withheld_client_incompatible" ] && echo 0 || echo 1) \
+  check "$([ "$exec_codex" = "withheld_client_incompatible" ] && echo 0 || echo 1)" \
     "codex MCP is classified as withheld, not as a failure (got $exec_codex)"
 
   # The contract claim and the artifact must not diverge: zero blocks <=> false.
   blocks=$(grep -cE '^\[mcp_servers' "$GEN" 2>/dev/null || true)
-  check $([ "$cfg_codex" = "false" ] && [ "${blocks:-0}" -eq 0 ] && echo 0 || echo 1) \
+  check "$([ "$cfg_codex" = "false" ] && [ "${blocks:-0}" -eq 0 ] && echo 0 || echo 1)" \
     "contract and generated codex config agree (configured=$cfg_codex, blocks=${blocks:-0})"
 
   exec_lsp=$(jq -r '.compatibility.claude_native_lsp.execution' "$CONTRACT")
-  check $([ "$exec_lsp" != "failing" ] && echo 0 || echo 1) \
+  check "$([ "$exec_lsp" != "failing" ] && echo 0 || echo 1)" \
     "claude_native_lsp is not reported as failing while its baseline is gated (got $exec_lsp)"
 
   vb=$(jq -r '.compatibility.claude_native_lsp.verified_by // ""' "$CONTRACT")
-  check $([ -n "$vb" ] && [ -f "$ROOT_DIR/$vb" ] && echo 0 || echo 1) \
+  check "$([ -n "$vb" ] && [ -f "$ROOT_DIR/$vb" ] && echo 0 || echo 1)" \
     "claude_native_lsp names a real verifier ($vb)"
 else
   printf '  \033[33mSKIP\033[0m  contract or jq unavailable\n'
