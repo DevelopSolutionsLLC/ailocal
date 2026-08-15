@@ -1,38 +1,45 @@
 """reasoning_router.py — translate `reasoning_effort` into Ollama's native `think`.
 
-RETIREMENT CANDIDATE — the reason this was written is no longer true.
-
-It said LiteLLM accepts `reasoning_effort` and drops it unmapped
-(BerriAI/litellm#15059, "still open on 1.93.0"). That issue was fixed by
-BerriAI/litellm#15465, merged October 2025, and the mapping IS present in the
-pinned 1.93.0 image, in `llms/ollama/chat/transformation.py` — for a
-non-`gpt-oss` model it does:
+KEPT ON MEASUREMENT, not on history. The issue that originally justified this
+(BerriAI/litellm#15059, reasoning_effort dropped unmapped) was fixed by #15465
+in October 2025 and the mapping IS present in the pinned 1.93.0:
 
     optional_params["think"] = value in {"low", "medium", "high"}
 
-Upstream therefore already turns thinking ON. What it does not do is preserve
-the LEVEL: low, medium and high all collapse to boolean True. This hook maps
-them to Ollama's graded string form instead, and maps `minimal` to "low" where
-upstream maps it to False.
+So the original reason is gone. A/B against the running stack found a DIFFERENT
+one that is still real. Same prompt, four effort levels, router removed from the
+callback list and the proxy restarted:
 
-[APPROX] That remaining difference has no measured effect on the model we run.
-Against gemma4:26b-mlx directly, `think: true`, `think: "high"` and
-`think: "low"` were all accepted without error and produced thinking blocks of
-61, 71 and 79 characters — no ordering, no signal. n=1 per level on one trivial
-prompt: too thin to delete a hook on, which is why this is a candidate rather
-than a removal.
+    effort     reasoning_content chars
+               with hook      without hook
+    none            0             1828
+    low          1506             1460
+    medium       1517             1650
+    high         1613             1491
 
-DELETE THIS FILE when an A/B on a reasoning-heavy prompt shows graded and
-boolean `think` are indistinguishable on the active model — or immediately if
-Ollama is confirmed to coerce a non-boolean `think` to truthy for models without
-graded support, since that makes the two provably identical.
+`none` is the whole justification. Without this hook it does not suppress
+thinking — the model emitted 1,828 characters of reasoning for a request that
+asked for none. With it, zero, reproducibly. Upstream's expression evaluates to
+`False` for "none", so the intent is right somewhere upstream and does not reach
+the backend on this path; that is the gap being covered.
+
+The GRADED mapping is inert and is kept only because it costs nothing. low,
+medium and high are indistinguishable in both columns (1506/1517/1613 against
+1460/1650/1491 — the spread is larger between runs of the same setting than
+between settings). Do not cite graded effort as a working control.
+
+RETIREMENT CONDITION: delete when `reasoning_effort: "none"` yields zero
+reasoning_content with this hook removed. That is one A/B, and the table above
+is the format for it.
 
 It does not decide how hard to think, only translate an explicit request. An
 automatic task->effort classifier belongs in registry.yaml beside the existing
 `task_classes`.
 
-`none` is aspirational on reasoning-native models, which still emit some
-reasoning under `think: false`. `low` is the real floor.
+`none` maps to `think: false` and, measured above, actually yields zero
+reasoning_content on gemma4:26b-mlx. An earlier note here called `none`
+"aspirational" and named `low` the real floor; the A/B contradicts that, and the
+measurement wins.
 """
 from litellm.integrations.custom_logger import CustomLogger
 

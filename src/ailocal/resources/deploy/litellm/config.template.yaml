@@ -95,13 +95,13 @@ litellm_settings:
     # empty 200 on the live FastAPI app — no model call, no router lookup, and
     # nothing under /v1/* or the health routes is touched. See the module
     # docstring for the three client call sites and what this does NOT prove.
-    # Translates reasoning_effort -> Ollama's native `think`. RETIREMENT
-    # CANDIDATE: the premise (litellm#15059, reasoning_effort dropped unmapped)
-    # was fixed by litellm#15465 and the mapping is present in 1.93.0. Upstream
-    # collapses low/medium/high to boolean True; this preserves the level, and
-    # [APPROX] that difference showed no signal on gemma4. See the module
-    # docstring for the A/B that would retire it. An explicit `think` in the
-    # request still wins, so a manual override beats this translation.
+    # Translates reasoning_effort -> Ollama's native `think`. KEPT on a measured
+    # A/B, not on the original issue (litellm#15059, fixed by #15465 and present
+    # in 1.93.0). With the hook removed, reasoning_effort:"none" still produced
+    # 1,828 characters of reasoning; with it, zero. That one level is the whole
+    # justification — low/medium/high are indistinguishable either way. The
+    # module docstring holds the table and the retirement condition. An explicit
+    # `think` in the request still wins.
     - /app/config/hooks/reasoning_router.proxy_handler_instance
     # Restores the client's interleaved system messages. LiteLLM's Anthropic
     # /v1/messages -> OpenAI adapter branches only on role user/assistant, so a
