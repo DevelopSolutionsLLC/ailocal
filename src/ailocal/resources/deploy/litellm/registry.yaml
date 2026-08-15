@@ -84,6 +84,14 @@ groups:
   delegation:
     - Agent               # the subagent spawn tool (was `Task` before v2.1.63)
     - "Task*"             # alias + background-task tools; harmless to keep together
+    # Agent SPAWNS; SendMessage CONTINUES. Keeping the first and dropping the
+    # second leaves the client telling the model to use a tool it does not have.
+    # [REAL] Observed verbatim in a claude-local session: the tool_result for a
+    # launched agent reads "Use SendMessage with to: 'a85f43ee8f2106fc8',
+    # summary: '<5-10 word recap>' to continue this agent." It was in
+    # `orchestration` and dropped. 1,482 B — 1.4% of a real payload — for the
+    # documented other half of a capability we deliberately keep.
+    - SendMessage
 
   # Skill loads a packaged procedure into the current turn. It was grouped with
   # orchestration and dropped with it, on a rationale — heavy machinery local
@@ -98,7 +106,12 @@ groups:
   orchestration:
     - Workflow            # measured 21,525 B — the largest single tool observed
     - DesignSync
-    - SendMessage
+    # KNOWN DEGRADATION, deliberately accepted. The built-in /code-review skill
+    # asks for findings through this tool, and Skill is now reachable, so that
+    # path can be taken. Unlike Skill it degrades rather than breaks: the skill
+    # itself still loads and its instructions permit plain-text output. 2,283 B
+    # for a conditional formatting improvement did not clear the bar. Revisit if
+    # a real /code-review run on claude-local is measurably worse for it.
     - ReportFindings
     - multi_agent_v1
 
