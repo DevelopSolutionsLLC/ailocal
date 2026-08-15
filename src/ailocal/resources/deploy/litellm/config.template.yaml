@@ -101,6 +101,19 @@ litellm_settings:
     # `think` IS forwarded and IS monotonic. An explicit `think` in the request
     # wins, so a manual override always beats this translation.
     - /app/config/hooks/reasoning_router.proxy_handler_instance
+    # Restores the client's interleaved system messages. LiteLLM's Anthropic
+    # /v1/messages -> OpenAI adapter branches only on role user/assistant, so a
+    # role:"system" entry inside the messages array falls through the loop and
+    # is silently discarded at zero token cost. That channel carries Claude
+    # Code's SessionStart hook output, the Plan-mode gate and plan-file path,
+    # the five-phase workflow, and the subagent/skill inventories — on
+    # claude-local none of it reached the model. Listed BEFORE the hooks that
+    # read messages so they see the restored shape. Fixed upstream in
+    # BerriAI/litellm#30443 but in no stable release (v1.96.2 and v1.97.0-rc.1
+    # both lack it; only v1.98.0-dev.2 has it). Delete this entry and the
+    # module when the pinned image ships that branch — the module docstring
+    # carries the one-line check.
+    - /app/config/hooks/system_transport.proxy_handler_instance
     # Restores context-window validation for local models. LiteLLM's
     # register_model strips the provider prefix from the key while the router's
     # pre-call check looks it up WITH the prefix, so max_input_tokens is never

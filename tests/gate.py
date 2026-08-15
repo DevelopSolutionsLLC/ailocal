@@ -81,6 +81,8 @@ def _gate_suites(repo: pathlib.Path, full: bool) -> list:
                     "AILOCAL_GATEWAY_MODULE=/app/config/hooks/tool_gateway.py"]),
             ("tool-call repair (repairs real calls, refuses examples)",
              [py, "tests/gateway.py", "repair"]),
+            ("system-message transport (interleaved reminders keep position)",
+             [py, "tests/gateway.py", "transport"]),
             ("profile resolver (single reader, fail-closed, no 64gb default)",
              [py, "tests/profiles.py", "resolver"]),
             ("policy ownership (one reader, client policy fails closed)",
