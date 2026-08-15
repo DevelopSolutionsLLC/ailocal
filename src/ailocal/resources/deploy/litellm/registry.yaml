@@ -85,11 +85,20 @@ groups:
     - Agent               # the subagent spawn tool (was `Task` before v2.1.63)
     - "Task*"             # alias + background-task tools; harmless to keep together
 
+  # Skill loads a packaged procedure into the current turn. It was grouped with
+  # orchestration and dropped with it, on a rationale — heavy machinery local
+  # models drive worst, Workflow alone 21,525 B — that does not describe Skill:
+  # measured 1,846 B, 3.0% of the dropped payload and 0.7% of the whole, one
+  # call, no loop to drive. Dropping it made the client's advertised skills
+  # unreachable: the listing named them while the only tool that can load them
+  # was filtered out. Same split, same reason, as `delegation` above.
+  skills:
+    - Skill
+
   orchestration:
     - Workflow            # measured 21,525 B — the largest single tool observed
     - DesignSync
     - SendMessage
-    - Skill
     - ReportFindings
     - multi_agent_v1
 
