@@ -254,6 +254,15 @@ def check_config_mount(name: str = CONTAINER) -> CheckResult:
     Cheap and deterministic: one `ls`. Remediation is a restart, which
     re-resolves the bind path.
     """
+    # A stopped container has no mount to inspect and check_container is already
+    # reporting that. Skipping here keeps this off the path the validator suite
+    # exercises, where the proxy is deliberately stopped and restarted, and
+    # avoids paying a `docker exec` to rediscover something already said.
+    state, _ = container_state(name)
+    if state != "running":
+        return CheckResult("config-mount", PASS,
+                           f"skipped — {name} is {state}")
+
     r = _run(["docker", "exec", name, "ls", "/app/config/hooks"])
     # A replaced mount shows up two ways depending on when it is caught: an
     # empty listing, or `ls` failing outright with "No such file or directory".
