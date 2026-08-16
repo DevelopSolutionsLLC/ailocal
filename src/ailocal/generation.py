@@ -560,6 +560,35 @@ def regen_claude_settings(models, clients):
         data["//"].append(
             f"Auto-compaction: window {win} x {pct}% = {int(win)*int(pct)//100} tokens "
             f"(profile-owned). NOT the model limit - architecture keeps its full context.")
+    # Output ceiling, from the SAME max_output the geometry already hands
+    # LiteLLM as num_predict. Without it the two ends disagreed:
+    # [REAL] Claude Code 2.1.224 sends max_tokens 32000 by default (captured
+    # against a local endpoint that logs the request), while the launch-default
+    # role serves num_predict = max_output = 16384. Every answer long enough to
+    # reach the ceiling therefore came back stop_reason=max_tokens, which the
+    # client reads as a turn it should continue rather than the backend's
+    # limit — so it re-asked, and a single response spent ~27 minutes emitting
+    # 16384-token chunks before Claude Code's own 32000 accumulator aborted it
+    # with "response exceeded the 32000 output token maximum". The abort was the
+    # only thing that stopped it.
+    #
+    # Projecting max_output makes the client ask for exactly what the backend
+    # will produce, so the ceiling is reached once, deliberately, instead of
+    # being discovered by truncation. This does NOT make a verbose model concise:
+    # it makes an over-long answer fail in one generation instead of six.
+    #
+    # Derived, never configured — a second number here would drift from the
+    # profile the way the retired figures above did.
+    out_geom = _geom(models[default])
+    if not out_geom["max_output"]:
+        raise SystemExit(
+            f"invalid geometry: claude launch_default '{default}' declares no "
+            "max_output, so there is no knowable output ceiling to project")
+    data.setdefault("env", {})["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(out_geom["max_output"])
+    data["//"].append(
+        f"Output ceiling: CLAUDE_CODE_MAX_OUTPUT_TOKENS = {out_geom['max_output']} "
+        f"(= {default}.max_output, the same number LiteLLM gets as num_predict). "
+        "Claude Code defaults to 32000, which the backend does not serve.")
     # Retire keys ailocal used to write. `env` merges live-over-template so that
     # Claude Code's own additions survive regeneration — which also means simply
     # deleting a key from the template never reaches an existing install: it

@@ -287,6 +287,25 @@ def resolver_checks() -> None:
           and env.get("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE") == str(comp["pct"]),
           "Claude compaction is generated from the profile block verbatim")
 
+    # The OUTPUT ceiling has one owner too. Claude Code's own default is 32000
+    # [REAL, captured off the wire against 2.1.224]; the launch-default role
+    # serves num_predict = max_output. When those disagreed, a long answer came
+    # back stop_reason=max_tokens, the client re-asked instead of stopping, and
+    # one response burned ~27 minutes before Claude Code's 32000 accumulator
+    # aborted it. Both ends must be the same number, and that number must come
+    # from the profile rather than being restated here.
+    launch = P.load_client_policy().get("claude", {}).get("launch_default", "architecture")
+    want_out = P.effective_role(launch)["max_output"]
+    check(want_out, f"claude launch_default '{launch}' declares a max_output")
+    check(env.get("CLAUDE_CODE_MAX_OUTPUT_TOKENS") == str(want_out),
+          f"Claude output ceiling == {launch}.max_output ({want_out})",
+          f"{env.get('CLAUDE_CODE_MAX_OUTPUT_TOKENS')!r} != {want_out!r}")
+    # The whole point is that the client never asks for more than the backend
+    # will produce. Asserting the relationship, not just the value, is what
+    # catches a future profile edit that raises num_predict on one side only.
+    check(int(env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"]) <= P.effective_role(launch)["num_predict"],
+          "Claude never requests more output than LiteLLM's num_predict serves")
+
     codex = (P.deployed_client_root() / "codex/config.toml").read_text()
     import re as _r
     cw = int(_r.search(r"model_context_window\s*=\s*(\d+)", codex).group(1))
@@ -681,7 +700,9 @@ def hardware_checks() -> None:
     cc = PARSED[tier][0].get("compaction", {})
     settings = P.deployed_client_root() / "claude/settings.json"
     if settings.exists() and cc:
-        import json
+        # `json` is imported at module scope; a local `import json` here made it
+        # a function-local name, so any later use outside this branch would
+        # raise NameError instead of reading the module.
         env = json.loads(settings.read_text()).get("env", {})
         check(env.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW") == str(cc["window"]),
               f"claude settings.json window matches the active profile ({tier})",
@@ -689,6 +710,48 @@ def hardware_checks() -> None:
         check(env.get("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE") == str(cc["pct"]),
               f"claude settings.json pct matches the active profile ({tier})",
               f"{env.get('CLAUDE_AUTOCOMPACT_PCT_OVERRIDE')!r} != {cc['pct']!r}")
+        # Same tier-agreement requirement for the output ceiling.
+        lp = P.load_client_policy().get("claude", {}).get("launch_default", "architecture")
+        want = (PARSED[tier][0].get(lp) or {}).get("max_output")
+        if want:
+            check(env.get("CLAUDE_CODE_MAX_OUTPUT_TOKENS") == str(want),
+                  f"claude settings.json output ceiling matches the active profile ({tier})",
+                  f"{env.get('CLAUDE_CODE_MAX_OUTPUT_TOKENS')!r} != {want!r}")
+
+    # HOSTED CLAUDE IS NOT OURS. Every key above is projected into
+    # CLAUDE_CONFIG_DIR only. ailocal writing an output ceiling or a compaction
+    # threshold into ~/.claude would silently re-tune the user's hosted sessions
+    # against a local model's geometry.
+    hosted = Path.home() / ".claude" / "settings.json"
+    if hosted.exists():
+        try:
+            henv = json.loads(hosted.read_text()).get("env", {}) or {}
+        except ValueError:
+            henv = {}
+        owned = ("CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+                 "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE")
+        leaked = [k for k in owned if k in henv]
+        check(not leaked, "hosted ~/.claude carries no ailocal-owned env key",
+              f"leaked into hosted settings: {leaked}")
+
+    # A launch_default with no declared output ceiling must FAIL, not fall back
+    # to Claude Code's 32000 — that default is exactly the number the backend
+    # does not serve, so a silent omission restores the original defect.
+    # regen_claude_settings raises before it stages anything, so this writes
+    # nothing.
+    _sm2 = load_sync()
+    _m2 = _sm2.load_models_yaml(RESOURCES / "profiles" / f"{P.active_tier()}.toml")
+    _c2 = _sm2.load_clients_yaml()
+    _lp2 = (_c2.get("claude") or {}).get("launch_default", "architecture")
+    _m2[_lp2] = {**_m2[_lp2]}
+    _m2[_lp2].pop("max_output", None)
+    try:
+        _sm2.regen_claude_settings(_m2, _c2)
+        check(False, "a launch_default without max_output is rejected",
+              "regen_claude_settings returned instead of raising")
+    except SystemExit as exc:
+        check("max_output" in str(exc),
+              "a launch_default without max_output is rejected", str(exc))
 
     # Codex's numbers must describe the model CODEX defaults to, not architecture.
     # Deriving them from architecture wrote a compaction limit of 49,152 against a
