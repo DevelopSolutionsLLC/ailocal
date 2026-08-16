@@ -590,6 +590,41 @@ def _set_toml_model(path, model, template=None):
     return True
 
 
+#: `[projects."<path>"]` blocks, which CODEX writes into this file itself.
+_CODEX_PROJECTS = re.compile(
+    r'(?ms)^\[projects\.".*?"\]\n(?:(?!^\[).*?\n)*')
+
+
+def _keep_codex_projects(text: str) -> str:
+    """Carry Codex's own trust records across regeneration.
+
+    config.toml is CO-OWNED, the same way claude/settings.json is. Codex appends
+
+        [projects."/path/to/repo"]
+        trust_level = "trusted"
+
+    when you approve a directory, and a generator that rebuilds this file from
+    the template alone deletes it — so every `ailocal start` silently un-trusts
+    every directory the user had approved, and the next session asks again.
+    [REAL] observed as gate drift after one `codex exec` run.
+
+    ONLY `[projects.*]`. Everything else in this file is ailocal's and must be
+    rewritten from the template; preserving more would let a stale hand edit
+    outlive the source it was generated from.
+    """
+    if not CODEX_CONFIG.exists():
+        return text
+    try:
+        live = CODEX_CONFIG.read_text()
+    except OSError:
+        return text
+    blocks = [b for b in _CODEX_PROJECTS.findall(live) if b.strip()
+              and b.split("\n", 1)[0] not in text]
+    if not blocks:
+        return text
+    return text.rstrip("\n") + "\n\n" + "".join(blocks).rstrip("\n") + "\n"
+
+
 def regen_codex(models, clients):
     cx = clients.get("codex", {})
     default = cx.get("default", next(iter(models)))
@@ -633,6 +668,7 @@ def regen_codex(models, clients):
                 text = re.sub(rf'(?m)^{key}\s*=.*$', f'{key} = {val}', text, count=1)
             else:
                 text = f'{key} = {val}\n' + text
+        text = _keep_codex_projects(text)
         stage(CODEX_CONFIG, text)
     if "plan" in profiles:
         _set_toml_model(CODEX_PLAN, mn(profiles["plan"]), CODEX_PLAN_TPL)
