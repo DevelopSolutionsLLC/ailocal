@@ -61,6 +61,8 @@ ALSO OUT OF THE GATE, AND NOT A BENCHMARK. The profiles justify their context an
 
 `src/ailocal/resources/deploy` and `.../clients` are read straight from the package, so editing them takes effect on the next `ailocal start` — there is no copy to refresh. Editing `profiles/` under `src/ailocal/resources` changes only the SHIPPED DEFAULT; the live policy is the copy in the config root, which `ailocal install` installs and thereafter preserves once you have edited it.
 
+Which also means: **reinstalling the package while the stack is running detaches the running container from it.** `deploy/litellm` is bind-mounted into `ailocal-litellm` as `/app/config`, and `pipx install --force` (or an upgrade, or anything else that recreates the venv) replaces that directory. The container keeps the old inode, so `/app/config` goes empty while `docker ps` still reports healthy and the proxy still answers 200 — it is serving the hooks Python imported at boot. End every reinstall with `ailocal start`, which recreates the containers and re-resolves the mount; [REAL] it does so even when the reinstall changed nothing, so it is always the safe way to finish. `ailocal check` reports this state if you forget. A bare `docker restart` repairs the mount too, but only that — `ailocal start` also picks up compose and generated-config changes, and it is what README tells users to run after `pipx upgrade`.
+
 ## Generated state
 
 FOUR roots. Each has ONE owner and ONE lifecycle, and `policy.py` is the only place any of them is resolved. Two of them default to the same directory; that does not make them the same root.

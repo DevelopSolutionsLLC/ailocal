@@ -91,6 +91,18 @@ def classification_checks() -> None:
     check(r.status is FAIL, "an absent required container fails")
     check(r.remediation is not None, "a failing check carries remediation")
 
+    # The detached-mount fault a package reinstall leaves behind is repaired by
+    # `ailocal start`. It used to say `docker restart <container>`: correct, but
+    # it asks the reader to know the container's name and leaves compose and
+    # generated-config changes unreconciled. Nobody should have to understand
+    # Docker inode behaviour to recover from `pipx install`.
+    import inspect
+    mount_src = inspect.getsource(S.check_config_mount)
+    check("remediation=\"ailocal start\"" in mount_src,
+          "the detached-mount fault points at the canonical repair command")
+    check("docker restart" not in mount_src.split('"""')[-1],
+          "it no longer hands out a raw docker command as the fix")
+
     # One implementation per primitive, not one per caller.
     for prim in ("served_aliases", "model_info", "ollama_installed",
                  "container_state", "http_json", "proxy_healthy"):

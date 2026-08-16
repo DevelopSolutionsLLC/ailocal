@@ -251,8 +251,14 @@ def check_config_mount(name: str = CONTAINER) -> CheckResult:
     the files behind tool filtering, system transport and tool repair were gone.
     The next restart would have loaded an empty callback list instead.
 
-    Cheap and deterministic: one `ls`. Remediation is a restart, which
-    re-resolves the bind path.
+    Cheap and deterministic: one `ls`.
+
+    Remediation is `ailocal start`, not a raw `docker restart`. [REAL] both were
+    measured repairing this exact state, but `ailocal start` is the canonical
+    command, it is already what README's upgrade line tells a user to run after
+    pipx, and it also reconciles a compose or generated-config change that a
+    bare container restart would miss. Nobody should need to know the
+    container's name, or that this is a Docker inode problem, to repair it.
     """
     # A stopped container has no mount to inspect and check_container is already
     # reporting that. Skipping here keeps this off the path the validator suite
@@ -280,7 +286,7 @@ def check_config_mount(name: str = CONTAINER) -> CheckResult:
             "config-mount", FAIL,
             "/app/config is EMPTY in the running container — it is serving stale "
             "in-memory hooks; a reinstall replaced the mounted directory",
-            remediation=f"docker restart {name}")
+            remediation="ailocal start")
     return CheckResult("config-mount", PASS,
                        f"container sees {len(r.stdout.split())} hook file(s)")
 
