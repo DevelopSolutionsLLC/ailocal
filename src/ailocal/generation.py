@@ -589,6 +589,22 @@ def regen_claude_settings(models, clients):
         f"Output ceiling: CLAUDE_CODE_MAX_OUTPUT_TOKENS = {out_geom['max_output']} "
         f"(= {default}.max_output, the same number LiteLLM gets as num_predict). "
         "Claude Code defaults to 32000, which the backend does not serve.")
+    # The window Claude Code ASSUMES for this model id. `ailocal-<cap>` does not
+    # start with `claude-`, carries no `[1m]`, and resolves to no Claude model,
+    # so per code.claude.com/docs/en/model-config this variable "applies
+    # directly and proactive compaction continues at the declared window".
+    # Without it Claude Code assumes 200000 for an unrecognised gateway id --
+    # [REAL] it says so at startup -- which is a window this stack never serves.
+    #
+    # TOTAL, not input: the documented unit is the context window, the same
+    # quantity compaction is measured against. context_input would understate it
+    # by exactly max_output. AUTO_COMPACT_WINDOW below stays on context_input,
+    # because what must not be exceeded is ADMISSION.
+    data["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(out_geom["total_context"])
+    data["//"].append(
+        f"Assumed window: CLAUDE_CODE_MAX_CONTEXT_TOKENS = {out_geom['total_context']} "
+        f"(= {default}.total_context). Claude Code otherwise assumes 200000 for an "
+        "unrecognised gateway model id.")
     # Retire keys ailocal used to write. `env` merges live-over-template so that
     # Claude Code's own additions survive regeneration — which also means simply
     # deleting a key from the template never reaches an existing install: it

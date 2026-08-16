@@ -19,17 +19,42 @@ disk_gb = 40
 # (16.49 GiB at 7,785 tokens -> 22.09 GiB at 137,233, cold, nothing else resident).
 # A filled 147,456 window is therefore ~22.5 GiB of 64 GB. Memory is NOT the
 # binding constraint here; cold prefill latency is, and compaction owns that.
+#
+# [REAL] Cold prefill RE-MEASURED on the MLX runner (ollama 0.32.13,
+# num_predict 1, every prompt carrying a unique preamble so Ollama cannot reuse
+# a cached KV prefix, nothing else resident):
+#     34,017 tok ->  34.0 s (1002 tok/s)    133,899 tok -> 236.3 s (567 tok/s)
+#     66,881 tok ->  83.2 s ( 804 tok/s)    166,571 tok -> 340.4 s (489 tok/s)
+#                                           231,390 tok -> 560.9 s (412 tok/s)
+# Measure the cache and you get a different answer: the same 231,390-token
+# prompt takes 154 s when it shares a prefix with the previous one. Only the
+# unique-preamble numbers above describe a cache miss, which is the case that
+# hurts.
+#
+# Still super-linear -- throughput falls 2.4x from 34K to 231K -- but ~5x faster
+# than the llama_cpp figures this profile used to reason from (27.8K -> 85 s,
+# 57.8K -> 341 s, 87.8K -> 789 s). Those numbers justified holding input at
+# 131072 and they no longer describe this runtime.
+#
+# WHY 163840 AND NOT 245760. The full native window fits arithmetically
+# (245760 + 16384 = 262144), but a cache miss at that admission costs ~9.3 min
+# of prefill, which is not an interactive agent turn. At 163840 the worst case
+# is ~340 s cold, ~250 s at the compaction trigger, against ~236 s / ~190 s
+# before: 25% more session history for ~30% more worst-case cold latency.
+# 196608 (~450 s) was measured and rejected as the point where a cache miss
+# stops being recoverable. 81,920 tokens of native window are left deliberately
+# unexposed as operational headroom.
 [architecture]
 role = "Lead architect"
 active = "gemma4:26b-mlx"
 reasoning = true  # gpt-oss:20b HAS thinking; qwen3-coder did not
-context_input = 131072
+context_input = 163840
 max_output = 16384
 temperature = 0.1
 keep_alive = "6h"
 purpose = ["architecture", "complex refactoring", "multi-step debugging", "design", "repository-wide planning", "large interactive/agent prompts"]
-strengths = ["128K input window shared across clients", "holds a whole subsystem in view", "strong code generation"]
-weaknesses = ["slower", "cold prefill of a full window costs minutes", "KV grows to ~22 GiB when the window is filled"]
+strengths = ["160K input window shared across clients", "holds a whole subsystem in view", "strong code generation"]
+weaknesses = ["slower", "cold prefill of a full window costs ~5.7 min on a cache miss", "KV grows to ~28 GiB when the window is filled"]
 top_p = 0.9
 top_k = 20
 repeat_penalty = 1.0
@@ -141,6 +166,8 @@ repeat_penalty = 1.0
   # Low temperature: answers must be reproducible across runs.
 
 [compaction]
-window = 131072  # effective window handed to the client's compactor
+window = 163840  # effective window handed to the client's compactor
+  # Tracks architecture.context_input, which is what LiteLLM admits. Compacting
+  # against anything larger schedules a turn the backend would reject.
 pct = 85  # compact at this % of the window
-  # trigger: 111411 tokens
+  # trigger: 139264 tokens (~250 s of cold prefill on a cache miss)

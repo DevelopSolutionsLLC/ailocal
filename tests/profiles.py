@@ -306,6 +306,19 @@ def resolver_checks() -> None:
     check(int(env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"]) <= P.effective_role(launch)["num_predict"],
           "Claude never requests more output than LiteLLM's num_predict serves")
 
+    # The window Claude Code assumes is TOTAL context, the unit compaction is
+    # measured in. Unset, it assumes 200000 for an unrecognised gateway id.
+    check(env.get("CLAUDE_CODE_MAX_CONTEXT_TOKENS") ==
+          str(P.effective_role(launch)["total_context"]),
+          f"Claude assumed window == {launch}.total_context "
+          f"({P.effective_role(launch)['total_context']})",
+          f"{env.get('CLAUDE_CODE_MAX_CONTEXT_TOKENS')!r}")
+    # Compaction must trigger below ADMISSION, not below the total window —
+    # compacting against total_context schedules a turn LiteLLM would reject.
+    check(int(env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"]) <=
+          P.effective_role(launch)["max_input_tokens"],
+          "compaction window never exceeds LiteLLM's admitted input")
+
     codex = (P.deployed_client_root() / "codex/config.toml").read_text()
     import re as _r
     cw = int(_r.search(r"model_context_window\s*=\s*(\d+)", codex).group(1))
@@ -531,8 +544,8 @@ def hardware_checks() -> None:
                   f"64={c64[cap].get(field)!r} 128={c128[cap].get(field)!r}")
 
     check(int(c64["architecture"]["context_input"]) + int(c64["architecture"]["max_output"])
-          == 147456,
-          "64gb architecture total_context is 147456")
+          == 180224,
+          "64gb architecture total_context is 180224")
 
     # THE OUTPUT-CEILING POLICY, by ROLE and identical on every tier. No model
     # here caps num_predict below its context, so these are policy choices, not
@@ -652,7 +665,19 @@ def hardware_checks() -> None:
     DANGER = {
         "16gb":  75000,    # qwen3.5:4b   548 tok/s @ 70K, and the slowest GPU
         "32gb":  100000,   # qwen3.5:9b   421 tok/s @ 70K
-        "64gb":  120000,   # gemma4-mlx   598 tok/s @ 137K
+        # 64gb and 128gb run the SAME model at the same clock, so they get the
+        # same threshold; the old 120000 was the only thing separating them and
+        # "more RAM buys no speed" was already the stated reason it should not.
+        #
+        # This is a LATENCY-TOLERANCE change, not a measurement correction. A
+        # re-measure (34K->34.0s, 67K->83.2s, 134K->236.3s, 167K->340.4s,
+        # 231K->560.9s cold, unique-prefix prompts) CONFIRMED the 598 tok/s @
+        # 137K figure this row was built on rather than overturning it. Moving
+        # 64gb to 145000 accepts ~263 s of cold prefill at the trigger where
+        # ~200 s was the previous line, in exchange for 25% more session
+        # history. The llama_cpp-era figures elsewhere in the tree (27.8K->85 s,
+        # 57.8K->341 s, 87.8K->789 s) are the ones that no longer apply.
+        "64gb":  145000,   # gemma4-mlx   598 tok/s @ 137K, re-measured 567 @ 134K
         "128gb": 145000,   # same model, same clock; more RAM buys no speed
     }
     for tier in PROFILES:
