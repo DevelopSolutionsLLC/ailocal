@@ -2,6 +2,51 @@
 
 Release policy and the meaning of each bump: [RELEASING.md](RELEASING.md).
 
+## v0.10.0 — language servers, client alignment, and a runtime that cannot drift silently
+
+`claude-local` now bootstraps a complete, self-sufficient config root, Claude Code's context and output settings match what the backend actually serves, and the generated runtime can no longer disagree with the repository without saying so.
+
+### Language servers in `claude-local`
+
+`ailocal clients claude` enables the official Claude Code LSP plugin for each language whose server binary is already on your machine — Python (`pyright-lsp`), TypeScript/JavaScript (`typescript-lsp`), Go (`gopls-lsp`) and C/C++ (`clangd-lsp`).
+
+ailocal installs no language server and no language ecosystem; a missing server is reported with the command that installs it. Plugins are enabled **only in ailocal's own config root** — hosted `~/.claude` is never modified. Plugin state is per config root, so a fresh root starts empty regardless of what your hosted client has.
+
+### Claude Code now asks for what the backend serves
+
+Claude Code defaults to a 32,000-token output request, while the backend serves the profile's `max_output`. Long answers were truncated and retried rather than ending cleanly. `settings.json` now carries `CLAUDE_CODE_MAX_OUTPUT_TOKENS` and `CLAUDE_CODE_MAX_CONTEXT_TOKENS` derived from the active profile — the same numbers LiteLLM receives.
+
+Those variables are process-wide while the model slots differ, so the generated file also lists the background slots whose smaller limits they cannot express.
+
+### 64 GB tier: more usable context
+
+`architecture` input rises 131,072 → 163,840 (180,224 total), compacting at 139,264. Re-measured cold prefill on the MLX runner justified the increase; the full 262,144 native window was measured and deliberately left unexposed, because a cache miss at that size costs over nine minutes.
+
+### More reliable tool calls on Gemma
+
+Repaired the one `Agent` argument `gemma4` omits, and kept `Skill` and `SendMessage` available — delegation and skill invocation now work instead of failing quietly.
+
+### Configuration ownership
+
+`~/.config/ailocal/.env` held generated secrets and your own provider keys in one file, which is why upgrading it meant offering to destroy your keys. It is now split: generated state is ailocal's, `.env.local` is yours and wins. Existing files migrate automatically, byte-for-byte, without rotating a key.
+
+The persona mechanism is removed. `ENABLE_LSP_TOOL` is no longer written and is retired from existing installs — the LSP tool is built into current Claude Code.
+
+### A runtime that reports its own drift
+
+- `ailocal check` detects a container whose config mount a reinstall detached; previously the proxy answered 200 while serving nothing.
+- The gate refuses to run on generated-config drift instead of regenerating over it mid-run.
+- The gate refuses to run when the installed package is older than the checkout. `ailocal start` runs the *installed* generator, so a tested change could otherwise be missing from the live runtime with a green suite either side of it. Remediation: `pipx install --force . && ailocal start`.
+- Codex keeps its own trust records across regeneration.
+
+### Upgrading
+
+```sh
+pipx upgrade ailocal && ailocal start
+```
+
+No commands or configuration layout change. Run `ailocal clients claude` to pick up LSP plugins for servers you already have.
+
 ## v0.9.1 — context windows sized from measured runner behaviour
 
 Every profile carried context limits inherited from a model backend ailocal no longer runs. This release re-measures the real constraints and re-sizes all four tiers against them. No commands, configuration layout or client files change shape — only the numbers inside the profiles.
