@@ -167,15 +167,10 @@ Local models are capable everyday assistants, not frontier models. Expect strong
 
 ## Language servers
 
-Claude Code has a built-in LSP tool — nothing to switch on. What it needs is a
-language server behind it, and that takes **two halves**: the server binary, and
-the official plugin that tells Claude Code to use it. A plugin on its own
-configures the integration; it does not install the binary.
-
-ailocal installs the official plugin for each language **whose server you already
-have**, into the roots it creates, so `claude-local` is not blind where hosted
-Claude can see. It never installs a language ecosystem: a language whose binary is
-absent is skipped, with the command that would fix it.
+ailocal bootstraps the `claude-local` configuration root, and that includes the
+official Claude Code LSP plugin for each language **whose server binary you
+already have**. The binaries stay yours: ailocal installs no language ecosystem,
+and skips a language whose server is absent with the command that would fix it.
 
 | Language | Server binary | You install it with | Plugin ailocal enables |
 |---|---|---|---|
@@ -186,20 +181,19 @@ absent is skipped, with the command that would fix it.
 
 Install a server, re-run `ailocal clients claude`, and the plugin follows — in
 **ailocal's own root only**. Plugin state is per config root: a fresh root starts
-with no marketplaces and no plugins whatever `~/.claude` holds, so the isolated
-root is self-sufficient and nothing here depends on your hosted client.
+with no marketplaces and no plugins whatever `~/.claude` holds, so this root is
+self-sufficient and depends on nothing your hosted client has.
 
-Your hosted `claude` is **yours** — ailocal does not add plugins to it. If you
-want the same languages there, run `/plugin` in a hosted session once. `cadence
-capabilities` reports both roots separately so you can see which is missing what.
+Your hosted `claude` is **yours** — ailocal never adds plugins to it. To get the
+same languages there, run `/plugin` in a hosted session once.
 
 **There is no Bash plugin.** The official marketplace publishes 13 LSP plugins and
 none of them is bash, so `bash-language-server` on PATH is unreachable from Claude
 Code's LSP tool. Shell is covered by ShellCheck, which is static analysis, not LSP.
 
-To check a server is genuinely working, ask for something only it can answer — a
-definition or a reference — rather than trusting that the plugin is listed.
-Installed, configured, and answering are three different states.
+To check a server genuinely works, ask for something only it can answer — a
+definition or a reference. Installed, configured, and answering are three
+different states.
 
 ## Web search
 
