@@ -27,6 +27,19 @@ schemas and a bare user prompt, then behaved exactly as an unconstrained
 model should — it never called ExitPlanMode because it was never told it was
 planning.
 
+[REAL] 2026-08-15, WITH this hook, Claude Code 2.1.224 on gemma4:26b-mlx,
+`claude -p --permission-mode plan "Plan how to add a retry helper..."`: the run
+completed in 8 turns and the transcript shows the whole workflow —
+
+    Agent x9  ->  Write x2  ->  ExitPlanMode
+
+ExitPlanMode IS now reached, with zero tool-parameter validation errors and no
+channel leakage. That closes the claim above: the workflow reaches the model and
+the handoff happens. RESIDUAL, and it is the MODEL's limit, not the transport's:
+the plan FILE is left at its "(To be filled after exploration)" stub and the
+ExitPlanMode `plan` argument is empty — the finished plan appears only in the
+final assistant message. Do not add prompting here to force the write-back.
+
 UPSTREAM. Fixed in https://github.com/BerriAI/litellm/pull/30443, which adds an
 in-place branch whose helper is documented "Translate an in-sequence system
 entry without changing its role or position."
