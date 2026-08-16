@@ -605,6 +605,21 @@ def regen_claude_settings(models, clients):
         f"Assumed window: CLAUDE_CODE_MAX_CONTEXT_TOKENS = {out_geom['total_context']} "
         f"(= {default}.total_context). Claude Code otherwise assumes 200000 for an "
         "unrecognised gateway model id.")
+    # KNOWN GAP, stated because it cannot be fixed here. Both variables above are
+    # process-wide, but the slots route to roles with DIFFERENT envelopes. They
+    # describe the launch default; every other slot is enforced only by LiteLLM's
+    # own max_input_tokens, and a background slot whose admission is smaller can
+    # be rejected before Claude Code thinks compaction is due. Listing the real
+    # numbers is the only thing this file can do about it.
+    smaller = sorted(
+        (mn(cap), g["max_input_tokens"])
+        for cap, g in ((c, _geom(models[c])) for c in slots.values() if c in models)
+        if g["max_input_tokens"] < out_geom["max_input_tokens"])
+    if smaller:
+        data["//"].append(
+            "Slots Claude Code cannot declare separately (process-wide vars "
+            f"describe {mn(default)} only): "
+            + ", ".join(f"{n} admits {v}" for n, v in smaller))
     # Retire keys ailocal used to write. `env` merges live-over-template so that
     # Claude Code's own additions survive regeneration — which also means simply
     # deleting a key from the template never reaches an existing install: it
