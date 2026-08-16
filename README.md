@@ -20,13 +20,7 @@ ailocal runs the coding tools you already use against models on your own machine
 
 **What it configures for you:** the models, the local API they are served on, and every supported client you have installed. You do not edit a config file by hand.
 
-**What it does not do:** install software. You install the prerequisites and whichever clients you want; ailocal detects what is present and configures it.
-
-**Supported clients** — all optional:
-
-- **Claude Code** — run `claude-local`
-- **Codex CLI** — run `codex-local`
-- **VS Code Copilot Chat** — pick an `ailocal-*` model in the chat model picker
+**What it does not do:** install software. You install the prerequisites and whichever clients you want; ailocal detects what is present and configures it. Every client is optional.
 
 **Requirements:** macOS on Apple Silicon, 16 GB unified memory minimum.
 
@@ -52,10 +46,9 @@ brew install pipx
 
 You do not need to install Python or set up a virtual environment. Homebrew's `pipx` brings its own Python and keeps ailocal isolated for you.
 
-**Language servers** are optional, and only matter if you use Claude Code. ailocal
-wires up the official plugin for each server it finds, so the isolated
-`claude-local` profile can answer "where is this defined" instead of re-reading
-whole files. Install the ones for languages you actually work in:
+**Language servers** are optional and only matter for Claude Code. Install the ones for
+languages you work in; ailocal enables the matching plugin for each server it finds. See
+[Language servers](#language-servers).
 
 ```bash
 npm i -g pyright                                    # Python
@@ -63,10 +56,6 @@ npm i -g typescript-language-server typescript      # TypeScript/JavaScript
 brew install gopls                                  # Go
 xcode-select --install                              # C/C++ (clangd)
 ```
-
-Without any of them, `ailocal clients claude` reports what is missing and
-everything else still works. ailocal installs no language server itself — see
-[Language servers](#language-servers).
 
 ## 2. Install clients (optional)
 
@@ -126,7 +115,7 @@ Installed a client after ailocal? Run `ailocal clients` and it picks it up.
 
 ### VS Code: paste the key once
 
-ailocal configures everything on the VS Code side except the key itself. VS Code keeps model API keys in its own encrypted storage, and offers no supported way for another program to write to it — so this one step is yours. It is a limitation of the VS Code boundary, not something ailocal skipped.
+VS Code keeps model API keys in its own encrypted storage, which no other program can write to, so this one step is yours. Everything else on the VS Code side is already configured.
 
 ```bash
 grep LITELLM_MASTER_KEY ~/.local/state/ailocal/env
@@ -167,10 +156,9 @@ Local models are capable everyday assistants, not frontier models. Expect strong
 
 ## Language servers
 
-ailocal bootstraps the `claude-local` configuration root, and that includes the
-official Claude Code LSP plugin for each language **whose server binary you
-already have**. The binaries stay yours: ailocal installs no language ecosystem,
-and skips a language whose server is absent with the command that would fix it.
+ailocal enables the official Claude Code LSP plugin for each language **whose server binary
+you already have**. It installs no language ecosystem, and reports the fixing command for a
+language whose server is absent.
 
 | Language | Server binary | You install it with | Plugin ailocal enables |
 |---|---|---|---|
@@ -179,21 +167,15 @@ and skips a language whose server is absent with the command that would fix it.
 | Go | `gopls` | `brew install gopls` | `gopls-lsp` |
 | C/C++ | `clangd` | `xcode-select --install` | `clangd-lsp` |
 
-Install a server, re-run `ailocal clients claude`, and the plugin follows — in
-**ailocal's own root only**. Plugin state is per config root: a fresh root starts
-with no marketplaces and no plugins whatever `~/.claude` holds, so this root is
-self-sufficient and depends on nothing your hosted client has.
+Install a server, re-run `ailocal clients claude`, and the plugin follows — in **ailocal's
+own root only**. Plugin state is per config root, so this root is self-sufficient and
+depends on nothing your hosted client has.
 
-Your hosted `claude` is **yours** — ailocal never adds plugins to it. To get the
-same languages there, run `/plugin` in a hosted session once.
+Your hosted `claude` is **yours**; ailocal never adds plugins to it. To get the same
+languages there, run `/plugin` in a hosted session once.
 
-**There is no Bash plugin.** The official marketplace publishes 13 LSP plugins and
-none of them is bash, so `bash-language-server` on PATH is unreachable from Claude
-Code's LSP tool. Shell is covered by ShellCheck, which is static analysis, not LSP.
-
-To check a server genuinely works, ask for something only it can answer — a
-definition or a reference. Installed, configured, and answering are three
-different states.
+There is no bash plugin in the official marketplace, so shell is covered by ShellCheck
+instead — static analysis, not LSP.
 
 ## Web search
 
