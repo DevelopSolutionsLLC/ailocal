@@ -654,15 +654,42 @@ def target_claude() -> None:
     print("  Launch with: claude-local  (source ~/.zshrc first)")
     print("  Plain 'claude' still talks to Anthropic's cloud — untouched.")
 
-    step("Python LSP baseline (ailocal-owned minimum)")
+    step("LSP baseline (ailocal-owned minimum)")
     lsp_baseline(home, "claude-local")
     lsp_baseline(Path.home() / ".claude", "claude (cloud)")
-    info("language servers: Python baseline only — anything broader is "
-         "provisioned by its own owner")
+    info("language servers: ailocal enables the PLUGIN for a server you already "
+         "have — it never installs a language ecosystem")
+
+
+#: language -> (official plugin, server binary, the command that installs it).
+#:
+#: ailocal enables the PLUGIN; the BINARY belongs to its own ecosystem and is
+#: never installed here. A language whose binary is absent is skipped with the
+#: command to fix it — enabling a plugin with no server behind it would advertise
+#: a capability that cannot answer, which is the thing this function exists to
+#: prevent.
+#:
+#: Identifiers are the marketplace's own, verified against `claude-plugins-official`.
+#: There is deliberately NO shell entry: the marketplace publishes 13 LSP plugins
+#: and none is bash, so a bash-language-server on PATH is unreachable from Claude
+#: Code. Shell is covered by ShellCheck, which is static analysis, not LSP.
+LSP_PLUGINS = (
+    ("Python",     "pyright-lsp",    "pyright-langserver",
+     "npm i -g pyright"),
+    ("TypeScript", "typescript-lsp", "typescript-language-server",
+     "npm i -g typescript-language-server typescript"),
+    ("Go",         "gopls-lsp",      "gopls",
+     "brew install gopls"),
+    ("C/C++",      "clangd-lsp",     "clangd",
+     "xcode-select --install"),
+)
+
+MARKETPLACE = "claude-plugins-official"
+MARKETPLACE_SOURCE = "anthropics/claude-plugins-official"
 
 
 def lsp_baseline(root: Path, label: str) -> None:
-    """The minimum local-client compatibility baseline ailocal owns.
+    """The local-client compatibility baseline ailocal owns.
 
     The LSP tool is built into Claude Code and needs no enabling; ENABLE_LSP_TOOL
     was the gate before 2.0.74 and settings.json no longer writes it. What the
@@ -670,19 +697,22 @@ def lsp_baseline(root: Path, label: str) -> None:
     provides — without this an ailocal-only machine advertises a capability that
     cannot answer.
 
-    ONE LANGUAGE, DELIBERATELY: Python. Applied to the isolated root AND to
-    ~/.claude — this wires up a binary the user already has, not routing
-    configuration, so cloud client CONFIG is still never touched.
+    PLUGIN STATE IS PER CONFIG ROOT, not global. [REAL] a fresh CLAUDE_CONFIG_DIR
+    reports "No marketplaces configured" and "No plugins installed" while
+    ~/.claude has four; each root carries its own plugins/cache, its own
+    installed_plugins.json and its own marketplace clone. So writing
+    `enabledPlugins` alone would be a lie on a fresh root: the plugin must first
+    be INSTALLED into that root. This runs the official `claude plugin` CLI per
+    root rather than reimplementing any of that state.
+
+    Applied to the isolated root AND to ~/.claude — this wires up a binary the
+    user already has, not routing configuration, so cloud client CONFIG is still
+    never touched.
     """
-    plugin = "pyright-lsp@claude-plugins-official"
-    marketplace, source = "claude-plugins-official", "anthropics/claude-plugins-official"
     if not shutil.which("claude"):
         return skip(f"claude not on PATH — no LSP baseline ({label})")
     if not root.is_dir():
         return skip(f"{root} missing — no LSP baseline ({label})")
-    if not shutil.which("pyright-langserver"):
-        warn(f"pyright-langserver not installed — {label} has NO Python LSP.")
-        return warn("  Install it, then re-run:  npm i -g pyright")
 
     env = {**os.environ, "CLAUDE_CONFIG_DIR": str(root)}
 
@@ -694,46 +724,64 @@ def lsp_baseline(root: Path, label: str) -> None:
             return 1, ""
         return r.returncode, r.stdout
 
-    # `plugin install` does NOT enable, so presence alone is not enough: a
-    # disabled plugin would report "already present" forever.
-    listing = claude("plugin", "list")[1]
-    if plugin in listing:
-        # The plugin's whole block, up to the next entry — NOT a fixed number of
-        # lines. `claude plugin list` gained a `Version:` line, which pushed
-        # `Status: enabled` out of a hard-coded three-line window, so an enabled
-        # plugin read as disabled and was "repaired" on every run.
-        after = []
+    def enabled(listing: str, plugin: str) -> bool:
+        """Is `plugin` present AND enabled in this root's listing?
+
+        Reads the plugin's whole block, up to the next entry — NOT a fixed number
+        of lines. `claude plugin list` gained a `Version:` line, which pushed
+        `Status: enabled` out of a hard-coded three-line window, so an enabled
+        plugin read as disabled and was "repaired" on every run.
+        """
+        if plugin not in listing:
+            return False
         for line in listing.split(plugin, 1)[1].splitlines()[1:]:
             if line.strip().startswith("❯") or (line and not line[0].isspace()):
                 break
-            after.append(line)
-        if any("enabled" in l for l in after):
-            return info(f"Python LSP baseline already present and enabled ({label})")
-        warn(f"pyright-lsp plugin present but disabled ({label}) — enabling")
-        # A live session on this root races the plugin-state write; one retry
-        # covers that without masking a real failure.
-        for attempt in (1, 2):
-            if claude("plugin", "enable", plugin)[0] == 0:
-                return info(f"Python LSP baseline enabled ({label})")
-            if attempt == 1:
-                __import__("time").sleep(2)
-        warn(f"pyright-lsp enable failed — {label} has no working Python LSP")
-        return warn(f"  If a live 'claude' session has {root} open, close it.")
+            if "enabled" in line:
+                return True
+        return False
+
+    wanted = [(lang, f"{p}@{MARKETPLACE}", binary, cmd)
+              for lang, p, binary, cmd in LSP_PLUGINS if shutil.which(binary)]
+    for lang, _p, binary, cmd in ((l, p, b, c) for l, p, b, c in LSP_PLUGINS
+                                  if not shutil.which(b)):
+        warn(f"{binary} not installed — {label} has NO {lang} LSP. Install it, "
+             f"then re-run:  {cmd}")
+    if not wanted:
+        return
 
     # A FRESH config root knows no marketplaces at all, so `marketplace update`
     # fails with "not found" and the install can never succeed. Registering it
     # first is what makes this work on a machine that has never run Claude Code;
     # `add` on a root that already has it is a no-op, and it takes the OWNER/REPO
     # source form, not the bare marketplace name.
-    if marketplace not in claude("plugin", "marketplace", "list")[1]:
-        if claude("plugin", "marketplace", "add", source)[0] != 0:
-            return warn(f"could not register {source} — {label} has no Python LSP")
-    claude("plugin", "marketplace", "update", marketplace)
-    if claude("plugin", "install", plugin)[0] == 0 and \
-            claude("plugin", "enable", plugin)[0] == 0:
-        info(f"Python LSP baseline installed and enabled ({label})")
-    else:
-        warn(f"pyright-lsp install/enable failed — {label} has no Python LSP")
+    listing = claude("plugin", "list")[1]
+    if any(not enabled(listing, plugin) for _l, plugin, _b, _c in wanted):
+        if MARKETPLACE not in claude("plugin", "marketplace", "list")[1]:
+            if claude("plugin", "marketplace", "add", MARKETPLACE_SOURCE)[0] != 0:
+                return warn(f"could not register {MARKETPLACE_SOURCE} — "
+                            f"{label} has no LSP")
+        claude("plugin", "marketplace", "update", MARKETPLACE)
+
+    for lang, plugin, _binary, _cmd in wanted:
+        if enabled(listing, plugin):
+            info(f"{lang} LSP already present and enabled ({label})")
+            continue
+        claude("plugin", "install", plugin)
+        # VERIFY THE STATE, DO NOT TRUST THE EXIT CODE. [REAL] `plugin install`
+        # now enables what it installs, and `plugin enable` on an
+        # already-enabled plugin exits 1 ("already enabled"). The old
+        # `install == 0 and enable == 0` chain therefore reported failure on a
+        # correctly provisioned FRESH root — the exact path it was written for.
+        # A live session on this root can also race the plugin-state write, so
+        # re-read rather than infer, once, before enabling explicitly.
+        if not enabled(claude("plugin", "list")[1], plugin):
+            claude("plugin", "enable", plugin)
+        if enabled(claude("plugin", "list")[1], plugin):
+            info(f"{lang} LSP installed and enabled ({label})")
+        else:
+            warn(f"{plugin} not enabled — {label} has no working {lang} LSP")
+            warn(f"  If a live 'claude' session has {root} open, close it.")
 
 
 # ── entry point ─────────────────────────────────────────────────────────────

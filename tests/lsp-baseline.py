@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
-"""test-lsp-baseline.py — claude-local's Python LSP works without Cadence.
+"""test-lsp-baseline.py — claude-local's LSP works without Cadence.
 
 ailocal provides the minimum local-client compatibility baseline required by the
-isolated profiles it creates. Cadence provides repository intelligence, broader
-language tooling, cross-client integration, and policy.
+isolated profiles it creates. Cadence provides repository intelligence,
+cross-client integration, and policy.
 
-This asserts the ailocal half, and nothing else. It does NOT check TypeScript, Go
-or C — those are Cadence's, and asserting them here would create a second owner.
+OWNERSHIP CORRECTED. This file used to say TypeScript, Go and C were "Cadence's"
+and refused to assert them. That assumption is what produced the gap: Cadence is
+client-neutral and must never own Claude Code plugins, so nothing enabled them
+and claude-local shipped with Python alone while hosted Claude had four. ailocal
+owns ~/.config/ailocal/claude, so ailocal owns the plugin enablement inside it.
+The BINARIES stay with their own ecosystems (npm, brew, Xcode) and are only
+detected — a language whose server is absent is skipped, never installed here.
 
 WHY IT DRIVES THE SERVER DIRECTLY. Presence is not capability: a plugin can be
 installed, the tool can be listed, and it can still answer nothing
@@ -30,6 +35,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from harness import RESOURCES, REPO, Suite
+#: THE table, imported rather than restated — a second copy here would drift from
+#: the installer and assert a baseline nothing actually provisions.
+from ailocal.clients import LSP_PLUGINS
 ROOT = Path.home() / ".config" / "ailocal" / "claude"
 #: Any substantial Python file with importable symbols works; this one is
 #: chosen because it is stable and always shipped.
@@ -60,7 +68,7 @@ def read(proc) -> dict | None:
 
 
 def main() -> int:
-    print("ailocal minimum LSP baseline (Python, claude-local)")
+    print("ailocal minimum LSP baseline (claude-local)")
 
     # 1. the isolated root exists and carries no obsolete LSP gate.
     #
@@ -88,13 +96,24 @@ def main() -> int:
         return 0
     check(True, f"pyright-langserver resolvable ({server})")
 
-    # 3. the plugin that wires it to Claude Code is present in THAT root
+    # 3. the plugins that wire the servers to Claude Code are present in THAT
+    #    root — every language whose binary exists, not just Python.
+    #
+    #    Plugin state is PER CONFIG ROOT: a fresh CLAUDE_CONFIG_DIR reports no
+    #    marketplaces and no plugins while ~/.claude has four, so this must be
+    #    asserted against the isolated root and cannot be inferred from hosted.
+    #    A language whose binary is missing is not a failure — the installer
+    #    reports it and skips, which is the documented behaviour.
     if shutil.which("claude"):
         out = subprocess.run(["claude", "plugin", "list"], capture_output=True,
                              text=True, timeout=120,
                              env={**os.environ, "CLAUDE_CONFIG_DIR": str(ROOT)}).stdout
-        check("pyright-lsp@claude-plugins-official" in out,
-              "pyright-lsp plugin installed in the isolated root")
+        for lang, plugin, binary, _cmd in LSP_PLUGINS:
+            if not shutil.which(binary):
+                print(f"  SKIP  {lang}: {binary} not installed")
+                continue
+            check(f"{plugin}@claude-plugins-official" in out,
+                  f"{plugin} installed in the isolated root ({lang})")
     else:
         check(False, "claude on PATH")
 
