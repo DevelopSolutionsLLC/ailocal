@@ -44,6 +44,49 @@ def _repo() -> pathlib.Path:
     sys.exit("the gate runs this repository's suites; run it from a checkout.")
 
 
+def _refuse_on_generated_drift() -> None:
+    """Stale generated config must stop the gate BEFORE any suite runs.
+
+    OBSERVED: the gate failed 2 of 4 consecutive runs, always in `validators`,
+    and passed on rerun with no action in between. Not a timing race — the cause
+    is generated-config drift. `validators` asserts that `ailocal check` exits 0,
+    which it correctly refuses to do while the generated config is stale.
+    Reproduced deterministically: install a template edit without regenerating,
+    and the same three checks fail every time.
+
+    Several suites write real generated configuration (see the note above
+    AILOCAL_PY), so the drift can be repaired mid-run by something later than
+    the suite that reported it. WHICH suite healed it was not isolated, and the
+    fix does not depend on knowing: refusing before any suite runs removes the
+    order-dependence whatever the healer is.
+
+    "Passes on rerun" is the dangerous property here, not the failure itself: it
+    teaches a reader to rerun the gate rather than read it, and the real drift is
+    never reported. Deciding it here makes the outcome a function of the tree.
+
+    SCOPE: this compares the INSTALLED package against the generated config,
+    which is the condition that actually flaked. A template edited in the
+    checkout but not installed is a different state, and already fails the gate
+    deterministically (`validators` plus `generation is a fixed point`), so it
+    needs nothing here.
+
+    Reuses `ailocal check`'s own drift check — one canonical implementation,
+    already bounded by its own timeout and already non-mutating (`--check`). A
+    BLOCKED result means the generator could not run at all, which is a broken
+    host rather than drift, so it is left to the suites to report.
+    """
+    from ailocal.checks.config import check_generated_in_sync
+
+    result = check_generated_in_sync()
+    if result.status != FAIL:
+        return
+    sys.exit(f"\n  {result.summary}"
+             f"\n      {(result.detail or '').strip()}"
+             f"\n\n  {result.remediation or 'regenerate, then rerun'}"
+             "\n  Refusing to run: PRECONDITION NOT MET."
+             "\n  (A later suite would regenerate this and hide the drift.)")
+
+
 def _gate_preconditions(repo: pathlib.Path) -> None:
     """Refuse rather than run a reduced set and report success."""
     container = S.CONTAINER
@@ -54,6 +97,7 @@ def _gate_preconditions(repo: pathlib.Path) -> None:
     if health not in ("healthy", ""):
         sys.exit(f"\n  {container} health is {health!r}, not healthy. Fix that "
                  "before trusting any result.")
+    _refuse_on_generated_drift()
     # Container health means the proxy PROCESS is up, not that the router serves
     # /v1/models. 401 counts as ready: it proves the route answers.
     for _ in range(60):

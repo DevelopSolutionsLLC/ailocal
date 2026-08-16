@@ -194,10 +194,56 @@ def exits_checks() -> None:
           "the configuration layer passes with the stack untouched")
 
 
+def gate_drift_checks() -> None:
+    """The gate must REFUSE on generated drift, not discover it mid-run.
+
+    Drift used to surface as three failing checks in `exits` above, because
+    `ailocal check` correctly exits 1 while the generated config is stale. A
+    later gate suite then regenerated it, so the same gate passed on rerun and
+    the drift went unreported — measured at 2 of 4 consecutive runs.
+
+    Decision logic only: the real drift check is stubbed, so this stays fast and
+    carries no timing component. It is the ORDER that regressed, not detection.
+    """
+    from harness import load_module
+    gate = load_module("gate", REPO / "tests/gate.py")
+    from ailocal.checks import config as cfg
+
+    original = cfg.check_generated_in_sync
+
+    def stub(status):
+        return lambda: CheckResult(
+            "generated-sync", status,
+            "generated files have drifted from their source",
+            "DRIFT — generated files are stale: litellm/config.yaml",
+            "ailocal start regenerates them")
+
+    def refuse(status):
+        """(refused?, message) for a drift check reporting `status`."""
+        cfg.check_generated_in_sync = stub(status)
+        try:
+            gate._refuse_on_generated_drift()
+            return False, ""
+        except SystemExit as exc:
+            return True, str(exc.code)
+        finally:
+            cfg.check_generated_in_sync = original
+
+    refused, message = refuse(FAIL)
+    check(refused, "drift stops the gate before any suite runs")
+    # A refusal that does not say what is stale just moves the confusion earlier.
+    check("litellm/config.yaml" in message, "the refusal names the stale artifact")
+    check("ailocal start" in message, "the refusal carries the remediation")
+    for status, label in ((PASS, "an in-sync tree"), (WARN, "a WARN"),
+                          (BLOCKED, "a generator that could not run")):
+        check(not refuse(status)[0], f"{label} does not stop the gate")
+
+
 SECTIONS = {"deterministic": deterministic_checks,
             "search-quota": search_quota_checks,
             "classification": classification_checks,
             "bounded": bounded_checks,
+            "gate-drift": gate_drift_checks,
             "exits": exits_checks}
 
 if __name__ == "__main__":
