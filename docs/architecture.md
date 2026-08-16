@@ -119,9 +119,9 @@ Same directory as the policy root by default, different owner and lifecycle: thi
 
 `~/.zshrc` is created if absent and backed up (`.zshrc.bak.<timestamp>`, newest 3 kept) before either line is inserted.
 
-**Explicitly not touched:** `~/.claude` and `~/.codex` config (the cloud roots stay separate — the isolated roots are reached through `CLAUDE_CONFIG_DIR` / `CODEX_HOME` in the wrappers), anything under Git, and any container not named `ailocal-*`. The one exception is `lsp_baseline()`, which enables the pyright plugin in both the isolated root and `~/.claude` — that wires up a language server, not routing configuration.
+**Explicitly not touched:** `~/.claude` and `~/.codex` config (the cloud roots stay separate — the isolated roots are reached through `CLAUDE_CONFIG_DIR` / `CODEX_HOME` in the wrappers), anything under Git, and any container not named `ailocal-*`. The one exception is `lsp_baseline()`, which enables the official LSP plugin for each language server already present (Python, TypeScript, Go, C/C++) in both the isolated root and `~/.claude` — that wires up language servers you already installed, not routing configuration.
 
-**Uninstalling** is therefore: `ailocal teardown` (containers + LaunchAgents), delete the two roots, remove the two `~/.zshrc` lines, and — if you want the disk back — `/Users/Shared/ollama/models`. The `pyright-lsp` plugin enabled in `~/.claude` is the one thing that outlives all of that.
+**Uninstalling** is therefore: `ailocal teardown` (containers + LaunchAgents), delete the two roots, remove the two `~/.zshrc` lines, and — if you want the disk back — `/Users/Shared/ollama/models`. The LSP plugins enabled in `~/.claude` are the one thing that outlives all of that.
 
 ---
 

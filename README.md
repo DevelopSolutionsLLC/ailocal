@@ -52,16 +52,21 @@ brew install pipx
 
 You do not need to install Python or set up a virtual environment. Homebrew's `pipx` brings its own Python and keeps ailocal isolated for you.
 
-**pyright** is optional, and only matters if you use Claude Code. It is the one
-language server ailocal wires up, so that the isolated `claude-local` profile can
-answer "where is this defined" instead of re-reading whole files:
+**Language servers** are optional, and only matter if you use Claude Code. ailocal
+wires up the official plugin for each server it finds, so the isolated
+`claude-local` profile can answer "where is this defined" instead of re-reading
+whole files. Install the ones for languages you actually work in:
 
 ```bash
-brew install pyright
+npm i -g pyright                                    # Python
+npm i -g typescript-language-server typescript      # TypeScript/JavaScript
+brew install gopls                                  # Go
+xcode-select --install                              # C/C++ (clangd)
 ```
 
-Without it, `ailocal clients claude` reports it and everything else still works.
-ailocal installs no other language server — see [Language servers](#language-servers).
+Without any of them, `ailocal clients claude` reports what is missing and
+everything else still works. ailocal installs no language server itself — see
+[Language servers](#language-servers).
 
 ## 2. Install clients (optional)
 
@@ -167,18 +172,26 @@ language server behind it, and that takes **two halves**: the server binary, and
 the official plugin that tells Claude Code to use it. A plugin on its own
 configures the integration; it does not install the binary.
 
-ailocal does exactly one language: it installs `pyright-lsp` from Anthropic's
-official marketplace into the roots it creates, so `claude-local` has a working
-floor. Anything beyond Python is yours to add, and it is two commands:
+ailocal installs the official plugin for each language **whose server you already
+have**, into the roots it creates, so `claude-local` is not blind where hosted
+Claude can see. It never installs a language ecosystem: a language whose binary is
+absent is skipped, with the command that would fix it.
 
-```bash
-brew install typescript-language-server   # or gopls, bash-language-server, llvm…
-claude plugin install typescript-lsp@claude-plugins-official
-```
+| Language | Server binary | You install it with | Plugin ailocal enables |
+|---|---|---|---|
+| Python | `pyright-langserver` | `npm i -g pyright` | `pyright-lsp` |
+| TypeScript | `typescript-language-server` | `npm i -g typescript-language-server typescript` | `typescript-lsp` |
+| Go | `gopls` | `brew install gopls` | `gopls-lsp` |
+| C/C++ | `clangd` | `xcode-select --install` | `clangd-lsp` |
 
-Anthropic maintains plugins for TypeScript, Go, C/C++, Bash and others. Use those
-rather than hand-rolling an LSP config — and add a language only when you work in
-it, since every server is a process Claude Code starts.
+Install a server, re-run `ailocal clients claude`, and the plugin follows. Plugin
+state is **per config root**, which is why this runs against the isolated root and
+`~/.claude` separately — a fresh root starts with no marketplaces and no plugins
+whatever the other root has.
+
+**There is no Bash plugin.** The official marketplace publishes 13 LSP plugins and
+none of them is bash, so `bash-language-server` on PATH is unreachable from Claude
+Code's LSP tool. Shell is covered by ShellCheck, which is static analysis, not LSP.
 
 To check a server is genuinely working, ask for something only it can answer — a
 definition or a reference — rather than trusting that the plugin is listed.
