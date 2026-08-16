@@ -24,6 +24,19 @@ biases toward doing nothing:
   - arguments are validated against the declared JSON schema; unknown keys are
     dropped and missing REQUIRED keys cause the call to be rejected outright
   - arguments are never invented or defaulted
+
+SECOND DEFECT: a NATIVE call missing one UI-metadata argument
+-------------------------------------------------------------
+Everything above concerns a call the runtime failed to parse at all. There is a
+second, disjoint defect: the runtime parses the call perfectly and the MODEL
+omits a required argument. See complete_ui_metadata() for the measurement, the
+rule, and why exactly one (tool, argument) pair is eligible.
+
+The "arguments are never invented" rule above still holds for recover(): that
+path may not fabricate, because there the whole call is in doubt. This one is
+narrower in every dimension — the call is native and already trusted, the tool
+is named explicitly, and the fabricated value is derived from an argument the
+model DID supply — so it is a schema-compatibility normalisation, not inference.
 """
 
 import collections
@@ -238,6 +251,132 @@ def _validate(name, args, tool_index):
         "type": "function",
         "function": {"name": name, "arguments": json.dumps(clean)},
     }
+
+
+# ── Missing UI-metadata argument on a NATIVE tool call ──────────────────────
+# Eligible (tool, argument) pairs. Deliberately a hardcoded allowlist and not a
+# heuristic over the schema: "which required arguments are safe to fabricate" is
+# not answerable from a JSON schema, so it is answered here, per tool, by a human
+# who checked what the argument does.
+FABRICABLE = {("Agent", "description")}
+
+_WS_RE = re.compile(r"\s+")
+LABEL_WORDS = 5
+LABEL_CHARS = 60
+
+
+def _short_label(prompt):
+    """First few words of the prompt, as a bounded, deterministic task label.
+
+    Chosen over a fixed per-subagent string ("Explore repository") because
+    subagent types are user-defined and open-ended, so any fixed mapping is
+    wrong for the types it has never heard of. Chosen over the whole prompt
+    because the schema asks for 3-5 words.
+
+    Discloses nothing new: the prompt is already rendered in the client's UI
+    next to this label, so no content moves anywhere it was not already going.
+    """
+    words = _WS_RE.sub(" ", prompt).strip().split(" ")
+    label = " ".join(words[:LABEL_WORDS])[:LABEL_CHARS].strip()
+    return label or "Delegated agent task"
+
+
+def complete_ui_metadata(name, args_text, declared_tools, ctx=None):
+    """Add ONE missing UI-metadata argument to a native tool call's arguments.
+
+    Returns the patched arguments as a JSON string, or None to leave the call
+    exactly as the model emitted it. `args_text` is the raw JSON the runtime
+    parsed out of the model's call.
+
+    THE DEFECT. gemma4 receives Claude Code's `Agent` schema, can recite that
+    `description` is required, and omits it anyway. Measured against Ollama
+    0.32.13 (latest stable) with the production sampling parameters and the
+    real captured schema: 10/10 calls omitted it on gemma4:26b-mlx AND 10/10 on
+    non-MLX gemma4:26b, while a control tool with two required string arguments
+    omitted 0/10. In real claude-local sessions: 8 of 17 Agent calls omitted it,
+    and those 8 are 8 of the 9 DISTINCT sessions that delegated at all — the
+    remaining 9 calls are one session that got it right and then repeated its
+    own correct example. So it is close to once per fresh delegation.
+    Independently reproduced off Ollama entirely, on vLLM: vllm-project/vllm
+    #39072 (open, gemma4 omits a required `path`). So the defect is the model,
+    not the runtime — confirmed by asking gemma4 to recite the schema it was
+    given, which it does correctly, `description` and all.
+
+    WHY REPAIR RATHER THAN LET THE CLIENT RETRY. Claude Code does recover: it
+    returns an InputValidationError and the model retries correctly. Measured
+    cost of one such recovery: 18.0 s wall, a discarded 14,474-token prefill,
+    252 discarded output tokens, and a user-visible "Invalid tool parameters"
+    line — on every fresh delegation, deterministically at temperature 0.1.
+
+    WHY `description` IS FABRICABLE. It is UI metadata: "A short (3-5 word)
+    description of the task". `subagent_type` selects the agent and `prompt`
+    is the work; `description` steers nothing. Fabricating it cannot change
+    what the agent does. No other argument of any other tool has been shown to
+    have that property, so no other argument is eligible.
+
+    WHY IT CANNOT DRIFT. The missing-required set must be EXACTLY the one
+    eligible name. If Claude Code adds a required `Agent` field tomorrow and
+    gemma4 omits that too, the missing set becomes two names, no rule matches,
+    and the call goes to the client unrepaired — a visible error, which is the
+    correct outcome for a field nobody has vetted.
+
+    RETIREMENT. Deliberately not tied to a version number — measure, do not
+    assume a release fixed it. Delete this function, its call sites and the
+    `native-args` suite when this returns `description` on every attempt:
+
+        POST http://127.0.0.1:11434/api/chat
+        {"model": <the configured model>, "stream": false,
+         "options": {"temperature": 0.1, "top_p": 0.9, "top_k": 20},
+         "tools": [<Claude Code's Agent tool, verbatim>],
+         "messages": [{"role": "user", "content":
+             "Use the Explore subagent to find where retry logic lives in this
+              repository. Delegate it, do not search yourself."}]}
+
+    Baseline for comparison: 0/10 attempts included `description` on both
+    gemma4:26b-mlx and gemma4:26b under ollama 0.32.13. The same result also
+    follows if the runtime gains schema-constrained tool arguments, since the
+    omission then becomes impossible to emit.
+    """
+    if not args_text or not declared_tools or not isinstance(name, str):
+        return None
+    eligible = {arg for tool, arg in FABRICABLE if tool == name}
+    if not eligible:
+        return None                       # not a tool we will ever complete
+    try:
+        args = json.loads(args_text)
+    except Exception:                     # noqa: BLE001 - malformed JSON is not ours
+        return _reject("native_args_not_json", tool=name, ctx=ctx)
+    if not isinstance(args, dict):
+        return _reject("native_args_not_object", tool=name, ctx=ctx)
+
+    index = _index_tools(declared_tools)
+    spec = index.get(name)
+    if spec is None:
+        return _reject("undeclared_tool", tool=name, ctx=ctx)
+    params = spec.get("parameters") or spec.get("input_schema") or {}
+    props = params.get("properties") or {}
+    missing = set(params.get("required") or []) - set(args)
+    # EXACTLY the eligible argument — never a superset, never a different one.
+    if missing != eligible:
+        return None
+    field = next(iter(missing))
+    if (props.get(field) or {}).get("type") != "string":
+        return _reject("field_not_a_string", tool=name, ctx=ctx)
+
+    # Every OTHER argument the model did supply must itself be well-formed.
+    # A call that is broken in some second way is not a call we complete.
+    prompt = args.get("prompt")
+    if not isinstance(prompt, str) or not prompt.strip():
+        return _reject("no_usable_prompt", tool=name, ctx=ctx)
+    subagent = args.get("subagent_type", None)
+    if subagent is not None and (not isinstance(subagent, str) or not subagent.strip()):
+        return _reject("malformed_subagent_type", tool=name, ctx=ctx)
+
+    patched = dict(args)
+    patched[field] = _short_label(prompt)
+    record("repaired", reason="missing_ui_metadata", tool=name, **(ctx or {}))
+    log.info("tool_repair: completed missing `%s` on native %s call", field, name)
+    return json.dumps(patched)
 
 
 def recover(content, declared_tools, ctx=None):
@@ -484,11 +623,33 @@ class ToolRepair(CustomLogger):
             blocks = response.get("content")
         if not isinstance(blocks, list):
             return False
-        # Native tool_use already present -> leave the response alone.
+        # Native tool_use already present -> the runtime parsed the call, so the
+        # text-recovery path below has nothing to do. The arguments may still be
+        # missing a UI-metadata field; that is the only thing touched here.
+        native = False
         for b in blocks:
-            btype = b.get("type") if isinstance(b, dict) else getattr(b, "type", None)
-            if btype == "tool_use":
-                return False
+            is_dict = isinstance(b, dict)
+            btype = b.get("type") if is_dict else getattr(b, "type", None)
+            if btype != "tool_use":
+                continue
+            native = True
+            args = b.get("input") if is_dict else getattr(b, "input", None)
+            name = b.get("name") if is_dict else getattr(b, "name", None)
+            if not isinstance(args, dict):
+                continue
+            patched = complete_ui_metadata(name, json.dumps(args), data.get("tools"),
+                                           _ctx(data, "/v1/messages"))
+            if patched is None:
+                continue
+            if is_dict:
+                b["input"] = json.loads(patched)
+            else:
+                try:
+                    b.input = json.loads(patched)
+                except Exception:  # noqa: BLE001
+                    pass
+        if native:
+            return False
 
         new_blocks, found = [], False
         for b in blocks:
@@ -559,6 +720,78 @@ class ToolRepair(CustomLogger):
         return (f"event: {event_type}\ndata: {json.dumps(payload)}\n\n").encode()
 
     @classmethod
+    def _native_tool_use_events(cls, ts, args_text):
+        """Re-emit one buffered tool_use block, with `args_text` as its input."""
+        idx = ts.get("index", 0)
+        return [
+            cls._sse("content_block_start", {
+                "type": "content_block_start", "index": idx,
+                "content_block": {"type": "tool_use", "id": ts.get("id"),
+                                  "name": ts.get("name"), "input": {}}}),
+            cls._sse("content_block_delta", {
+                "type": "content_block_delta", "index": idx,
+                "delta": {"type": "input_json_delta", "partial_json": args_text}}),
+            cls._sse("content_block_stop", {"type": "content_block_stop", "index": idx}),
+        ]
+
+    @classmethod
+    def _anthropic_native_arg_repair(cls, text, state, tools):
+        """Complete a missing UI-metadata argument on a NATIVE streamed tool_use.
+
+        Returns the byte chunks to emit, or None for "not my event" so the
+        caller's own handling runs unchanged.
+
+        Buffers one tool_use block start->stop because the arguments arrive as
+        input_json_delta fragments and the decision needs the whole object. That
+        costs nothing a user can perceive: a tool call is executed, not read —
+        the same reasoning the streaming hook already documents for text.
+        """
+        try:
+            payload = json.loads(text.split("data:", 1)[1].strip())
+        except Exception:  # noqa: BLE001 - not an SSE data event
+            return None
+        if not isinstance(payload, dict):
+            return None
+        etype = payload.get("type")
+        ts = state.setdefault("native_tool", {})
+
+        if etype == "content_block_start":
+            block = payload.get("content_block") or {}
+            if block.get("type") != "tool_use":
+                return None               # text block: caller's buffering owns it
+            ts.clear()
+            ts.update(active=True, index=payload.get("index", 0), id=block.get("id"),
+                      name=block.get("name"), args="")
+            # The runtime parsed a call: the text-recovery path must stand down,
+            # exactly as it would have on seeing this event itself.
+            state["native"] = True
+            state["saw_tool_use"] = True
+            return []                     # hold until the arguments are known
+
+        if not ts.get("active"):
+            return None
+
+        if etype == "content_block_delta":
+            delta = payload.get("delta") or {}
+            if delta.get("type") != "input_json_delta":
+                return None
+            ts["args"] += delta.get("partial_json") or ""
+            return []
+
+        if etype == "content_block_stop":
+            ts["active"] = False
+            patched = complete_ui_metadata(ts.get("name"), ts["args"], tools,
+                                           state.get("ctx"))
+            if patched is not None:
+                state["completed_args"] = True
+                if AILOCAL_DEBUG:
+                    print(f"tool_repair: COMPLETED missing arg on {ts.get('name')}",
+                          flush=True)
+            return cls._native_tool_use_events(ts, patched or ts["args"])
+
+        return None
+
+    @classmethod
     def _anthropic_sse_repair(cls, raw, state, tools):
         """Recover malformed tool calls on the Anthropic SSE byte stream.
 
@@ -583,6 +816,13 @@ class ToolRepair(CustomLogger):
             text = raw.decode("utf-8", "ignore")
         except Exception:  # noqa: BLE001
             return [raw]
+
+        # A native tool_use block may still be missing a required argument. That
+        # is a different defect from everything below, so it is decided first;
+        # the helper returns None for every event it does not own.
+        completed = cls._anthropic_native_arg_repair(text, state, tools)
+        if completed is not None:
+            return completed
 
         # A real tool_use block means the runtime parsed it correctly -> stand down
         # for the rest of the stream.
@@ -859,6 +1099,18 @@ class ToolRepair(CustomLogger):
                     for c in buffered:
                         yield c
                     buffered = []
+
+            # A stream that ended mid tool_use block leaves the completion
+            # buffer holding events nobody will ever close. Emit them as
+            # received: a truncated call the client rejects is a visible
+            # failure, and swallowing it silently would be a worse one.
+            ts = sse_state.get("native_tool") or {}
+            if ts.get("active"):
+                ts["active"] = False
+                log.warning("tool_repair: stream ended inside a tool_use block — "
+                            "flushing it unrepaired")
+                for out in self._native_tool_use_events(ts, ts.get("args") or ""):
+                    yield out
 
             if suspect and not native_seen:
                 calls, leftover = recover(text, tools, _ctx(request_data, "/v1/chat/completions"))

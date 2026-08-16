@@ -127,6 +127,33 @@ litellm_settings:
     # qwen2.5-coder 0% -> 100%, devstral untouched (hook never fires). ~0.1-0.2ms.
     # Known unfixed upstream bug: ollama/ollama#16686 (PR #16693 open, stale).
     # Model-agnostic by design - keep it even after upstream lands a fix.
+    #
+    # SECOND, DISJOINT DEFECT in the same hook - complete_ui_metadata().
+    #   DEFECT    gemma4 emits a NATIVE, correctly-parsed Claude Code `Agent`
+    #             call and omits the required `description`. The client returns
+    #             InputValidationError and the model retries correctly, so the
+    #             user sees "Invalid tool parameters" before every fresh
+    #             delegation and pays a discarded round trip for it.
+    #   OWNER     the model. Ollama renders the schema correctly (gemma4 can
+    #             recite `description` as required) and its parser preserves the
+    #             arguments; LiteLLM and ailocal never touch them.
+    #   UPSTREAM  vllm-project/vllm#39072 - the same model omitting a different
+    #             required field on an entirely different serving stack. Open,
+    #             no fix, no maintainer response. No Ollama-side fix is possible
+    #             today: tool schemas go into the PROMPT and are NOT
+    #             grammar-constrained (ollama/ollama#6002).
+    #   OBSERVED  ollama 0.32.13 (== latest stable), gemma4:26b-mlx AND
+    #             non-MLX gemma4:26b. Direct /api/chat with the captured schema
+    #             and production sampling: 10/10 omitted on both builds; a
+    #             control tool with two required strings omitted 0/10. Real
+    #             claude-local sessions: 8/17 first Agent calls. One measured
+    #             recovery cost 18.0s and a discarded 14,474-token prefill.
+    #   FIX       add `description` (first 5 words of the model's own prompt)
+    #             when it is the ONLY missing required argument of `Agent`.
+    #             Nothing else, no other tool, no other field.
+    #   RETIRE    when the configured model emits required arguments reliably,
+    #             or Ollama constrains tool arguments to the schema. Check with
+    #             the direct /api/chat probe spelled out in that docstring.
     - /app/config/hooks/tool_repair.proxy_handler_instance
     - websearch_interception
     # Tool-payload measurement, and filtering when AILOCAL_TOOL_GATEWAY=filter.
