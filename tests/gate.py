@@ -87,6 +87,32 @@ def _refuse_on_generated_drift() -> None:
              "\n  (A later suite would regenerate this and hide the drift.)")
 
 
+def _refuse_on_stale_install(repo: pathlib.Path) -> None:
+    """The suites import the CHECKOUT; `ailocal` runs the INSTALLED package.
+
+    Every manual `ailocal start` afterwards exercises the second. Letting the
+    gate report success while those differ is what allowed a committed generator
+    change to be absent from the live runtime, with a green suite either side of
+    it.
+
+    This is NOT the generated-config drift below. That asks whether the
+    generated files match the current generator; this asks whether the generator
+    that will run is the one just tested. Checked FIRST, because a stale install
+    produces generated drift, and the remedy for a cause is not the remedy for
+    its symptom.
+    """
+    from ailocal.checks.install_parity import REMEDIATION, compare
+
+    ok, why = compare(repo)
+    if ok:
+        return
+    sys.exit(f"\n  {why}"
+             f"\n\n  {REMEDIATION}"
+             "\n  Refusing to run: PRECONDITION NOT MET."
+             "\n  (The suites would pass against the checkout and say nothing"
+             "\n   about the package `ailocal start` actually executes.)")
+
+
 def _gate_preconditions(repo: pathlib.Path) -> None:
     """Refuse rather than run a reduced set and report success."""
     container = S.CONTAINER
@@ -97,6 +123,7 @@ def _gate_preconditions(repo: pathlib.Path) -> None:
     if health not in ("healthy", ""):
         sys.exit(f"\n  {container} health is {health!r}, not healthy. Fix that "
                  "before trusting any result.")
+    _refuse_on_stale_install(repo)
     _refuse_on_generated_drift()
     # Container health means the proxy PROCESS is up, not that the router serves
     # /v1/models. 401 counts as ready: it proves the route answers.
@@ -161,6 +188,12 @@ def _gate_suites(repo: pathlib.Path, full: bool) -> list:
         ]),
         ("INVARIANTS", [
             ("generation is a fixed point", _fixed_point),
+            # The precondition already refused a stale install before any suite
+            # ran. This is the FROZEN behaviour of that refusal: that it detects
+            # drift at all, fails closed when nothing is installed, and stays
+            # distinct from generated-config drift.
+            ("installed package matches the checkout (source vs runtime)",
+             [py, "tests/install-parity.py"]),
             ("litellm runtime matches the validated version", _version_current),
             ("all shell scripts parse (bash -n)", _shell_parses),
             ("shell passes ShellCheck (warning+, skipped if absent)",
