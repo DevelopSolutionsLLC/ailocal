@@ -112,16 +112,22 @@ def main() -> None:
            / "tool_gateway.py").is_file(),
           "the proxy hooks ship in the wheel and are read from it")
     (state / "active-profile").write_text("64gb\n")
-    # .env is user configuration and is never shipped; synthesize one so the
-    # isolated stack has a key of its own rather than borrowing production's.
+    # Neither file is shipped, so both are synthesized here — with the SAME two
+    # owners the runtime uses, because `install` is what migrates a legacy
+    # combined `.env` and this suite deliberately never runs it. Writing the
+    # pre-split `$AILOCAL_CONFIG/.env` leaves the generated secrets where
+    # nothing reads them, and `start` then fails its pre-flight check.
+    #
     # BRAVE_API is a placeholder: settings.yml configures the engine, so
     # rendering requires a value, but this suite never issues a search and so
     # spends no quota.
-    (cfg / ".env").write_text("LITELLM_MASTER_KEY=sk-integration-test-only\n"
-                              "SEARXNG_SECRET=integration-test-only\n"
-                              "BRAVE_API=integration-test-placeholder\n"
-                              "OLLAMA_URL=http://host.docker.internal:11434\n")
-    (cfg / ".env").chmod(0o600)
+    (state / "env").write_text("LITELLM_MASTER_KEY=sk-integration-test-only\n"
+                               "SEARXNG_SECRET=integration-test-only\n")
+    (state / "env").chmod(0o600)
+    (cfg / ".env.local").write_text(
+        "BRAVE_API=integration-test-placeholder\n"
+        "OLLAMA_URL=http://host.docker.internal:11434\n")
+    (cfg / ".env.local").chmod(0o600)
 
     # THE POINT OF THIS SUITE. From here the source does not exist.
     shutil.rmtree(source)
@@ -169,7 +175,9 @@ def main() -> None:
         if not ok:
             # A health failure is useless without the reason, and the container
             # is removed moments later by `stop`.
-            state = subprocess.run(
+            # NOT `state` — that name is the state root, and rebinding it here
+            # destroys the path every later assertion needs.
+            inspected = subprocess.run(
                 ["docker", "inspect", f"{PROJECT}-litellm", "--format",
                  "{{.State.Status}} {{.State.ExitCode}} "
                  "{{range .State.Health.Log}}{{.Output}}{{end}}"],
@@ -177,7 +185,7 @@ def main() -> None:
             logs = subprocess.run(["docker", "logs", "--tail", "25",
                                    f"{PROJECT}-litellm"],
                                   capture_output=True, text=True)
-            detail = (state + "\n" + logs.stdout + logs.stderr)[-1200:]
+            detail = (inspected + "\n" + logs.stdout + logs.stderr)[-1200:]
         check(ok, "the isolated proxy becomes healthy", detail)
         ran("status", "status")
         ran("stop", "stop", timeout=300)
