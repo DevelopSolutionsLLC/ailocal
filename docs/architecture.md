@@ -119,9 +119,9 @@ Same directory as the policy root by default, different owner and lifecycle: thi
 
 `~/.zshrc` is created if absent and backed up (`.zshrc.bak.<timestamp>`, newest 3 kept) before either line is inserted.
 
-**Explicitly not touched:** `~/.claude` and `~/.codex` config (the cloud roots stay separate — the isolated roots are reached through `CLAUDE_CONFIG_DIR` / `CODEX_HOME` in the wrappers), anything under Git, and any container not named `ailocal-*`. The one exception is `lsp_baseline()`, which enables the official LSP plugin for each language server already present (Python, TypeScript, Go, C/C++) in both the isolated root and `~/.claude` — that wires up language servers you already installed, not routing configuration.
+**Explicitly not touched:** `~/.claude` and `~/.codex` config (the cloud roots stay separate — the isolated roots are reached through `CLAUDE_CONFIG_DIR` / `CODEX_HOME` in the wrappers), anything under Git, and any container not named `ailocal-*`. `lsp_baseline()` enables the official LSP plugin for each language server already present (Python, TypeScript, Go, C/C++) in the isolated root **only**; it used to run against `~/.claude` too, and no longer does — hosted Claude never traverses ailocal, and plugin state is per config root, so provisioning the hosted client bought `claude-local` nothing.
 
-**Uninstalling** is therefore: `ailocal teardown` (containers + LaunchAgents), delete the two roots, remove the two `~/.zshrc` lines, and — if you want the disk back — `/Users/Shared/ollama/models`. The LSP plugins enabled in `~/.claude` are the one thing that outlives all of that.
+**Uninstalling** is therefore: `ailocal teardown` (containers + LaunchAgents), delete the two roots, remove the two `~/.zshrc` lines, and — if you want the disk back — `/Users/Shared/ollama/models`. Nothing outlives that any more: the LSP plugins live in the isolated root and go with it.
 
 ---
 

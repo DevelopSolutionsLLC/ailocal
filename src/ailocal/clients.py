@@ -656,9 +656,17 @@ def target_claude() -> None:
 
     step("LSP baseline (ailocal-owned minimum)")
     lsp_baseline(home, "claude-local")
-    lsp_baseline(Path.home() / ".claude", "claude (cloud)")
+    # ~/.claude IS NOT PROVISIONED HERE, deliberately. This used to also run
+    # against the hosted root ("claude (cloud)", carried forward from
+    # install-clients.sh). No product requirement justified it: hosted Claude
+    # never traverses ailocal, and plugin state is PER CONFIG ROOT, so
+    # claude-local is fully functional from the root above alone. What the call
+    # did do was write state into a client ailocal does not own, which then
+    # outlived `ailocal teardown`. Hosted plugins belong to the user, via
+    # `/plugin`; Cadence reports which are missing per root.
     info("language servers: ailocal enables the PLUGIN for a server you already "
-         "have — it never installs a language ecosystem")
+         "have, in its OWN root only — it never installs a language ecosystem "
+         "and never touches ~/.claude")
 
 
 #: language -> (official plugin, server binary, the command that installs it).
@@ -705,9 +713,9 @@ def lsp_baseline(root: Path, label: str) -> None:
     be INSTALLED into that root. This runs the official `claude plugin` CLI per
     root rather than reimplementing any of that state.
 
-    Applied to the isolated root AND to ~/.claude — this wires up a binary the
-    user already has, not routing configuration, so cloud client CONFIG is still
-    never touched.
+    THE ISOLATED ROOT ONLY. Callers must not point this at ~/.claude: the hosted
+    client is the user's, it does not traverse ailocal, and per-root plugin state
+    means provisioning it buys claude-local nothing.
     """
     if not shutil.which("claude"):
         return skip(f"claude not on PATH — no LSP baseline ({label})")

@@ -184,10 +184,14 @@ absent is skipped, with the command that would fix it.
 | Go | `gopls` | `brew install gopls` | `gopls-lsp` |
 | C/C++ | `clangd` | `xcode-select --install` | `clangd-lsp` |
 
-Install a server, re-run `ailocal clients claude`, and the plugin follows. Plugin
-state is **per config root**, which is why this runs against the isolated root and
-`~/.claude` separately — a fresh root starts with no marketplaces and no plugins
-whatever the other root has.
+Install a server, re-run `ailocal clients claude`, and the plugin follows — in
+**ailocal's own root only**. Plugin state is per config root: a fresh root starts
+with no marketplaces and no plugins whatever `~/.claude` holds, so the isolated
+root is self-sufficient and nothing here depends on your hosted client.
+
+Your hosted `claude` is **yours** — ailocal does not add plugins to it. If you
+want the same languages there, run `/plugin` in a hosted session once. `cadence
+capabilities` reports both roots separately so you can see which is missing what.
 
 **There is no Bash plugin.** The official marketplace publishes 13 LSP plugins and
 none of them is bash, so `bash-language-server` on PATH is unreachable from Claude
