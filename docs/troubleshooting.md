@@ -125,7 +125,7 @@ ailocal check     # reports whether the model is resident and whether a
 
 Memory and swap staying flat while the model is resident means it is working, not stuck.
 
-**Fix** — wait. `API_TIMEOUT_MS` is pinned to the proxy's own 900 s so the client and proxy give up together instead of the client abandoning a request the backend keeps servicing. To avoid the stall, keep sessions shorter or use a smaller capability for routine work.
+**Fix** — wait; client and proxy share a 900 s timeout and give up together. To avoid the stall, keep sessions shorter or use a smaller capability for routine work.
 
 **Status** — hardware limitation.
 
@@ -208,9 +208,9 @@ $EDITOR ~/.config/ailocal/.env.local    # set BRAVE_API=your-key
 ailocal start                     # re-renders the settings with the key
 ```
 
-`.env.local` is yours: `ailocal install` creates it once and never writes it again, so your keys survive every upgrade. ailocal's own generated secrets live separately, in `$AILOCAL_STATE/env`. The rendered settings live at `$AILOCAL_STATE/searxng/settings.yml`, outside the repository, mode `0600`, and are never committed.
+`.env.local` is yours and survives every upgrade; see [security.md](security.md) for where each secret lives.
 
-Search is deliberately coding-first: scraped general-web engines are disabled because they degrade under sustained use and fail with CAPTCHAs. Brave's API-backed engine is how general-web coverage comes back.
+Search is coding-first: scraped general-web engines are disabled because they fail with CAPTCHAs under sustained use. Brave's API-backed engine restores general-web coverage.
 
 **Status** — configuration issue.
 

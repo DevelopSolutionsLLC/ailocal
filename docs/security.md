@@ -29,7 +29,7 @@ The threat model is a developer workstation: it protects against accidental expo
 | `SEARXNG_SECRET` | `$AILOCAL_STATE/env` (generated) | gitignored |
 | Rendered SearXNG settings | `$AILOCAL_STATE/searxng/settings.yml` | mode `0600`, **outside the checkout** |
 
-**Why the rendered settings live outside the repository.** SearXNG has no environment interpolation for an engine's `api_key`: its settings loader supports a fixed allow-list of variables and no `${VAR}` substitution, so the Brave key cannot be passed the way `SEARXNG_SECRET` is. The tracked `resources/deploy/searxng/settings.yml` therefore carries a placeholder and the rendered copy is written to the state root. Being outside Git's tree makes committing it impossible rather than merely discouraged.
+SearXNG's settings loader supports no `${VAR}` substitution for an engine's `api_key`, so the Brave key cannot be passed as an environment variable the way `SEARXNG_SECRET` is. The tracked `resources/deploy/searxng/settings.yml` carries a placeholder; the rendered copy holding the key is written to the state root, outside Git's tree.
 
 No secret appears in the generation manifest, in generated artifacts, in logs, or in captured evidence, which redacts key-shaped content before persisting.
 
@@ -65,8 +65,7 @@ The proxy container sees only what it needs:
 
 | Mount | Access | Contents |
 |---|---|---|
-| `/app/config` | read-only | authored hooks, registry, template |
-| `/app/instructions` | read-only | personas |
+| `/app/config` | read-only | authored hooks, registry, config template |
 | `/app/generated` | read-only | generated proxy configuration |
 | `/app/captures` | writable | the only path the proxy may write |
 

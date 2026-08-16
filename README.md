@@ -44,7 +44,7 @@ brew install --cask docker-desktop ollama-app
 brew install pipx
 ```
 
-You do not need to install Python or set up a virtual environment. Homebrew's `pipx` brings its own Python and keeps ailocal isolated for you.
+`pipx` brings its own Python — you do not need to install Python or set up a virtual environment.
 
 **Language servers** are optional and only matter for Claude Code. Install the ones for
 languages you work in; ailocal enables the matching plugin for each server it finds. See
@@ -179,11 +179,11 @@ instead — static analysis, not LSP.
 
 ## Web search
 
-Web search works. `claude-local` can search the live web: the request is intercepted by the local proxy, executed against ailocal's own SearXNG instance, and the results go back to the model, which answers with sources.
+`claude-local` searches the live web: the local proxy intercepts the request, runs it against ailocal's own SearXNG instance, and returns results the model answers with sources.
 
-Claude Code may still display **0 searches** even when the answer is clearly sourced. That counter tracks Anthropic-hosted search, which never runs here; retrieval still happened.
+Claude Code may display **0 searches** on a clearly sourced answer. That counter tracks Anthropic-hosted search, which never runs here; retrieval still happened.
 
-**Brave Search is optional.** Without a key, search uses the keyless engines and keeps working — a fresh install needs nothing. Adding a Brave API key turns on an API-backed general-web engine, which is more reliable than the keyless ones for broad questions:
+**Brave Search is optional.** Without a key, search uses the keyless engines. Adding a Brave API key enables an API-backed general-web engine, which is more reliable for broad questions:
 
 ```bash
 $EDITOR ~/.config/ailocal/.env.local    # set BRAVE_API=your-key
@@ -205,7 +205,7 @@ ailocal measures your Mac's memory and chooses a profile automatically. You do n
 
 ailocal never picks a profile your machine cannot hold. To override it: `ailocal profile use 32gb`, then `ailocal start`.
 
-A long conversation compacts automatically before it reaches that window — your client does the compacting, and ailocal supplies the point at which it starts, sized to what your hardware can process without a long pause. The full window stays available for one-off large requests.
+A long conversation compacts automatically before it reaches that window. Your client does the compacting; ailocal supplies the threshold. The full window stays available for one-off large requests.
 
 To change which model a profile uses, edit the file in `~/.config/ailocal/profiles/` and run `ailocal start`. Your edits are preserved across upgrades.
 

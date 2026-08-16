@@ -46,10 +46,14 @@ Run `installed-runtime` whenever packaging, resources or provisioning change. Ru
 
 `deploy/` and `clients/` are read straight from the package, so editing them takes effect on the next `ailocal start`. Editing `profiles/` under `src/` changes only the SHIPPED DEFAULT; the live policy is the copy in the config root, which `ailocal install` preserves once you have edited it.
 
-Two ordering rules, both of which have caused silent failures:
+The runtime executes the INSTALLED package, so after changing anything under `src/ailocal/`:
 
-- **`ailocal start` runs the INSTALLED generator, not your checkout.** After changing anything under `src/ailocal/`: `pipx install --force .` **then** `ailocal start`. Reversed, `start` regenerates from the stale package and reverts your change. The gate refuses to run on this condition; `PYTHONPATH=src python -m ailocal.generation` is a check, not a fix, because it leaves the installed package stale.
-- **End every reinstall with `ailocal start`.** `pipx install --force` recreates the venv and replaces the `deploy/litellm` directory bind-mounted into `ailocal-litellm` as `/app/config`. The container keeps the old inode, so the mount goes empty while `docker ps` still reports healthy and the proxy still answers 200. `ailocal check` reports this state.
+```sh
+pipx install --force .   # then
+ailocal start
+```
+
+Both halves are required, in that order. `ailocal start` regenerates from the installed package, so starting first reverts the change; the gate refuses to run on this condition. A reinstall replaces the `deploy/litellm` directory bind-mounted into the container, which keeps the old inode and serves an empty mount while still reporting healthy, so `ailocal start` must follow to recreate it. `ailocal check` reports both states. Running the generator from the checkout (`PYTHONPATH=src python -m ailocal.generation`) is a check, not a fix.
 
 ## Generated state
 
