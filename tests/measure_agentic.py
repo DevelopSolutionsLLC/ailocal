@@ -13,12 +13,14 @@ human reads the table and decides.
 
 FOUR THINGS ARE MEASURED, because decode tok/s alone picks the wrong model:
 
-  decode + acceptance   tok/s from the API, paired with the `speculate_stats`
-                        line the MLX runner emits for that same request. Ollama
-                        0.32.13 runs MTP speculative decoding ON BY DEFAULT with
+  decode + acceptance   median tok/s over several runs, paired with whatever
+                        `speculate_stats` the MLX runner wrote during them.
+                        Ollama runs MTP speculative decoding ON BY DEFAULT with
                         a runtime depth controller -- no flag, no DRAFT
-                        directive. A candidate with no drafter weights simply
-                        emits no stats line, and that absence IS the finding.
+                        directive. The runner does NOT emit one stats line per
+                        request, so a run with no line proves nothing on its
+                        own; only a model that reports none across every repeat
+                        is evidence it is not drafting.
   prefill cold + warm   what Claude Code actually waits on. The warm repeat
                         exercises the runner's prefix trie; the gap between the
                         two is the real cost of a cache miss.
@@ -26,10 +28,11 @@ FOUR THINGS ARE MEASURED, because decode tok/s alone picks the wrong model:
                         correctness question at least as much as a speed one.
   resident              GiB at depth, which is what the 64 GB profile rests on.
 
-SAMPLING: each candidate runs at ITS OWN VENDOR-RECOMMENDED settings, not at the
-profile's temp 0.1. Draft acceptance is temperature-sensitive, so measuring both
-models at one arbitrary temperature would compare the setting, not the models.
-What ailocal should then SHIP is a separate decision this script only informs.
+SAMPLING: each candidate runs at ITS OWN VENDOR-RECOMMENDED settings, so neither
+is measured off-spec. This turned out NOT to be a throughput question: gemma4
+accepted 0.79 of its drafts at temp 0.1 and 0.77 at temp 1.0, a difference far
+inside the run-to-run spread. Sampling is therefore an output-QUALITY decision
+for the profiles, not a speed one, and this script does not settle it.
 
 TWO LABELS, kept apart deliberately:
   [REAL]    produced through the real runner on this machine.
@@ -51,6 +54,7 @@ import argparse
 import json
 import pathlib
 import re
+import statistics
 import subprocess
 import sys
 import time
@@ -198,26 +202,66 @@ def speculation_since(offset):
 
 # ── probes ──────────────────────────────────────────────────────────────────
 
-def decode(model, opts, think, want=512):
-    """Sustained decode rate on a short prompt, with the speculation it used.
+def decode(model, opts, think, want=512, repeats=5):
+    """Sustained decode rate, REPEATED, with the speculation it used.
 
     The prompt asks for bulk generation on purpose: acceptance on predictable
     code text is the case the profiles actually care about, and it is also the
     case the vendors quote their speedups from.
+
+    Repeated because a single sample is not a rate. Measured on this machine,
+    four identical runs at one fixed setting spread 68.7-100.8 tok/s with an
+    outlier at 2.9 -- OLLAMA_NUM_PARALLEL is 2 and other models stay resident,
+    so a probe can land beside someone else's work. That spread is wider than
+    the difference between any two sampling settings, which means a single-shot
+    number invites a conclusion the measurement cannot support. The MEDIAN
+    resists the outlier; the spread is reported beside it so nobody reads three
+    significant figures into it.
+
+    Acceptance is aggregated across the repeats for a second reason: the runner
+    does NOT emit one stats line per request. Observed 4/4 in one batch and 2/4
+    in the next at identical settings, so a missing line means "not reported
+    this run", never "did not draft". `reported` carries that denominator.
     """
-    off = log_offset()
-    r = api("/api/generate", {
-        "model": model,
-        "prompt": "Write a Python function that validates an IPv4 address, "
-                  "with a docstring and three unit tests. Code only.",
-        "stream": False, "think": think,
-        "options": {**opts, "num_ctx": NUM_CTX, "num_predict": want},
-        "keep_alive": "120s"})
-    n = r.get("eval_count", 0)
-    secs = r.get("eval_duration", 0) / 1e9
-    # `off is None` is unreadable-log, which is NOT the same claim as "drafted
-    # nothing". The caller must be able to tell them apart.
-    return n, secs, r.get("done_reason", "?"), speculation_since(off), off is not None
+    rates, accs, reason = [], [], "?"
+    log_ok = False
+    for _ in range(repeats):
+        off = log_offset()
+        # `off is None` is unreadable-log, which is NOT the same claim as
+        # "drafted nothing". Tracked separately so the caller can tell them
+        # apart rather than reporting a missing file as a model property.
+        log_ok = log_ok or off is not None
+        r = api("/api/generate", {
+            "model": model,
+            "prompt": "Write a Python function that validates an IPv4 address, "
+                      "with a docstring and three unit tests. Code only.",
+            "stream": False, "think": think,
+            "options": {**opts, "num_ctx": NUM_CTX, "num_predict": want},
+            "keep_alive": "120s"})
+        n = r.get("eval_count", 0)
+        secs = r.get("eval_duration", 0) / 1e9
+        reason = r.get("done_reason", "?")
+        if n and secs:
+            rates.append(n / secs)
+        st = speculation_since(off)
+        if st:
+            accs.append(st)
+    if not rates:
+        return None, reason, None, log_ok
+    stat = {
+        "median": statistics.median(rates),
+        "lo": min(rates), "hi": max(rates), "runs": len(rates),
+    }
+    spec = None
+    if accs:
+        spec = {
+            "acceptance": statistics.median(a["acceptance"] for a in accs),
+            "avg_accepted": statistics.median(a["avg_accepted"] for a in accs),
+            "avg_draft": statistics.median(a["avg_draft"] for a in accs),
+            "max_draft": max(a["max_draft"] for a in accs),
+            "reported": len(accs), "of": repeats,
+        }
+    return stat, reason, spec, log_ok
 
 
 def prefill_pair(model, depth, opts):
@@ -348,7 +392,7 @@ def gateway_probe():
 
 # ── report ──────────────────────────────────────────────────────────────────
 
-def run(model, spec, depths, rounds, quick):
+def run(model, spec, depths, rounds, quick, repeats):
     print(f"\n{'='*72}\n{model}   engine={engine_of(model)}\n  {spec['label']}")
     opts, think = spec["options"], spec["think"]
     print(f"  sampling     {opts}  think={think}   [vendor-recommended]")
@@ -357,17 +401,18 @@ def run(model, spec, depths, rounds, quick):
     if base:
         print(f"  weights      {base/GIB:.2f} GiB resident, no KV yet")
 
-    n, secs, why, spec_stats, log_ok = decode(model, opts, think)
-    if n and secs:
-        print(f"  decode       {n} tokens in {secs:.1f}s = {n/secs:.1f} tok/s "
-              f"(done_reason={why})")
+    rate, why, spec_stats, log_ok = decode(model, opts, think, repeats=repeats)
+    if rate:
+        print(f"  decode       median {rate['median']:.1f} tok/s "
+              f"(spread {rate['lo']:.1f}-{rate['hi']:.1f} over {rate['runs']} "
+              f"runs, done_reason={why})")
     else:
         print(f"  decode       produced nothing (done_reason={why})")
     if spec_stats:
-        print(f"  speculation  acceptance {spec_stats['acceptance']:.2f} over "
-              f"{spec_stats['batches']} batches, avg_accepted "
-              f"{spec_stats['avg_accepted']:.2f} of avg_draft "
-              f"{spec_stats['avg_draft']:.1f} (max {spec_stats['max_draft']})")
+        print(f"  speculation  acceptance {spec_stats['acceptance']:.2f} median, "
+              f"avg_accepted {spec_stats['avg_accepted']:.2f} of avg_draft "
+              f"{spec_stats['avg_draft']:.1f} (max {spec_stats['max_draft']}) "
+              f"— reported by {spec_stats['reported']}/{spec_stats['of']} runs")
     elif not log_ok:
         print("  speculation  UNAVAILABLE — the running server's log target is "
               "gone (see ~/Library/Logs/ailocal). Not a claim about drafting.")
@@ -405,6 +450,8 @@ def main(argv=None):
                     help="default: every candidate")
     ap.add_argument("--quick", action="store_true",
                     help="8K depth only and no tool loop; smokes the plumbing")
+    ap.add_argument("--repeats", type=int, default=5,
+                    help="decode samples per model; a single one is not a rate")
     ap.add_argument("--rounds", type=int, default=8,
                     help="tool-loop repetitions per model (default 8)")
     ap.add_argument("--gateway", action="store_true",
@@ -428,7 +475,7 @@ def main(argv=None):
         if not spec:
             print(f"\n{model}: not a known candidate, skipped")
             continue
-        run(model, spec, depths, args.rounds, args.quick)
+        run(model, spec, depths, args.rounds, args.quick, args.repeats)
 
     if args.gateway:
         print(f"\n{'='*72}\ngateway (ailocal-architecture -> incumbent)")
