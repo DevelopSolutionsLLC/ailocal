@@ -49,7 +49,7 @@ OLLAMA_ENV = {
     # 4, not 5, and not 3. The tier needs THREE distinct models, not five: the
     # architecture, implementation and review roles all point at ONE
     # gemma4:26b-mlx and share a single resident copy, so three roles cost one
-    # model. The other two are qwen3.5:2b (fast) and qwen2.5-coder:3b
+    # model. The other two are qwen3.5:9b (fast) and qwen2.5-coder:3b
     # (completion). The fourth slot is nomic-embed-text, which is NOT in any
     # profile -- it is served by this same Ollama for indexing outside ailocal,
     # and it still occupies a slot.
@@ -61,7 +61,32 @@ OLLAMA_ENV = {
     # candidate. Paying a ~30 s reload of the large model to admit the small one
     # is the thrash worth avoiding.
     "OLLAMA_MAX_LOADED_MODELS": "4",
-    "OLLAMA_NUM_PARALLEL": "2",
+    # 1, not 2. [REAL] 2026-08-21, Ollama 0.32.14. When the scheduler actually
+    # uses two slots it DIVIDES the declared window between them, so a role gets
+    # half the context its profile declares. Read straight off the runner for
+    # qwen2.5-coder:3b at num_ctx 4480:
+    #     np=2 -> "4608 cells, 2/2 seqs",  n_ctx_slot = 2304
+    #     np=1 -> "4608 cells, 1 slot",    n_ctx_slot = 4608
+    # The completion role declares 3968 max_input; under np=2 the runner could
+    # only hold 2304, so LiteLLM's pre-call guard would admit a request the
+    # backend then had to cut. Under np=1 a 3,020-token prompt is evaluated
+    # whole (prompt_eval_count 3020, verified on two CONCURRENT callers).
+    #
+    # Nothing loses by dropping to 1. Every model large enough to matter ALREADY
+    # runs single-slot -- the scheduler lowers parallelism itself at working
+    # window sizes, observed as `-np 1` on every qwen3.5 launch (135168 and
+    # 262144 both allocated their full declared cells at 1/1 seqs) -- and the
+    # MLX runner never sees this variable at all. So `2` was reaching exactly
+    # the models it hurt: the 4,480-token completion tier and the 2,048-token
+    # embedder. Two concurrent requests still both succeed; they queue on the
+    # single slot (measured 2.6 s wall for a pair, no reload, no error).
+    #
+    # SEPARATE and UNCHANGED: a prompt larger than the slot is front-truncated
+    # by `--context-shift --keep 4` with HTTP 200 and no error to the caller.
+    # That is a llama.cpp behaviour, not a parallelism one, and np=1 does not
+    # cure it -- it only makes the slot as large as the profile says. See
+    # registry.yaml's llama_cpp runtime_engines block.
+    "OLLAMA_NUM_PARALLEL": "1",
     # These last two reach the llama_cpp runner ONLY, where they become
     # `--flash-attn on --cache-type-k q8_0 --cache-type-v q8_0`. The MLX runner
     # accepts neither: it uses MLX's own fused attention and an unquantized KV
@@ -295,6 +320,23 @@ def _wait(predicate, attempts: int, delay: float) -> bool:
 
 # ── Ollama environment and login agents ─────────────────────────────────────
 
+def _write_ollama_setenv_agent() -> None:
+    """Login agent that publishes OLLAMA_ENV into the user's session.
+
+    SECOND consumer of the same dict. `com.ailocal.ollama` bakes OLLAMA_ENV into
+    the SERVER's own environment; this one publishes it to user shells, so a
+    bare `ollama` CLI call sees what the daemon sees.
+
+    It must be rewritten wherever the server agent is, or the two drift. Observed
+    on a real install: the server plist carried KEEP_ALIVE 6h / MAX_LOADED 4
+    while this agent still carried the superseded -1 / 5, because a normal
+    install rewrote the first and only `--env-only` rewrote the second. Reading
+    either one then implied a different runtime than the server actually had.
+    """
+    setenv = "; ".join(f"launchctl setenv {k} {v}" for k, v in OLLAMA_ENV.items())
+    _write_agent("com.ailocal.ollama-env", ["/bin/sh", "-c", setenv])
+
+
 def _write_agent(label: str, program: list[str], *, keep_alive: bool = False,
                  env: dict | None = None, calendar: dict | None = None) -> Path:
     LA_DIR.mkdir(parents=True, exist_ok=True)
@@ -392,8 +434,7 @@ def configure_ollama_services(env_only: bool, role: str = "architecture") -> int
         for k, v in OLLAMA_ENV.items():
             _run("launchctl", "setenv", k, v)
             ok(f"{k}={v}")
-        setenv = "; ".join(f"launchctl setenv {k} {v}" for k, v in OLLAMA_ENV.items())
-        _write_agent("com.ailocal.ollama-env", ["/bin/sh", "-c", setenv])
+        _write_ollama_setenv_agent()
         print("\n  ▶ Quit Ollama (menubar → Quit) and reopen it; the server reads "
               "these only at startup.")
         return 0
@@ -419,6 +460,13 @@ def configure_ollama_services(env_only: bool, role: str = "architecture") -> int
     _write_agent("com.ailocal.ollama", [binary, "serve"], keep_alive=True,
                  env=OLLAMA_ENV)
     ok(f"ollama serve managed by launchd (env baked in, logs in {LOG_DIR})")
+
+    # Same dict, second consumer. Written HERE as well as in --env-only, so the
+    # daemon's environment and the one published to user shells cannot disagree.
+    _write_ollama_setenv_agent()
+    for k, v in OLLAMA_ENV.items():
+        _run("launchctl", "setenv", k, v)
+    ok("session env matches the server's (com.ailocal.ollama-env refreshed)")
 
     # The agent must never carry a baked model tag, or it warms a model the
     # profile has since replaced. Resolve through the command at run time.
