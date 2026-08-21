@@ -21,10 +21,23 @@ DESIGN COMMITMENTS
    active profile. Duplicating it here would create two sources that drift apart
    after a profile change. The registry's own max_context is a fallback for
    classes with no generated entry (cloud models).
-4. **Capability match precedes model-name match.** ailocal's compat aliases
-   (claude-sonnet-4-6, gpt-4o) resolve through model_group_alias to LOCAL
-   capabilities. Matching names first would classify them as frontier and pass
-   them through unfiltered — the exact opposite of intent.
+4. **Classification follows the BACKING MODEL, then the slot.** A capability
+   (architecture, implementation, review, fast) is a ROLE, not a model. Several
+   roles routinely share one set of weights — on the 64/128 GB profiles all
+   three of architecture, implementation and review are gemma4:26b-mlx, and on
+   16/32 GB a single qwen3.5 serves all four. Matching the role first therefore
+   handed one model two or three contradictory capability declarations
+   depending only on which alias the request arrived under. So the order is:
+
+     1. the resolved BACKEND model (from the generated model_list) by pattern
+     2. the capability/role, as a policy fallback for a backend we do not name
+     3. the raw requested name by pattern
+     4. `unknown` (fails open)
+
+   Step 1 still protects the compat aliases that motivated the original
+   capability-first rule: `claude-sonnet-4-6` resolves to a backend of
+   `gemma4:26b-mlx`, which cannot match `claude-*`. Step 3 is reached only by a
+   model with no ailocal backend at all — a genuine frontier passthrough.
 """
 
 import fnmatch
@@ -55,6 +68,7 @@ class Registry:
         self.doc = {}
         self.contexts = {}      # capability -> max_context (generated)
         self.alias = {}         # compat name -> ailocal-<capability>
+        self.backends = {}      # capability -> backing model (generated)
         self._load(caps_json or CAPS_JSON, config_path or CONFIG_PATH)
 
     # ── loading ─────────────────────────────────────────────────────────────
@@ -91,6 +105,18 @@ class Registry:
                 cfg = yaml.safe_load(f) or {}
             self.alias = dict((cfg.get("router_settings") or {}).get(
                 "model_group_alias") or {})
+            # capability -> backing model, so classification can describe the
+            # weights rather than the role (commitment 4). The provider prefix
+            # is stripped: registry patterns name models, not deployments.
+            for entry in (cfg.get("model_list") or []):
+                name = entry.get("model_name") or ""
+                backend = ((entry.get("litellm_params") or {}).get("model")
+                           or "")
+                if not name or not backend:
+                    continue
+                if name.startswith("ailocal-"):
+                    name = name[len("ailocal-"):]
+                self.backends[name] = backend.split("/", 1)[-1]
         except Exception:
             pass
 
@@ -104,23 +130,48 @@ class Registry:
         name = self.alias.get(model, model) or ""
         return name[len("ailocal-"):] if name.startswith("ailocal-") else name
 
+    def backend_of(self, model):
+        """Requested model name -> the model actually serving it, or None.
+
+        None means this deployment has no backend for it, which is itself the
+        signal that the name belongs to something we do not host.
+        """
+        return self.backends.get(self.capability_of(model))
+
     def model_class(self, model):
         """(class_name, class_dict) for a requested model name.
 
-        Capability match first (see commitment 4), then glob on the raw name.
-        Returns (None, {}) when nothing matches, which every caller must treat
-        as 'no opinion'.
+        Backend model first, then the capability/role, then the raw name — see
+        commitment 4 for why that order and not the reverse. Returns (None, {})
+        when nothing matches, which every caller must treat as 'no opinion'.
         """
         classes = (self.doc.get("model_classes") or {})
         capability = self.capability_of(model)
+        backend = self.backend_of(model)
 
+        def by_name(candidate, allow_universal):
+            for name, spec in classes.items():
+                for pattern in spec.get("match_models") or []:
+                    # The `*` catch-all is a LAST-resort class, so it must not
+                    # win at the backend stage — every backend matches it, and
+                    # that would starve the capability stage below of any
+                    # class it could ever answer (local_completion is
+                    # capability-only and would become unreachable).
+                    if pattern == "*" and not allow_universal:
+                        continue
+                    if candidate and fnmatch.fnmatch(candidate, pattern):
+                        return name, spec
+            return None, None
+
+        name, spec = by_name(backend, False)
+        if spec is not None:
+            return name, spec
         for name, spec in classes.items():
             if capability and capability in (spec.get("match_capabilities") or []):
                 return name, spec
-        for name, spec in classes.items():
-            for pattern in spec.get("match_models") or []:
-                if model and fnmatch.fnmatch(model, pattern):
-                    return name, spec
+        name, spec = by_name(model, True)
+        if spec is not None:
+            return name, spec
         return None, {}
 
     def supports(self, model, feature):
