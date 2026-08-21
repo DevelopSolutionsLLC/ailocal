@@ -62,6 +62,33 @@ def main() -> None:
           "shipped, not what is on disk)")
     check(edited.read_text() == keep, "and is still not overwritten")
 
+    _suite.section("--reset-config TAKES THE DEFAULT, AFTER BACKING THE EDIT UP")
+    # The whole point of the flag is to override the preservation asserted
+    # above, so it is tested immediately after it and against the SAME edit.
+    shipped_64 = (RESOURCES / "profiles" / "64gb.toml").read_text()
+    report = I.provision(RESOURCES, cfg, state, reset=True)
+    check(report["preserved"] == [],
+          "reset preserves nothing: an edited file is no longer exempt")
+    check(edited.read_text() == shipped_64,
+          "the edited profile now matches what was shipped")
+    backup = report.get("backup")
+    check(backup is not None and (backup / "profiles" / "64gb.toml").is_file(),
+          "the operator's version was copied to a backup FIRST",
+          repr(backup))
+    check(backup is not None
+          and (backup / "profiles" / "64gb.toml").read_text() == keep,
+          "and the backup holds the edit byte-for-byte, not the default")
+    check(not (backup / "profiles" / "32gb.toml").exists(),
+          "only files it was about to replace are backed up, not the whole tree")
+
+    report = I.provision(RESOURCES, cfg, state, reset=True)
+    check(report.get("backup") is None,
+          "a reset with nothing edited creates no backup directory")
+
+    # Restore the edit so the sections below still describe an edited tree.
+    edited.write_text(keep)
+    I.provision(RESOURCES, cfg, state)
+
     _suite.section("A DELETED DEFAULT IS REPORTED, NEVER RESURRECTED")
     (cfg / "profiles" / "16gb.toml").unlink()
     report = I.provision(RESOURCES, cfg, state)
@@ -69,6 +96,15 @@ def main() -> None:
           "a default the operator removed is reported")
     check(not (cfg / "profiles" / "16gb.toml").exists(),
           "and it is not written back")
+
+    I.provision(RESOURCES, cfg, state, reset=True)
+    check((cfg / "profiles" / "16gb.toml").is_file(),
+          "reset DOES write back a deleted default: the operator asked for the "
+          "shipped tree, and a hole is not part of it")
+    # That reset also took the default for 64gb.toml, by design. Put the edit
+    # back so the sections below still describe an edited tree.
+    edited.write_text(keep)
+    I.provision(RESOURCES, cfg, state)
 
     _suite.section("A CORRUPT MANIFEST NEVER LICENSES AN OVERWRITE")
     (state / I.MANIFEST_NAME).write_text("{ not json")
