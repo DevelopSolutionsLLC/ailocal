@@ -262,10 +262,25 @@ runtime_engines:
     evidence: >-
       re-measured on Ollama 0.32.14. A runner loaded at num_ctx 20480 was handed
       a ~40K-token prompt and reported prompt_eval_count 10243 -- HALF the
-      window, because OLLAMA_NUM_PARALLEL 2 splits it into two slots. The caller
-      got HTTP 200 and no error either way: the front of the prompt is simply
-      gone. This is why admission policy stays conservative and why LiteLLM's
-      pre-call guard is the only layer that fails loudly.
+      window. The caller got HTTP 200 and no error: the front of the prompt is
+      simply gone. This is why admission policy stays conservative and why
+      LiteLLM's pre-call guard is the only layer that fails loudly.
+      NUM_PARALLEL, resolved 2026-08-21 after several wrong readings. Two
+      DIFFERENT effects were being confused, and both are real:
+      (1) SLOT SIZING. When the scheduler uses more than one slot it divides
+      the declared window between them. Read off the runner for
+      qwen2.5-coder:3b at num_ctx 4480: np=2 gives n_ctx_slot 2304, np=1 gives
+      n_ctx_slot 4608. Ollama decides per load and lowers parallelism itself at
+      working window sizes, which is why every qwen3.5 launch carried `-np 1`
+      with its full declared cells. ailocal now ships OLLAMA_NUM_PARALLEL=1 so
+      a declared window is the real one on every role (see install.py).
+      (2) TRUNCATION, the finding above. A prompt larger than the SLOT is
+      front-truncated by `--context-shift --keep 4` with HTTP 200. This is
+      independent of parallelism and np=1 does not cure it; it only makes the
+      slot as large as the profile declares. Confirmed after the change: a
+      4,670-token prompt into a 4,608-token slot still came back with
+      prompt_eval_count 2242, while a 3,020-token prompt was evaluated whole.
+      An earlier note here blamed (2) on (1). It did not; they compound.
     tested_ollama: "0.32.14"
     tested_on: "2026-08-21"
     confidence: VERIFIED
