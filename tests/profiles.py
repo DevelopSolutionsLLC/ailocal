@@ -544,31 +544,52 @@ def hardware_checks() -> None:
                   f"64={c64[cap].get(field)!r} 128={c128[cap].get(field)!r}")
 
     check(int(c64["architecture"]["context_input"]) + int(c64["architecture"]["max_output"])
-          == 180224,
-          "64gb architecture total_context is 180224")
+          == 196608,
+          "64gb architecture total_context is 196608")
 
-    # THE OUTPUT-CEILING POLICY, by ROLE and identical on every tier. No model
-    # here caps num_predict below its context, so these are policy choices, not
-    # capabilities -- which is exactly why they belong in one asserted table
-    # rather than drifting per tier.
+    # THE OUTPUT-CEILING POLICY, by ROLE and by ENGINE CLASS. It stopped being
+    # one table on 2026-08-21, because the two runners do not charge for a
+    # ceiling the same way and pretending otherwise forced the MLX tiers down to
+    # what llama_cpp can afford.
     #
+    # llama_cpp (16/32 GB): KV is allocated EAGERLY for the whole window, so a
+    # larger ceiling is paid for out of that role's own context_input, up front,
+    # whether or not the tokens are ever produced. The ceilings stay modest:
     #   architecture 16384  long design documents
     #   implementation 8192 large code generation without spending input budget
     #   review       16384  long review reports
-    #   fast          8192  more than a word, still not a generation tier
-    #   completion     512  multi-line FIM suggestions; NOT a chat role
     #
-    # On the llama_cpp tiers (16/32 GB) a role's ceiling is charged eagerly and
-    # the tier total is fixed, so a larger ceiling is paid for out of that role's
-    # OWN context_input -- see the shared-runner check above.
-    OUTPUT_POLICY = {"architecture": 16384, "implementation": 8192,
-                     "review": 16384, "fast": 8192, "completion": 512}
+    # mlx (64/128 GB): KV is allocated LAZILY, per token in use. [REAL] num_ctx
+    # 196608 loaded at 16.15 GiB resident -- identical to a small window -- so a
+    # ceiling costs nothing until a response actually reaches it. The big roles
+    # therefore take the largest step that still fits the model's 262144 native
+    # window, which is 32768 on 64gb and 16384 on 128gb (whose 245760 input
+    # leaves less room). This is why the tiers legitimately differ.
+    #
+    # Every tier keeps fast 8192 and completion 512: both are role boundaries,
+    # not capability limits. fast must answer in a word or two; completion is a
+    # FIM suggestion, and a chat-sized ceiling there would make it one.
+    NATIVE = 262144
+    OUTPUT_POLICY = {
+        "16gb":  {"architecture": 16384, "implementation": 8192, "review": 16384},
+        "32gb":  {"architecture": 16384, "implementation": 8192, "review": 16384},
+        "64gb":  {"architecture": 32768, "implementation": 32768, "review": 32768},
+        "128gb": {"architecture": 16384, "implementation": 16384, "review": 16384},
+    }
+    UNIVERSAL = {"fast": 8192, "completion": 512}
     for tier in PROFILES:
         caps, _ = PARSED[tier]
-        for cap, want in OUTPUT_POLICY.items():
+        for cap, want in {**OUTPUT_POLICY[tier], **UNIVERSAL}.items():
             check(int(caps[cap]["max_output"]) == want,
                   f"{tier}.{cap} output ceiling is {want}",
                   f"got {caps[cap].get('max_output')}")
+        # The ceiling must FIT. This is the check that a future widening of
+        # context_input cannot silently push a role past the model's own window:
+        # geometry() would happily return a num_ctx the runner then truncates.
+        for cap in OUTPUT_POLICY[tier]:
+            total = int(caps[cap]["context_input"]) + int(caps[cap]["max_output"])
+            check(total <= NATIVE,
+                  f"{tier}.{cap} fits the 262144 native window ({total})")
 
     check("embeddings" not in P.ROLES,
           "embeddings is not a capability role: no consumer ever called it, and "
