@@ -17,6 +17,7 @@ import plistlib
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from . import policy, runtime
@@ -129,7 +130,8 @@ def distribution_source() -> Path:
                      "the installation is incomplete.")
 
 
-def provision(source: Path, config: Path, state: Path) -> dict:
+def provision(source: Path, config: Path, state: Path, *,
+              reset: bool = False) -> dict:
     """Install the user-editable policy defaults. Nothing else is copied.
 
     deploy/ and clients/ are read straight out of the package (policy.data_root),
@@ -138,6 +140,14 @@ def provision(source: Path, config: Path, state: Path) -> dict:
 
     A config file is replaced only where it still matches the digest recorded
     when it was installed; anything else is the operator's and is preserved.
+
+    `reset=True` overrides that and takes the shipped default for every file,
+    edited or not -- but never destructively: each file it is about to replace is
+    copied into a timestamped directory beside the config root FIRST, and the
+    caller is told where. The preservation rule is the right default precisely
+    because it cannot know whether an edit was deliberate; --reset-config is how
+    an operator says it was not, after a release changes a default they never
+    chose to diverge from.
     """
     for p in (config, state):
         p.mkdir(parents=True, exist_ok=True)
@@ -155,9 +165,30 @@ def provision(source: Path, config: Path, state: Path) -> dict:
     except (OSError, ValueError, KeyError, TypeError):
         shipped, provenance = {}, False
 
-    if provenance:
+    backup = None
+    if provenance and reset:
+        # Resolve what WOULD have been preserved, back exactly those up, then
+        # preserve nothing. Backing up the whole tree would copy files the
+        # installer was never going to touch.
+        edited = [rel for rel, want in sorted(shipped.items())
+                  if (config / rel).is_file() and digest(config / rel) != want]
+        if edited:
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            backup = config.parent / f"{config.name}-backup-{stamp}"
+            for rel in edited:
+                dest = backup / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(config / rel, dest)
+        preserved = []
+    elif provenance:
         preserved = [rel for rel, want in sorted(shipped.items())
                      if (config / rel).is_file() and digest(config / rel) != want]
+    elif reset:
+        # No provenance means no file can be proven untouched -- normally that
+        # makes everything preserved. Under reset the same absence means nothing
+        # can be proven EDITED either, so there is nothing to back up and the
+        # shipped tree simply lands.
+        preserved = []
     else:
         # Without provenance nothing can prove a file is untouched, so every
         # existing config file is treated as edited. A fresh install has none.
@@ -177,7 +208,7 @@ def provision(source: Path, config: Path, state: Path) -> dict:
             # Deleting a shipped default is a decision, not damage: once the
             # manifest proves it was installed, an upgrade reports it rather
             # than resurrecting it.
-            if not dest.exists() and rel in shipped:
+            if not dest.exists() and rel in shipped and not reset:
                 absent.append(rel)
                 continue
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -209,7 +240,7 @@ def provision(source: Path, config: Path, state: Path) -> dict:
     for rel in retired:
         record["config"].pop(rel, None)
     return {"installed": installed, "preserved": sorted(set(preserved)),
-            "absent": absent, "retired": retired}
+            "absent": absent, "retired": retired, "backup": backup}
 
 
 # ── host prerequisites ──────────────────────────────────────────────────────
@@ -837,6 +868,11 @@ Idempotent.
 
   --yes              unattended; also enables production autostart
   --profile <tier>   override the tier detected from installed memory
+  --reset-config     take the shipped policy defaults even for files you have
+                     edited. Your versions are copied to a timestamped backup
+                     directory first, and the path is printed. Use this after a
+                     release changes a default you never chose to diverge from;
+                     without it, an edited file is kept and never updated.
 """
 
 
@@ -849,14 +885,19 @@ def cmd_install(argv: list[str]) -> int:
         print(USAGE)
         return 0
     assume_yes = "--yes" in argv
+    reset = "--reset-config" in argv
 
     require_prerequisites()
 
     step("Installing assets")
     source = distribution_source()
-    report = provision(source, policy.config_root(), policy.state_root())
+    report = provision(source, policy.config_root(), policy.state_root(),
+                       reset=reset)
     ok(f"shipped assets read in place from {source}")
     ok(f"config {policy.config_root()}: {len(report['installed'])} file(s)")
+    if report.get("backup"):
+        warn(f"--reset-config replaced your edited files; originals saved to "
+             f"{report['backup']}")
     for rel in report["preserved"]:
         dim(f"kept {rel} (edited since install)")
     for rel in report["absent"]:

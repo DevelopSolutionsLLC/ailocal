@@ -44,7 +44,7 @@ Run `installed-runtime` whenever packaging, resources or provisioning change. Ru
 
 ## Install and runtime ordering
 
-`deploy/` and `clients/` are read straight from the package, so editing them takes effect on the next `ailocal start`. Editing `profiles/` under `src/` changes only the SHIPPED DEFAULT; the live policy is the copy in the config root, which `ailocal install` preserves once you have edited it.
+`deploy/` and `clients/` are read straight from the package, so editing them takes effect on the next `ailocal start`. Editing `profiles/` under `src/` changes only the SHIPPED DEFAULT; the live policy is the copy in the config root, which `ailocal install` preserves once you have edited it. `ailocal install --reset-config` takes the shipped defaults anyway, backing your versions up first — which is how you pick up a changed default after editing a profile by hand.
 
 The runtime executes the INSTALLED package, so after changing anything under `src/ailocal/`:
 

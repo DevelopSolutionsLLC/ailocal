@@ -132,6 +132,7 @@ Copilot Chat ships inside VS Code — there is no extension to install and no Co
 | Command | What it does |
 |---|---|
 | `ailocal install` | set everything up (run once) |
+| `ailocal install --reset-config` | re-take the shipped policy defaults, backing up your edits first |
 | `ailocal start` | bring the models and proxy up |
 | `ailocal stop` | bring them down |
 | `ailocal status` | what is loaded right now |
