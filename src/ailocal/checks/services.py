@@ -26,7 +26,7 @@ INSPECT_TIMEOUT = 15     # docker / ollama subprocesses
 GENERATE_TIMEOUT = 120   # one bounded model response
 
 PROXY = os.environ.get("AILOCAL_PROXY", "http://127.0.0.1:4000")
-OLLAMA = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+OLLAMA = policy.ollama_url()
 CONTAINER = os.environ.get("AILOCAL_LITELLM_CONTAINER", "ailocal-litellm")
 
 

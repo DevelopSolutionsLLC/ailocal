@@ -21,7 +21,7 @@ from pathlib import Path
 
 from . import policy
 
-OLLAMA = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+OLLAMA = policy.ollama_url()
 
 BOLD, DIM, RESET = "\033[1m", "\033[2m", "\033[0m"
 GREEN, RED, YELLOW, MAGENTA, CYAN = ("\033[32m", "\033[31m", "\033[33m",

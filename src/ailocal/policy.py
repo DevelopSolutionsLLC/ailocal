@@ -117,6 +117,27 @@ def _xdg(var: str, *fallback: str) -> Path:
         os.path.expanduser("~"), *fallback))
 
 
+def ollama_url() -> str:
+    """The Ollama base URL, from OLLAMA_HOST, always with a scheme.
+
+    OLLAMA_HOST is Ollama's OWN variable and its documented form is a bare
+    `host:port` — which is exactly what `ailocal install` writes into the
+    LaunchAgent and into `launchctl setenv`. Read as a URL it is unusable:
+    urllib parses `127.0.0.1:11434` as scheme `127.0.0.1`, every request raises,
+    and a caller that maps "raised" onto "unreachable" reports Ollama as DOWN
+    while it is serving perfectly. `ailocal check` did exactly that, and only in
+    shells that had inherited the variable ailocal itself sets — so it looked
+    intermittent rather than wrong.
+
+    Normalising here rather than at each call site keeps ONE reading of the
+    variable, in the module both consumers already import.
+    """
+    raw = (os.environ.get("OLLAMA_HOST") or "").strip()
+    if not raw:
+        return "http://127.0.0.1:11434"
+    return raw if "://" in raw else f"http://{raw}"
+
+
 def state_root(override_path=None) -> Path:
     """Generated and machine-selected state, OUTSIDE the checkout.
 
