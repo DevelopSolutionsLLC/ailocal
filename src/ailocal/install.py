@@ -37,9 +37,39 @@ AGENTS = ("com.ailocal.ollama", "com.ailocal.preload", "com.ailocal.litellm",
 OLLAMA_ENV = {
     "OLLAMA_HOST": "127.0.0.1:11434",
     "OLLAMA_MODELS": MODEL_STORE,
-    "OLLAMA_KEEP_ALIVE": "-1",
-    "OLLAMA_MAX_LOADED_MODELS": "5",
+    # 6h, not -1. This is the default for anything loaded WITHOUT an explicit
+    # keep_alive -- generation goes through LiteLLM, which sends a per-role value
+    # that overrides this, so the default governs everything else: the preload
+    # agent, a bare `ollama run`, and models other tools load on this same daemon
+    # (nomic-embed-text is one). `-1` meant none of those ever released memory,
+    # which is not a default anyone chose; it is a default nobody noticed. A
+    # process that wants a model pinned can still ask for -1 explicitly.
+    "OLLAMA_KEEP_ALIVE": "6h",
+    # 4, not 5, and not 3. The tier needs THREE distinct models, not five: the
+    # architecture, implementation and review roles all point at ONE
+    # gemma4:26b-mlx and share a single resident copy, so three roles cost one
+    # model. The other two are qwen3.5:2b (fast) and qwen2.5-coder:3b
+    # (completion). The fourth slot is nomic-embed-text, which is NOT in any
+    # profile -- it is served by this same Ollama for indexing outside ailocal,
+    # and it still occupies a slot.
+    #
+    # 3 would fit today only because `completion` is standby and never loads.
+    # The moment it does, Ollama must evict something to admit a 1.9 GB FIM
+    # model, and the eviction is not guaranteed to pick the cheap one: keep_alive
+    # -1 stops the TIMER, not a capacity eviction, so the 16 GiB gemma is a
+    # candidate. Paying a ~30 s reload of the large model to admit the small one
+    # is the thrash worth avoiding.
+    "OLLAMA_MAX_LOADED_MODELS": "4",
     "OLLAMA_NUM_PARALLEL": "2",
+    # These last two reach the llama_cpp runner ONLY, where they become
+    # `--flash-attn on --cache-type-k q8_0 --cache-type-v q8_0`. The MLX runner
+    # accepts neither: it uses MLX's own fused attention and an unquantized KV
+    # cache, with no knob to quantize it. So every MLX-served role -- which is
+    # every large role in the 64 GB and 128 GB profiles -- pays full fp16 KV no
+    # matter what is set here, and a profile that cites a KB/token figure for an
+    # MLX model is citing an UNQUANTIZED one. Measured 2026-08-21: gemma4:26b-mlx
+    # 46.2 KB/token at 64K depth, which matches the 45.4 the profiles claim.
+    # Keep them: they are correct and load-bearing for the llama_cpp roles.
     "OLLAMA_FLASH_ATTENTION": "1",
     "OLLAMA_KV_CACHE_TYPE": "q8_0",
 }
@@ -769,6 +799,28 @@ def audit() -> list:
              "a competing Ollama instance", "quit the Ollama menu-bar app")
     else:
         fine(f"port 11434 owned by the managed LaunchAgent (pid {holder})")
+
+    # The log destination is checked SEPARATELY from whether the agent runs,
+    # because the failure it catches is invisible to every other signal here.
+    # If the directory is removed while the agent is up, launchd does not
+    # recreate it and does not reopen the descriptors: the process keeps writing
+    # to an unlinked inode. `launchctl print` still reports running, the port is
+    # still held, `ailocal check` was still green -- and every diagnostic the
+    # runner emits (speculation stats, prompt truncation, load failures) is lost
+    # with no symptom at all. Only a restart reopens the path, so the fix is a
+    # mkdir AND a kickstart; either alone leaves the running process writing to
+    # nowhere.
+    if not LOG_DIR.is_dir():
+        flag("MISSING", "log directory is gone; server output is unreadable",
+             LOG_DIR, f"mkdir -p '{LOG_DIR}' && launchctl kickstart -k "
+                      f"gui/{os.getuid()}/com.ailocal.ollama")
+    elif holder and any(
+            "(deleted)" in line and str(LOG_DIR) in line
+            for line in _out("lsof", "-p", holder).splitlines()):
+        flag("STALE", "server is writing to a deleted log file",
+             LOG_DIR, f"launchctl kickstart -k gui/{os.getuid()}/com.ailocal.ollama")
+    else:
+        fine(f"log destination writable ({LOG_DIR})")
 
     return results
 
