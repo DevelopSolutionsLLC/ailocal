@@ -36,15 +36,24 @@ active = "gemma4:26b-mlx"
 reasoning = true  # gpt-oss:20b HAS thinking; qwen3-coder did not
 context_input = 245760
 max_output = 16384
-temperature = 0.1
+temperature = 1.0
 keep_alive = "6h"
 purpose = ["architecture", "complex refactoring", "multi-step debugging", "design", "repository-wide planning", "large interactive/agent prompts"]
 strengths = ["full 240K native input window", "holds a whole subsystem in view", "strong code generation"]
 weaknesses = ["slower", "cold prefill of a full window costs many minutes", "KV grows to ~27 GiB when filled"]
-top_p = 0.9
-top_k = 20
+top_p = 0.95
+top_k = 64
 repeat_penalty = 1.0
-  # Low temperature: answers must be reproducible across runs.
+  # Google's published Gemma 4 setting, applied verbatim: temperature 1.0,
+  # top_k 64, top_p 0.95. REPLACES the previous temp 0.1-0.2 / top_k 20,
+  # which was chosen for run-to-run reproducibility. Two measurements drove
+  # the change (2026-08-21, Ollama 0.32.14): sampling costs NOTHING in
+  # throughput here -- draft acceptance was 0.79 at temp 0.1 and 0.77 at
+  # temp 1.0, a gap far inside the run-to-run spread -- and Gemma 4 is
+  # reported to degrade on coding when held far below its recommended
+  # temperature. Reproducibility was being bought with quality, not speed.
+  # Anything needing determinism should pass a per-request temperature
+  # rather than pinning the whole role.
 # ── implementation — everyday working coder ──────────────────────────────────
 [implementation]
 role = "Daily coding"
@@ -56,16 +65,42 @@ active = "gemma4:26b-mlx"
   # Capabilities: tools YES, insert YES, thinking NO.
 reasoning = true
 context_input = 245760
-max_output = 8192
-temperature = 0.1
-keep_alive = -1  # same physical model as architecture
+max_output = 16384
+  # max_output raised 2026-08-21. [REAL] With no ceiling, gemma4 finished
+  # real coding tasks in 2,337-5,175 tokens, so 8192 was not truncating
+  # normal work -- but at the OLD sampling it looped, spending 13k-23k
+  # CHARACTERS on reasoning and returning an EMPTY response 7 times in 25.
+  # That failure is silent: the client sees a short answer, not an error.
+  # A ceiling cannot fix looping, it only moves where the truncation lands,
+  # so this is headroom, not a cure -- the sampling change is the cure.
+  # Costs nothing: MLX allocates KV lazily, and num_ctx 196608 was verified
+  # to load at 16.15 GiB resident, identical to a small window.
+temperature = 1.0
+keep_alive = "6h"
+  # 6h, NOT -1. [REAL] keep_alive is LAST-WRITER-WINS on a shared model, and
+  # architecture, implementation and review are all ONE resident
+  # gemma4:26b-mlx. Measured 2026-08-21: a request carrying -1 set
+  # expires_at to the year 2318, and a later 6h request reset it to +6h.
+  # So the role used LAST governed the whole model -- and implementation is
+  # the highest-frequency role, which meant 16 GiB stayed pinned forever
+  # while architecture's 6h looked like the policy. Three roles sharing one
+  # model must declare the SAME keep_alive or the shortest one is fiction.
 purpose = ["implementation", "features", "refactoring", "tests", "shell", "python", "typescript"]
 strengths = ["fast", "low memory", "excellent everyday code generation"]
 weaknesses = ["architecture", "repository-wide planning"]
-top_p = 0.9
-top_k = 20
+top_p = 0.95
+top_k = 64
 repeat_penalty = 1.0
-  # Low temperature: answers must be reproducible across runs.
+  # Google's published Gemma 4 setting, applied verbatim: temperature 1.0,
+  # top_k 64, top_p 0.95. REPLACES the previous temp 0.1-0.2 / top_k 20,
+  # which was chosen for run-to-run reproducibility. Two measurements drove
+  # the change (2026-08-21, Ollama 0.32.14): sampling costs NOTHING in
+  # throughput here -- draft acceptance was 0.79 at temp 0.1 and 0.77 at
+  # temp 1.0, a gap far inside the run-to-run spread -- and Gemma 4 is
+  # reported to degrade on coding when held far below its recommended
+  # temperature. Reproducibility was being bought with quality, not speed.
+  # Anything needing determinism should pass a per-request temperature
+  # rather than pinning the whole role.
 # ── review — code review / bug & security detection ──────────────────────────
 [review]
 role = "Code review"
@@ -73,14 +108,32 @@ active = "gemma4:26b-mlx"
 reasoning = true  # thinking AND tools (deepseek had NO tools)
 context_input = 245760
 max_output = 16384
-temperature = 0.2
-keep_alive = -1  # same physical model as architecture
+temperature = 1.0
+keep_alive = "6h"
+  # 6h, NOT -1. [REAL] keep_alive is LAST-WRITER-WINS on a shared model, and
+  # architecture, implementation and review are all ONE resident
+  # gemma4:26b-mlx. Measured 2026-08-21: a request carrying -1 set
+  # expires_at to the year 2318, and a later 6h request reset it to +6h.
+  # So the role used LAST governed the whole model -- and implementation is
+  # the highest-frequency role, which meant 16 GiB stayed pinned forever
+  # while architecture's 6h looked like the policy. Three roles sharing one
+  # model must declare the SAME keep_alive or the shortest one is fiction.
 purpose = ["code review", "bug detection", "security review", "alternative solutions"]
 strengths = ["careful analysis", "security awareness", "concrete findings"]
 weaknesses = ["slower than the implementation tier", "not for bulk generation"]
-top_p = 0.9
-top_k = 20
+top_p = 0.95
+top_k = 64
 repeat_penalty = 1.0
+  # Google's published Gemma 4 setting, applied verbatim: temperature 1.0,
+  # top_k 64, top_p 0.95. REPLACES the previous temp 0.1-0.2 / top_k 20,
+  # which was chosen for run-to-run reproducibility. Two measurements drove
+  # the change (2026-08-21, Ollama 0.32.14): sampling costs NOTHING in
+  # throughput here -- draft acceptance was 0.79 at temp 0.1 and 0.77 at
+  # temp 1.0, a gap far inside the run-to-run spread -- and Gemma 4 is
+  # reported to degrade on coding when held far below its recommended
+  # temperature. Reproducibility was being bought with quality, not speed.
+  # Anything needing determinism should pass a per-request temperature
+  # rather than pinning the whole role.
   # Reasoning is on here and nowhere else: review is the one tier where thinking
   # earns its latency. Per-request reasoning_effort is UNRELIABLE (BerriAI/litellm
   # #15059 maps it incorrectly for Ollama); the per-role default below works.
