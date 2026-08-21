@@ -2,6 +2,62 @@
 
 Release policy and the meaning of each bump: [RELEASING.md](RELEASING.md).
 
+## v0.11.0 — sampling, output ceilings and models that actually unload
+
+Three defects that all failed the same way: silently. Nothing here needs user action, but if you have edited your own `~/.config/ailocal/profiles/`, see the migration note at the end.
+
+### Gemma now runs at Google's published sampling
+
+The gemma4 roles shipped `temperature 0.1 / top_k 20 / top_p 0.9`, chosen for run-to-run reproducibility. They now ship Google's documented `temperature 1.0 / top_k 64 / top_p 0.95`.
+
+This was measured, not adopted on faith. A 50-generation A/B on coding tasks scored by *executing* the model's code against hidden assertions:
+
+| | old (t0.1/k20/p0.9) | vendor (t1.0/k64/p0.95) |
+|---|---|---|
+| tasks passed | 18/25 (72%) | **24/25 (96%)** |
+| decode | 82.9 tok/s | 81.0 tok/s |
+
+The mechanism is not "better code". All 7 failures at the old setting were **empty responses**: constrained sampling sent the model into 13,000–23,000 characters of reasoning until it exhausted its output budget and returned nothing. The one failure at vendor sampling was genuinely wrong code. Sampling costs nothing in throughput — draft acceptance was 0.79 against 0.77.
+
+`tests/measure_sampling.py` is that benchmark, kept out of the gate like the other measurement scripts.
+
+### Models unload
+
+`implementation` and `review` declared `keep_alive = -1`. All three gemma roles share **one** resident model, and keep_alive is last-writer-wins on it, so the highest-frequency role re-pinned 16 GiB permanently while `architecture`'s `6h` sat in the profile looking like the policy. Measured: a request carrying `-1` set `expires_at` to the year **2318**.
+
+All three now declare `6h`. Roles sharing a model must declare the same keep_alive or the shortest one is fiction. `fast` (20m) and `completion` (2h) are unchanged.
+
+`OLLAMA_KEEP_ALIVE` also drops from `-1` to `6h`. It is the default for anything loaded *without* an explicit value — the preload agent, a bare `ollama run`, and models other tools load on the same daemon. `-1` there meant none of them ever released memory. A caller that wants a model pinned can still pass `-1` explicitly.
+
+### Output ceilings raised to what the window allows
+
+64 GB: `architecture`, `implementation` and `review` go to **32768** (implementation was 8192). 128 GB: `implementation` to 16384 — its `architecture` and `review` were already at the model's native 262144 ceiling and could not grow without cutting input.
+
+Free on MLX, where KV is allocated lazily: `num_ctx` 196608 was verified to load at 16.15 GiB resident, identical to a small window. `CLAUDE_CODE_MAX_OUTPUT_TOKENS` now derives to 32768, above Claude Code's own 32000 default request, so the truncate-and-retry behaviour v0.10.0 addressed is gone rather than narrowed.
+
+To be clear about what this does *not* fix: with no ceiling at all, gemma4 finishes these tasks in 2,337–5,175 tokens, so 8192 was never truncating normal work. The empty answers came from looping, and the sampling change is what fixes those. This is headroom.
+
+### `OLLAMA_MAX_LOADED_MODELS` 5 → 4
+
+The tier needs three distinct models, not five: three roles share one gemma. The fourth slot is `nomic-embed-text`, which is in no profile but is served by the same daemon. Three would fit only while `completion` stays standby — and `keep_alive -1` stops the idle timer, not a capacity eviction, so admitting a 1.9 GB FIM model could evict the 16 GiB gemma.
+
+### Fixes
+
+- `ailocal check` reported **"Ollama not responding"** against a healthy daemon whenever `OLLAMA_HOST` was set — which `ailocal install` guarantees via `launchctl setenv`. Ollama's variable is documented as bare `host:port`; read as a URL, `127.0.0.1` parses as the scheme and every request raises. New `policy.ollama_url()` normalises it for both readers.
+- `ailocal check` now detects a **deleted log destination**. If `~/Library/Logs/ailocal/` is removed while the agent runs, launchd neither recreates it nor reopens the descriptors: the process writes to an unlinked inode, `launchctl print` still says running, and every diagnostic is lost with no symptom. Remediation is a mkdir *and* a kickstart; either alone leaves the process writing to nowhere.
+- `OLLAMA_FLASH_ATTENTION` and `OLLAMA_KV_CACHE_TYPE` are documented as reaching the **llama_cpp runner only**. The MLX runner takes neither, so every MLX-served role pays unquantized fp16 KV regardless. Measured 46.2 KB/token at 64K depth, which matches the 45.4 the profiles claim.
+- `registry.yaml` engine behaviour re-measured on Ollama 0.32.14 and re-stamped, not version-bumped. MLX: loaded at 24576, processed 57,787 tokens without truncation. llama_cpp: loaded at 20480, processed 10,243 — *half*, because `OLLAMA_NUM_PARALLEL` splits the window into slots.
+
+### New measurement scripts
+
+`tests/measure_agentic.py` compares candidate models for the agentic default — decode, speculation acceptance, cold and warm prefill, resident memory, tool-loop correctness. `tests/measure_sampling.py` A/Bs sampling on executed code. Both are out of the gate, keep no history and assert nothing, like `measure_geometry.py`.
+
+For the record, on this hardware `gemma4:26b-mlx` remains the fastest by a wide margin: 2.9x the decode and 3.8–6x the prefill of `qwen3.8:27b-mlx`. Ollama's MLX build of gemma4 has **no vision**; the GGUF `gemma4:26b` does, and beats qwen3.8 on every axis while keeping it.
+
+### Migration
+
+`ailocal install` preserves a profile you have edited — it compares against the shipped manifest digest and keeps anything that differs. So an untouched profile picks these values up on upgrade; **an edited one does not**. If you have customised `~/.config/ailocal/profiles/`, copy the new `temperature`, `top_k`, `top_p`, `max_output` and `keep_alive` values across by hand, or delete your copy to take the shipped one.
+
 ## v0.10.0 — language servers, client alignment, and a runtime that cannot drift silently
 
 `claude-local` now bootstraps a complete, self-sufficient config root, Claude Code's context and output settings match what the backend actually serves, and the generated runtime can no longer disagree with the repository without saying so.
