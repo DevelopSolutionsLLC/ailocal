@@ -34,6 +34,14 @@ docker cp "$ROOT/$IMPL" "$CONTAINER:$STAGE/impl.py" >/dev/null
 # Paths the suites resolve inside the image, not in the checkout.
 env_args=(
   -e "AILOCAL_REGISTRY_MODULE=/app/config/hooks/capability_registry.py"
+  # tool-gateway-impl.py imports the gateway through AILOCAL_GATEWAY_MODULE and
+  # falls back to a checkout-relative path. The image has no checkout, so
+  # omitting this resolved to /tmp/src/... and the suite died on
+  # FileNotFoundError before its first assertion -- i.e. it never ran in the one
+  # environment it is written for. (AILOCAL_GATEWAY_SOURCE below is a DIFFERENT
+  # variable, read by capability-registry-impl.py to grep the gateway's source.)
+  -e "AILOCAL_GATEWAY_MODULE=/app/config/hooks/tool_gateway.py"
+  -e "AILOCAL_GATEWAY_SOURCE=/app/config/hooks/tool_gateway.py"
   -e "AILOCAL_REGISTRY=/app/config/registry.yaml"
   -e "AILOCAL_CONFIG_PATH=/app/generated/config.yaml"
   -e "AILOCAL_CAPABILITIES_JSON=/app/generated/capabilities.json"
