@@ -47,7 +47,9 @@ disk_gb = 40
 [architecture]
 role = "Lead architect"
 active = "gemma4:26b-mlx"
-reasoning = true  # gpt-oss:20b HAS thinking; qwen3-coder did not
+reasoning = true  # [REAL] gemma4:26b-mlx reports the `thinking` capability
+                  # (`ollama show`) and returns reasoning_content. The models
+                  # this line used to name (gpt-oss:20b, qwen3-coder) are gone.
 context_input = 163840
 max_output = 32768
   # max_output raised 2026-08-21. [REAL] With no ceiling, gemma4 finished
@@ -90,7 +92,11 @@ active = "gemma4:26b-mlx"
   # runner enforces context per-request (registry.yaml), so three roles declaring
   # three different num_ctx still share ONE resident copy of the weights -- the
   # differing windows cost no extra memory.
-  # Capabilities: tools YES, insert YES, thinking NO.
+  # [REAL] Capabilities on 2026-08-21 (`ollama show gemma4:26b-mlx`):
+  # completion, tools, thinking. NO insert, and NO vision -- the MLX
+  # conversion drops vision that the GGUF gemma4:26b keeps. An earlier
+  # version of this line read "insert YES, thinking NO" and was wrong on
+  # both counts while `reasoning = true` sat directly beneath it.
 reasoning = true
 context_input = 131072
 max_output = 32768
@@ -133,7 +139,7 @@ repeat_penalty = 1.0
 [review]
 role = "Code review"
 active = "gemma4:26b-mlx"
-reasoning = true  # thinking AND tools (deepseek had NO tools)
+reasoning = true  # thinking AND tools, both reported by `ollama show`.
   # Full input AND full output. A review of a 128K change emits findings, not
   # bulk code -- but the MLX runner allocates KV lazily, so an unused output
   # ceiling costs nothing here, and a review that DOES have a lot to say should
@@ -175,7 +181,9 @@ repeat_penalty = 1.0
   # temperature. Reproducibility was being bought with quality, not speed.
   # Anything needing determinism should pass a per-request temperature
   # rather than pinning the whole role.
-  # Reasoning is on here and nowhere else: review is the one tier where thinking
+  # Reasoning is on for architecture, implementation AND review -- this block
+  # previously claimed "here and nowhere else", which contradicted the two
+  # roles above it. Review is the tier where thinking most clearly
   # earns its latency. Per-request reasoning_effort is UNRELIABLE (BerriAI/litellm
   # #15059 maps it incorrectly for Ollama); the per-role default below works.
 # ── fast — lightweight tool-enabled agent (NOT autocomplete) ────────────────
@@ -183,18 +191,50 @@ repeat_penalty = 1.0
 # capability, so inline autocomplete would fail QUIETLY.
 [fast]
 role = "Fast agent"
-active = "qwen3.5:2b"
-preferred = ["qwen3.5:2b"]
+active = "qwen3.5:9b"
+preferred = ["qwen3.5:9b", "qwen3.5:2b"]
+  # qwen3.5:9b REPLACES qwen3.5:2b here, 2026-08-21. This role is the
+  # tool-driven background agent (Claude Code's HAIKU slot), so RELIABILITY is
+  # the requirement, not size. [REAL] tests/measure_agentic.py, 16 rounds each,
+  # half injecting a transient tool failure the model must recover from,
+  # repeated at BOTH vendor sampling (temp 1.0) and this block's sampling
+  # (temp 0.0) with identical results:
+  #
+  #     qwen3.5:2b   8/16 tasks complete,  0/8 recoveries
+  #     qwen3.5:9b  16/16 tasks complete,  8/8 recoveries
+  #
+  # Neither model ever malformed a tool argument. The 2B's failure is narrower
+  # and worse than "less accurate": it drives a clean tool loop and then
+  # abandons the task the moment a tool returns something it did not expect.
+  # For a background agent that is a silent stall.
+  #
+  # The cost is small and measured on this host: warm TTFT 294 ms vs 257 ms on
+  # a classification prompt and 301 ms vs 241 ms on a short code prompt (median
+  # of 5), i.e. ~50 ms — far below what a background role notices. Resident
+  # 7.98 GiB vs 3.63 GiB at num_ctx 135168.
+  #
+  # It does NOT evict the architecture model. [REAL] gemma4:26b-mlx (23 GB),
+  # nomic-embed-text, qwen3.5:4b and qwen3.5:9b were all resident at 100% GPU
+  # simultaneously during this measurement; Ollama reported 51.8 GiB of Metal
+  # budget on this 64 GB machine, against ~32 GiB for gemma4 + 9b + embeddings.
   # reasoning is off although the model supports it: with thinking enabled it
   # emitted ~19k reasoning characters and returned EMPTY content within its
   # budget. This tier answers in a word or two and must not think itself out.
 reasoning = false
-  # [REAL] qwen3.5:2b supports 262144 natively and is the cheapest model here by
-  # a wide margin: cold prefill 45.8s at 70,002 tokens (1529 tok/s, vs 598 tok/s
-  # for gemma4 at 137K). Unlike gemma4 this is a llama_cpp runner, which
-  # allocates KV EAGERLY for the whole declared window and again per parallel
-  # slot: ~11.6 KB per ctx-token x OLLAMA_NUM_PARALLEL=2, so num_ctx 135168 costs
-  # ~3.7 GiB resident whether or not it is used. Cheap enough to stop rationing.
+  # [REAL] qwen3.5 supports 262144 natively (`ollama show`). This is a llama_cpp
+  # runner, which allocates KV EAGERLY for the whole declared window.
+  # Measured directly from the server log at num_ctx 135168 with
+  # OLLAMA_KV_CACHE_TYPE=q8_0 in force:
+  #     qwen3.5:2b   llama_kv_cache: size =  841.50 MiB (135168 cells)
+  #     qwen3.5:9b   llama_kv_cache: size = 2244.00 MiB (135168 cells)
+  # CORRECTION: an earlier version of this comment multiplied KV by
+  # OLLAMA_NUM_PARALLEL=2 and arrived at ~3.7 GiB. No doubling occurs at this
+  # window: the scheduler lowers parallelism itself here, and every qwen3.5
+  # launch on this host carried `-np 1` with its full declared cells at 1/1
+  # seqs. Where two slots ARE used -- only the tiny completion window -- the
+  # declared window is SPLIT rather than multiplied, which is why ailocal now
+  # ships OLLAMA_NUM_PARALLEL=1 (see install.py). Either way the figures above
+  # are the measured totals; do not scale them by a parallel count.
   # max_output 8192, not 16384: this tier stays concise by design.
 context_input = 126976
 max_output = 8192
@@ -219,8 +259,8 @@ repeat_penalty = 1.0
 # with BOTH `insert` (FIM) and `tools`, verified across six candidates.
 [completion]
 role = "Autocomplete (standby)"
-active = "qwen2.5-coder:3b-instruct-q4_K_M"
-preferred = ["qwen2.5-coder:3b-instruct-q4_K_M", "qwen2.5-coder:1.5b"]
+active = "qwen2.5-coder:3b"
+preferred = ["qwen2.5-coder:3b", "qwen2.5-coder:1.5b"]
 context_input = 3968
   # max_output 512, raised from 128. A FIM suggestion is a few lines, not a
   # paragraph, but 128 truncated multi-line completions mid-block. 512 is

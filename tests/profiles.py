@@ -574,7 +574,14 @@ def hardware_checks() -> None:
         "16gb":  {"architecture": 16384, "implementation": 8192, "review": 16384},
         "32gb":  {"architecture": 16384, "implementation": 8192, "review": 16384},
         "64gb":  {"architecture": 32768, "implementation": 32768, "review": 32768},
-        "128gb": {"architecture": 16384, "implementation": 16384, "review": 16384},
+        # 128gb matches 64gb, 2026-08-21. The reason 64 GB uses 32768 is a
+        # property of GEMMA, not of that machine: with reasoning on, the model
+        # spends real output budget thinking before answering ([REAL] 5,142
+        # eval tokens on a small coding task; a 2,048 cap truncated the answer
+        # to 0/3 correct where 32,768 scored 3/3). Holding the larger machine
+        # at half the ceiling made it strictly less capable than the smaller
+        # one, which no evidence supported.
+        "128gb": {"architecture": 32768, "implementation": 32768, "review": 32768},
     }
     UNIVERSAL = {"fast": 8192, "completion": 512}
     for tier in PROFILES:
@@ -609,7 +616,7 @@ def hardware_checks() -> None:
     # in every tier reports 262144 native context (`ollama show`), and
     # nomic-embed-text reports 2048.
     NATIVE = {"gemma4:26b-mlx": 262144, "qwen3.5:9b": 262144, "qwen3.5:4b": 262144,
-              "qwen3.5:2b": 262144, "qwen2.5-coder:3b-instruct-q4_K_M": 32768,
+              "qwen3.5:2b": 262144, "qwen2.5-coder:3b": 32768,
               "qwen2.5-coder:1.5b": 32768, "nomic-embed-text": 2048}
     for tier in PROFILES:
         caps, _ = PARSED[tier]

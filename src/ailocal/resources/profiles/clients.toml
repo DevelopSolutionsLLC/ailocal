@@ -37,8 +37,9 @@ launch_default = "architecture"
   #   implementation works, but pointing two slots at one capability listed
   #   `ailocal-implementation` twice in the /model picker, and tied up the 14B on
   #   background summarisation.
-  #   fast (qwen3.5:2b, 32768 ctx, native tools, persona) is built for exactly
-  #   this traffic and had no consumer at all until now.
+  #   fast is built for exactly this traffic and had no consumer at all until
+  #   now. (It was qwen3.5:2b when this note was written; 64/128 GB now serve
+  #   the role with qwen3.5:9b -- see those profiles for the measurement.)
 slots = {opus = "architecture", sonnet = "implementation", haiku = "fast", fable = "review"}
 
 # Codex CLI
