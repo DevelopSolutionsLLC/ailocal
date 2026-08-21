@@ -243,10 +243,15 @@ runtime_engines:
   mlx:
     context_enforcement: dynamic_per_request
     reports_load_time_context: true      # /api/ps is stale, not authoritative
-    evidence: measured against the runner at Ollama 0.32.5
-    tested_ollama: "0.32.5"
-    tested_mlx: "0.32.0-21-g973e27f"
-    tested_on: "2026-08-03"
+    evidence: >-
+      re-measured on Ollama 0.32.14 / MLX 0.32.0-213-gadf21de. A runner loaded
+      at num_ctx 24576 was handed a ~40K-token prompt and reported
+      prompt_eval_count 57787 with no truncation, so it processed 2.35x its
+      load-time window. /api/ps still reported the load-time 24576 throughout,
+      which is the stale reading below.
+    tested_ollama: "0.32.14"
+    tested_mlx: "0.32.0-213-gadf21de"
+    tested_on: "2026-08-21"
     confidence: VERIFIED
     revalidate_on_runtime_upgrade: true
     matches: ["*-mlx", "*-mlx:*"]
@@ -254,9 +259,15 @@ runtime_engines:
     context_enforcement: fixed_runner_window
     reports_load_time_context: false
     truncation_direction: front         # keep=4 head tokens, remainder discarded
-    evidence: measured against the runner at Ollama 0.32.5
-    tested_ollama: "0.32.5"
-    tested_on: "2026-08-03"
+    evidence: >-
+      re-measured on Ollama 0.32.14. A runner loaded at num_ctx 20480 was handed
+      a ~40K-token prompt and reported prompt_eval_count 10243 -- HALF the
+      window, because OLLAMA_NUM_PARALLEL 2 splits it into two slots. The caller
+      got HTTP 200 and no error either way: the front of the prompt is simply
+      gone. This is why admission policy stays conservative and why LiteLLM's
+      pre-call guard is the only layer that fails loudly.
+    tested_ollama: "0.32.14"
+    tested_on: "2026-08-21"
     confidence: VERIFIED
     revalidate_on_runtime_upgrade: true
     matches: ["*"]                       # default for anything not MLX-tagged
