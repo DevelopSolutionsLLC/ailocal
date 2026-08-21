@@ -2,6 +2,18 @@
 
 Release policy and the meaning of each bump: [RELEASING.md](RELEASING.md).
 
+## v0.12.0 — `ailocal install --reset-config`
+
+v0.11.0 changed profile defaults and then told you, in its own migration note, that an edited profile would not receive them. That note described a gap with no tool to close it: the only ways to take a new default were to hand-copy values or delete your file. This adds the third way.
+
+```sh
+ailocal install --reset-config
+```
+
+Takes the shipped policy defaults for every config file, including ones you have edited. Your versions are copied to a timestamped `~/.config/ailocal-backup-<stamp>/` directory **first**, containing only the files it was about to replace, and the path is printed. A deleted default is written back too — the flag means "give me the shipped tree", and a hole is not part of it.
+
+Without the flag nothing changes: an edited file is still preserved and still never updated, which remains the right default. The installer cannot know whether a divergence was deliberate, so it assumes it was. `--reset-config` is how you say it was not.
+
 ## v0.11.0 — sampling, output ceilings and models that actually unload
 
 Three defects that all failed the same way: silently. Nothing here needs user action, but if you have edited your own `~/.config/ailocal/profiles/`, see the migration note at the end.
