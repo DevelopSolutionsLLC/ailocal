@@ -837,6 +837,34 @@ def flush_stage():
 
 
 
+def _stable(t):
+    return re.sub(r'"generated_at":\s*"[^"]*"', '"generated_at": ""', t)
+
+def _same(dest, text):
+    """Is the destination already this output?
+
+    settings.json and config.toml are CO-OWNED (see regen_claude_settings):
+    Claude Code writes `theme`, `enabledPlugins` and friends into the same
+    file, and it serialises with its OWN key order — `env` first, the `//`
+    banner last. The merge then re-emits template order, so a byte compare
+    called that drift on every run after the co-owner touched the file, and
+    `ailocal start` "fixed" it only until Claude Code wrote again. For JSON,
+    key order carries no meaning, so compare the parsed documents and let
+    the co-owner order the file however it likes. Anything that is not JSON,
+    or does not parse, falls back to the textual compare unchanged.
+    """
+    live = _stable(dest.read_text())
+    staged = _stable(text)
+    if live == staged:
+        return True
+    if dest.suffix != ".json":
+        return False
+    try:
+        return json.loads(live) == json.loads(staged)
+    except ValueError:
+        return False
+
+
 def main(argv=None):
     tier, args = parse_profile_flag(sys.argv[1:] if argv is None else list(argv))
 
@@ -876,9 +904,6 @@ def main(argv=None):
     if check_only:
         # generated_at is a timestamp: two identical generations differ by it,
         # so it is normalised away rather than reported as drift every run.
-        def _stable(t):
-            return re.sub(r'"generated_at":\s*"[^"]*"', '"generated_at": ""', t)
-
         def _label(d):
             for base in (_pc.state_root(), _pc.config_root(), _pc.data_root()):
                 try:
@@ -888,7 +913,7 @@ def main(argv=None):
             return str(d)
 
         drift = sorted(_label(d) for d, text in _STAGE.items()
-                       if not d.exists() or _stable(d.read_text()) != _stable(text))
+                       if not d.exists() or not _same(d, text))
         # --check writes nothing, so the staging tables must not survive into a
         # later call in the same process.
         _STAGE.clear()

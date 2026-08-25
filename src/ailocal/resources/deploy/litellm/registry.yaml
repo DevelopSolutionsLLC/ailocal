@@ -262,10 +262,25 @@ runtime_engines:
     evidence: >-
       re-measured on Ollama 0.32.14. A runner loaded at num_ctx 20480 was handed
       a ~40K-token prompt and reported prompt_eval_count 10243 -- HALF the
-      window, because OLLAMA_NUM_PARALLEL 2 splits it into two slots. The caller
-      got HTTP 200 and no error either way: the front of the prompt is simply
-      gone. This is why admission policy stays conservative and why LiteLLM's
-      pre-call guard is the only layer that fails loudly.
+      window. The caller got HTTP 200 and no error: the front of the prompt is
+      simply gone. This is why admission policy stays conservative and why
+      LiteLLM's pre-call guard is the only layer that fails loudly.
+      NUM_PARALLEL, resolved 2026-08-21 after several wrong readings. Two
+      DIFFERENT effects were being confused, and both are real:
+      (1) SLOT SIZING. When the scheduler uses more than one slot it divides
+      the declared window between them. Read off the runner for
+      qwen2.5-coder:3b at num_ctx 4480: np=2 gives n_ctx_slot 2304, np=1 gives
+      n_ctx_slot 4608. Ollama decides per load and lowers parallelism itself at
+      working window sizes, which is why every qwen3.5 launch carried `-np 1`
+      with its full declared cells. ailocal now ships OLLAMA_NUM_PARALLEL=1 so
+      a declared window is the real one on every role (see install.py).
+      (2) TRUNCATION, the finding above. A prompt larger than the SLOT is
+      front-truncated by `--context-shift --keep 4` with HTTP 200. This is
+      independent of parallelism and np=1 does not cure it; it only makes the
+      slot as large as the profile declares. Confirmed after the change: a
+      4,670-token prompt into a 4,608-token slot still came back with
+      prompt_eval_count 2242, while a 3,020-token prompt was evaluated whole.
+      An earlier note here blamed (2) on (1). It did not; they compound.
     tested_ollama: "0.32.14"
     tested_on: "2026-08-21"
     confidence: VERIFIED
@@ -273,20 +288,79 @@ runtime_engines:
     matches: ["*"]                       # default for anything not MLX-tagged
 
 
+# ── Per-model capabilities as the RUNTIME reports them ──────────────────────
+# [REAL] `ollama show <model>` on Ollama 0.32.14, 2026-08-21. This is the
+# runtime's own answer, not a judgement about how well the model uses each
+# capability — that belongs in a model class below, with its own evidence.
+#
+# It is recorded per MODEL because a class can span models that differ: vision
+# is the live example. Every qwen3.5 tier reports it; gemma4:26b-mlx does not,
+# because the MLX conversion drops it while the GGUF gemma4:26b is unaffected.
+# A class-level `supports_vision` would have to be wrong for one of them.
+#
+# Nothing in the gateway reads this yet. It is here so the next capability
+# question is answered from a recorded measurement instead of a guess.
+model_capabilities:
+  measured_ollama: "0.32.14"
+  measured_on: "2026-08-21"
+  models:
+    "gemma4:26b-mlx":      [completion, tools, thinking]
+    "qwen3.5:9b":          [completion, vision, tools, thinking]
+    "qwen3.5:4b":          [completion, vision, tools, thinking]
+    "qwen3.5:2b":          [completion, vision, tools, thinking]
+    "qwen2.5-coder:3b":    [completion, tools, insert]
+    "qwen2.5-coder:1.5b":  [completion, tools, insert]
+
 model_classes:
 
   # ── Local: agentic ────────────────────────────────────────────────────────
+  # The default class for a general-purpose local model. A model is described
+  # by what it can do, not by the ROLE it happens to be filling: architecture,
+  # implementation and review are all gemma4:26b-mlx on 64/128 GB, and all four
+  # non-FIM roles are one qwen3.5 on 16/32 GB. Declaring the same weights
+  # agentic under one alias and non-agentic under another was a bug, not a
+  # policy — see commitment 4 in capability_registry.py.
+  #
   # REAL: qwen3-coder:30b-a3b-q4_K_M drove multi-step tool loops reliably
   # (16/16 agentic runs, 148 tool executions, and a clean Read->Edit repair of
   # calc.py in two calls under filtering).
+  # REAL: gemma4:26b-mlx drives delegation natively — it emits a correctly
+  # parsed Claude Code `Agent` call, observed in 8/17 first delegations in real
+  # claude-local sessions (see the tool_repair note in config.template.yaml,
+  # which exists precisely because the model DOES reach that tool). That is
+  # direct evidence against denying it the `delegation` group.
+  # REAL, measured 2026-08-21 on Ollama 0.32.14 / M3 Max 64 GB via
+  # tests/measure_agentic.py's tool loop (16 rounds each, half of them
+  # injecting a transient tool failure the model must recover from):
+  #
+  #   gemma4:26b-mlx   8/8  complete, 4/4 recovered, 0 bad args of 20 calls
+  #   qwen3.5:9b      16/16 complete, 8/8 recovered, 0 bad args of 40 calls
+  #   qwen3.5:4b       7/8  complete, 3/4 recovered, 0 bad args of 13 calls
+  #
+  # All three call tools natively, emit every required argument without
+  # repair, consume tool results, and finish the task after using them. That
+  # is the evidence this class asserts; it is no longer inherited from
+  # qwen3-coder.
   local_agentic:
-    match_capabilities: [architecture]
-    match_models: ["*qwen3-coder*"]
+    match_capabilities: [architecture, implementation, review]
+    match_models: ["*qwen3-coder*", "*gemma4:*", "*qwen3.5:9b*", "*qwen3.5:4b*"]
     supports_tools: true
+    # MCP tools arrive as ordinary function tools under an `mcp__server__tool`
+    # name (namespace_expansion is disabled), so "supports MCP" asks nothing of
+    # the model beyond dispatching a namespaced name.
     supports_mcp: true
     supports_parallel_tools: true
-    supports_structured_output: true
-    supports_reasoning: false      # Qwen's non-thinking variant; emits no <think>
+    # UNVERIFIED, and false for a structural reason rather than a per-model
+    # one: Ollama puts tool schemas in the PROMPT and does not
+    # grammar-constrain arguments (ollama/ollama#6002), so no local model here
+    # can be said to enforce a schema. Raise it per-model only on measurement.
+    supports_structured_output: false
+    # REAL: gemma4:26b-mlx returns reasoning_content (see reasoning_router.py).
+    # Ollama reports the `thinking` capability for gemma4 and every qwen3.5.
+    supports_reasoning: true
+    # Vision is NOT declared at class level: this class spans models that
+    # differ on it (qwen3.5 has it, gemma4:26b-mlx does not). See the
+    # `model_capabilities` block above for the per-model truth.
     preferred_groups: [edit_and_run, search, lsp, mcp_plumbing, planning, delegation]
     # `delegation` is deliberately NOT denied: this is the one local tier measured
     # able to drive a multi-step tool loop, so it is the only one that can usefully
@@ -297,11 +371,17 @@ model_classes:
       notes: "Default target for agentic local work."
 
   # ── Local: weak at agentic loops ──────────────────────────────────────────
-  # REAL: qwen2.5-coder:14b-instruct-q4_K_M was measured non-agentic. It is kept
-  # available (it is a fine single-shot coder) but the registry declares the
-  # limitation rather than encoding it in a conditional somewhere.
+  # REAL: qwen2.5-coder:14b was measured non-agentic (2 turns, file UNCHANGED).
+  # It is kept available (it is a fine single-shot coder) but the registry
+  # declares the limitation rather than encoding it in a conditional somewhere.
+  #
+  # `match_capabilities` was REMOVED here. It read [implementation, review],
+  # which meant the finding above — measured on a 14B coder this deployment no
+  # longer pulls — was being applied to whatever model happened to occupy those
+  # two roles. On every current profile that is the SAME model serving
+  # `architecture` right beside it. The class now matches only the models it
+  # was actually measured on, and is dormant until one of them is served.
   local_nonagentic:
-    match_capabilities: [implementation, review]
     match_models: ["*qwen2.5-coder:14b*", "*deepseek-coder-v2*"]
     supports_tools: true
     supports_mcp: false
@@ -322,8 +402,11 @@ model_classes:
   # 4096-token window. Any conversational turn routed here 400s with "No models
   # have context window large enough"; a real agent turn cannot fit at all.
   # ── Local: small, tool-capable, background tier ───────────────────────────
-  # qwen3.5:2b behind `fast`. This is the capability Claude Code's HAIKU slot
-  # now maps to, so it takes real traffic: background summarisation, post-tool
+  # qwen3.5:2b. NOTE: as of 2026-08-21 no profile serves this model as its
+  # active `fast` role -- 64/128 GB moved to qwen3.5:9b on measured tool
+  # reliability -- but it remains the declared FALLBACK there, so this class is
+  # live whenever that fallback engages. Claude Code's HAIKU slot maps to
+  # `fast`, so the role takes real traffic: background summarisation, post-tool
   # processing, task classification. Before this entry it matched no class at
   # all and the gateway reported model_class=unknown, i.e. "no opinion" — which
   # meant the one tier serving the highest-frequency requests had no tool policy.
@@ -333,8 +416,25 @@ model_classes:
   # roomy until Claude Code's ~24K of tool schemas is subtracted, leaving ~8K for
   # the actual conversation. A 2B model handed the full tool surface will spend
   # its window describing tools it cannot drive.
+  # `match_capabilities: [fast]` was REMOVED. The narrow group list below is
+  # justified by the 2B model's window arithmetic, and that argument does not
+  # transfer to the `fast` ROLE: on 16/32 GB `fast` is qwen3.5:4b / :9b, the
+  # very same model serving architecture on those tiers. Slot-matching declared
+  # it unable to edit a file in one alias and fully agentic in another. Those
+  # tiers now fall through to local_agentic, which is what they were already
+  # being treated as everywhere else.
+  #
+  # REAL, 2026-08-21, same harness and 24 total rounds across two sampling
+  # settings (vendor temp 1.0 and the profile's temp 0.0 — identical results,
+  # so this is not a sampling artefact):
+  #
+  #   qwen3.5:2b   8/16 complete, 0/8 recovered, 0 bad args of 24 calls
+  #
+  # It calls tools correctly and never malforms an argument, so its FORMAT is
+  # sound. What it cannot do is recover: every round where a tool returned an
+  # unexpected error, it abandoned the task. That is precisely the boundary
+  # this class exists to draw, and it is now measured rather than assumed.
   local_small_agentic:
-    match_capabilities: [fast]
     match_models: ["*qwen3.5:2b*"]
     supports_tools: true
     supports_mcp: false
