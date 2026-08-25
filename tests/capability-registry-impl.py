@@ -71,9 +71,26 @@ check(d["aliases"] > 0, f"model_group_alias loaded ({d['aliases']})")
 print("\nMODEL CLASSIFICATION")
 name, _ = reg.model_class("ailocal-architecture")
 check(name == "local_agentic", f"ailocal-architecture -> local_agentic (got {name})")
+# Same weights as architecture on every current profile, so it must get the
+# same class. This asserted local_nonagentic until the classifier keyed off the
+# ROLE rather than the backing model, which gave one model two contradictory
+# capability declarations depending on the alias a request arrived under.
 name, _ = reg.model_class("ailocal-implementation")
-check(name == "local_nonagentic",
-      f"ailocal-implementation -> local_nonagentic (got {name})")
+check(name == "local_agentic",
+      f"ailocal-implementation -> local_agentic (got {name})")
+
+# The defect above, stated directly: a model does not change what it can do
+# based on which role it is filling.
+_by_backend = {}
+for _cap in ("architecture", "implementation", "review", "fast", "completion"):
+    _m = "ailocal-" + _cap
+    _by_backend.setdefault(reg.backend_of(_m), set()).add(reg.model_class(_m)[0])
+for _backend, _classes in _by_backend.items():
+    if _backend is None:
+        continue
+    check(len(_classes) == 1,
+          f"{_backend} gets ONE class across every role it fills "
+          f"(got {sorted(_classes)})")
 name, _ = reg.model_class("ailocal-completion")
 check(name == "local_completion", f"ailocal-completion -> local_completion (got {name})")
 
@@ -100,12 +117,19 @@ check(reg.is_passthrough("some-model-nobody-registered") is True,
 print("\nCAPABILITY FLAGS")
 check(reg.supports("ailocal-architecture", "tools") is True,
       "local_agentic supports tools")
-check(reg.supports("ailocal-architecture", "reasoning") is False,
-      "local_agentic declares NO reasoning (qwen3-coder emits no <think>)")
+# Was `is False`, on a qwen3-coder that emitted no <think>. The deployed models
+# do emit reasoning: Ollama reports the `thinking` capability for gemma4 and
+# every qwen3.5 tier, and reasoning_router.py records real reasoning_content
+# from gemma4:26b-mlx.
+check(reg.supports("ailocal-architecture", "reasoning") is True,
+      "local_agentic declares reasoning (gemma4/qwen3.5 report `thinking`)")
 check(reg.supports("ailocal-completion", "tools") is False,
       "the FIM tier declares no tool support at all")
-check(reg.supports("ailocal-implementation", "mcp") is False,
-      "the measured non-agentic tier declares no MCP")
+# Ollama puts tool schemas in the prompt and does not grammar-constrain
+# arguments (ollama/ollama#6002), so no local tier can claim enforced
+# structured output — this is a runtime fact, not a per-model judgement.
+check(reg.supports("ailocal-implementation", "structured_output") is False,
+      "no local tier claims enforced structured output (ollama/ollama#6002)")
 check(reg.supports("ailocal-architecture", "nonexistent_feature") is None,
       "an unknown feature returns None, not False — unknown != unsupported")
 

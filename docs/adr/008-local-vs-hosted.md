@@ -8,7 +8,9 @@ Local models are private and free but slower and weaker. Hosted models are the o
 
 ## Alternatives considered
 
-1. **Replace hosted entirely.** Rejected: local models cannot yet carry all work; `implementation` is measured non-agentic.
+1. **Replace hosted entirely.** Rejected: local models cannot yet carry all work.
+
+   The original rejection also cited "`implementation` is measured non-agentic". That reading no longer holds and has been withdrawn: it was measured on `qwen2.5-coder:14b`, which this deployment no longer serves, and it described a *role* rather than a model. On every current profile `implementation` is the same weights as `architecture`. The rejection stands on the first clause alone.
 2. **Env vars in `.zshrc` to switch modes.** Rejected: a shell-global mode is invisible state; you find out which model you were talking to afterwards.
 3. **XDG-isolated wrappers.** Chosen.
 

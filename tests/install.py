@@ -11,6 +11,7 @@ from the package — so there is no data root here to assert about.
 """
 from __future__ import annotations
 
+import plistlib
 import shutil
 import sys
 import tempfile
@@ -142,6 +143,49 @@ def main() -> None:
                          (128, "128gb"), (192, "128gb")):
         got = I.tier_for_memory(gb)
         check(got == expected, f"{gb} GB selects {expected or 'nothing'}", f"got {got}")
+
+    _suite.section("OLLAMA ENVIRONMENT HAS ONE SOURCE")
+    # Both launch agents are generated from I.OLLAMA_ENV: the SERVER plist bakes
+    # it into the daemon, and com.ailocal.ollama-env publishes it to user shells.
+    # They drifted on a real machine -- daemon on KEEP_ALIVE 6h / MAX_LOADED 4
+    # while the shell agent still said -1 / 5 -- because a normal install
+    # rewrote the first and only `--env-only` rewrote the second. Reading either
+    # one then implied a different runtime than the server actually had.
+    #
+    # Written into a temp LA_DIR through the REAL writer, with launchctl
+    # neutralised: this asserts what the installer GENERATES, which is the thing
+    # that regressed. It says nothing about what is installed on this machine or
+    # what the running daemon holds -- those are separate claims.
+    agents = box / "LaunchAgents"
+    saved_la, saved_log, saved_run, saved_bootout = (
+        I.LA_DIR, I.LOG_DIR, I._run, I._bootout)
+    I.LA_DIR, I.LOG_DIR = agents, box / "Logs"
+    I._run = lambda *a, **k: type("R", (), {"returncode": 0, "stdout": ""})()
+    I._bootout = lambda label: None
+    try:
+        server = I._write_agent("com.ailocal.ollama", ["/bin/true", "serve"],
+                                keep_alive=True, env=I.OLLAMA_ENV)
+        I._write_ollama_setenv_agent()
+        shell = agents / "com.ailocal.ollama-env.plist"
+        check(server.is_file() and shell.is_file(),
+              "a normal install writes BOTH the server and shell env agents")
+        baked = plistlib.loads(server.read_bytes()).get("EnvironmentVariables", {})
+        argv = plistlib.loads(shell.read_bytes())["ProgramArguments"][-1]
+        # `launchctl setenv K V; launchctl setenv K V; ...` -> {K: V}
+        published = dict(
+            part.split()[-2:] for part in argv.split(";") if "setenv" in part)
+        for key, want in I.OLLAMA_ENV.items():
+            check(baked.get(key) == want,
+                  f"server plist carries {key}={want}", f"got {baked.get(key)!r}")
+            check(published.get(key) == want,
+                  f"shell agent publishes {key}={want}",
+                  f"got {published.get(key)!r}")
+        check(set(published) == set(I.OLLAMA_ENV) == set(baked),
+              "neither artifact carries a key the other lacks",
+              f"baked={sorted(baked)} published={sorted(published)}")
+    finally:
+        I.LA_DIR, I.LOG_DIR = saved_la, saved_log
+        I._run, I._bootout = saved_run, saved_bootout
 
     shutil.rmtree(box, ignore_errors=True)
     sys.exit(_suite.report())

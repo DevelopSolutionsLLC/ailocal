@@ -110,6 +110,32 @@ CANDIDATES = {
         "options": {"temperature": 1.0, "top_k": 64, "top_p": 0.95},
         "think": True,
     },
+    # The actively served models whose CLASSIFICATION rests on measurement.
+    # Each carries its own num_ctx: the shared 180224 below is the architecture
+    # role's window, and forcing it onto a llama_cpp model would measure an
+    # eager KV allocation no profile asks for (qwen3.5 runs on llama_cpp, which
+    # allocates the whole declared window per parallel slot up front).
+    "qwen3.5:9b": {
+        "label": "fast-role challenger / 32 GB architecture model",
+        "options": {"temperature": 1.0, "top_k": 20, "top_p": 0.95,
+                    "presence_penalty": 1.5},
+        "think": False,
+        "num_ctx": 135168,       # the 64/128 GB fast role's live window
+    },
+    "qwen3.5:4b": {
+        "label": "16 GB architecture/implementation/review/fast model",
+        "options": {"temperature": 1.0, "top_k": 20, "top_p": 0.95,
+                    "presence_penalty": 1.5},
+        "think": False,
+        "num_ctx": 135168,
+    },
+    "qwen3.5:2b": {
+        "label": "incumbent fast model on 64/128 GB",
+        "options": {"temperature": 1.0, "top_k": 20, "top_p": 0.95,
+                    "presence_penalty": 1.5},
+        "think": False,
+        "num_ctx": 135168,
+    },
     "qwen3.8:27b-mlx": {
         "label": "challenger — qwen3_5 arch, 27.8B, adds vision",
         # Thinking mode: temp 1.0 / top_p 0.95 / top_k 20. The instruct-mode
@@ -202,7 +228,7 @@ def speculation_since(offset):
 
 # ── probes ──────────────────────────────────────────────────────────────────
 
-def decode(model, opts, think, want=512, repeats=5):
+def decode(model, opts, think, ctx, want=512, repeats=5):
     """Sustained decode rate, REPEATED, with the speculation it used.
 
     The prompt asks for bulk generation on purpose: acceptance on predictable
@@ -211,7 +237,8 @@ def decode(model, opts, think, want=512, repeats=5):
 
     Repeated because a single sample is not a rate. Measured on this machine,
     four identical runs at one fixed setting spread 68.7-100.8 tok/s with an
-    outlier at 2.9 -- OLLAMA_NUM_PARALLEL is 2 and other models stay resident,
+    outlier at 2.9 -- other models stay resident (and OLLAMA_NUM_PARALLEL was
+    still 2 when that spread was recorded; it ships as 1 now),
     so a probe can land beside someone else's work. That spread is wider than
     the difference between any two sampling settings, which means a single-shot
     number invites a conclusion the measurement cannot support. The MEDIAN
@@ -236,7 +263,7 @@ def decode(model, opts, think, want=512, repeats=5):
             "prompt": "Write a Python function that validates an IPv4 address, "
                       "with a docstring and three unit tests. Code only.",
             "stream": False, "think": think,
-            "options": {**opts, "num_ctx": NUM_CTX, "num_predict": want},
+            "options": {**opts, "num_ctx": ctx, "num_predict": want},
             "keep_alive": "120s"})
         n = r.get("eval_count", 0)
         secs = r.get("eval_duration", 0) / 1e9
@@ -264,9 +291,9 @@ def decode(model, opts, think, want=512, repeats=5):
     return stat, reason, spec, log_ok
 
 
-def prefill_pair(model, depth, opts):
+def prefill_pair(model, depth, opts, ctx):
     """Cold prefill, then the identical prompt again while the trie is warm."""
-    n, cold, res = fill(model, depth, NUM_CTX)
+    n, cold, res = fill(model, depth, ctx)
     warm = None
     if n:
         prompt = (
@@ -274,13 +301,13 @@ def prefill_pair(model, depth, opts):
             * max(1, depth // 18)).replace("record", f"rec_{depth}")
         r = api("/api/generate", {
             "model": model, "prompt": prompt, "stream": False,
-            "options": {**opts, "num_ctx": NUM_CTX, "num_predict": 8},
+            "options": {**opts, "num_ctx": ctx, "num_predict": 8},
             "keep_alive": "120s"})
         warm = r.get("prompt_eval_duration", 0) / 1e9
     return n, cold, warm, res
 
 
-def tool_loop(model, opts, think, rounds):
+def tool_loop(model, opts, think, ctx, rounds):
     """[APPROX] Multi-step tool calling against /api/chat. See module docstring.
 
     Counts a run complete only when the model called read_file, then reported
@@ -291,60 +318,103 @@ def tool_loop(model, opts, think, rounds):
     fx.parent.mkdir(parents=True, exist_ok=True)
     fx.write_text(FIXTURE_BODY)
 
-    done = malformed = 0
-    turns = []
-    for _ in range(rounds):
+    r = {"rounds": rounds, "done": 0, "bad_args": 0, "unknown_tool": 0,
+         "no_call": 0, "transport": 0, "thinking": 0, "calls": 0,
+         "fault_rounds": 0, "fault_recovered": 0, "turns": []}
+    # Half the rounds inject ONE transient failure on the first read_file, so
+    # the model receives a tool result it did not expect and must retry rather
+    # than give up or invent a value. A loop that only ever sees success does
+    # not distinguish "drives tools" from "replays a two-step script".
+    for round_no in range(rounds):
+        fault = round_no % 2 == 1
+        if fault:
+            r["fault_rounds"] += 1
+        fault_pending = fault
+        recovered = False
         msgs = [{"role": "user", "content": TASK}]
         read_ok = False
         for turn in range(1, 7):
             try:
-                r = api("/api/chat", {
+                resp = api("/api/chat", {
                     "model": model, "messages": msgs, "tools": TOOLS,
                     "stream": False, "think": think,
-                    "options": {**opts, "num_ctx": NUM_CTX, "num_predict": 1024},
+                    "options": {**opts, "num_ctx": ctx, "num_predict": 1024},
                     "keep_alive": "120s"}, timeout=600)
             except (urllib.error.URLError, OSError):
-                malformed += 1
+                r["transport"] += 1
                 break
-            m = r.get("message", {})
+            m = resp.get("message", {})
             msgs.append(m)
+            if (m.get("thinking") or "").strip():
+                r["thinking"] += 1
             calls = m.get("tool_calls") or []
             if not calls:
                 # No call and no prior read: it answered from nothing.
                 if read_ok and EXPECT in (m.get("content") or ""):
-                    done += 1
-                    turns.append(turn)
+                    r["done"] += 1
+                    r["turns"].append(turn)
+                    if fault:
+                        recovered = True
+                else:
+                    r["no_call"] += 1
                 break
             for c in calls:
                 fn = c.get("function", {})
                 name, args = fn.get("name"), fn.get("arguments") or {}
+                r["calls"] += 1
                 if isinstance(args, str):
+                    # Ollama normally hands back a parsed object. A string here
+                    # is the model emitting JSON the runtime could not fold in,
+                    # which is exactly what tool_repair.py exists to rescue --
+                    # so it counts against NATIVE argument validity even when
+                    # json.loads below succeeds.
+                    r["bad_args"] += 1
                     try:
                         args = json.loads(args)
                     except ValueError:
-                        malformed += 1
                         args = {}
                 if name == "read_file":
-                    try:
-                        out = pathlib.Path(args.get("path", "")).read_text()
-                        read_ok = True
-                    except OSError as exc:
-                        out = f"error: {exc}"
+                    # A required argument that is absent or not a string is the
+                    # SAME defect class as gemma4 omitting `description` on
+                    # Agent (config.template.yaml). The old loop hid it: a
+                    # missing path just produced a read error indistinguishable
+                    # from a genuine one.
+                    path = args.get("path")
+                    if not isinstance(path, str) or not path:
+                        r["bad_args"] += 1
+                        out = "error: missing required argument 'path'"
+                    elif fault_pending:
+                        fault_pending = False
+                        out = ("error: EAGAIN resource temporarily "
+                               "unavailable; retry the read")
+                    else:
+                        try:
+                            out = pathlib.Path(path).read_text()
+                            read_ok = True
+                        except OSError as exc:
+                            out = f"error: {exc}"
                     msgs.append({"role": "tool", "name": name, "content": out})
                 elif name == "report":
-                    if read_ok and args.get("value", "").strip() == EXPECT:
-                        done += 1
-                        turns.append(turn)
+                    value = args.get("value")
+                    if not isinstance(value, str) or not value:
+                        r["bad_args"] += 1
+                    elif read_ok and value.strip() == EXPECT:
+                        r["done"] += 1
+                        r["turns"].append(turn)
+                        if fault:
+                            recovered = True
                     calls = None
                     break
                 else:
-                    malformed += 1
+                    r["unknown_tool"] += 1
                     msgs.append({"role": "tool", "name": name or "?",
                                  "content": "error: unknown tool"})
             if calls is None:
                 break
-    avg = sum(turns) / len(turns) if turns else None
-    return done, rounds, malformed, avg
+        if recovered:
+            r["fault_recovered"] += 1
+    r["avg_turns"] = (sum(r["turns"]) / len(r["turns"])) if r["turns"] else None
+    return r
 
 
 def gateway_probe():
@@ -396,12 +466,15 @@ def run(model, spec, depths, rounds, quick, repeats):
     print(f"\n{'='*72}\n{model}   engine={engine_of(model)}\n  {spec['label']}")
     opts, think = spec["options"], spec["think"]
     print(f"  sampling     {opts}  think={think}   [vendor-recommended]")
+    print(f"  num_ctx      {ctx}")
 
-    base = load_cold(model, NUM_CTX)
+    ctx = spec.get("num_ctx", NUM_CTX)
+    base = load_cold(model, ctx)
     if base:
         print(f"  weights      {base/GIB:.2f} GiB resident, no KV yet")
 
-    rate, why, spec_stats, log_ok = decode(model, opts, think, repeats=repeats)
+    rate, why, spec_stats, log_ok = decode(model, opts, think, ctx,
+                                          repeats=repeats)
     if rate:
         print(f"  decode       median {rate['median']:.1f} tok/s "
               f"(spread {rate['lo']:.1f}-{rate['hi']:.1f} over {rate['runs']} "
@@ -421,7 +494,7 @@ def run(model, spec, depths, rounds, quick, repeats):
               "one token at a time (no MTP drafter for this blob)")
 
     for depth in depths:
-        n, cold, warm, res = prefill_pair(model, depth, opts)
+        n, cold, warm, res = prefill_pair(model, depth, opts, ctx)
         if not (n and cold):
             print(f"  prefill {depth:>6}  no measurement")
             continue
@@ -435,11 +508,19 @@ def run(model, spec, depths, rounds, quick, repeats):
                   + (f", kv {kv:.1f} KB/token (lazy)" if kv else ""))
 
     if not quick:
-        done, tot, bad, avg = tool_loop(model, opts, think, rounds)
-        print(f"  tool loop    {done}/{tot} completed correctly, "
-              f"{bad} malformed calls"
-              + (f", {avg:.1f} turns avg" if avg else "")
+        t = tool_loop(model, opts, think, ctx, rounds)
+        print(f"  tool loop    {t['done']}/{t['rounds']} completed correctly"
+              + (f", {t['avg_turns']:.1f} turns avg" if t["avg_turns"] else "")
               + "   [APPROX — direct /api/chat, not the gateway]")
+        print(f"  tool args    {t['bad_args']} invalid of {t['calls']} calls "
+              f"(missing/unparsed required argument — what tool_repair.py "
+              f"would otherwise have to fix)")
+        print(f"  recovery     {t['fault_recovered']}/{t['fault_rounds']} "
+              f"rounds recovered from an injected transient tool failure")
+        print(f"  other        {t['unknown_tool']} unknown-tool, "
+              f"{t['no_call']} gave up without a correct answer, "
+              f"{t['transport']} transport errors, "
+              f"{t['thinking']} turns returned reasoning content")
 
     subprocess.run(["ollama", "stop", model], capture_output=True)
 
@@ -465,7 +546,7 @@ def main(argv=None):
     print(f"agentic candidate comparison   "
           f"{datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC}")
     print(f"ollama {ollama}   mlx {mlx}")
-    print(f"num_ctx {NUM_CTX} for every probe (the architecture role's window)")
+    print(f"num_ctx {NUM_CTX} default (architecture's window); candidates may\n        override it — each run prints the value it used")
     print("OLLAMA_KV_CACHE_TYPE / OLLAMA_FLASH_ATTENTION do NOT reach the MLX "
           "runner; they are llama-server flags. KV below is unquantized.")
 

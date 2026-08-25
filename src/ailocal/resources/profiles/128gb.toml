@@ -5,9 +5,11 @@
 # changes is how many of those tokens fit at once.
 #
 # THREE LEVELS OF EVIDENCE, kept apart deliberately:
-#   MODEL-SUPPORTED   gemma4:26b-mlx and qwen3.5:2b both report 262144 native
-#                     context (`ollama show`). 245760 + 16384 = 262144 is the
-#                     model's own ceiling, not a chosen number.
+#   MODEL-SUPPORTED   gemma4:26b-mlx and every qwen3.5 tier report 262144
+#                     native context (`ollama show`). 229376 + 32768 = 262144 is
+#                     the model's own ceiling, not a chosen number, and the
+#                     runner enforces it with an HTTP 400 rather than a silent
+#                     truncation ([REAL] 2026-08-21).
 #   MEASURED (64 GB)  MLX allocates KV lazily at 45.4 KB per token in use, so a
 #                     filled 262,144 window costs ~27.5 GiB (weights ~16.15 GiB
 #                     + ~11.35 GiB KV). Two such sessions fit 128 GB with room;
@@ -30,12 +32,35 @@ disk_gb = 40
 # The one big-context capability every client shares (Claude Code, Codex, VS Code):
 # design, deep reasoning, AND large interactive/agent prompts. This tier declares
 # gemma4's FULL native 262144 window; there is no larger setting to grow into.
+# GEOMETRY, 2026-08-21. This tier is the MAX-CAPABILITY profile: it starts from
+# the 64 GB quality policy and removes the memory-driven compromises, it does not
+# inherit them.
+#
+# num_ctx stays at gemma4's full native 262144. [REAL] Recall does NOT degrade at
+# depth: a four-constant retrieval task with the constants planted at 5%, 35%,
+# 62% and 88% of the prompt scored 4/4 at 57,031, 114,584 AND 235,993 prompt
+# tokens on this runner. The only cost of depth is prefill (102 s / 236 s / 723 s
+# cold, unique preamble, so a real cache miss) -- latency, not accuracy, and a
+# 128 GB profile exists to expose capability rather than to optimise a rare cold
+# miss. [REAL] The runner also enforces the ceiling LOUDLY: prompts above ~262144
+# were rejected with HTTP 400 in ~400 ms, not silently truncated.
+#
+# max_output 16384 -> 32768, matching 64 GB. The reason 64 GB raised it is a
+# property of GEMMA, not of that machine's memory: with reasoning enabled the
+# model spends real output budget thinking before it answers. [REAL] measured
+# here at 5,142 eval tokens for a SMALL coding task, and a 2,048-token cap
+# truncated the answer to 0/3 correct where the same task at a 32,768 budget
+# scored 3/3. 16384 left a 128 GB machine strictly LESS capable than a 64 GB one,
+# which is backwards. context_input absorbs the change (229376 + 32768 = 262144)
+# because the native ceiling is hard.
 [architecture]
 role = "Lead architect"
 active = "gemma4:26b-mlx"
-reasoning = true  # gpt-oss:20b HAS thinking; qwen3-coder did not
-context_input = 245760
-max_output = 16384
+reasoning = true  # [REAL] gemma4:26b-mlx reports the `thinking` capability
+                  # (`ollama show`) and returns reasoning_content. The models
+                  # this line used to name (gpt-oss:20b, qwen3-coder) are gone.
+context_input = 229376
+max_output = 32768
 temperature = 1.0
 keep_alive = "6h"
 purpose = ["architecture", "complex refactoring", "multi-step debugging", "design", "repository-wide planning", "large interactive/agent prompts"]
@@ -62,10 +87,14 @@ active = "gemma4:26b-mlx"
   # (persona, sampling, output ceiling), not a model boundary. Same input window
   # too: the MLX runner enforces context per-request, so three roles declaring
   # three different num_ctx still share ONE resident copy of the weights.
-  # Capabilities: tools YES, insert YES, thinking NO.
+  # [REAL] Capabilities on 2026-08-21 (`ollama show gemma4:26b-mlx`):
+  # completion, tools, thinking. NO insert, and NO vision -- the MLX
+  # conversion drops vision that the GGUF gemma4:26b keeps. An earlier
+  # version of this line read "insert YES, thinking NO" and was wrong on
+  # both counts while `reasoning = true` sat directly beneath it.
 reasoning = true
-context_input = 245760
-max_output = 16384
+context_input = 229376
+max_output = 32768
   # max_output raised 2026-08-21. [REAL] With no ceiling, gemma4 finished
   # real coding tasks in 2,337-5,175 tokens, so 8192 was not truncating
   # normal work -- but at the OLD sampling it looped, spending 13k-23k
@@ -105,9 +134,9 @@ repeat_penalty = 1.0
 [review]
 role = "Code review"
 active = "gemma4:26b-mlx"
-reasoning = true  # thinking AND tools (deepseek had NO tools)
-context_input = 245760
-max_output = 16384
+reasoning = true  # thinking AND tools, both reported by `ollama show`.
+context_input = 229376
+max_output = 32768
 temperature = 1.0
 keep_alive = "6h"
   # 6h, NOT -1. [REAL] keep_alive is LAST-WRITER-WINS on a shared model, and
@@ -134,7 +163,9 @@ repeat_penalty = 1.0
   # temperature. Reproducibility was being bought with quality, not speed.
   # Anything needing determinism should pass a per-request temperature
   # rather than pinning the whole role.
-  # Reasoning is on here and nowhere else: review is the one tier where thinking
+  # Reasoning is on for architecture, implementation AND review -- this block
+  # previously claimed "here and nowhere else", which contradicted the two
+  # roles above it. Review is the tier where thinking most clearly
   # earns its latency. Per-request reasoning_effort is UNRELIABLE (BerriAI/litellm
   # #15059 maps it incorrectly for Ollama); the per-role default below works.
 # ── fast — lightweight tool-enabled agent (NOT autocomplete) ────────────────
@@ -142,8 +173,32 @@ repeat_penalty = 1.0
 # capability, so inline autocomplete would fail QUIETLY.
 [fast]
 role = "Fast agent"
-active = "qwen3.5:2b"
-preferred = ["qwen3.5:2b"]
+active = "qwen3.5:9b"
+preferred = ["qwen3.5:9b", "qwen3.5:2b"]
+  # qwen3.5:9b REPLACES qwen3.5:2b here, 2026-08-21. This role is the
+  # tool-driven background agent (Claude Code's HAIKU slot), so RELIABILITY is
+  # the requirement, not size. [REAL] tests/measure_agentic.py, 16 rounds each,
+  # half injecting a transient tool failure the model must recover from,
+  # repeated at BOTH vendor sampling (temp 1.0) and this block's sampling
+  # (temp 0.0) with identical results:
+  #
+  #     qwen3.5:2b   8/16 tasks complete,  0/8 recoveries
+  #     qwen3.5:9b  16/16 tasks complete,  8/8 recoveries
+  #
+  # Neither model ever malformed a tool argument. The 2B's failure is narrower
+  # and worse than "less accurate": it drives a clean tool loop and then
+  # abandons the task the moment a tool returns something it did not expect.
+  # For a background agent that is a silent stall.
+  #
+  # The cost is small and measured on this host: warm TTFT 294 ms vs 257 ms on
+  # a classification prompt and 301 ms vs 241 ms on a short code prompt (median
+  # of 5), i.e. ~50 ms — far below what a background role notices. Resident
+  # 7.98 GiB vs 3.63 GiB at num_ctx 135168.
+  #
+  # It does NOT evict the architecture model. [REAL] gemma4:26b-mlx (23 GB),
+  # nomic-embed-text, qwen3.5:4b and qwen3.5:9b were all resident at 100% GPU
+  # simultaneously during this measurement; Ollama reported 51.8 GiB of Metal
+  # budget on this 64 GB machine, against ~32 GiB for gemma4 + 9b + embeddings.
   # reasoning is off although the model supports it: with thinking enabled it
   # emitted ~19k reasoning characters and returned EMPTY content within its
   # budget. This tier answers in a word or two and must not think itself out.
@@ -170,8 +225,8 @@ repeat_penalty = 1.0
 # with BOTH `insert` (FIM) and `tools`, verified across six candidates.
 [completion]
 role = "Autocomplete (standby)"
-active = "qwen2.5-coder:3b-instruct-q4_K_M"
-preferred = ["qwen2.5-coder:3b-instruct-q4_K_M", "qwen2.5-coder:1.5b"]
+active = "qwen2.5-coder:3b"
+preferred = ["qwen2.5-coder:3b", "qwen2.5-coder:1.5b"]
 context_input = 3968
   # max_output 512, raised from 128. A FIM suggestion is a few lines, not a
   # paragraph, but 128 truncated multi-line completions mid-block. 512 is
@@ -189,5 +244,16 @@ repeat_penalty = 1.0
 
 [compaction]
 window = 163840  # effective window handed to the client's compactor
+  # DELIBERATELY does NOT track architecture.context_input on this tier, unlike
+  # 64 GB where the two coincide. context_input is what the backend ADMITS;
+  # this is when the CLIENT summarises, and that is a latency budget, not a
+  # memory one. 128 GB runs the same gemma4 at the same clock as 64 GB, so the
+  # cold prefill at a given depth is identical and more RAM buys no speed.
+  # [REAL] 2026-08-21: 114,584 tok cold = 236 s, 235,993 tok cold = 723 s.
+  # Compacting at 139,264 keeps a resumed session inside ~250 s of cold
+  # prefill; letting it track 229376 would put the trigger at ~195K, i.e.
+  # roughly 10 minutes to resume a session that has no prefix cache.
+  # Raising the ADMITTED window without raising this is the intended shape:
+  # capability is exposed, routine latency is not sacrificed.
 pct = 85  # compact at this % of the window
-  # trigger: 139264 tokens
+  # trigger: 139,264 tokens
