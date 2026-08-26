@@ -224,6 +224,29 @@ check(reg.group_of("TaskCreate") == "delegation", "Task* prefix -> delegation")
 # Agent reached the model: it called Agent and the reviewer ran on the review tier.
 check(reg.group_of("Agent") == "delegation",
       "Agent (the real subagent tool) -> delegation, NOT orchestration")
+
+# The work-tracking path, end to end. Cadence instructs the model to load the
+# work-tracking skill BEFORE any issue_write / sub_issue_write / projects_* call,
+# so two things have to hold together: Skill must be reachable, and so must the
+# GitHub tools that skill exists to drive. They reach the model by DIFFERENT
+# mechanisms, which is why this is asserted rather than assumed.
+#
+# Skill is reachable because `skills` is in the always floor. It was not, and a
+# short request like "create a GitHub issue to track X" classified `debug` and
+# lost the only tool that can load a skill the same client advertises.
+check("skills" in ((reg.doc.get("task_classes") or {}).get("always") or []),
+      "skills is in the always floor, so Skill survives a classified task")
+
+# The GitHub tools are reachable by fail-open: they match no group, and an
+# ungrouped tool is forwarded (see the native_lsp comment in registry.yaml). That
+# is deliberate — an external MCP the registry has never heard of must not vanish
+# because it was not enumerated — but it means the work-tracking surface depends
+# on fail-open staying fail-open. If a future change makes ungrouped tools
+# droppable, these break, which is the point.
+for _gh in ("mcp__github__issue_write", "mcp__github__projects_write",
+            "mcp__github__sub_issue_write"):
+    check(reg.group_of(_gh) is None,
+          f"{_gh} is ungrouped — reachable via fail-open, not by enumeration")
 # Delegation is a SEPARATE group from orchestration on purpose. Grouped together,
 # denying orchestration to local models also stripped Task, so claude-local could
 # not reach the subagents this repo ships — measured, and initially misread as the
