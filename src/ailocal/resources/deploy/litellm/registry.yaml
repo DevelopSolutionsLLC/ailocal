@@ -558,7 +558,17 @@ task_classes:
 
   # Groups every task keeps regardless of classification. Reading and running
   # things is the floor: a task that cannot read a file cannot be verified.
-  always: [edit_and_run, mcp_plumbing, native_lsp]
+  #
+  # `skills` is in the floor for the reason the group exists at all (see its
+  # comment above): the client ADVERTISES its skills in every request, and Skill
+  # is the only tool that can load one. Splitting it out of `orchestration`
+  # stopped it being dropped with Workflow, but it still fell out of any task
+  # that classified — explore, debug and review all omit it — so a request like
+  # "create a GitHub issue to track X" classified `debug` and lost the tool its
+  # own instructions tell it to use before touching issue_write/projects_*.
+  # Measured 1,846 B against the ~100 ms warm prefill it re-costs, versus a lost
+  # capability the model is told to reach for: the floor is the cheap side.
+  always: [edit_and_run, mcp_plumbing, native_lsp, skills]
 
   # Groups force-added when the request EXPLICITLY asks for them, whatever class
   # it matched. Classification is substring matching, so it reads the topic and
