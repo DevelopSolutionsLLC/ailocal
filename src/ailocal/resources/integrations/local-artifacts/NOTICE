@@ -1,0 +1,113 @@
+local-artifacts
+Copyright (c) 2026 VTChevalier
+
+A fork of claude-code-local-artifacts
+  https://github.com/xiagaohui/local-artifacts-for-claude-code
+  at revision ddb479689c3d3d5f3b935b4cadf0cc23fe931bb3 (2026-06-20), MIT.
+Upstream's licence and notice are kept as LICENSE.upstream / NOTICE.upstream.
+
+This product bundles the following third-party software:
+
+--------------------------------------------------------------------------------
+marked (marked.min.js, v4.3.0)
+https://github.com/markedjs/marked
+Copyright (c) 2018+, MarkedJS; Copyright (c) 2011-2018, Christopher Jeffrey
+Licensed under the MIT License. Full text: ./licenses/marked-LICENSE.txt
+--------------------------------------------------------------------------------
+
+This project is unofficial and is NOT affiliated with, endorsed by, or sponsored
+by Anthropic. "Claude", "Claude Code" and "Artifacts" are referenced only to
+describe interoperability; all trademarks belong to their respective owners.
+
+
+WHAT THIS FORK CHANGED, AND WHY
+===============================
+
+1. POST /publish deleted.
+   Upstream exposed an unauthenticated HTTP POST that accepted a cross-origin
+   "simple request" (Content-Type: text/plain -> no preflight) with no Origin
+   or Host check. [REAL] Executing that request against upstream returned
+   {"ok":true} and the injected scripted HTML was then served at /. It was
+   never used by the MCP path, which calls _publish() in-process, so it is
+   removed rather than patched. The server now has no HTTP mutation route.
+
+2. Host header validated.
+   Only 127.0.0.1 / localhost / [::1], optionally with our port, are served;
+   anything else gets 421. Upstream accepted any Host, so a remote page that
+   had rebound a name to 127.0.0.1 could read the artifact back.
+
+3. Untrusted content moved into a sandboxed iframe.
+   Upstream served model-generated HTML as the top-level document with no CSP.
+   Here `/` is a TRUSTED viewer we generate (banner + SSE) and the artifact is
+   served separately at `/content`, framed with sandbox="allow-scripts" and no
+   allow-same-origin, so it runs in an opaque origin under
+   `connect-src 'none'`. SSE lives in the viewer, which is why the artifact
+   itself needs no network permission at all.
+   [REAL] Verified behaviourally, not by reading headers: honeypot sockets
+   standing in for Ollama/Qdrant/LiteLLM/the internet recorded 0 connections
+   from the artifact, while an identical page served without the CSP lit all
+   of them.
+
+4. Markdown is contained, not sanitized.
+   marked v4.3.0 passes raw HTML through and upstream did not sanitize it, so
+   Markdown artifacts executed script exactly like HTML ones. Rather than
+   sanitize (which breaks legitimate inline HTML), Markdown now renders under
+   the SAME sandbox+CSP boundary as HTML. Documented, not silently inherited.
+
+5. file_path confined to an approved root.
+   Upstream allowed any readable .html/.md/.txt anywhere on the host. The root
+   is now the server's cwd at startup -- [REAL] Claude Code spawns stdio MCP
+   servers with cwd = its own launch directory, so this is the active project --
+   overridable with LOCAL_ARTIFACTS_ROOT. Paths are resolved (following
+   symlinks) before the containment check, so a symlink inside the root that
+   points outside it is refused.
+
+6. State moved out of ~/.claude.
+   Upstream wrote to ~/.claude/artifacts, a tree Claude Code owns. State now
+   lives under $XDG_STATE_HOME/local-artifacts (0700, files 0600).
+
+7. CLAUDE_CODE_DISABLE_ARTIFACT is no longer honoured.
+   Upstream disabled its own publishing when that variable was set. It is
+   Claude Code's switch for the HOSTED tool, and the whole point here is to
+   work while the hosted tool is unavailable. Auto-open is controlled by
+   LOCAL_ARTIFACTS_AUTO_OPEN instead.
+
+8. Ported to the mcp 2.x API.
+   Upstream targets mcp 1.x (@app.list_tools()/@app.call_tool()). mcp 2.x
+   renamed FastMCP to MCPServer and dropped those decorators.
+
+9. Model-visible strings rewritten in English.
+   The tool description is the primary tool-routing signal, and local models
+   are measurably sensitive to its wording.
+
+10. Bind failure reporting tightened.
+    publish() waits on an explicit ready event before reporting, so a bind
+    failure cannot race the first tool call.
+
+11. Deterministic diagram layout added (this fork only).
+    The local benchmark showed the model hand-writing SVG coordinates and
+    producing overlapping boxes and colliding labels. Architecture diagrams are
+    now described semantically (nodes/groups/edges/kinds) and laid out by ELK,
+    with an SVG design system supplying presentation. The model writes no
+    geometry, and the emitted artifact contains no script at all.
+    Mermaid is bundled and inlined by the trusted server, so diagram support
+    never reintroduces a CDN dependency.
+
+    Bundled: elkjs 0.12.0 (EPL-2.0 OR GPL-3.0-or-later, licences/elkjs-LICENSE.md),
+    mermaid 11.17.2 (MIT), marked 4.3.0 (MIT). See vendor/VERSIONS.txt.
+
+12. Productization (this fork only).
+    - CLAUDE_PROJECT_DIR is the authoritative project root; cwd is a documented
+      fallback. [REAL] verified that stdio MCP servers receive it on Claude Code
+      2.1.231, and that it equals the LAUNCH directory, not the git root.
+    - Publishing writes the canonical source under <project>/.artifacts/
+      automatically. For architecture that is the semantic graph, not the
+      rendered SVG, so the artifact stays editable and reproducible.
+    - artifact_id gives stable identity; the same id updates in place.
+    - Tool renamed to mcp__artifact__publish (22 chars, from 39).
+      [REAL] name mangling fell from 3/18 runs to 0/24.
+    - Plugin packaging was tested and rejected: a plugin-provided MCP server is
+      namespaced mcp__plugin_<plugin>_<server>__<tool>, which is LONGER, and
+      tool-name length is the failure mode packaging would have been adopted to
+      fix. Skills-dir plugins otherwise work (auto-load, MCP spawn,
+      CLAUDE_PLUGIN_ROOT/DATA) and need no settings.json entry.

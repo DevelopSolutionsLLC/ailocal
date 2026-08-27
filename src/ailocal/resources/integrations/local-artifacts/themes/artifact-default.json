@@ -1,0 +1,92 @@
+{
+  "$comment": [
+    "Canonical visual tokens for local artifacts. The MODEL supplies semantics",
+    "(nodes, groups, edges, kinds, labels); this file supplies every colour,",
+    "typeface and measurement. Architecture SVG and Mermaid both read it, so the",
+    "two diagram types look like one product.",
+    "",
+    "Design references (references, not dependencies): C4 notation guidance",
+    "(c4model.com/diagrams/notation) -- every element states its TYPE, every",
+    "diagram carries a key, relationships are labelled and directional, and",
+    "notation must survive black-and-white printing and colour blindness.",
+    "Structurizr element styles and Mermaid themeVariables informed the token",
+    "shape.",
+    "",
+    "Consequence of the C4 rule: kind is rendered as a visible type label, so",
+    "colour is an ACCENT and never the sole carrier of meaning. Edge kinds add a",
+    "dash pattern for the same reason. That is why runtime and model may share a",
+    "hue family without becoming ambiguous."
+  ],
+  "typography": {
+    "sans": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+    "mono": "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+    "title_px": 13.0,
+    "type_label_px": 8.5,
+    "subtitle_px": 10.5,
+    "badge_px": 9.0,
+    "edge_label_px": 10.5,
+    "group_label_px": 10.0
+  },
+  "geometry": {
+    "node_radius": 6,
+    "group_radius": 10,
+    "accent_rail_px": 3,
+    "node_stroke_px": 1,
+    "group_stroke_px": 1.25,
+    "edge_stroke_px": 1.6,
+    "corner_radius": 9
+  },
+  "light": {
+    "canvas": "#f6f7f9",
+    "surface": "#ffffff",
+    "group_surface": "#f0f2f5",
+    "ink": "#14181d",
+    "muted": "#59616d",
+    "faint": "#828b98",
+    "border": "#d3d8de",
+    "accent": {
+      "client":   "#1f6fb2",
+      "service":  "#0f7b6c",
+      "router":   "#6b4fa1",
+      "runtime":  "#2b6cb0",
+      "model":    "#2f7d55",
+      "database": "#8a6100",
+      "external": "#5b6472",
+      "tool":     "#a85416",
+      "default":  "#5b6472"
+    }
+  },
+  "dark": {
+    "canvas": "#0d1014",
+    "surface": "#161a20",
+    "group_surface": "#12161b",
+    "ink": "#e5e9ef",
+    "muted": "#9aa4b2",
+    "faint": "#6f7885",
+    "border": "#2a313a",
+    "accent": {
+      "client":   "#6db3f2",
+      "service":  "#3fc0ad",
+      "router":   "#b39ae0",
+      "runtime":  "#7aa9e6",
+      "model":    "#68c68f",
+      "database": "#d9ad4a",
+      "external": "#98a3b3",
+      "tool":     "#e0954f",
+      "default":  "#98a3b3"
+    }
+  },
+  "edge_kinds": {
+    "request":    {"accent": "client",   "dash": "none",  "label": "request"},
+    "inference":  {"accent": "model",    "dash": "none",  "label": "inference"},
+    "tool":       {"accent": "tool",     "dash": "7 5",   "label": "tool / MCP"},
+    "data":       {"accent": "database", "dash": "1 5",   "label": "data"},
+    "dependency": {"accent": "external", "dash": "3 4",   "label": "dependency"},
+    "default":    {"accent": "default",  "dash": "none",  "label": "relates to"}
+  },
+  "type_labels": {
+    "client": "CLIENT", "service": "SERVICE", "router": "ROUTER",
+    "runtime": "RUNTIME", "model": "MODEL", "database": "DATABASE",
+    "external": "EXTERNAL", "tool": "TOOL", "default": ""
+  }
+}

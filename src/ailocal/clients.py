@@ -15,6 +15,7 @@ Never touched: ~/.claude, ~/.codex. Those are the user's cloud sessions.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -113,6 +114,14 @@ def _code(*args, timeout: int = 120) -> str | None:
     except (OSError, subprocess.SubprocessError):
         return None
     return r.stdout if r.returncode == 0 else None
+
+
+def _sh(*args, timeout: int = 900) -> int:
+    """Run a provisioning command; return its exit status. Never raises."""
+    try:
+        return subprocess.run([str(a) for a in args], timeout=timeout).returncode
+    except (OSError, subprocess.SubprocessError):
+        return 1
 
 
 def _extensions() -> list[str]:
@@ -612,6 +621,85 @@ def target_codex() -> None:
     print("    (BerriAI/litellm#27442). `codex-local exec` is unaffected.")
 
 
+
+# ── Bundled local artifact capability ───────────────────────────────────────
+
+def _artifact_source() -> Path:
+    """The component ships inside the package, like deploy/ and clients/."""
+    return policy.data_root() / "integrations/local-artifacts"
+
+
+def provision_local_artifacts(home: Path) -> bool:
+    """Install the bundled artifact MCP for claude-local and register it.
+
+    ailocal stays standard-library-only: the component needs `mcp`, so it gets
+    its OWN interpreter in the state root and runs as a subprocess, exactly as
+    LiteLLM runs as a container. Nothing here is imported by ailocal.
+
+    Registration MERGES into .claude.json. That file still belongs to the user
+    -- github, grepai and anything else they added must survive -- so this
+    writes one key and leaves the rest alone.
+    """
+    src = _artifact_source()
+    if not (src / "server.py").is_file():
+        warn("bundled artifact component missing from the package")
+        return False
+
+    venv = policy.state_root() / "local-artifacts" / ".venv"
+    py = venv / "bin" / "python"
+    req = src / "requirements.txt"
+    if not py.is_file():
+        step("Provisioning the artifact runtime")
+        r = _sh(sys.executable, "-m", "venv", str(venv))
+        if r != 0:
+            warn("could not create the artifact venv — artifacts unavailable")
+            return False
+    stamp = venv / ".requirements.sha"
+    want = (hashlib.sha256(req.read_bytes()).hexdigest()
+            if req.is_file() else "")
+    have = stamp.read_text().strip() if stamp.is_file() else ""
+    if have != want:
+        _sh(str(py), "-m", "pip", "install", "-q", "--upgrade", "pip")
+        r = _sh(str(py), "-m", "pip", "install", "-q", "-r", str(req))
+        if r != 0:
+            warn("could not install the artifact runtime dependency (mcp)")
+            return False
+        stamp.write_text(want + "\n")
+        info(f"artifact runtime ready ({venv})")
+    else:
+        skip("artifact runtime already provisioned")
+
+    # MCP registration, merged.
+    cj = home / ".claude.json"
+    try:
+        data = json.loads(cj.read_text()) if cj.is_file() else {}
+    except Exception:
+        warn(f"{cj} is not valid JSON — artifact MCP not registered")
+        return False
+    servers = data.setdefault("mcpServers", {})
+    entry = {"type": "stdio", "command": str(py), "args": [str(src / "server.py")],
+             "env": {}, "alwaysLoad": True}
+    if servers.get("artifact") != entry:
+        servers["artifact"] = entry
+        cj.write_text(json.dumps(data, indent=2) + "\n")
+        info("artifact MCP registered in .claude.json (other servers preserved)")
+    else:
+        skip("artifact MCP already registered")
+
+    # The routing skill travels with the component.
+    skill_src = src / "skill" / "SKILL.md"
+    if skill_src.is_file():
+        dst = home / "skills" / "local-artifact"
+        dst.mkdir(parents=True, exist_ok=True)
+        (dst / "SKILL.md").write_text(skill_src.read_text())
+        info(f"{dst}/SKILL.md written")
+
+    if not shutil.which("node"):
+        warn("node is not on PATH — every artifact format works except "
+             "'architecture', which uses the bundled elkjs for layout")
+    return True
+
+
 # ── Claude Code ─────────────────────────────────────────────────────────────
 
 def target_claude() -> None:
@@ -650,6 +738,8 @@ def target_claude() -> None:
     else:
         claude_json.write_text('{"hasCompletedOnboarding": true}\n')
         info(f"{claude_json} seeded (skips first-run onboarding)")
+
+    provision_local_artifacts(home)
 
     print("  Launch with: claude-local  (source ~/.zshrc first)")
     print("  Plain 'claude' still talks to Anthropic's cloud — untouched.")
