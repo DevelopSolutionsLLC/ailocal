@@ -216,7 +216,9 @@ def gen_role_block(role, info):
             params.append(f"      {key}: {info[key]}")
     # num_predict is the only ceiling the backend honours: [REAL] a per-request
     # max_tokens of 512 against an alias declaring 32768 returned 4,199 tokens
-    # (LiteLLM 1.93.0, ollama_chat).
+    # (LiteLLM 1.93.0, ollama_chat). Re-verified on 1.98.0: max_tokens 512
+    # returned 2,510 tokens and stopped on end_turn, so the request-level
+    # ceiling still does not bind and this parameter is still the only one.
     if _g["num_predict"] is not None:
         params.append(f"      num_predict: {_g['num_predict']}")
     if ka is not None:

@@ -392,7 +392,8 @@ def geometry(context_input, max_output):
     Admission equals context_input BY CONSTRUCTION, so there is no second place
     to get over-admission wrong. max_output is the only ceiling that binds:
     [REAL] a per-request max_tokens of 512 against an alias declaring
-    num_predict 32768 returned 4,199 tokens (LiteLLM 1.93.0, ollama_chat).
+    num_predict 32768 returned 4,199 tokens (LiteLLM 1.93.0, ollama_chat);
+    re-verified on 1.98.0, where the same 512 returned 2,510 tokens.
     """
     if not isinstance(context_input, int) or context_input <= 0:
         raise ProfileError(ROLE_CONFIG_INVALID, f"context_input={context_input!r}")

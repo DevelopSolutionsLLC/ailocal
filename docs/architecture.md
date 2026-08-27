@@ -197,13 +197,43 @@ Claude Code's variables are process-wide while its model slots route to differen
 
 **Add a client template** — place the authored template under `resources/clients/<client>/`, emit its rendered output to `$AILOCAL_STATE/clients/<client>/` from the generator, and deploy it from `src/ailocal/clients.py`. Never write generated output beside the template.
 
+**Add a bundled integration** — place it under `resources/integrations/<name>/` with its own
+provenance and licences, provision it from `src/ailocal/clients.py` into the state root, and
+give it a check in `src/ailocal/checks/`. It runs as a subprocess with its own interpreter, so
+ailocal's `dependencies = []` is unaffected. See the artifact component and ADR 011.
+
+---
+
+## The claude-local surface
+
+Inference is **always** through LiteLLM. There is no direct-Ollama path for an agent or a
+subagent, in production or otherwise; the proxy is the only route, which is what makes the
+gateway, the registry and the metrics meaningful.
+
+Three things shape what the model actually sees on a `claude-local` request, all per-process
+and none of them written to `~/.claude`:
+
+- **MCP tool search** (`ENABLE_TOOL_SEARCH=true`) defers what can be deferred. Requires
+  LiteLLM ≥ 1.98, which preserves the mid-array `role: "system"` messages the deferred-tool
+  listing travels in.
+- **Native Workflow disabled**, because its schema cannot be deferred at all.
+- **The bundled artifact MCP**, which declares `alwaysLoad` and is therefore eager.
+
+[REAL] the resulting parent surface is 23 tools / 32,055 bytes. A delegated subagent gets what
+it declares minus `Grep`/`Glob`; the full matrix and its method are in
+[claude-local.md](claude-local.md#known-subagent-limitations).
+
+**Cadence is optional and separately owned.** ailocal neither installs nor depends on it, and
+`claude-local` is complete without it.
+
 ---
 
 ## Decisions
 
 Durable decisions are in [adr/](adr/): the tool gateway and task classification
-(004), local and hosted models side by side (008), and host policy as TOML read
-by `tomllib` (010). Numbers are never reused; a gap is a decision recorded
-elsewhere or never taken.
+(004, partially superseded at LiteLLM 1.98), local and hosted models side by
+side (008), host policy as TOML read by `tomllib` (010), and the bundled
+artifact capability (011). Numbers are never reused; a gap is a decision
+recorded elsewhere or never taken.
 
 ---
