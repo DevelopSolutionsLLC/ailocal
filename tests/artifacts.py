@@ -21,8 +21,8 @@ REPO = pathlib.Path(__file__).resolve().parent.parent
 SRC = REPO / "src/ailocal/resources/integrations/local-artifacts"
 
 #: Deterministic, hermetic (each writes only into its own temp dirs).
-CORE = ["test_architecture.py", "test_design.py", "test_persistence.py",
-        "test_server.py"]
+CORE = ["test_architecture.py", "test_design.py", "test_lifetime.py",
+        "test_persistence.py", "test_server.py"]
 #: Needs a real browser and free loopback ports.
 FULL = ["test_browser.py"]
 
@@ -56,7 +56,12 @@ def main() -> int:
         # leaves behind points at a port nothing is listening on any more, and a
         # gate that produces a screenful of "connection refused" is a gate people
         # stop running.
-        env = dict(os.environ, LOCAL_ARTIFACTS_AUTO_OPEN="0")
+        # A publish now starts a preview server that deliberately OUTLIVES the
+        # process that published, so an automated run would leave one behind for
+        # the full idle timeout. Tests get a short one instead: whatever they
+        # spawn reaps itself seconds after the suite ends.
+        env = dict(os.environ, LOCAL_ARTIFACTS_AUTO_OPEN="0",
+                   LOCAL_ARTIFACTS_IDLE_EXIT="5")
         r = subprocess.run([str(py), str(path)], cwd=str(SRC), env=env,
                            capture_output=True, text=True, timeout=900)
         ok = r.returncode == 0

@@ -99,9 +99,10 @@ WHAT THIS FORK CHANGED, AND WHY
    The tool description is the primary tool-routing signal, and local models
    are measurably sensitive to its wording.
 
-10. Bind failure reporting tightened.
-    publish() waits on an explicit ready event before reporting, so a bind
-    failure cannot race the first tool call.
+10. Bind failure reporting tightened, then superseded by (13).
+    publish() waited on an explicit ready event before reporting, so a bind
+    failure could not race the first tool call. Production no longer binds in
+    this process at all; the honest-failure property it added is kept by (13).
 
 11. Deterministic diagram layout added (this fork only).
     The local benchmark showed the model hand-writing SVG coordinates and
@@ -130,3 +131,21 @@ WHAT THIS FORK CHANGED, AND WHY
       tool-name length is the failure mode packaging would have been adopted to
       fix. Skills-dir plugins otherwise work (auto-load, MCP spawn,
       CLAUDE_PLUGIN_ROOT/DATA) and need no settings.json entry.
+
+13. Preview-server lifetime decoupled from the MCP process (this fork only).
+    Upstream runs the HTTP listener as a daemon thread inside the stdio MCP
+    server. Claude Code terminates that process at session end (MCP spec: close
+    stdin, SIGTERM, SIGKILL), so every preview URL stopped answering the moment
+    its session ended, while the artifact remained on disk -- the measured cause
+    of "127.0.0.1 refused to connect". Upstream's README calls the server
+    persistent; what persists there is the restored state file, not the server.
+    This fork runs `server.py --serve` as ONE shared, session-independent
+    process per machine, started on demand by the first publish and reused by
+    every session after it, exiting after LOCAL_ARTIFACTS_IDLE_EXIT with no
+    request and no connected viewer. It also fixes a second measured defect: a
+    session that lost the bind race was poisoned for its entire life and could
+    never publish, even once the port was free.
+    Publishing crosses the process boundary through the 0600 state file, which
+    is now written atomically -- deliberately NOT over HTTP, so the write
+    endpoint removed in (1) stays removed.
+    See docs/adr/013-artifact-preview-lifetime.md.

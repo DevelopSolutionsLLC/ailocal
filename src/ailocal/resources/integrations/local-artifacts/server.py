@@ -7,9 +7,15 @@ Artifact tool is not registered.
 Forked from xiagaohui/local-artifacts-for-claude-code @ ddb4796 (MIT).
 See NOTICE for what changed and why.
 
-    Claude Code --spawns--> this process
-                              |-- stdio MCP server  (publish_artifact)
-                              `-- HTTP thread on 127.0.0.1:PORT
+    Claude Code --spawns--> this process   (one per session, stdio MCP)
+                              `-- publish -> state file -> shared preview server
+
+    server.py --serve       ONE per machine, started on demand by the first
+                            publish, reused by every session, NOT a child of any
+                            of them. A listener inside the MCP process dies when
+                            Claude Code terminates that process at session end,
+                            which is what made preview URLs refuse connections.
+                            See docs/adr/013-artifact-preview-lifetime.md.
 
 Rendering boundary: the top-level document at `/` is a TRUSTED viewer we
 generate. Model-generated content is served separately at `/content` and framed
@@ -34,6 +40,22 @@ import architecture
 # ── Config ────────────────────────────────────────────────────────────────────
 PORT = int(os.environ.get("LOCAL_ARTIFACTS_PORT", "7891"))
 MAX_SIZE = 16 * 1024 * 1024  # 16 MiB
+
+# The preview server outlives the session that published to it, so it needs its
+# own way to die. It exits after this many seconds with no request, no publish
+# and no connected viewer. 0 disables the timeout. One shared 24 MiB process is
+# the entire budget: every session reuses it instead of starting its own.
+#
+# 30 minutes, not longer, because nothing is lost by reaping: [REAL] a cold
+# start costs 0.351s against 0.18s warm, so the next publish pays ~170ms and
+# transparently gets a fresh server. Nothing is lost by reaping *early* either,
+# because everything that constitutes use defers it -- an open tab holds an SSE
+# connection and blocks the reaper outright, any GET resets the clock, and so
+# does an incoming publish. What remains is the one case worth the wait: a
+# transcript URL reopened later with no tab still open and nothing republishing.
+# Half an hour covers the pauses inside a working session; past that the artifact
+# is still on disk under .artifacts/ and republishing brings it straight back.
+IDLE_EXIT = int(os.environ.get("LOCAL_ARTIFACTS_IDLE_EXIT", "1800"))  # 30 min
 
 # State lives in a local-artifacts-owned XDG location. Never ~/.claude: that
 # tree belongs to Claude Code, and ailocal's invariants forbid touching it.
@@ -118,11 +140,27 @@ _sse_lock = threading.Lock()
 _http_error: str = ""
 _http_ready = threading.Event()   # set once bind succeeded OR failed
 _opened_once = False
+_last_activity = time.time()      # serve mode: drives the idle reaper
+_content_mtime = 0.0              # serve mode: last CONTENT_FILE we ingested
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    """Write 0600, atomically. The preview server reads these files from another
+    process, so a reader must never observe a partially written artifact."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    try:
+        tmp.chmod(0o600)
+    except OSError:
+        pass
+    os.replace(tmp, path)
 
 
 def _load_persisted_state():
+    global _content_mtime
     try:
         if CONTENT_FILE.exists():
+            _content_mtime = CONTENT_FILE.stat().st_mtime
             saved = json.loads(CONTENT_FILE.read_text(encoding="utf-8"))
             if isinstance(saved, dict):
                 _state.update({k: saved.get(k, _state[k]) for k in _state})
@@ -495,6 +533,8 @@ class Handler(BaseHTTPRequestHandler):
     # rather than patched.
 
     def do_GET(self):
+        global _last_activity
+        _last_activity = time.time()
         if not _host_ok(self.headers.get("Host", "")):
             self._send(421, "text/plain; charset=utf-8",
                        b"Misdirected request: unrecognised Host header.")
@@ -593,13 +633,8 @@ def _publish(title, emoji, content, fmt, published_at, artifact_id=""):
         snap = dict(_state)
     try:
         meta = {k: v for k, v in snap.items() if k != "content"}
-        STATE_FILE.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
-        CONTENT_FILE.write_text(json.dumps(snap, ensure_ascii=False))
-        for f in (STATE_FILE, CONTENT_FILE):
-            try:
-                f.chmod(0o600)
-            except OSError:
-                pass
+        _atomic_write(STATE_FILE, json.dumps(meta, ensure_ascii=False, indent=2))
+        _atomic_write(CONTENT_FILE, json.dumps(snap, ensure_ascii=False))
     except Exception:
         pass
     _notify_sse()
@@ -618,6 +653,152 @@ def _run_http():
         return
     _http_ready.set()
     srv.serve_forever()
+
+
+def _watch_state(interval=0.25):
+    """Ingest artifacts published by OTHER processes.
+
+    This is the whole transport between a publishing session and the shared
+    preview server. It is deliberately a file, not an HTTP endpoint: upstream's
+    `POST /publish` was an unauthenticated cross-origin write and was removed in
+    the security audit (test_server.py section E pins it removed). Reading a
+    0600 file in the user's own state directory reintroduces no write surface.
+    """
+    global _content_mtime, _last_activity
+    while True:
+        time.sleep(interval)
+        try:
+            mtime = CONTENT_FILE.stat().st_mtime
+        except OSError:
+            continue
+        if mtime == _content_mtime:
+            continue
+        try:
+            saved = json.loads(CONTENT_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            continue          # mid-write or corrupt; try again next tick
+        if isinstance(saved, dict):
+            with _state_lock:
+                _state.update({k: saved.get(k, _state[k]) for k in _state})
+            _content_mtime = mtime
+            # A publish is use. Do not rely on the publisher's /status probes to
+            # defer the reaper for us: that couples the idle policy to how
+            # ensure_preview_server happens to be implemented.
+            _last_activity = time.time()
+            _notify_sse()
+
+
+def _idle_reaper():
+    """Exit once nobody is using this server.
+
+    A viewer with the page open holds an SSE connection, so an idle server is
+    one with no requests AND no watchers -- not merely one nobody has clicked
+    recently. Without this the process a session leaves behind would live until
+    reboot, which is the zombie the decoupling would otherwise trade for.
+    """
+    if IDLE_EXIT <= 0:
+        return
+    while True:
+        time.sleep(min(60, max(1, IDLE_EXIT // 10)))
+        with _sse_lock:
+            watchers = len(_sse_clients)
+        if watchers == 0 and (time.time() - _last_activity) > IDLE_EXIT:
+            os._exit(0)
+
+
+def _probe(timeout=0.6):
+    """True if OUR preview server is already answering on PORT.
+
+    A 200 is not enough: some other local service could hold the port and
+    answer /status, and treating that as ours would report a successful publish
+    against a server that has never heard of the artifact. Require the response
+    to be our own JSON, so an unrecognised occupant falls through to the honest
+    "did not come up, set LOCAL_ARTIFACTS_PORT" error instead.
+    """
+    import urllib.request
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{PORT}/status",
+                                     headers={"Host": f"127.0.0.1:{PORT}"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            if r.status != 200:
+                return False
+            st = json.loads(r.read().decode("utf-8"))
+        return isinstance(st, dict) and "artifact_id" in st and "port" in st
+    except Exception:
+        return False
+
+
+def _await_ingest(artifact_id, published_at, timeout=3.0):
+    """Block until the shared server is serving the artifact we just wrote.
+
+    `publish()` returns a URL and opens a browser at it. Without this the tab
+    can open before the watcher has picked the state file up, so the user sees
+    the empty page and the success message describes this process's memory
+    rather than what the URL actually serves.
+    """
+    import urllib.request
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            req = urllib.request.Request(f"http://127.0.0.1:{PORT}/status",
+                                         headers={"Host": f"127.0.0.1:{PORT}"})
+            with urllib.request.urlopen(req, timeout=0.5) as r:
+                st = json.loads(r.read().decode("utf-8"))
+            if (st.get("artifact_id") == artifact_id
+                    and st.get("published_at") == published_at):
+                return True
+        except Exception:
+            pass
+        time.sleep(0.05)
+    return False
+
+
+def ensure_preview_server(timeout=8.0):
+    """Guarantee a preview server owns PORT, without owning it ourselves.
+
+    The listener must NOT live in this process. Claude Code terminates a stdio
+    MCP server when the session ends (MCP spec: close stdin, then SIGTERM, then
+    SIGKILL), so a listener parented to it dies with the session while the
+    preview_url stays in the transcript -- the measured cause of "refused to
+    connect". The server is therefore started in its own session and outlives
+    us. Concurrent sessions do not each get one: whoever loses the bind race
+    exits, and everybody reuses the winner.
+    """
+    global _http_error
+    if _probe():
+        _http_error = ""
+        return True
+
+    # The child is told the port and the state directory EXPLICITLY rather than
+    # inheriting them. Both are resolved at import time, and a caller that has
+    # since changed os.environ would otherwise hand us a server on a different
+    # port, reading a different state file -- and the state file IS the
+    # transport, so the two processes have to agree on it or nothing arrives.
+    env = dict(os.environ,
+               LOCAL_ARTIFACTS_PORT=str(PORT),
+               XDG_STATE_HOME=str(STATE_DIR.parent))
+    try:
+        subprocess.Popen([sys.executable, os.path.abspath(__file__), "--serve"],
+                         cwd=str(Path(__file__).resolve().parent), env=env,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL,
+                         start_new_session=True)   # not in our process group:
+                                                   # our SIGTERM must not reach it
+    except Exception as e:
+        _http_error = f"cannot start the preview server ({e})."
+        return False
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if _probe():
+            _http_error = ""
+            return True
+        time.sleep(0.1)
+
+    _http_error = (f"the preview server did not come up on 127.0.0.1:{PORT} "
+                   f"within {timeout:.0f}s. Something else may be holding the "
+                   f"port; set LOCAL_ARTIFACTS_PORT to move it.")
+    return False
 
 
 def _open_browser(url):
@@ -829,8 +1010,7 @@ def publish(title, content="", file_path="", fmt="html", emoji="\U0001F4C4",
               "and embed any image as a data: URI -- then publish again."
         )
 
-    _http_ready.wait(timeout=5)
-    if _http_error:
+    if not ensure_preview_server():
         return False, (f"Publish failed: the artifact was NOT published because "
                        f"the local server is not running. {_http_error}")
 
@@ -845,11 +1025,27 @@ def publish(title, content="", file_path="", fmt="html", emoji="\U0001F4C4",
     now = time.strftime("%Y-%m-%d %H:%M:%S")
     _publish(title=title, emoji=emoji, content=text, fmt=fmt, published_at=now,
              artifact_id=aid)
+
+    # The viewer can die between coming up and ingesting this artifact -- it is
+    # shared and long-lived, so another session's reaper or a stray kill can land
+    # in exactly that window. Recover once (a fresh server reloads the state file
+    # at import, so it comes up already serving this artifact), and if that still
+    # fails, SAY so: reporting a preview_url nobody is listening on is the exact
+    # failure this whole design exists to remove.
+    preview_note = ""
+    if not _await_ingest(aid, now):
+        if not (ensure_preview_server() and _await_ingest(aid, now)):
+            preview_note = ("the preview server is not serving this artifact "
+                            f"({_http_error or 'it stopped responding'}). The "
+                            "source below is saved; publish again to retry.")
+
     url = f"http://127.0.0.1:{PORT}"
-    _open_browser(url)
-    lines = [f"Artifact published.",
+    if not preview_note:
+        _open_browser(url)
+    lines = [("Artifact published." if not preview_note
+              else "Artifact saved, but NOT viewable: " + preview_note),
              f"  artifact_id:  {aid}",
-             f"  preview_url:  {url}",
+             f"  preview_url:  {url}" + ("  (not responding)" if preview_note else ""),
              f"  source_path:  {src_path if src_path else '(not written)'}"]
     if src_note:
         lines.append(f"  note:         {src_note}")
@@ -980,15 +1176,36 @@ def build_mcp():
 
 
 def start_http_thread():
+    """In-process listener. Used by the test suite, which drives publish() and
+    the HTTP surface inside one interpreter. Production uses `--serve` instead:
+    a listener in the MCP process dies with the session."""
     t = threading.Thread(target=_run_http, daemon=True)
     t.start()
     return t
 
 
+def serve_main():
+    """The shared preview server. One per machine, started on demand by the
+    first session that publishes, reused by every session after it, and gone
+    IDLE_EXIT seconds after the last viewer closes the tab."""
+    try:
+        srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    except OSError:
+        return 0            # someone else won the race; they serve, we are done
+    threading.Thread(target=_watch_state, daemon=True).start()
+    threading.Thread(target=_idle_reaper, daemon=True).start()
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
 if __name__ == "__main__":
-    # HTTP first: publish() waits on _http_ready, so a bind failure is known
-    # before the first tool call rather than racing it.
-    start_http_thread()
+    if "--serve" in sys.argv:
+        sys.exit(serve_main())
+    # MCP mode binds nothing. The preview server is started lazily by the first
+    # publish, so a session that never draws anything costs no process at all.
     try:
         build_mcp().run("stdio")
     except KeyboardInterrupt:
