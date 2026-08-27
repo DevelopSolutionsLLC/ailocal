@@ -327,10 +327,16 @@ svg.diagram{display:block;width:100%;height:auto}
 .n-title{fill:var(--ink);font-weight:600}
 """
 for _k in ACCENTS:
+    # The accent belongs to the GEOMETRY -- the rail, the line, the arrowhead --
+    # not to the label text. Small text set in a mid-saturation hue on the canvas
+    # measured 3-5:1 and read as unreadable; the same text in --ink is 14:1 and
+    # the colour coding survives on the shapes, with the legend and the printed
+    # TYPE label carrying the mapping. This is also why the diagram stays legible
+    # in greyscale.
     CSS += (f".rail-{_k}{{fill:var(--a-{_k})}}\n"
-            f".type-{_k}{{fill:var(--a-{_k});letter-spacing:.09em}}\n"
+            f".type-{_k}{{fill:var(--muted);letter-spacing:.09em}}\n"
             f".ek-{_k}{{stroke:var(--a-{_k});fill:none}}\n"
-            f".et-{_k}{{fill:var(--a-{_k})}}\n"
+            f".et-{_k}{{fill:var(--ink)}}\n"
             f".ah-{_k}{{fill:var(--a-{_k})}}\n")
 CSS = (CSS.replace("%LIGHT%", _css_vars("light"))
           .replace("%DARK%", _css_vars("dark"))
