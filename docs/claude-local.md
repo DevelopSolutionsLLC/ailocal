@@ -98,12 +98,32 @@ tool.
 
 ## Known subagent limitations
 
-A subagent does not necessarily receive the tools its definition declares. [REAL] an agent
-declaring `Read, Grep, Glob, Bash` was granted `Read, Bash`; the same run with tool search
-**disabled** granted the same two. This is the client's own subagent behaviour, not an
-ailocal or tool-search effect, and disabling tool search does not fix it.
+A subagent receives exactly the tools its definition declares, **minus `Grep` and `Glob`**.
 
-Write agent definitions so they still work when `Grep` and `Glob` do not arrive.
+[REAL CURRENT] measured on the wire (Claude Code 2.1.231, this stack), by recording the
+`tools` array of every request:
+
+| Execution mode | tools | schema bytes |
+|---|---|---|
+| Parent session | 23 | 32,055 |
+| Built-in `Explore` | 17 | 18,828 |
+| Custom agent declaring `Read, Grep, Glob, Bash` | 2 (`Read`, `Bash`) | 4,529 |
+| Same agent, delegated in the background | 2 | 4,529 |
+| Custom agent declaring `Read, Bash` + 5 grepai tools | 7 (all of them) | 8,469 |
+
+So MCP tools survive delegation and `Grep`/`Glob` do not. The cause is upstream of delegation:
+those two are absent from the **parent's** surface as well, and are not offered as deferred
+tools, so `ToolSearch` cannot acquire them anywhere — and the built-in `Explore` agent does
+not have them either. Tool search is not the cause; the same runs with it disabled behave
+identically.
+
+Note the parent figures corroborate the tool-search and Workflow numbers above: 23 tools /
+32,055 bytes against the 24 / 31,221 recorded then, the difference being the bundled artifact
+tool, which did not exist at that measurement.
+
+Write agent definitions that declare only what arrives, and search with `grep`/`rg` and
+`find` through `Bash`. A subagent also gets `ToolSearch` only if it declares it, so an
+undeclared deferred tool is unreachable from inside one.
 
 ## Configuration
 

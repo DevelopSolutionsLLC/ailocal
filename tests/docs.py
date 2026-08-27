@@ -13,8 +13,12 @@ import re
 import sys
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
+# Documentation that SHIPS is documentation: the bundled component's own README
+# reaches users inside the wheel, and carried standalone install instructions
+# for exactly as long as nothing checked it.
 DOCS = [REPO / "README.md", REPO / "AGENTS.md", REPO / "RELEASING.md",
-        *sorted((REPO / "docs").rglob("*.md"))]
+        *sorted((REPO / "docs").rglob("*.md")),
+        *sorted((REPO / "src/ailocal/resources/integrations").rglob("*.md"))]
 
 PASS = FAIL = 0
 

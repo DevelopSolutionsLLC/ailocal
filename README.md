@@ -237,6 +237,40 @@ A long conversation compacts automatically before it reaches that window. Your c
 
 To change which model a profile uses, edit the file in `~/.config/ailocal/profiles/` and run `ailocal start`. Your edits are preserved across upgrades.
 
+## Defaults
+
+What a fresh install gives you, without configuring anything.
+
+| | Default | Change it with |
+|---|---|---|
+| Inference | Ollama, via LiteLLM on `127.0.0.1:4000` | — |
+| Profile | chosen from your Mac's memory | edit `~/.config/ailocal/profiles/`, then `ailocal start` |
+| LiteLLM | pinned by digest, version reported by `ailocal check` | a deliberate upgrade, then the gate |
+| Tool search (`claude-local`) | on (`ENABLE_TOOL_SEARCH=true`) | `AILOCAL_TOOL_SEARCH=…` |
+| Native Workflow (`claude-local`) | off | `AILOCAL_NATIVE_WORKFLOWS=1` |
+| Local artifacts | on, bundled | — |
+| Web search | ailocal's own SearXNG, keyless | add `BRAVE_API` |
+| Context | the profile's `num_ctx`; 1M-context beta off | profile |
+| Hosted `claude`, `~/.claude` | never touched | — |
+
+Every `claude-local` variable is **process-scoped** — set it inline for one session. The full
+table, with accepted values and effects, is in [docs/claude-local.md](docs/claude-local.md#configuration).
+
+## Optional enhancements
+
+None of these are required, and ailocal does not install them.
+
+- **[Cadence](https://github.com/DevelopSolutionsLLC/cadence)** — composes engineering
+  instructions, skills and agents. Separately owned; ailocal does not depend on it, and
+  `claude-local` works normally without it.
+- **Native Workflow** — `AILOCAL_NATIVE_WORKFLOWS=1 claude-local` restores Claude Code's
+  built-in Workflow tool for one session. It is off by default because its schema cannot be
+  deferred and it was never invoked in 148 measured sessions.
+- **Language servers** — install a server binary and re-run `ailocal clients claude`; the
+  plugin follows, in ailocal's root only.
+- **Brave Search** — an API-backed general-web engine for broad questions.
+- **Node.js** — only the `architecture` artifact format needs it.
+
 ## Documentation
 
 | Document | Purpose |

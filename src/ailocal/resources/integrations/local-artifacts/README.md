@@ -41,17 +41,23 @@ There is **one** artifact and **one** URL. Publishing again replaces it in place
 
 ## Install
 
+Nothing to do — this component ships inside ailocal and is provisioned by:
+
 ```sh
-git clone <this repo> && cd local-artifacts
-./install.sh                                    # -> ~/.config/ailocal/claude
-CLAUDE_CONFIG_DIR=/other/cfg ./install.sh       # -> a different config dir
+ailocal clients claude
 ```
 
-Restart Claude Code. The first call asks for tool permission once, like any MCP tool.
+That creates the runtime venv in the state root, registers `mcpServers.artifact` and installs
+the skill. Restart Claude Code; the first call asks for tool permission once, like any MCP
+tool. `ailocal check` reports whether both halves are in place.
 
-The installer touches exactly two things inside that config dir — `mcpServers.artifact` in `.claude.json`, and `skills/local-artifact/SKILL.md`. It **never writes `settings.json`**, so a generator that owns `settings.json` (ailocal's, for example) can rewrite it freely without losing this.
+There is **no standalone installer here** and you should not create one: a second artifact
+server registered against the same config would compete for the same tool name and port. See
+[ADR 011](../../../../../docs/adr/011-bundled-artifacts.md) for why this is bundled.
 
-`./uninstall.sh` reverses both and removes runtime state. It deliberately leaves `<project>/.artifacts/` alone — those are your documents. Upgrade is `git pull && ./install.sh`.
+Provisioning touches exactly two things inside the config dir — `mcpServers.artifact` in `.claude.json`, and `skills/local-artifact/SKILL.md`. It **never writes `settings.json`**, so a generator that owns `settings.json` (ailocal's, for example) can rewrite it freely without losing this.
+
+Runtime state lives outside the project; `<project>/.artifacts/` holds your documents and is never removed automatically. Upgrading ailocal upgrades this.
 
 **Node.js** is needed only for `architecture` layout. Without it, every other format works and architecture publishes report the missing dependency rather than failing silently.
 
