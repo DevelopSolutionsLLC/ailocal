@@ -8,17 +8,44 @@ It is a fork of [xiagaohui/local-artifacts-for-claude-code](https://github.com/x
 
 ## What it is
 
-One Python process, spawned by Claude Code as a stdio MCP server, with a loopback HTTP thread inside it.
+Two kinds of process. Claude Code spawns one stdio MCP server per session; those
+sessions **share a single preview server** that none of them owns.
 
 ```
-Claude Code ──spawns──> server.py
-                          ├── MCP: publish_artifact
-                          └── HTTP 127.0.0.1:7891
-                                ├── /          trusted viewer  (banner + SSE)
-                                ├── /content   the artifact, in a sandboxed iframe
-                                ├── /events    SSE
-                                └── /status    metadata
+Claude Code ──spawns──> server.py            (one per session, stdio MCP)
+                          └── publish ──┐     writes the artifact to the state file
+                                        │
+Claude Code ──spawns──> server.py       │    (another session)
+                          └── publish ──┤
+                                        v
+                       server.py --serve      ONE per machine, ~24 MiB
+                       HTTP 127.0.0.1:7891    started on demand by the first
+                          ├── /          trusted viewer  (banner + SSE)
+                          ├── /content   the artifact, in a sandboxed iframe
+                          ├── /events    SSE
+                          └── /status    metadata
 ```
+
+The preview server is deliberately **not** a child of any MCP process. Claude Code
+terminates a stdio MCP server when the session ends — the MCP spec has the client
+close stdin, then `SIGTERM`, then `SIGKILL` — so a listener living inside it dies
+with the session while the `preview_url` stays in the transcript. That was the
+measured cause of "127.0.0.1 refused to connect": the artifact was still on disk,
+just unreachable. See [ADR 013](../../../../../docs/adr/013-artifact-preview-lifetime.md).
+
+Sessions never each start their own server: whoever loses the bind race exits, and
+everyone reuses the winner.
+
+It exits by itself after `LOCAL_ARTIFACTS_IDLE_EXIT` seconds (default 30 minutes)
+of genuine disuse. Everything that counts as use defers it: any HTTP request
+resets the clock, an incoming publish resets it, and an open tab holds an SSE
+connection which blocks the reaper outright. Reaping costs almost nothing —
+[REAL] a cold start is 0.351s against 0.18s warm — and the next publish starts a
+fresh server transparently and returns a working URL.
+
+Publishing crosses the process boundary through the 0600 state file, not over HTTP.
+There is no write endpoint: upstream's `POST /publish` accepted unauthenticated
+cross-origin writes and was removed in the security audit, and it stays removed.
 
 ## Where the routing rules live
 
@@ -133,6 +160,7 @@ mcp__plugin_<plugin>_<server>__<tool>      e.g. mcp__plugin_testplug_artifact__p
 | `LOCAL_ARTIFACTS_PORT` | `7891` | loopback port |
 | `LOCAL_ARTIFACTS_ROOT` | server cwd at startup | approved root for `file_path` |
 | `LOCAL_ARTIFACTS_AUTO_OPEN` | `1` | `0` disables opening a browser |
+| `LOCAL_ARTIFACTS_IDLE_EXIT` | `1800` (30 min) | seconds of no request, no publish **and** no open viewer before the shared preview server exits; `0` never |
 | `XDG_STATE_HOME` | `~/.local/state` | state lives in `<here>/local-artifacts` |
 
 `CLAUDE_CODE_DISABLE_ARTIFACT` is deliberately **not** honoured — it is Claude Code's switch for the hosted tool, and this exists to work when that tool is gone.
