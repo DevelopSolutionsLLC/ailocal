@@ -20,6 +20,39 @@ Claude Code ──spawns──> server.py
                                 └── /status    metadata
 ```
 
+## Where the routing rules live
+
+Three layers, deliberately not three copies of the same text:
+
+| Layer | Delivered to the model? | Carries |
+|---|---|---|
+| `mcp__artifact__publish` **tool description** | yes, measured | the routing contract: when to call, and not to return artifact source in a fenced block |
+| **skill** (`skill/SKILL.md`) | yes, listed in session init | which `format` to choose |
+| **server `instructions`** | **no, on this client** | one line, optional, nothing depends on it |
+
+MCP's `InitializeResult.instructions` is a hint a client **MAY** add to the prompt; the spec
+does not require it. [REAL] captured at the Claude Code → LiteLLM boundary on 2.1.231, the
+system prompt contains no MCP or artifact text at all, tool search on or off. So correctness
+rests on the tool description.
+
+[REAL] stating the missing user vocabulary there — "publish", "flowchart", "diagram" — and
+adding "call this tool instead of returning a fenced code block" moved invocation from 6/15
+to 13/15 (p = 0.008, negative control unchanged at 0/3) for +443 bytes.
+
+## The presentation boundary
+
+The model owns **meaning**. The renderer owns **presentation**. For `architecture` that
+already meant refusing model-authored coordinates; for `mermaid` it now also means dropping
+`style`, `classDef`, `class` and `linkStyle`. [REAL] 4 of 18 captured artifacts hard-coded
+fills including `#f9f` and `#0f0`, which landed as pastels on the dark canvas under light
+text. Graph structure, labels and relationships are untouched.
+
+Separately, `[label]` text containing parentheses is quoted, because Mermaid requires it and
+the model does not do it: one unquoted `Reviewer(s)` turned an entire diagram into "Syntax
+error in text". That is syntax normalisation, is idempotent, and changes no semantics. A
+diagram that is *semantically* wrong — a subgraph containing itself — stays a visible
+failure rather than being guessed at.
+
 ## Formats
 
 | `format` | The model sends | Who does layout |
