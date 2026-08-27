@@ -115,7 +115,6 @@ litellm_settings:
     # both lack it; only v1.98.0-dev.2 has it). Delete this entry and the
     # module when the pinned image ships that branch — the module docstring
     # carries the one-line check.
-    - /app/config/hooks/system_transport.proxy_handler_instance
     # Restores context-window validation for local models. LiteLLM's
     # register_model strips the provider prefix from the key while the router's
     # pre-call check looks it up WITH the prefix, so max_input_tokens is never
