@@ -47,6 +47,20 @@ claude-local() {
   # HAIKU at a small FIM tier hard-400s every background call, and a missing
   # FABLE silently strands the `reviewer` subagent off the review tier.
   #
+  # ENABLE_TOOL_SEARCH: documented values are true | auto | auto:N | false
+  # (`force` is NOT a documented value). AILOCAL_TOOL_SEARCH overrides per
+  # process for measurement. Claude Code defers most tool schemas and fetches them on
+  # demand via its ToolSearch tool. It disables that automatically when
+  # ANTHROPIC_BASE_URL is not first-party -- the deferred-tool listing rides on
+  # mid-array role:"system" messages, which many proxies drop -- so claude-local
+  # got the whole tool surface eagerly. [REAL] measured on the wire through this
+  # stack: 70 tools / 144,893 schema bytes -> 24 / 53,044 (-63%, ~21K fewer
+  # tokens per request), and latency median/p90/max 41/729/941 s -> 24/40/62 s.
+  # Requires LiteLLM >= 1.98, which preserves those system messages upstream;
+  # on 1.93 the listing was dropped and deferred tools became undiscoverable.
+  # [REAL] deferred GitHub discovery 5/5 through ToolSearch; grepai, Cadence
+  # skills, Cadence agents and multi-turn reminders all unaffected (16/16 tasks
+  # completed, no capability lost).
   # CLAUDE_CODE_DISABLE_1M_CONTEXT: local backends cap at num_ctx (64K here), not
   # 1M — so let Claude Code request the 1M-context beta and it just overflows.
   # Disabling it keeps sessions inside the window the models actually serve.
@@ -138,6 +152,7 @@ claude-local() {
     ANTHROPIC_BASE_URL="$base" ANTHROPIC_API_KEY="$key" \
     CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1 \
     CLAUDE_CODE_DISABLE_1M_CONTEXT=1 \
+    ENABLE_TOOL_SEARCH=${AILOCAL_TOOL_SEARCH:-true} \
     API_TIMEOUT_MS="${AILOCAL_API_TIMEOUT_MS:-900000}" \
     claude "${_model_args[@]}" "$@"
 }

@@ -30,7 +30,7 @@ services:
     # Pinned by digest, not tag: a moving tag would change proxy behaviour without
     # a commit. `ailocal check` gates the running build against
     # the validated version.
-    image: ghcr.io/berriai/litellm@sha256:a1745e629abfb17d434426ff48b115f54f4f4c4a0f5af241de569e93c63c411e
+    image: ghcr.io/berriai/litellm@sha256:20b5044b619055374061a6d5b7b08754cad75aeabbf82ddf4f69cc0cf80ddaf4
     container_name: ${AILOCAL_LITELLM_CONTAINER:-ailocal-litellm}
     restart: unless-stopped
     mem_limit: 2g
@@ -71,7 +71,7 @@ services:
       # The version this stack was VALIDATED against. `ailocal check` compares
       # it to the running library and fails loudly on drift, so a floating tag or
       # a manual pull can never again leave docs and runtime disagreeing.
-      - AILOCAL_LITELLM_VERSION=1.93.0
+      - AILOCAL_LITELLM_VERSION=1.98.0
       # capability_registry.py — the Local Agent Gateway's registry (Phase A).
       - AILOCAL_REGISTRY=/app/config/registry.yaml
       # Phase D task negotiation: infer the tools a task needs from the first
