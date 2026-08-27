@@ -37,10 +37,8 @@ class SpecError(Exception):
 # narrow overflows the node, and overflow is the defect this module exists to
 # remove. Sizes come from the theme so the renderer has one source.
 def _typo(k, d):
-    import json as _j
-    with open(Path(__file__).resolve().parent / "themes" / "artifact-default.json",
-              encoding="utf-8") as f:
-        return _j.load(f)["typography"].get(k, d)
+    import tokens as _t
+    return _t.load()["typography"].get(k, d)
 
 
 TITLE_PX, TITLE_ADV = _typo("title_px", 13.0), 0.60
@@ -266,7 +264,10 @@ def _elk_edge(e):
 
 
 # ── design system ─────────────────────────────────────────────────────────────
-# Every colour, typeface and measurement comes from themes/artifact-default.json.
+# Every colour, typeface and measurement comes from the DTCG token files via
+# tokens.load(). Colour VALUES are generated from a pinned @carbon/themes
+# release; ailocal owns which semantic role each one serves. The renderer sees
+# semantic names only and never learns that a value came from blue.60.
 # The model supplies semantics only.
 #
 # C4's notation guidance drives two rules here (c4model.com/diagrams/notation):
@@ -276,9 +277,9 @@ def _elk_edge(e):
 #   the same hue family without becoming ambiguous. Edge kinds carry a dash
 #   pattern for the same redundancy, and every diagram gets a key.
 
-THEME_PATH = HERE / "themes" / "artifact-default.json"
-with open(THEME_PATH, encoding="utf-8") as _f:
-    THEME = json.load(_f)
+import tokens as _tokens
+
+THEME = _tokens.load()
 
 TYPO = THEME["typography"]
 GEO = THEME["geometry"]

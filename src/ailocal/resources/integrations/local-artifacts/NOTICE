@@ -14,6 +14,25 @@ https://github.com/markedjs/marked
 Copyright (c) 2018+, MarkedJS; Copyright (c) 2011-2018, Christopher Jeffrey
 Licensed under the MIT License. Full text: ./licenses/marked-LICENSE.txt
 --------------------------------------------------------------------------------
+Carbon Design System (@carbon/themes, v11.80.0)
+https://github.com/carbon-design-system/carbon
+Copyright IBM Corp.
+Licensed under the Apache License, Version 2.0.
+Full text: ./licenses/carbon-LICENSE.txt
+
+NOT bundled as code. themes/carbon.tokens.json is a DERIVED WORK: colour values
+extracted from that release's DTCG token source (packages/themes/src/dtcg/) and
+resolved from Carbon's alias chains into concrete sRGB. Modifications versus
+upstream: only the tokens ailocal aliases are retained, aliases are flattened to
+values, and each token records the upstream path it came from. No Carbon code,
+CSS, component or trademark is redistributed. Regenerate with
+tools/update_carbon_tokens.py. Upstream ships no NOTICE file (checked at
+v11.80.0), so there is none to propagate.
+
+This project is not affiliated with, endorsed by, or sponsored by IBM.
+"Carbon" and "IBM" are referenced only to credit the source of the colour
+values; all trademarks belong to their respective owners.
+--------------------------------------------------------------------------------
 
 This project is unofficial and is NOT affiliated with, endorsed by, or sponsored
 by Anthropic. "Claude", "Claude Code" and "Artifacts" are referenced only to

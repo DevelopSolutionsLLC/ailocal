@@ -13,16 +13,24 @@ WCAG 2.2 thresholds applied:
 Decorative styling is deliberately NOT held to 3:1. A card border that merely
 reinforces a boundary already carried by fill, accent rail and text is not a
 graphical object required for understanding, and demanding 3:1 of it would push
-the palette somewhere worse for no accessibility gain.
+the palette somewhere worse for no accessibility gain. It must still be VISIBLE
+against what it sits on, which is a separate and weaker claim -- gated below.
+
+Colour values are generated from a pinned @carbon/themes release, so these gates
+are also what stops an upstream bump from silently regressing legibility.
 """
 import importlib.util
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-THEME = json.loads((HERE / "themes/artifact-default.json").read_text())
+sys.path.insert(0, str(HERE))
+import tokens as _tokens
+
+THEME = _tokens.load()
 
 PASS = FAIL = 0
 
@@ -131,6 +139,75 @@ check("label text is unchanged apart from the quotes",
 print("\nAUTOMATED RUNS MUST NOT OPEN A BROWSER")
 check("LOCAL_ARTIFACTS_AUTO_OPEN=0 suppresses the browser",
       'LOCAL_ARTIFACTS_AUTO_OPEN' in (HERE / "server.py").read_text())
+
+print("\nA BORDER MUST AT LEAST BE VISIBLE ON WHAT IT SITS ON")
+# Not a 3:1 claim -- just that it is not the same colour as its own fill. The
+# first Carbon mapping tried border.subtle.01, which resolves to the same
+# gray.20 as layer.accent.01: a group outline that could not be seen at all.
+for mode in ("light", "dark"):
+    m = THEME[mode]
+    for ground in ("surface", "group_surface", "canvas"):
+        check(f"{mode}/border differs from {ground}", m["border"] != m[ground],
+              f'both {m["border"]}')
+
+print("\nACCENTS STAY LEGIBLE ON EVERY GROUND THEY ARE DRAWN ON")
+# A connector crosses the canvas, a type rail sits on a node, and both appear
+# inside group fills. All three are load-bearing, so all three are gated.
+for mode in ("light", "dark"):
+    m = THEME[mode]
+    for ground in ("canvas", "surface", "group_surface"):
+        worst, which = min((contrast(v, m[ground]), k) for k, v in m["accent"].items())
+        check(f"{mode}/weakest accent vs {ground} >= 3.0:1", worst >= 3.0,
+              f"{which} {worst:.2f}:1")
+
+print("\nGENERATED TOKENS ARE DTCG-CONFORMANT AND REPRODUCIBLE")
+gen = json.loads((HERE / "themes/carbon.tokens.json").read_text())
+authored = json.loads((HERE / "themes/artifact.tokens.json").read_text())
+up = gen["$extensions"]["com.developsolutions.ailocal"]["upstream"]
+check("generated file records its upstream package and version",
+      up.get("package") == "@carbon/themes" and up.get("version"))
+check("generated file records an integrity hash for the pinned tarball",
+      str(up.get("integrity", "")).startswith("sha"))
+check("upstream licence is recorded for attribution", up.get("license") == "Apache-2.0")
+
+
+def colours(node, out=None):
+    out = [] if out is None else out
+    if isinstance(node, dict):
+        if "$value" in node and isinstance(node["$value"], dict) \
+                and "colorSpace" in node["$value"]:
+            out.append(node["$value"])
+        else:
+            for k, v in node.items():
+                if not k.startswith("$") or k == "$value":
+                    colours(v, out)
+    return out
+
+
+vals = colours(gen)
+check("generated file actually contains colour tokens", len(vals) > 0, str(len(vals)))
+# DTCG 2025.10 colour: colorSpace and components REQUIRED, hex optional.
+check("every colour declares a colorSpace",
+      all(c.get("colorSpace") == "srgb" for c in vals))
+check("every colour carries numeric components",
+      all(isinstance(c.get("components"), list)
+          and len(c["components"]) == 3
+          and all(isinstance(n, (int, float)) for n in c["components"]) for c in vals))
+check("hex fallback, where present, is 6-digit notation",
+      all(re.fullmatch(r"#[0-9a-fA-F]{6}", c["hex"]) for c in vals if "hex" in c))
+check("hex fallback agrees with the components it falls back for",
+      all(c["hex"].lower() ==
+          "#%02x%02x%02x" % tuple(round(n * 255) for n in c["components"])
+          for c in vals if "hex" in c))
+
+# The authored file is the mapping; it must not carry its own literal colours,
+# or a value could drift away from the generated palette unnoticed.
+literal = re.findall(r'"#[0-9a-fA-F]{3,8}"', (HERE / "themes/artifact.tokens.json").read_text())
+check("the authored mapping hard-codes no colour of its own", not literal, str(literal))
+# Same claim for the renderer.
+src = (HERE / "architecture.py").read_text()
+hexes = [h for h in re.findall(r'"#[0-9a-fA-F]{3,8}"', src)]
+check("the renderer hard-codes no colour", not hexes, str(hexes))
 
 print(f"\n  {PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)
