@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import pathlib
 import sys
 
@@ -158,6 +159,35 @@ def check_codex_no_mcp() -> CheckResult:
                        "codex declares zero [mcp_servers.*] blocks" if not out
                        else f"codex declares MCP blocks — {'; '.join(out)}",
                        remediation=None if not out else "ailocal clients codex")
+
+
+def check_local_artifacts() -> CheckResult:
+    """The bundled artifact capability is registered and its runtime exists.
+
+    Both halves are needed to draw: a registration pointing at an interpreter
+    that is gone fails at the first tool call, inside the model's turn, where
+    the user sees "no such tool" rather than a broken install.
+    """
+    cj = P.deployed_client_root() / "claude" / ".claude.json"
+    try:
+        entry = (json.loads(cj.read_text()).get("mcpServers") or {}).get("artifact")
+    except Exception:
+        entry = None
+    if not entry:
+        return CheckResult("local-artifacts", FAIL,
+                           "claude-local has no artifact MCP registered",
+                           remediation="ailocal clients claude")
+    runtime = pathlib.Path(entry.get("command", ""))
+    if not runtime.is_file():
+        return CheckResult("local-artifacts", FAIL,
+                           f"artifact runtime is missing ({runtime})",
+                           remediation="ailocal clients claude")
+    if not shutil.which("node"):
+        return CheckResult("local-artifacts", WARN,
+                           "artifacts work, but 'architecture' needs node on PATH",
+                           remediation="brew install node")
+    return CheckResult("local-artifacts", PASS,
+                       "claude-local can publish artifacts locally")
 
 
 # ── deployed container state ────────────────────────────────────────────────
@@ -333,6 +363,7 @@ def deterministic_checks(tier: str | None = None) -> list[CheckResult]:
     results += check_client_slots()
     results += [check_alias_uniqueness(),
                 check_no_raw_backend_tags(), check_codex_no_mcp(),
+                check_local_artifacts(),
                 check_mount_drift()]
     # Generated-file drift only makes sense against the active tier.
     if tier is None:

@@ -147,7 +147,7 @@ To upgrade: `pipx upgrade ailocal && ailocal start`.
 
 | Tool | Status |
 |---|---|
-| Claude Code | Fully supported — tools, web search, and Python language support |
+| Claude Code | Fully supported — tools, web search, language servers, and local artifacts |
 | VS Code Copilot | Supported for chat and code completion |
 | Codex CLI | Configured and routed correctly, but interactive sessions do not finish — an upstream bug ([BerriAI/litellm#27442](https://github.com/BerriAI/litellm/issues/27442)) |
 
@@ -193,6 +193,33 @@ ailocal start                     # re-renders the search settings
 
 The key stays in that file on your machine. It is never committed, never printed, and never leaves the local search container.
 
+## Artifacts
+
+Anthropic's hosted `Artifact` tool publishes to claude.ai and is unavailable to a
+locally-routed session. `claude-local` gets a local equivalent instead: ailocal ships the
+artifact renderer inside the package and `ailocal clients claude` provisions it, so there is
+nothing extra to clone, install, or keep in sync.
+
+Ask for a diagram, a page, or a report and the model calls `mcp__artifact__publish`. The
+result opens in your browser from `127.0.0.1` and the canonical source is written to
+`.artifacts/` in your project, so it survives the session and can be committed.
+
+| Format | Rendered by | Needs |
+|---|---|---|
+| `html`, `markdown` | bundled `marked` | — |
+| `mermaid` | bundled `mermaid` | — |
+| `architecture` | bundled `elkjs`, laid out in Node | `node` on PATH |
+
+The model supplies only semantics — components, edges, groupings. Layout is computed by ELK
+and presentation comes from a design token file, so the same input renders the same way
+every time rather than depending on the model's sense of geometry.
+
+**The page cannot reach the network.** The artifact renders in a sandboxed iframe with an
+opaque origin under `connect-src 'none'`, served separately from the viewer that frames it.
+Every asset is vendored; nothing is fetched from a CDN.
+
+Your hosted `claude` is untouched — it keeps the real `Artifact` tool.
+
 ## Your Mac's profile
 
 ailocal measures your Mac's memory and chooses a profile automatically. You do not need to think about this to install or use it.
@@ -217,6 +244,7 @@ To change which model a profile uses, edit the file in `~/.config/ailocal/profil
 | [docs/architecture.md](docs/architecture.md) | how the pieces fit together |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | symptoms and fixes |
 | [docs/security.md](docs/security.md) | secrets, permissions, exposure |
+| [docs/adr/011-bundled-artifacts.md](docs/adr/011-bundled-artifacts.md) | why artifacts ship inside the package |
 | [AGENTS.md](AGENTS.md) | developing and validating ailocal |
 
 ## License
