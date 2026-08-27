@@ -2,6 +2,57 @@
 
 Release policy and the meaning of each bump: [RELEASING.md](RELEASING.md).
 
+## v0.13.0 — local artifacts, and a smaller `claude-local`
+
+Three things change what a `claude-local` session actually carries, and one corrects a fact this repository had wrong.
+
+### Artifacts work locally
+
+Claude Code does not register its hosted `Artifact` tool when a session authenticates with `ANTHROPIC_API_KEY`, so `claude-local` had no way to publish a diagram, a page or a report. It does now, through a renderer that ships inside the package.
+
+```sh
+ailocal clients claude        # provisions the runtime and registers the MCP server
+ailocal check | grep artifact # confirms both halves
+```
+
+Nothing to clone, no second virtualenv, no separate installer. `mcp` is a subprocess dependency with its own interpreter in the state root, exactly as LiteLLM is a container, so ailocal is still standard-library only. Registration **merges** one key into `.claude.json`; anything else you have registered there survives.
+
+Artifacts render from `127.0.0.1` and the canonical source is written to `.artifacts/` in your project, so it outlives the session. The page cannot reach the network: it runs in a sandboxed iframe with an opaque origin under `connect-src 'none'`, and every asset is vendored.
+
+**`node` is optional.** Without it the `architecture` format is unavailable and every other format works; provisioning says so rather than failing quietly.
+
+### Tool search is on
+
+`ENABLE_TOOL_SEARCH=true` for `claude-local`. [REAL] measured on the wire: **70 tools / 144,893 schema bytes to 24 / 53,044**, and latency median/p90/max **41/729/941 s to 24/40/62 s**. Deferred GitHub discovery succeeded 5/5; grepai, Cadence skills, Cadence agents and multi-turn reminders were unaffected across 16/16 tasks.
+
+Set `AILOCAL_TOOL_SEARCH=false` to opt out for one session.
+
+### Native Workflow is off
+
+Claude Code's built-in `Workflow` tool ships a 21,822-byte schema that cannot be deferred, and [REAL] it was invoked **0 times across 148 real `claude-local` sessions**. Disabling it took the model-visible schema from **53,044 to 31,221 bytes** and the fixed prompt from **21,789 to 16,695 input tokens**, with capability preserved 10/10.
+
+```sh
+AILOCAL_NATIVE_WORKFLOWS=1 claude-local   # restores it, for that process only
+```
+
+Hosted `claude` is untouched either way. This flag controls Anthropic's built-in tool and has nothing to do with any Cadence workflow capability, which does not exist.
+
+### LiteLLM 1.98.0
+
+Pinned by digest. The `system_transport` hook is **removed**, not disabled: it existed because LiteLLM discarded mid-array `role: "system"` messages, which upstream fixed in BerriAI/litellm#30443, first shipping in a stable release with 1.98.0. That channel is what carries the deferred-tool listing, which is why tool search requires this version.
+
+**Correction.** The registry declared that `/v1/responses` drops `namespace` tools. That was read off the 1.93.0 image and is no longer true — 1.98.0 expands them, so they reach the backend and removing them is a real saving. The gateway was under-counting, and two suites asserted the old upstream behaviour as though it were a property of the gateway. ADR 004 is marked partially superseded and its Codex figure is **withdrawn rather than replaced**, because no replacement was measured.
+
+### Upgrading
+
+```sh
+pipx install --force . && ailocal start && ailocal clients claude
+```
+
+`ailocal start` pulls the new image; `ailocal clients claude` provisions artifacts and re-writes the wrapper. Existing profiles and configuration are untouched.
+
+**Nothing breaks.** CLI commands, configuration layout and profile behaviour are unchanged. The two behavioural changes are `claude-local` defaults, both per-process and both reversible with an environment variable, documented in [docs/claude-local.md](docs/claude-local.md).
+
 ## v0.12.0 — `ailocal install --reset-config`
 
 v0.11.0 changed profile defaults and then told you, in its own migration note, that an edited profile would not receive them. That note described a gap with no tool to close it: the only ways to take a new default were to hand-copy values or delete your file. This adds the third way.
