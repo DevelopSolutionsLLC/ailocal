@@ -4,6 +4,10 @@ import importlib.util, json, os, shutil, subprocess, sys, tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+# Each load() starts a real preview server on its own port. They must not
+# outlive the test, and must never touch the operator's live artifact state.
+STATE = Path(tempfile.mkdtemp(prefix="tp-state-"))
+PORTS = []
 PASS = FAIL = 0
 def check(name, cond, detail=""):
     global PASS, FAIL
@@ -15,7 +19,9 @@ def load(env, port):
     for k in ("LOCAL_ARTIFACTS_ROOT", "CLAUDE_PROJECT_DIR"):
         e.pop(k, None)
     e.update(env)
-    e.update(LOCAL_ARTIFACTS_PORT=str(port), LOCAL_ARTIFACTS_AUTO_OPEN="0")
+    e.update(LOCAL_ARTIFACTS_PORT=str(port), LOCAL_ARTIFACTS_AUTO_OPEN="0",
+             XDG_STATE_HOME=str(STATE))
+    PORTS.append(port)
     old = dict(os.environ)
     os.environ.clear(); os.environ.update(e)
     spec = importlib.util.spec_from_file_location(f"srv{port}", str(HERE / "server.py"))
@@ -125,7 +131,15 @@ check("symlink escaping the project root refused", not ok and "outside the appro
 ok, msg = srv.publish(title="T", file_path=str(proj / "ok.md"))
 check("file inside the project root still publishes", ok, msg[:120])
 
-for d in (proj, override, cwd, outside):
+mine = str(os.getpid())                 # load() binds some ports in-process
+for port in PORTS:                      # leave no daemon behind
+    r = subprocess.run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN"],
+                       capture_output=True, text=True)
+    for pid in sorted({l.split()[1] for l in r.stdout.splitlines()[1:]}):
+        if pid != mine:
+            subprocess.run(["kill", pid], capture_output=True)
+
+for d in (proj, override, cwd, outside, STATE):
     shutil.rmtree(d, ignore_errors=True)
 print(f"\n{'='*46}\n  PASS {PASS}   FAIL {FAIL}\n{'='*46}")
 sys.exit(1 if FAIL else 0)
