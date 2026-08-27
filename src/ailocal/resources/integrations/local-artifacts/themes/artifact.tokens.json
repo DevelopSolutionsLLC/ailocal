@@ -1,0 +1,121 @@
+{
+  "$schema": "https://tr.designtokens.org/format/",
+  "$description": "Canonical ailocal artifact tokens. HAND-AUTHORED — this file is the mapping, not the palette. Every colour is an alias into themes/carbon.tokens.json, which is generated from a pinned @carbon/themes release. Renderers read the resolved result through tokens.py and never learn that a value came from blue.60.",
+  "$extensions": {
+    "com.developsolutions.ailocal": {
+      "ownership": [
+        "MODEL OWNS: semantic content, relationships, labels, requested format.",
+        "DESIGN SYSTEM OWNS: colour, typeface, hierarchy, spacing, presentation defaults.",
+        "Carbon owns the colour VALUES. ailocal owns which semantic role each one serves,",
+        "and owns typography, geometry, edge dash patterns and type labels outright —",
+        "Carbon is a UI system and has no opinion about diagram edges.",
+        "",
+        "Accent step policy: light diagram accents take Carbon step 60, dark step 40.",
+        "Carbon tunes each family so a given step lands at the same contrast, so this",
+        "one rule gives every diagram kind [REAL] >= 4.5:1 on light and >= 6.1:1 on dark",
+        "against both canvas and surface. It also makes the accents near-identical in",
+        "LUMINANCE, which is precisely why the printed type label below is load-bearing",
+        "and colour is never the sole carrier of meaning (C4 notation rule)."
+      ]
+    }
+  },
+
+  "typography": {
+    "sans": {
+      "$type": "fontFamily",
+      "$value": ["-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto", "Helvetica", "Arial", "sans-serif"],
+      "$description": "UI/label face. Deliberately the platform stack: an artifact must render with no network."
+    },
+    "mono": {
+      "$type": "fontFamily",
+      "$value": ["ui-monospace", "SFMono-Regular", "Menlo", "Consolas", "monospace"],
+      "$description": "Code and identifier face."
+    },
+    "title": { "$type": "dimension", "$value": { "value": 14.0, "unit": "px" }, "$description": "Node title." },
+    "type_label": { "$type": "dimension", "$value": { "value": 9.5, "unit": "px" }, "$description": "The printed kind label that carries meaning colour must not carry alone." },
+    "subtitle": { "$type": "dimension", "$value": { "value": 11.0, "unit": "px" }, "$description": "Node subtitle." },
+    "badge": { "$type": "dimension", "$value": { "value": 9.5, "unit": "px" }, "$description": "Badge text." },
+    "edge_label": { "$type": "dimension", "$value": { "value": 11.5, "unit": "px" }, "$description": "Relationship label." },
+    "group_label": { "$type": "dimension", "$value": { "value": 10.5, "unit": "px" }, "$description": "Group/boundary label." }
+  },
+
+  "geometry": {
+    "$type": "dimension",
+    "node_radius": { "$value": { "value": 6, "unit": "px" } },
+    "group_radius": { "$value": { "value": 10, "unit": "px" } },
+    "accent_rail_px": { "$value": { "value": 3, "unit": "px" }, "$description": "The type rail. A graphical object required for understanding, so it is contrast-gated." },
+    "node_stroke_px": { "$value": { "value": 1, "unit": "px" } },
+    "group_stroke_px": { "$value": { "value": 1.25, "unit": "px" } },
+    "edge_stroke_px": { "$value": { "value": 1.6, "unit": "px" } },
+    "corner_radius": { "$value": { "value": 9, "unit": "px" } }
+  },
+
+  "light": {
+    "$type": "color",
+    "$description": "Light theme. Surfaces and text alias Carbon g10; accents alias palette step 60.",
+    "canvas": { "$value": "{carbon.light.background}", "$description": "Page ground behind the diagram." },
+    "surface": { "$value": "{carbon.light.layer.01}", "$description": "Node fill." },
+    "group_surface": { "$value": "{carbon.light.layer.accent.01}", "$description": "Boundary/group fill." },
+    "ink": { "$value": "{carbon.light.text.primary}", "$description": "Primary text. Gated >= 4.5:1 on surface." },
+    "muted": { "$value": "{carbon.light.text.secondary}", "$description": "Subtitle text. Gated >= 4.5:1 on surface." },
+    "faint": { "$value": "{carbon.light.text.helper}", "$description": "Least prominent text still gated >= 4.5:1 — Carbon's helper role, not a decorative grey." },
+    "border": { "$value": "{carbon.light.border.subtle.02}", "$description": "Decorative reinforcement of a boundary already carried by fill, rail and text. Deliberately NOT contrast-gated." },
+    "accent": {
+      "client": { "$value": "{carbon.palette.blue.60}" },
+      "service": { "$value": "{carbon.palette.teal.60}" },
+      "router": { "$value": "{carbon.palette.purple.60}" },
+      "runtime": { "$value": "{carbon.palette.cyan.60}" },
+      "model": { "$value": "{carbon.palette.green.60}" },
+      "database": { "$value": "{carbon.palette.orange.60}" },
+      "external": { "$value": "{carbon.palette.coolGray.60}" },
+      "tool": { "$value": "{carbon.palette.magenta.60}" },
+      "default": { "$value": "{carbon.palette.coolGray.60}" }
+    }
+  },
+
+  "dark": {
+    "$type": "color",
+    "$description": "Dark theme. Surfaces and text alias Carbon g100; accents alias palette step 40.",
+    "canvas": { "$value": "{carbon.dark.background}" },
+    "surface": { "$value": "{carbon.dark.layer.01}" },
+    "group_surface": { "$value": "{carbon.dark.layer.accent.01}" },
+    "ink": { "$value": "{carbon.dark.text.primary}" },
+    "muted": { "$value": "{carbon.dark.text.secondary}" },
+    "faint": { "$value": "{carbon.dark.text.helper}" },
+    "border": { "$value": "{carbon.dark.border.subtle.02}" },
+    "accent": {
+      "client": { "$value": "{carbon.palette.blue.40}" },
+      "service": { "$value": "{carbon.palette.teal.40}" },
+      "router": { "$value": "{carbon.palette.purple.40}" },
+      "runtime": { "$value": "{carbon.palette.cyan.40}" },
+      "model": { "$value": "{carbon.palette.green.40}" },
+      "database": { "$value": "{carbon.palette.orange.40}" },
+      "external": { "$value": "{carbon.palette.coolGray.40}" },
+      "tool": { "$value": "{carbon.palette.magenta.40}" },
+      "default": { "$value": "{carbon.palette.coolGray.40}" }
+    }
+  },
+
+  "edge_kinds": {
+    "$description": "ailocal-owned. Each relationship kind pairs an accent with a dash pattern AND a text label, so an edge stays identifiable in greyscale.",
+    "request": { "accent": "client", "dash": "none", "label": "request" },
+    "inference": { "accent": "model", "dash": "none", "label": "inference" },
+    "tool": { "accent": "tool", "dash": "7 5", "label": "tool / MCP" },
+    "data": { "accent": "database", "dash": "1 5", "label": "data" },
+    "dependency": { "accent": "external", "dash": "3 4", "label": "dependency" },
+    "default": { "accent": "default", "dash": "none", "label": "relates to" }
+  },
+
+  "type_labels": {
+    "$description": "ailocal-owned. C4 notation: every element states its TYPE in text.",
+    "client": "CLIENT",
+    "service": "SERVICE",
+    "router": "ROUTER",
+    "runtime": "RUNTIME",
+    "model": "MODEL",
+    "database": "DATABASE",
+    "external": "EXTERNAL",
+    "tool": "TOOL",
+    "default": ""
+  }
+}

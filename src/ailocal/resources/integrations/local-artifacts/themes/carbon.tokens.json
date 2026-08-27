@@ -1,0 +1,605 @@
+{
+  "$schema": "https://tr.designtokens.org/format/",
+  "$description": "GENERATED from @carbon/themes@11.80.0 -- do not edit by hand. Regenerate with tools/update_carbon_tokens.py. Only the tokens themes/artifact.tokens.json aliases are included.",
+  "$extensions": {
+    "com.developsolutions.ailocal": {
+      "generator": "tools/update_carbon_tokens.py",
+      "upstream": {
+        "package": "@carbon/themes",
+        "version": "11.80.0",
+        "integrity": "sha512-SqtfqwReq1SRrBoC121Bllrh0DvW2j/LWFo/zVn+lblh+AJlLZsmeBC9oyxphpp8GpHfLhjmeg1J2hfs0AVX4A==",
+        "license": "Apache-2.0",
+        "source": "src/dtcg/",
+        "themes": {
+          "light": "g10.json",
+          "dark": "g100.json"
+        }
+      },
+      "format": "DTCG Format Module 2025.10 (Final Community Group Report)"
+    }
+  },
+  "carbon": {
+    "dark": {
+      "background": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.086275,
+            0.086275,
+            0.086275
+          ],
+          "hex": "#161616"
+        },
+        "$description": "Default page background color. Use as the base surface for the entire application or page.",
+        "$extensions": {
+          "com.developsolutions.ailocal": {
+            "upstream": "g100.json:background"
+          }
+        }
+      },
+      "border": {
+        "subtle": {
+          "02": {
+            "$type": "color",
+            "$value": {
+              "colorSpace": "srgb",
+              "components": [
+                0.435294,
+                0.435294,
+                0.435294
+              ],
+              "hex": "#6f6f6f"
+            },
+            "$description": "02. Token for 02 in the design system.",
+            "$extensions": {
+              "com.developsolutions.ailocal": {
+                "upstream": "g100.json:border.subtle.02"
+              }
+            }
+          }
+        }
+      },
+      "layer": {
+        "01": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.14902,
+              0.14902,
+              0.14902
+            ],
+            "hex": "#262626"
+          },
+          "$description": "01. Token for 01 in the design system.",
+          "$extensions": {
+            "com.developsolutions.ailocal": {
+              "upstream": "g100.json:layer.01"
+            }
+          }
+        },
+        "accent": {
+          "01": {
+            "$type": "color",
+            "$value": {
+              "colorSpace": "srgb",
+              "components": [
+                0.223529,
+                0.223529,
+                0.223529
+              ],
+              "hex": "#393939"
+            },
+            "$description": "01. Token for 01 in the design system.",
+            "$extensions": {
+              "com.developsolutions.ailocal": {
+                "upstream": "g100.json:layer.accent.01"
+              }
+            }
+          }
+        }
+      },
+      "text": {
+        "helper": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.658824,
+              0.658824,
+              0.658824
+            ],
+            "hex": "#a8a8a8"
+          },
+          "$description": "Helper. Token for helper in the design system.",
+          "$extensions": {
+            "com.developsolutions.ailocal": {
+              "upstream": "g100.json:text.helper"
+            }
+          }
+        },
+        "primary": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.956863,
+              0.956863,
+              0.956863
+            ],
+            "hex": "#f4f4f4"
+          },
+          "$description": "Primary. Token for primary in the design system.",
+          "$extensions": {
+            "com.developsolutions.ailocal": {
+              "upstream": "g100.json:text.primary"
+            }
+          }
+        },
+        "secondary": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.776471,
+              0.776471,
+              0.776471
+            ],
+            "hex": "#c6c6c6"
+          },
+          "$description": "Secondary. Token for secondary in the design system.",
+          "$extensions": {
+            "com.developsolutions.ailocal": {
+              "upstream": "g100.json:text.secondary"
+            }
+          }
+        }
+      }
+    },
+    "light": {
+      "background": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.956863,
+            0.956863,
+            0.956863
+          ],
+          "hex": "#f4f4f4"
+        },
+        "$description": "Default page background color. Use as the base surface for the entire application or page.",
+        "$extensions": {
+          "com.developsolutions.ailocal": {
+            "upstream": "g10.json:background"
+          }
+        }
+      },
+      "border": {
+        "subtle": {
+          "02": {
+            "$type": "color",
+            "$value": {
+              "colorSpace": "srgb",
+              "components": [
+                0.776471,
+                0.776471,
+                0.776471
+              ],
+              "hex": "#c6c6c6"
+            },
+            "$description": "Subtle border color for layer 02. Use for low-contrast borders on second layer surfaces.",
+            "$extensions": {
+              "com.developsolutions.ailocal": {
+                "upstream": "g10.json:border.subtle.02"
+              }
+            }
+          }
+        }
+      },
+      "layer": {
+        "01": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              1,
+              1,
+              1
+            ],
+            "hex": "#ffffff"
+          },
+          "$description": "Primary layer background",
+          "$extensions": {
+            "com.developsolutions.ailocal": {
+              "upstream": "g10.json:layer.01"
+            }
+          }
+        },
+        "accent": {
+          "01": {
+            "$type": "color",
+            "$value": {
+              "colorSpace": "srgb",
+              "components": [
+                0.878431,
+                0.878431,
+                0.878431
+              ],
+              "hex": "#e0e0e0"
+            },
+            "$description": "Primary accent layer",
+            "$extensions": {
+              "com.developsolutions.ailocal": {
+                "upstream": "g10.json:layer.accent.01"
+              }
+            }
+          }
+        }
+      },
+      "text": {
+        "helper": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.435294,
+              0.435294,
+              0.435294
+            ],
+            "hex": "#6f6f6f"
+          },
+          "$description": "Helper. Token for helper in the design system.",
+          "$extensions": {
+            "com.developsolutions.ailocal": {
+              "upstream": "g10.json:text.helper"
+            }
+          }
+        },
+        "primary": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.086275,
+              0.086275,
+              0.086275
+            ],
+            "hex": "#161616"
+          },
+          "$description": "Primary. Token for primary in the design system.",
+          "$extensions": {
+            "com.developsolutions.ailocal": {
+              "upstream": "g10.json:text.primary"
+            }
+          }
+        },
+        "secondary": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.321569,
+              0.321569,
+              0.321569
+            ],
+            "hex": "#525252"
+          },
+          "$description": "Secondary. Token for secondary in the design system.",
+          "$extensions": {
+            "com.developsolutions.ailocal": {
+              "upstream": "g10.json:text.secondary"
+            }
+          }
+        }
+      }
+    },
+    "palette": {
+      "blue": {
+        "40": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.470588,
+              0.662745,
+              1
+            ],
+            "hex": "#78a9ff"
+          },
+          "$description": "blue 40",
+          "$extensions": {
+            "com.developsolutions.ailocal": {
+              "upstream": "color-palette.json:blue.40"
+            }
+          }
+        },
+        "60": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.058824,
+              0.384314,
+              0.996078
+            ],
+            "hex": "#0f62fe"
+          },
+          "$description": "blue 60",
+          "$extensions": {
+            "com.developsolutions.ailocal": {
+              "upstream": "color-palette.json:blue.60"
+            }
+          }
+        }
+      },
+      "coolGray": {
+        "40": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.635294,
+              0.662745,
+              0.690196
+            ],
+            "hex": "#a2a9b0"
+          },
+          "$description": "coolGray 40",
+          "$extensions": {
+            "com.developsolutions.ailocal": {
+              "upstream": "color-palette.json:coolGray.40"
+            }
+          }
+        },
+        "60": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.411765,
+              0.439216,
+              0.466667
+            ],
+            "hex": "#697077"
+          },
+          "$description": "coolGray 60",
+          "$extensions": {
+            "com.developsolutions.ailocal": {
+              "upstream": "color-palette.json:coolGray.60"
+            }
+          }
+        }
+      },
+      "cyan": {
+        "40": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.2,
+              0.694118,
+              1
+            ],
+            "hex": "#33b1ff"
+          },
+          "$description": "cyan 40",
+          "$extensions": {
+            "com.developsolutions.ailocal": {
+              "upstream": "color-palette.json:cyan.40"
+            }
+          }
+        },
+        "60": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0,
+              0.447059,
+              0.764706
+            ],
+            "hex": "#0072c3"
+          },
+          "$description": "cyan 60",
+          "$extensions": {
+            "com.developsolutions.ailocal": {
+              "upstream": "color-palette.json:cyan.60"
+            }
+          }
+        }
+      },
+      "green": {
+        "40": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.258824,
+              0.745098,
+              0.396078
+            ],
+            "hex": "#42be65"
+          },
+          "$description": "green 40",
+          "$extensions": {
+            "com.developsolutions.ailocal": {
+              "upstream": "color-palette.json:green.40"
+            }
+          }
+        },
+        "60": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.098039,
+              0.501961,
+              0.219608
+            ],
+            "hex": "#198038"
+          },
+          "$description": "green 60",
+          "$extensions": {
+            "com.developsolutions.ailocal": {
+              "upstream": "color-palette.json:green.60"
+            }
+          }
+        }
+      },
+      "magenta": {
+        "40": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              1,
+              0.494118,
+              0.713725
+            ],
+            "hex": "#ff7eb6"
+          },
+          "$description": "magenta 40",
+          "$extensions": {
+            "com.developsolutions.ailocal": {
+              "upstream": "color-palette.json:magenta.40"
+            }
+          }
+        },
+        "60": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.815686,
+              0.14902,
+              0.439216
+            ],
+            "hex": "#d02670"
+          },
+          "$description": "magenta 60",
+          "$extensions": {
+            "com.developsolutions.ailocal": {
+              "upstream": "color-palette.json:magenta.60"
+            }
+          }
+        }
+      },
+      "orange": {
+        "40": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              1,
+              0.513725,
+              0.168627
+            ],
+            "hex": "#ff832b"
+          },
+          "$description": "orange 40",
+          "$extensions": {
+            "com.developsolutions.ailocal": {
+              "upstream": "color-palette.json:orange.40"
+            }
+          }
+        },
+        "60": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.729412,
+              0.305882,
+              0
+            ],
+            "hex": "#ba4e00"
+          },
+          "$description": "orange 60",
+          "$extensions": {
+            "com.developsolutions.ailocal": {
+              "upstream": "color-palette.json:orange.60"
+            }
+          }
+        }
+      },
+      "purple": {
+        "40": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.745098,
+              0.584314,
+              1
+            ],
+            "hex": "#be95ff"
+          },
+          "$description": "purple 40",
+          "$extensions": {
+            "com.developsolutions.ailocal": {
+              "upstream": "color-palette.json:purple.40"
+            }
+          }
+        },
+        "60": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.541176,
+              0.247059,
+              0.988235
+            ],
+            "hex": "#8a3ffc"
+          },
+          "$description": "purple 60",
+          "$extensions": {
+            "com.developsolutions.ailocal": {
+              "upstream": "color-palette.json:purple.60"
+            }
+          }
+        }
+      },
+      "teal": {
+        "40": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.031373,
+              0.741176,
+              0.729412
+            ],
+            "hex": "#08bdba"
+          },
+          "$description": "teal 40",
+          "$extensions": {
+            "com.developsolutions.ailocal": {
+              "upstream": "color-palette.json:teal.40"
+            }
+          }
+        },
+        "60": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0,
+              0.490196,
+              0.47451
+            ],
+            "hex": "#007d79"
+          },
+          "$description": "teal 60",
+          "$extensions": {
+            "com.developsolutions.ailocal": {
+              "upstream": "color-palette.json:teal.60"
+            }
+          }
+        }
+      }
+    }
+  }
+}

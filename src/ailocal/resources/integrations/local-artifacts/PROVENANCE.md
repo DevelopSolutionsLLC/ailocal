@@ -16,3 +16,10 @@ installed separately.
 
 Upstream notices for the vendored assets are unchanged: see NOTICE,
 NOTICE.upstream, LICENSE.upstream and licenses/.
+
+One upstream arrived after the migration: `themes/carbon.tokens.json` is
+GENERATED from `@carbon/themes` (Apache-2.0) at a pinned version by
+`tools/update_carbon_tokens.py`, and is a derived work of Carbon's DTCG token
+source rather than vendored code. Attribution and the list of modifications are
+in NOTICE; the licence text is `licenses/carbon-LICENSE.txt`; the architecture
+and update procedure are in DESIGN-SYSTEM.md.
