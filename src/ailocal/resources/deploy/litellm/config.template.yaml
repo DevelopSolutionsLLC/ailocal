@@ -103,18 +103,16 @@ litellm_settings:
     # module docstring holds the table and the retirement condition. An explicit
     # `think` in the request still wins.
     - /app/config/hooks/reasoning_router.proxy_handler_instance
-    # Restores the client's interleaved system messages. LiteLLM's Anthropic
-    # /v1/messages -> OpenAI adapter branches only on role user/assistant, so a
-    # role:"system" entry inside the messages array falls through the loop and
-    # is silently discarded at zero token cost. That channel carries Claude
-    # Code's SessionStart hook output, the Plan-mode gate and plan-file path,
-    # the five-phase workflow, and the subagent/skill inventories — on
-    # claude-local none of it reached the model. Listed BEFORE the hooks that
-    # read messages so they see the restored shape. Fixed upstream in
-    # BerriAI/litellm#30443 but in no stable release (v1.96.2 and v1.97.0-rc.1
-    # both lack it; only v1.98.0-dev.2 has it). Delete this entry and the
-    # module when the pinned image ships that branch — the module docstring
-    # carries the one-line check.
+    # HISTORICAL: a `system_transport` hook used to sit here. LiteLLM's
+    # Anthropic /v1/messages -> OpenAI adapter branched only on role
+    # user/assistant, so a role:"system" entry inside the messages array fell
+    # through the loop and was silently discarded — taking Claude Code's
+    # SessionStart output, the Plan-mode gate and the subagent/skill
+    # inventories with it. Fixed upstream in BerriAI/litellm#30443, which
+    # first shipped in a stable release with 1.98.0. The hook and its module
+    # were REMOVED at that upgrade, not disabled; do not restore them. The
+    # behaviour they protected is asserted directly by the work-tracking
+    # surface test, which is what would fail if a future image regressed it.
     # Restores context-window validation for local models. LiteLLM's
     # register_model strips the provider prefix from the key while the router's
     # pre-call check looks it up WITH the prefix, so max_input_tokens is never

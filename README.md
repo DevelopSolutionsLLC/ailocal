@@ -241,6 +241,7 @@ To change which model a profile uses, edit the file in `~/.config/ailocal/profil
 
 | Document | Purpose |
 |---|---|
+| [docs/claude-local.md](docs/claude-local.md) | what claude-local is, tool search, Workflow, every variable |
 | [docs/architecture.md](docs/architecture.md) | how the pieces fit together |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | symptoms and fixes |
 | [docs/security.md](docs/security.md) | secrets, permissions, exposure |
