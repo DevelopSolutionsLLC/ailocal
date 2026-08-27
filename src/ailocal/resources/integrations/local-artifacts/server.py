@@ -43,8 +43,11 @@ MAX_SIZE = 16 * 1024 * 1024  # 16 MiB
 
 # The preview server outlives the session that published to it, so it needs its
 # own way to die. It exits after this many seconds with no request, no publish
-# and no connected viewer. 0 disables the timeout. One shared 24 MiB process is
-# the entire budget: every session reuses it instead of starting its own.
+# and no connected viewer. 0 disables the timeout. One shared ~25 MiB process is
+# the entire budget: every session reuses it instead of starting its own. Reaping
+# also bounds the one thing that does grow: [REAL] rendering Mermaid inlines a
+# 3.4 MB library per page and RSS climbs to a ~361 MiB plateau after ~60 renders
+# (allocator high-water, not a leak -- live allocations stay flat). See README.
 #
 # 30 minutes, not longer, because nothing is lost by reaping: [REAL] a cold
 # start costs 0.351s against 0.18s warm, so the next publish pays ~170ms and
