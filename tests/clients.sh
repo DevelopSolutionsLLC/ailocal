@@ -94,6 +94,41 @@ check "$([ "$(grep -c 'AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE' "$CONFIGURE")" -ge 1
   "override logic survives generation.py regeneration"
 }
 
+claude_workflow_checks() {
+GEN="$(_config_root)/configure.zsh"
+
+echo "CLAUDE-LOCAL WORKFLOW TOGGLE"
+
+check "$([ -f "$GEN" ] && echo 0 || echo 1)" "generated configure.zsh exists"
+
+# Anthropic's Workflow tool cannot be deferred (its schema is non-deferrable and
+# anthropics/claude-code#54716 is closed), so claude-local turns it off and buys
+# back 21,822 schema bytes / ~5,100 input tokens. Hosted Claude must never see
+# this: the variable is injected per-process by the wrapper only.
+n=$(grep -c 'CLAUDE_CODE_DISABLE_WORKFLOWS=1' "$GEN" 2>/dev/null || true)
+check "$([ "${n:-0}" -ge 1 ] && echo 0 || echo 1)" \
+  "claude-local disables Anthropic Workflow by default (found ${n:-0})"
+
+e=$(grep -c 'AILOCAL_NATIVE_WORKFLOWS' "$GEN" 2>/dev/null || true)
+check "$([ "${e:-0}" -ge 1 ] && echo 0 || echo 1)" \
+  "AILOCAL_NATIVE_WORKFLOWS escape hatch is present (found ${e:-0})"
+
+# The toggle must be conditional, not unconditional.
+c=$(grep -cE 'if \[\[ "\$\{AILOCAL_NATIVE_WORKFLOWS:-\}" != "1" \]\]' "$GEN" 2>/dev/null || true)
+check "$([ "${c:-0}" -ge 1 ] && echo 0 || echo 1)" \
+  "the disable is conditional on the escape hatch (found ${c:-0})"
+
+# It must live inside the wrapper's per-process env, never in a settings file.
+s=$(grep -c 'CLAUDE_CODE_DISABLE_WORKFLOWS' "$(_config_root)/claude/settings.json" 2>/dev/null || true)
+check "$([ "${s:-0}" -eq 0 ] && echo 0 || echo 1)" \
+  "the flag is NOT written into settings.json (found ${s:-0})"
+
+# hosted Claude must be untouched
+h=$(grep -c 'CLAUDE_CODE_DISABLE_WORKFLOWS' "$HOME/.claude/settings.json" 2>/dev/null || true)
+check "$([ "${h:-0}" -eq 0 ] && echo 0 || echo 1)" \
+  "hosted ~/.claude carries no Workflow override (found ${h:-0})"
+}
+
 codex_checks() {
 GEN="$(_config_root)/codex/config.toml"
 
@@ -247,7 +282,8 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   case "${1:-all}" in
     roles) roles_checks ;;
     codex) codex_checks ;;
-    all)   roles_checks; codex_checks ;;
+    workflow) claude_workflow_checks ;;
+    all)   roles_checks; codex_checks; claude_workflow_checks ;;
     *) echo "unknown section: $1 (expected roles|codex|all)" >&2; exit 2 ;;
   esac
   report || exit 1

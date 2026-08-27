@@ -106,6 +106,31 @@ claude-local() {
   # production model anyway. The architecture override therefore also passes
   # --model, the highest-priority supported mechanism. The slot rewrite below
   # still matters: it redirects the subagent/background tiers.
+  # ANTHROPIC WORKFLOW, LOCALLY. Claude Code's built-in Workflow tool ships a
+  # 21,822-byte schema that cannot be deferred: `non_deferrable_builtins` is fed
+  # by an Anthropic rollout flag and by settings, but both only ADD to the
+  # non-deferrable set, and the request to opt built-ins out of deferral
+  # (anthropics/claude-code#54716) is closed as not planned. ENABLE_TOOL_SEARCH
+  # does not reach it either -- `true` leaves Workflow eager, and `auto`/`auto:N`
+  # defer it only by leaving every MCP tool eager instead, which costs more than
+  # it saves. So the supported choice here is on or off, not lazy.
+  #
+  # [REAL] on this stack it is pure overhead: 0 invocations across 148 real
+  # claude-local sessions, and disabling it took the model-visible tool schema
+  # from 53,044 to 31,221 bytes and the fixed prompt from 21,789 to 16,695
+  # input tokens, with capability preserved 10/10 (ordinary coding, Cadence
+  # skills, Cadence agents, GitHub + LSP discovery, grepai, artifacts and the
+  # negative control all unaffected).
+  #
+  # claude-local ONLY. Hosted Claude keeps Anthropic's native Workflow: this
+  # variable is injected per-process by this wrapper and nothing writes it to
+  # ~/.claude. AILOCAL_NATIVE_WORKFLOWS=1 restores it for anyone who wants
+  # /workflows back and accepts the schema cost.
+  local -a _workflow_env=()
+  if [[ "${AILOCAL_NATIVE_WORKFLOWS:-}" != "1" ]]; then
+    _workflow_env=(CLAUDE_CODE_DISABLE_WORKFLOWS=1)
+  fi
+
   local -a _model_args=()
   [[ -n "${AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE:-}" ]] && \
     _model_args=(--model "$AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE")
@@ -153,6 +178,7 @@ claude-local() {
     CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1 \
     CLAUDE_CODE_DISABLE_1M_CONTEXT=1 \
     ENABLE_TOOL_SEARCH=${AILOCAL_TOOL_SEARCH:-true} \
+    "${_workflow_env[@]}" \
     API_TIMEOUT_MS="${AILOCAL_API_TIMEOUT_MS:-900000}" \
     claude "${_model_args[@]}" "$@"
 }
