@@ -183,6 +183,8 @@ def _gate_suites(repo: pathlib.Path, full: bool) -> list:
              [py, "tests/install.py"]),
             ("client compatibility probes (/api/hello, no side effects)",
              ["/bin/bash", "tests/compat-routes.sh"]),
+            ("bundled artifact capability (spec, persistence, MCP server)",
+             [py, "tests/artifacts.py"] + (["--full"] if full else [])),
         ]),
         ("INVARIANTS", [
             ("generation is a fixed point", _fixed_point),
