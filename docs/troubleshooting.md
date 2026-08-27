@@ -293,6 +293,141 @@ Then reload the VS Code window.
 
 ---
 
+## The artifact tool is missing in claude-local
+
+The model says it has no way to publish, or `mcp__artifact__publish` never appears.
+
+```sh
+ailocal check | grep artifact
+```
+
+`ailocal clients claude` provisions the runtime and registers the MCP server; run it if the
+check reports either half missing. It is idempotent and preserves the other MCP servers in
+`.claude.json`.
+
+If the check passes but the tool still does not appear, the registration is correct and the
+model simply did not route to it. Ask for the artifact explicitly ("publish an artifact
+showing…").
+
+**Status** — fixed by re-running client configuration.
+
+---
+
+## An artifact renders but the `architecture` format fails
+
+Every other format works; only `architecture` errors.
+
+That format computes its layout with the bundled elkjs, in Node:
+
+```sh
+node --version || brew install node
+```
+
+`ailocal clients claude` warns about this at provisioning time. No other format needs Node.
+
+**Status** — install Node.
+
+---
+
+## The artifact preview will not open
+
+The page is served from `127.0.0.1` by the artifact server, which runs as a child of the
+Claude Code session. If the session has ended, the preview is gone — but the canonical source
+was written to `.artifacts/` in the project you launched from, and republishing it re-renders
+the page.
+
+The page itself cannot reach the network by design: it runs in a sandboxed iframe under
+`connect-src 'none'`. A blocked request in the browser console is the boundary working, not a
+fault.
+
+**Status** — expected; re-publish from the saved source.
+
+---
+
+## ToolSearch cannot find a GitHub or LSP tool
+
+Those tools are deferred, not absent. Acquire them by name, batching into one call:
+
+```
+ToolSearch("select:LSP,mcp__github__issue_read")
+```
+
+If a name genuinely does not resolve, check the server is registered
+(`ailocal check`) and that LiteLLM is ≥ 1.98 — the deferred-tool listing travels in mid-array
+`role: "system"` messages, which the previous pin discarded.
+
+`Grep` and `Glob` are a known exception: they are frequently neither present nor offered as
+deferred tools, so `ToolSearch` cannot acquire them. Use `grep`/`rg` and `find` through
+`Bash`.
+
+**Status** — expected behaviour; see [claude-local.md](claude-local.md#tool-search).
+
+---
+
+## A subagent has fewer tools than its definition declares
+
+An agent declaring `Read, Grep, Glob, Bash` is granted `Read, Bash`.
+
+This is Claude Code's own subagent behaviour. [REAL] the same run with tool search
+**disabled** granted the same two tools, so it is not caused by ailocal's configuration and
+turning tool search off does not fix it. Write agent definitions that still work over `Bash`.
+
+**Status** — upstream; no ailocal-side fix.
+
+---
+
+## Native Workflow is missing (`/workflows` does nothing)
+
+`claude-local` disables Claude Code's built-in Workflow tool by default — its 21,822-byte
+schema cannot be deferred and it was invoked 0 times across 148 measured sessions. Restore it
+for one session:
+
+```sh
+AILOCAL_NATIVE_WORKFLOWS=1 claude-local
+```
+
+The override is process-scoped, and hosted `claude` is unaffected either way.
+
+**Status** — intentional; see [claude-local.md](claude-local.md#native-workflow-is-off-by-default).
+
+---
+
+## The context is unexpectedly large
+
+Check what is actually being sent before tuning anything:
+
+```sh
+ailocal check
+```
+
+The usual causes are tool search disabled (`AILOCAL_TOOL_SEARCH=false` in your shell) or
+native Workflow re-enabled (`AILOCAL_NATIVE_WORKFLOWS=1`). Both are per-process, so an
+`export` in your shell profile is easy to forget. Together they account for roughly 114K
+schema bytes versus 31K with the defaults.
+
+**Status** — check the two variables first.
+
+---
+
+## An editable install stops importing (`ModuleNotFoundError: ailocal`)
+
+Two different causes look identical.
+
+```sh
+ls -lO .venv/lib/*/site-packages/*.pth   # is the .pth flagged `hidden`?
+grep executable .venv/pyvenv.cfg          # does that interpreter still exist?
+```
+
+- **`.pth` marked `hidden`** — CPython deliberately skips hidden `.pth` files, so the path
+  entry is never added. Recreating the venv does not help. Run with
+  `PYTHONPATH=<repo>/src` instead; subprocesses inherit it.
+- **`pyvenv.cfg` names a Python that was upgraded away** (e.g. 3.14.6 → 3.14.7) — recreate
+  the venv.
+
+**Status** — developer environment; does not affect an installed `ailocal`.
+
+---
+
 ## A cosmetic warning appears at startup
 
 SearXNG logs a bot-detection line during boot. It is expected on a single-user local instance reached only from LiteLLM, and can be ignored.

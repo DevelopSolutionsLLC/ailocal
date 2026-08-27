@@ -163,8 +163,12 @@ check(reg.route_for_call_type("acompletion") == "/v1/chat/completions",
       "acompletion -> /v1/chat/completions")
 check(reg.route_for_call_type(None, has_input_key=True) == "/v1/responses",
       "an unknown call_type with an `input` key -> /v1/responses")
-check(reg.route_drops_type("/v1/responses", "namespace") is True,
-      "/v1/responses drops namespace (LiteLLM's own behaviour)")
+# CHANGED AT LiteLLM 1.98.0: `namespace` used to be dropped on this route and
+# is now expanded into real Chat Completions tools, so it reaches the backend
+# and removing it IS a saving. Asserting the CURRENT direction is what makes a
+# future upstream flip visible instead of silently restoring a wrong figure.
+check(reg.route_drops_type("/v1/responses", "namespace") is False,
+      "/v1/responses no longer drops namespace (LiteLLM 1.98 expands it)")
 for t in ("computer_use", "image_generation", "shell"):
     check(reg.route_drops_type("/v1/responses", t) is True,
           f"/v1/responses drops {t}")

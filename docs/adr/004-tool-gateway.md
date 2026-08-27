@@ -1,6 +1,6 @@
 # ADR 004 — Tool gateway and task classification
 
-**Status:** Accepted · **Date:** 2026-07 · **The decision that most shapes daily feel**
+**Status:** Accepted, PARTIALLY SUPERSEDED at LiteLLM 1.98.0 (see *What changed at 1.98.0*) · **Date:** 2026-07 · **The decision that most shapes daily feel**
 
 ## Problem
 
@@ -38,9 +38,20 @@ Groups express *what a tool is for*, which is what lets a model or task select b
 
 ## Measurements
 
-- Conversational: **61 tools → 1 kept**, end to end through `claude -p`.
-- Codex's real gain is **18%, not 71%** — LiteLLM already discards its `namespace` tools before the backend, so removing them is not a saving.
-- Gateway overhead: ~0.2–0.7 ms per request.
+- [REAL HISTORICAL, LiteLLM 1.93.0] Conversational: **61 tools → 1 kept**, end to end through `claude -p`. The declared surface has since changed (ToolSearch, Workflow disabled), so the *ratio* is the durable part, not the 61.
+- [WITHDRAWN at 1.98.0] "Codex's real gain is **18%, not 71%** — LiteLLM already discards its `namespace` tools before the backend, so removing them is not a saving." The premise no longer holds; see below. The figure has **not** been re-measured, so no replacement number is claimed here.
+- [REAL] Gateway overhead: ~0.2–0.7 ms per request.
+
+## What changed at 1.98.0
+
+The previous pin, LiteLLM 1.93.0, dropped `namespace` tools when translating `/v1/responses` down to Chat Completions. Two things were built on that fact:
+
+1. the registry's `drops_tool_types` for `/v1/responses`, which told the gateway not to book removing a namespace tool as a saving; and
+2. `namespace_expansion` — flattening a bundle into `mcp__<server>__<tool>` functions so it could reach the backend at all. It ships **disabled**.
+
+LiteLLM 1.98.0 expands `namespace` itself (`_namespace_chat_tools`), read on the pinned image rather than inferred. So bundles now reach the backend, removing them **is** a real saving, and the drop set is `[computer_use, image_generation, shell]`. The registry and both suites were corrected to the 1.98.0 behaviour.
+
+**Open:** `namespace_expansion` has lost its original justification. It is disabled, so it costs nothing at runtime, and deleting a feature is a separate decision from correcting a measurement — it was deliberately not removed during a documentation pass. Decide it explicitly: either name a requirement 1.98's own expansion does not satisfy, or delete the feature, its config, its suite and this paragraph together.
 
 ## Known limitations
 
