@@ -70,6 +70,19 @@ architecture JSON -> validate -> size -> elkjs (Node, in the server) -> static S
 
 The resulting artifact contains **no script at all** — for this format the sandbox has nothing to contain. `check_diagram.py` is the objective gate: node overlap, text escaping its box, text collisions, clipping, arrowheads, expected topology.
 
+## The design system
+
+Colour, typeface and spacing are owned by the renderer, never by the model. Values are
+derived from IBM Carbon's DTCG token source at a pinned version rather than hand-picked, and
+contrast is gated by `test_design.py` rather than eyeballed.
+
+**[DESIGN-SYSTEM.md](DESIGN-SYSTEM.md) is authoritative** — the token architecture, what is
+generated versus hand-authored, the accessibility gates and how to update the tokens.
+
+```sh
+python3 tools/update_carbon_tokens.py --check   # is the committed palette current?
+```
+
 There is **one** artifact and **one** URL. Publishing again replaces it in place and the open tab refreshes itself — that is how you update.
 
 ## Install
