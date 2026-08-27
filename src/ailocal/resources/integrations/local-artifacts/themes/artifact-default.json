@@ -20,12 +20,12 @@
   "typography": {
     "sans": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
     "mono": "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-    "title_px": 13.0,
-    "type_label_px": 8.5,
-    "subtitle_px": 10.5,
-    "badge_px": 9.0,
-    "edge_label_px": 10.5,
-    "group_label_px": 10.0
+    "title_px": 14.0,
+    "type_label_px": 9.5,
+    "subtitle_px": 11.0,
+    "badge_px": 9.5,
+    "edge_label_px": 11.5,
+    "group_label_px": 10.5
   },
   "geometry": {
     "node_radius": 6,
@@ -37,56 +37,86 @@
     "corner_radius": 9
   },
   "light": {
-    "canvas": "#f6f7f9",
+    "canvas": "#e8ebf0",
     "surface": "#ffffff",
-    "group_surface": "#f0f2f5",
+    "group_surface": "#f2f4f7",
     "ink": "#14181d",
     "muted": "#59616d",
-    "faint": "#828b98",
-    "border": "#d3d8de",
+    "faint": "#626b78",
+    "border": "#b6bec9",
     "accent": {
-      "client":   "#1f6fb2",
-      "service":  "#0f7b6c",
-      "router":   "#6b4fa1",
-      "runtime":  "#2b6cb0",
-      "model":    "#2f7d55",
+      "client": "#1470b8",
+      "service": "#0f7b6c",
+      "router": "#6b4fa1",
+      "runtime": "#4a5bb8",
+      "model": "#2f7d55",
       "database": "#8a6100",
       "external": "#5b6472",
-      "tool":     "#a85416",
-      "default":  "#5b6472"
+      "tool": "#a85416",
+      "default": "#5b6472"
     }
   },
   "dark": {
     "canvas": "#0d1014",
-    "surface": "#161a20",
-    "group_surface": "#12161b",
+    "surface": "#222933",
+    "group_surface": "#171c23",
     "ink": "#e5e9ef",
     "muted": "#9aa4b2",
-    "faint": "#6f7885",
-    "border": "#2a313a",
+    "faint": "#8f99a8",
+    "border": "#45505e",
     "accent": {
-      "client":   "#6db3f2",
-      "service":  "#3fc0ad",
-      "router":   "#b39ae0",
-      "runtime":  "#7aa9e6",
-      "model":    "#68c68f",
+      "client": "#58b6f5",
+      "service": "#3fc0ad",
+      "router": "#b39ae0",
+      "runtime": "#8f9bf0",
+      "model": "#68c68f",
       "database": "#d9ad4a",
       "external": "#98a3b3",
-      "tool":     "#e0954f",
-      "default":  "#98a3b3"
+      "tool": "#e0954f",
+      "default": "#98a3b3"
     }
   },
   "edge_kinds": {
-    "request":    {"accent": "client",   "dash": "none",  "label": "request"},
-    "inference":  {"accent": "model",    "dash": "none",  "label": "inference"},
-    "tool":       {"accent": "tool",     "dash": "7 5",   "label": "tool / MCP"},
-    "data":       {"accent": "database", "dash": "1 5",   "label": "data"},
-    "dependency": {"accent": "external", "dash": "3 4",   "label": "dependency"},
-    "default":    {"accent": "default",  "dash": "none",  "label": "relates to"}
+    "request": {
+      "accent": "client",
+      "dash": "none",
+      "label": "request"
+    },
+    "inference": {
+      "accent": "model",
+      "dash": "none",
+      "label": "inference"
+    },
+    "tool": {
+      "accent": "tool",
+      "dash": "7 5",
+      "label": "tool / MCP"
+    },
+    "data": {
+      "accent": "database",
+      "dash": "1 5",
+      "label": "data"
+    },
+    "dependency": {
+      "accent": "external",
+      "dash": "3 4",
+      "label": "dependency"
+    },
+    "default": {
+      "accent": "default",
+      "dash": "none",
+      "label": "relates to"
+    }
   },
   "type_labels": {
-    "client": "CLIENT", "service": "SERVICE", "router": "ROUTER",
-    "runtime": "RUNTIME", "model": "MODEL", "database": "DATABASE",
-    "external": "EXTERNAL", "tool": "TOOL", "default": ""
+    "client": "CLIENT",
+    "service": "SERVICE",
+    "router": "ROUTER",
+    "runtime": "RUNTIME",
+    "model": "MODEL",
+    "database": "DATABASE",
+    "external": "EXTERNAL",
+    "tool": "TOOL",
+    "default": ""
   }
 }

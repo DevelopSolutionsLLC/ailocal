@@ -75,6 +75,32 @@ disk, and hosted `claude` keeps Anthropic's native Workflow either way.
 [the README's Artifacts section](../README.md#artifacts) and
 [ADR 011](adr/011-bundled-artifacts.md). Nothing to clone or install separately.
 
+## How the artifact tool is routed
+
+Worth separating three different kinds of claim, because they are often run together:
+
+**What the protocol guarantees.** MCP's `InitializeResult.instructions` is a hint a client
+**MAY** add to the model's prompt. The specification does not require delivery, so a client
+that omits it is behaving correctly.
+
+**What we measured.** [REAL CURRENT] on Claude Code 2.1.231, captured at the Claude Code →
+LiteLLM request boundary: the system prompt contains no MCP or artifact text at all, with
+tool search on **and** off. So on this path the server's `instructions` do not reach the
+model.
+
+**What follows.** The tool description is the routing contract, because it is the part
+proven to arrive. `SERVER_INSTRUCTIONS` is kept to one line as optional guidance for clients
+that do honour it, and nothing depends on it for correctness. The format guidance lives in
+the skill, which is delivered. Three copies of one policy is how they drift apart.
+
+This is why a wording change to the tool description moved artifact invocation from 6/15 to
+13/15 (p = 0.008) while the same words in the server instructions had done nothing.
+
+**Transport is unchanged and stays that way.** The bundled server is stdio, which Claude
+Code's documentation describes as appropriate for local processes; SSE is deprecated in
+favour of Streamable HTTP for *remote* servers, which this is not. MCP transport and
+LiteLLM's response streaming are separate layers and neither implies the other.
+
 ## Repository intelligence
 
 - **grepai** — semantic search over an index; unaffected by tool search.

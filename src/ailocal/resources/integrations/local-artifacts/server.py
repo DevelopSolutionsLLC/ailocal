@@ -370,6 +370,51 @@ mermaid.initialize({{
 </html>"""
 
 
+#: Mermaid statements that carry PRESENTATION rather than meaning. The model is
+#: asked for semantics and supplies colour anyway: [REAL] 4 of 18 captured
+#: artifacts hard-coded fills, including `fill:#f9f` and `fill:#0f0`, which land
+#: as pale pastels on the dark canvas with light text over them and are
+#: unreadable. The `architecture` format already refuses model-authored geometry
+#: for the same reason; this is that rule applied to colour. `class` goes with
+#: `classDef` so no statement is left referencing a definition that was removed.
+_MERMAID_STYLE_STMT = re.compile(
+    r"^[ \t]*(?:style|classDef|linkStyle|class)\b[^\n]*$", re.M)
+
+
+def strip_mermaid_presentation(source: str) -> tuple[str, int]:
+    """Drop model-authored colour directives so the theme applies.
+
+    Returns the cleaned source and how many statements were removed. Semantics
+    -- nodes, edges, labels, subgraphs, directions -- are untouched.
+    """
+    cleaned, n = _MERMAID_STYLE_STMT.subn("", source)
+    if not n:
+        return source, 0
+    # Collapse the blank lines the removal leaves behind.
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip() + "\n"
+    return cleaned, n
+
+
+#: Square-bracket labels containing parentheses. Mermaid needs these quoted and
+#: the model does not quote them: [REAL] `Reviewers[Reviewer(s) Assigned]` in a
+#: captured artifact made the whole diagram render as "Syntax error in text",
+#: which is what the user sees instead of their flowchart. Quoting is a SYNTAX
+#: normalisation and changes no semantics -- the label text is identical. It is
+#: deliberately narrow: `((circle))` nodes and already-quoted labels are left
+#: alone, and nothing else about the source is rewritten.
+_MERMAID_UNQUOTED_LABEL = re.compile(r'\[(?!")([^\[\]"\n]*[()][^\[\]"\n]*)\]')
+
+
+def normalise_mermaid_labels(source: str) -> tuple[str, int]:
+    """Quote `[label]` text containing parentheses. Returns source and count."""
+    n = 0
+    def q(m):
+        nonlocal n
+        n += 1
+        return '["' + m.group(1).strip() + '"]'
+    return _MERMAID_UNQUOTED_LABEL.sub(q, source), n
+
+
 def build_mermaid_content(source: str) -> str:
     """Mermaid runs INSIDE the sandboxed iframe, exactly like marked does for
     Markdown: opaque origin, connect-src 'none'. The library is inlined from
@@ -378,6 +423,10 @@ def build_mermaid_content(source: str) -> str:
     if not js:
         return ("<!DOCTYPE html><html><body><p>mermaid.min.js is missing from "
                 "vendor/. Reinstall local-artifacts.</p></body></html>")
+    # Silently: this is a stdio MCP server and anything written to stdout
+    # corrupts the protocol frame.
+    source, _dropped = strip_mermaid_presentation(source)
+    source, _quoted = normalise_mermaid_labels(source)
     import architecture as _arch
     theme = _arch.THEME
     return MERMAID_PAGE.format(
@@ -812,19 +861,17 @@ def publish(title, content="", file_path="", fmt="html", emoji="\U0001F4C4",
 
 # ── MCP ───────────────────────────────────────────────────────────────────────
 
+# OPTIONAL, CLIENT-DEPENDENT, NOT RELIED UPON FOR CORRECTNESS.
+# [REAL] captured at the wire on Claude Code 2.1.231: a session's system prompt
+# contains no MCP or artifact text whatsoever, with tool search on and off, so
+# nothing here reaches the model on this client. It is kept short for clients
+# that do honour `initialize.instructions`, and deliberately does not restate
+# the routing contract -- that lives in TOOL_DESCRIPTION, which is proven
+# model-visible, and the format guidance lives in the skill. Three copies of one
+# policy is how they drift apart.
 SERVER_INSTRUCTIONS = (
-    "Renders and publishes local visual artifacts. Use this server whenever the "
-    "user asks to create, show, display, preview, diagram, visualize, present or "
-    "update an artifact, dashboard, chart, architecture or system diagram, "
-    "request/data-flow diagram, interactive visualization, polished comparison, "
-    "or styled report.\n"
-    "Publish the finished visual with mcp__artifact__publish. Do NOT describe the "
-    "artifact, print its JSON, or emit it in a fenced code block in chat -- an "
-    "artifact only exists once the tool is called.\n"
-    "formats: architecture (JSON of nodes/groups/edges; layout is computed for "
-    "you, never write coordinates), mermaid (Mermaid source), html (one "
-    "self-contained document), markdown (prose).\n"
-    "Not for files the user wants kept in the repository -- write those normally."
+    "Renders and publishes local visual artifacts. Routing and format rules are "
+    "carried by the mcp__artifact__publish tool description."
 )
 
 TOOL_DESCRIPTION = (
@@ -833,7 +880,23 @@ TOOL_DESCRIPTION = (
     # tool_use that simply dropped the mandatory `mcp__` prefix in 3 of 18 runs.
     # Plugin packaging was measured and REJECTED for making this worse: a
     # plugin-provided server is namespaced mcp__plugin_<plugin>_<server>__<tool>.
-    "Use mcp__artifact__publish to create or update a local artifact preview.\n"
+    #
+    # THIS STRING IS THE ROUTING CONTRACT. The MCP server's `instructions` are
+    # NOT delivered to the model on this client -- [REAL] captured at the wire,
+    # the system prompt contains no MCP or artifact text at all, with tool
+    # search on or off. Anything required for correct routing has to be here.
+    #
+    # The vocabulary line is measured, not decorative: at n=3 each, "Publish a
+    # flowchart", "Create a flowchart" and "Publish a diagram" scored 0/3 and
+    # returned fenced Mermaid instead, while "Publish a Mermaid diagram" and
+    # "Visualize ..." scored 3/3. The words that failed are now stated.
+    "Use mcp__artifact__publish to publish, create, render, show, visualize or "
+    "present a visual artifact: a flowchart, diagram, architecture or system "
+    "diagram, request/data-flow diagram, chart, dashboard, interactive "
+    "visualization, polished comparison or styled report.\n"
+    "When the result is a visual artifact, CALL THIS TOOL instead of returning "
+    "Mermaid, HTML or architecture JSON as a fenced code block -- an artifact "
+    "only exists once the tool is called.\n"
     "  architecture - system, service, deployment or request/data-flow diagrams. "
     "Send JSON: {\"title\":..., \"groups\":[{\"id\",\"label\"}], "
     "\"nodes\":[{\"id\",\"label\",\"kind\",\"group\",\"subtitle\"}], "
@@ -841,7 +904,8 @@ TOOL_DESCRIPTION = (
     "node kind: client|service|router|runtime|model|database|external|tool. "
     "edge kind: request|inference|tool|data|dependency. "
     "Layout is computed for you -- never write coordinates or SVG.\n"
-    "  mermaid - flowchart, sequence, state, class or ER diagram. Mermaid source.\n"
+    "  mermaid - flowchart, sequence, state, class or ER diagram. Mermaid source. "
+    "Colour is applied for you -- do not send style/classDef/linkStyle.\n"
     "  html - dashboards and interactive UI. One self-contained document.\n"
     "  markdown - document or report previews.\n"
     "Pass artifact_id to update an existing artifact in place. The source file "
