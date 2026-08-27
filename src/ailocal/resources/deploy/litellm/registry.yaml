@@ -150,7 +150,13 @@ mutating_tools:
 # never reach a backend, so the gateway must not count removing them as a saving.
 #
 # Source: litellm/responses/litellm_completion_transformation/transformation.py
-# on the 1.93.0 image (read, not inferred). Re-check after a LiteLLM upgrade.
+# on the 1.98.0 image (read, not inferred). Re-check after a LiteLLM upgrade.
+#
+# CHANGED AT 1.98.0: `namespace` used to be dropped here and no longer is --
+# the transformation now expands it through `_namespace_chat_tools()`, so those
+# tools DO reach the backend and removing them IS a real saving. The list below
+# is 1.98.0's actual drop set. This is why the Codex figure in ADR 004 is
+# marked historical: it was computed when the drop made the removal free.
 
 routes:
 
@@ -177,7 +183,7 @@ routes:
     call_types: [aresponses, responses]
     tools_key: tools
     tool_shape: "{type:function, name, description, parameters}"
-    drops_tool_types: [computer_use, image_generation, namespace, shell]
+    drops_tool_types: [computer_use, image_generation, shell]
     result_status: heuristic       # inspect function_call_output text
 
 # ── Namespace expansion ─────────────────────────────────────────────────────

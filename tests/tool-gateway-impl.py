@@ -187,8 +187,13 @@ check(r3["tools_dropped"] == 0,
       "a protected tool survives even a model that supports no tools")
 
 print("\nNO CREDIT FOR LITELLM'S OWN DROPS")
-ns = {"type": "namespace", "name": "multi_agent_v1",
-      "description": "spawn sub-agents", "tools": [{"name": "spawn"}]}
+# The EXAMPLE type changed at LiteLLM 1.98.0, the mechanism did not. `namespace`
+# used to be discarded on this route and is now expanded, so it is no longer a
+# witness for "LiteLLM removed it, not us". `shell` still is. Testing the
+# mechanism through a type the pinned image really drops is what keeps this
+# suite measuring the gateway instead of a stale upstream fact.
+ns = {"type": "shell", "name": "multi_agent_v1",
+      "description": "spawn sub-agents"}
 fn = {"type": "function", "name": "exec_command", "description": "run",
       "parameters": {"type": "object"}}
 NS_B, FN_B = tg.tool_bytes(ns), tg.tool_bytes(fn)
@@ -199,9 +204,9 @@ check(rr["bytes_in"] == NS_B + FN_B, "bytes_in counts everything the client sent
 check(rr["bytes_reachable"] == FN_B,
       f"bytes_reachable == {FN_B}: only the function tool reaches the model")
 check(rr["bytes_prefiltered_by_litellm"] == NS_B,
-      "the namespace bytes are attributed to LiteLLM, not to this gateway")
+      "the shell-tool bytes are attributed to LiteLLM, not to this gateway")
 check(rr["bytes_dropped_moot"] == NS_B,
-      "dropping a namespace tool is booked as MOOT, not as a saving")
+      "dropping a LiteLLM-discarded tool is booked as MOOT, not a saving")
 check(rr["bytes_dropped"] == 0,
       "no reachable bytes were saved here, so no saving is claimed")
 check(rr["bytes_dropped"] + rr["bytes_dropped_moot"] + rr["bytes_kept"]
@@ -214,11 +219,24 @@ check(rr["bytes_kept_reachable"] <= rr["bytes_kept"],
 check(rr["bytes_kept_reachable"] <= rr["bytes_reachable"],
       "the model never receives more than the route forwards — any ratio "
       "against bytes_reachable must use this field")
-ns_kept = {"type": "namespace", "name": "mcp__lsp", "description": "bundle",
-           "tools": [{"name": "hover"}]}
+# A namespace bundle now SURVIVES translation on this route (1.98.0). It is
+# kept by the gateway and forwarded, so kept and reachable agree -- the
+# opposite of what this asserted against 1.93.0, and the reason ADR 004's
+# Codex figure is marked historical rather than merely re-run.
+ns_bundle = {"type": "namespace", "name": "mcp__lsp", "description": "bundle",
+             "tools": [{"name": "hover"}]}
+rb, _ = gw.negotiate(dict(CODEX_HEADERS, model="ailocal-architecture",
+                          input="", tools=[ns_bundle]), "aresponses")
+check(rb["tools_dropped"] == 0, "an ungrouped namespace bundle is kept...")
+check(rb["bytes_kept"] > 0 and rb["bytes_kept_reachable"] == rb["bytes_kept"],
+      "...and on 1.98 it now REACHES the model, so removing it is a real saving")
+check(rb["tools_killed_by_translation"] == 0,
+      "translation no longer kills a namespace bundle on /v1/responses")
+
+ns_kept = {"type": "shell", "name": "local_shell", "description": "run"}
 rk, _ = gw.negotiate(dict(CODEX_HEADERS, model="ailocal-architecture",
                           input="", tools=[ns_kept]), "aresponses")
-check(rk["tools_dropped"] == 0, "an ungrouped namespace bundle is kept...")
+check(rk["tools_dropped"] == 0, "an ungrouped discarded tool is kept...")
 check(rk["bytes_kept"] > 0 and rk["bytes_kept_reachable"] == 0,
       "...but contributes ZERO to what the model receives")
 # The COUNT must tell the same story the BYTES already told. Reporting a
@@ -227,21 +245,21 @@ check(rk["bytes_kept"] > 0 and rk["bytes_kept_reachable"] == 0,
 # saw them (measured 2026-07-29: tools_kept 14 with both bundles listed in
 # `largest`). tools_kept now means FORWARDED.
 check(rk["tools_kept"] == 0,
-      "a namespace bundle LiteLLM will discard is NOT counted as kept")
+      "a tool LiteLLM will discard is NOT counted as kept")
 check(rk["tools_kept_by_gateway"] == 1,
       "...while the pre-translation figure still records the gateway's own "
       "decision under its own name")
 check(rk["tools_killed_by_translation"] == 1,
       "the entry is booked against the translation stage that removes it")
 killed = rk["killed_by_translation"]
-check(killed and killed[0]["name"] == "mcp__lsp"
-      and killed[0]["type"] == "namespace" and "litellm" in killed[0]["reason"],
+check(killed and killed[0]["name"] == "local_shell"
+      and killed[0]["type"] == "shell" and "litellm" in killed[0]["reason"],
       "each killed entry names itself, its type, and the reason it vanished")
 # <= 1 because encode([]) is the two-byte "[]", which tokenises to 1 — the
 # floor for an empty forwarded set, not zero.
 check(rk["tokens_est_kept"] <= 1 < rk["tokens_est_in"],
       "tokens the model pays for exclude tools it never receives")
-# Claude Code's route keeps namespaces, so the two stages must agree there.
+# Claude Code's route drops nothing, so the two stages must agree there.
 rc, _ = gw.negotiate(dict(CLAUDE_HEADERS, model="ailocal-architecture",
                           messages=[{"role": "user", "content": "hi"}],
                           tools=[ns_kept]), "acompletion")
@@ -427,15 +445,20 @@ check(names == ["mcp__lsp__get_hover", "mcp__lsp__get_definition"],
 check(all(t.get("type") == "function" for t in out),
       "every expanded tool is type=function, which the route does NOT drop")
 check(not any(t.get("type") == "namespace" for t in out),
-      "the bundle itself is removed — keeping it would pay its bytes twice and "
-      "be dropped downstream anyway")
+      "the bundle itself is removed — keeping it would pay its bytes twice")
 check(info and info[0]["expanded"] == 2, "expansion is reported")
 
-# The whole point: expanded tools are REACHABLE where the bundle was not.
+# ORIGINAL RATIONALE, SUPERSEDED UPSTREAM. This feature exists because an
+# unexpanded bundle reached no backend on /v1/responses: LiteLLM 1.93.0 dropped
+# `namespace` outright. LiteLLM 1.98.0 expands it itself
+# (`_namespace_chat_tools`), so the bundle IS reachable now and the gateway's
+# own expansion — which ships DISABLED — no longer has that justification.
+# Asserting the current direction rather than deleting the feature: whether the
+# gateway should still carry it is a design decision, recorded in ADR 004.
 rb, _ = gw.negotiate(dict(CODEX_HEADERS, model="ailocal-architecture", input="",
                           tools=[bundle]), "aresponses")
-check(rb["bytes_kept_reachable"] == 0,
-      "baseline: an unexpanded bundle contributes ZERO reachable bytes")
+check(rb["bytes_kept_reachable"] == rb["bytes_kept"] > 0,
+      "an unexpanded bundle is now reachable (LiteLLM 1.98 expands it)")
 
 # Group awareness: flattened lsp tools land in the lsp group, so task
 # negotiation and client profiles apply to them like any other tool.
