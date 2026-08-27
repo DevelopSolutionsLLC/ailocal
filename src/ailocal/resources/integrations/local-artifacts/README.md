@@ -18,7 +18,7 @@ Claude Code ──spawns──> server.py            (one per session, stdio MCP
 Claude Code ──spawns──> server.py       │    (another session)
                           └── publish ──┤
                                         v
-                       server.py --serve      ONE per machine, ~24 MiB
+                       server.py --serve      ONE per machine, ~25 MiB idle
                        HTTP 127.0.0.1:7891    started on demand by the first
                           ├── /          trusted viewer  (banner + SSE)
                           ├── /content   the artifact, in a sandboxed iframe
@@ -35,6 +35,30 @@ just unreachable. See [ADR 013](../../../../../docs/adr/013-artifact-preview-lif
 
 Sessions never each start their own server: whoever loses the bind race exits, and
 everyone reuses the winner.
+
+### Memory
+
+[REAL] 25.5 MiB at rest, and it stays there: publishing does not move it at all
+(25.4 -> 25.5 MiB over 26 publishes), and serving Markdown does not either
+(25.5 -> 25.6 MiB over 20 renders).
+
+Rendering **Mermaid** is different, because `mermaid.min.js` is 3.4 MB and is
+inlined into the page, so every `/content` render builds a ~3.5 MB string. RSS
+climbs about 10 MiB per render at first, then decelerates and **plateaus at
+~361 MiB after roughly 60 renders** — flat from there through 100, and it does
+not fall when the artifact is replaced or the client disconnects.
+
+That is the allocator, not a leak. Measured under `tracemalloc`, live Python
+allocations are *constant* at 6.8 MiB across 1 to 20 renders (peak 15.3 MiB);
+only RSS moves. Freed arenas are not returned to the OS, and are eventually
+reused — which is why it plateaus. Caching the vendor read was tried and
+rejected: it changed the curve by less than 3% (252 vs 246 MiB at 20 renders)
+while permanently retaining 7 MiB, so it did not earn its place.
+
+Nothing here is engineered around. The idle reap already bounds it: the process
+exits after 30 minutes of disuse and the next publish starts a fresh one at
+25 MiB. Reaching the plateau takes ~60 Mermaid renders inside a single idle
+window, and costs less than the containers this deliberately replaces.
 
 It exits by itself after `LOCAL_ARTIFACTS_IDLE_EXIT` seconds (default 30 minutes)
 of genuine disuse. Everything that counts as use defers it: any HTTP request
