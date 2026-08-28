@@ -421,14 +421,40 @@ mermaid.initialize({{
 _MERMAID_STYLE_STMT = re.compile(
     r"^[ \t]*(?:style|classDef|linkStyle|class)\b[^\n]*$", re.M)
 
+#: The same set MINUS `class`, for class diagrams. In a flowchart `class a,b x`
+#: applies a classDef; in a classDiagram `class Foo {` DECLARES the class, and
+#: stripping it deleted the declaration while leaving its `}` behind. [REAL] a
+#: ten-class diagram with members rendered as "Syntax error in text" -- the
+#: exact failure the label-quoting rule below exists to prevent, reintroduced by
+#: the colour rule. `style` and `classDef` stay stripped: both are presentation
+#: in either dialect.
+_MERMAID_STYLE_STMT_CLASSDIAGRAM = re.compile(
+    r"^[ \t]*(?:style|classDef|linkStyle)\b[^\n]*$", re.M)
+
+#: A leading `---`-fenced frontmatter block may precede the diagram keyword.
+_MERMAID_FRONTMATTER = re.compile(r"\A\s*---.*?^---[ \t]*$", re.M | re.S)
+
+
+def _is_class_diagram(source: str) -> bool:
+    body = _MERMAID_FRONTMATTER.sub("", source, count=1)
+    for line in body.splitlines():
+        line = line.strip()
+        if not line or line.startswith("%%"):
+            continue
+        return line.startswith("classDiagram")
+    return False
+
 
 def strip_mermaid_presentation(source: str) -> tuple[str, int]:
     """Drop model-authored colour directives so the theme applies.
 
     Returns the cleaned source and how many statements were removed. Semantics
-    -- nodes, edges, labels, subgraphs, directions -- are untouched.
+    -- nodes, edges, labels, subgraphs, directions and class declarations --
+    are untouched.
     """
-    cleaned, n = _MERMAID_STYLE_STMT.subn("", source)
+    pattern = (_MERMAID_STYLE_STMT_CLASSDIAGRAM if _is_class_diagram(source)
+               else _MERMAID_STYLE_STMT)
+    cleaned, n = pattern.subn("", source)
     if not n:
         return source, 0
     # Collapse the blank lines the removal leaves behind.
@@ -1089,13 +1115,25 @@ TOOL_DESCRIPTION = (
     # flowchart", "Create a flowchart" and "Publish a diagram" scored 0/3 and
     # returned fenced Mermaid instead, while "Publish a Mermaid diagram" and
     # "Visualize ..." scored 3/3. The words that failed are now stated.
-    "Use mcp__artifact__publish to publish, create, render, show, visualize or "
-    "present a visual artifact: a flowchart, diagram, architecture or system "
-    "diagram, request/data-flow diagram, chart, dashboard, interactive "
+    "Use mcp__artifact__publish to publish, create, draw, sketch, make, render, "
+    "show, visualize or present a visual artifact: a flowchart, diagram, "
+    "architecture or system diagram, class/relationship diagram, "
+    "request/data-flow diagram, chart, dashboard, interactive "
     "visualization, polished comparison or styled report.\n"
     "When the result is a visual artifact, CALL THIS TOOL instead of returning "
     "Mermaid, HTML or architecture JSON as a fenced code block -- an artifact "
     "only exists once the tool is called.\n"
+    # [REAL] the second measured vocabulary gap. "draw me a code architecture
+    # diagram of the classes and objects in this pipeline" -- an actual phrase a
+    # user typed -- and its neighbours routed 2/4 and 1/4, because the verbs
+    # draw/sketch/make were absent and "class relationships" named no listed
+    # noun. Stating the RULE as well as the words is what generalises past the
+    # next synonym nobody listed.
+    "A visual verb (draw, sketch, make, render, show, diagram) asking for a "
+    "picture of code, classes, objects, services or a process MEANS call this "
+    "tool -- the user does not have to say \"publish\". Only return the source "
+    "in your reply instead when they explicitly ask for the source, the raw "
+    "Mermaid, or text.\n"
     "  architecture - system, service, deployment or request/data-flow diagrams. "
     "Send JSON: {\"title\":..., \"groups\":[{\"id\",\"label\"}], "
     "\"nodes\":[{\"id\",\"label\",\"kind\",\"group\",\"subtitle\"}], "
