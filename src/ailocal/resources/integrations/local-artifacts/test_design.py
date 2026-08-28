@@ -124,6 +124,44 @@ for hexval in ("#f9f", "#0f0", "#e1f5fe", "#fff9c4"):
 check("semantic structure survives",
       "Start([Developer Submits PR])" in out and "-->" in out and "Reviewer(s)" in out)
 
+# A classDiagram declares its classes with `class Foo {`. Stripping that as if
+# it were a flowchart's `class node styleName` deleted the declaration and left
+# the closing brace, so [REAL] a ten-class diagram with members rendered as
+# "Syntax error in text" -- the colour rule reintroducing the exact failure the
+# quoting rule below exists to prevent.
+CLASS_DIAGRAM = """classDiagram
+    class Router {
+        -routes: dict
+        +dispatch(req)
+    }
+    class Handler {
+        <<abstract>>
+        +handle(req)*
+    }
+    classDef hot fill:#f9f
+    Handler <|-- Router
+"""
+cd_out, cd_dropped = srv.strip_mermaid_presentation(CLASS_DIAGRAM)
+check("class DECLARATIONS survive in a classDiagram",
+      "class Router {" in cd_out and "class Handler {" in cd_out, cd_out)
+check("no orphan brace is left behind",
+      cd_out.count("{") == cd_out.count("}"), cd_out)
+check("members survive", "+dispatch(req)" in cd_out and "<<abstract>>" in cd_out)
+check("the relationship survives", "Handler <|-- Router" in cd_out)
+check("classDef colour is still stripped there",
+      cd_dropped == 1 and "#f9f" not in cd_out, f"dropped {cd_dropped}")
+
+# The flowchart dialect must NOT lose the rule: there `class` IS presentation.
+FLOWCHART = """flowchart TD
+    A[a] --> B[b]
+    class A hot
+    classDef hot fill:#f9f
+"""
+fc_out, fc_dropped = srv.strip_mermaid_presentation(FLOWCHART)
+check("flowchart `class` is still stripped as presentation",
+      fc_dropped == 2 and "class A hot" not in fc_out, f"dropped {fc_dropped}")
+check("flowchart semantics survive", "A[a] --> B[b]" in fc_out)
+
 print("\nSYNTAX NORMALISATION (narrow, idempotent, semantics preserved)")
 q1, n1 = srv.normalise_mermaid_labels("Review[Reviewer(s) Assigned]")
 check("unquoted parens get quoted", n1 == 1 and q1 == 'Review["Reviewer(s) Assigned"]', q1)
