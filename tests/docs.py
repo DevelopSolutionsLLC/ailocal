@@ -44,6 +44,30 @@ configured = env_default.group(1) if env_default else ""
 check("the LiteLLM version is declared in compose.yaml", bool(configured),
       "no AILOCAL_LITELLM_VERSION default found")
 
+# The image ref and AILOCAL_LITELLM_VERSION are deliberately BOTH declared: the
+# ref says which artifact to run, the env says which version was validated, and
+# check_litellm_version reads the env from inside the running container and
+# compares it to the library's own dist-info. A host-side file cannot make that
+# assertion, and the tag cannot stand in for it either -- `main-stable` floats,
+# which is why the tag "is not evidence" in checks/services.py.
+#
+# What was missing is the guard against the two drifting apart. When the tag IS
+# a version, it must be the validated one; a floating tag is legitimate and is
+# skipped rather than failed.
+_ref = re.search(r"^\s*image:\s*(\S*litellm\S*)", compose, re.M)
+_tag = ""
+if _ref:
+    _r = _ref.group(1).split("@", 1)[0]          # drop any digest
+    _last = _r.rsplit("/", 1)[-1]                # never mistake a registry port
+    _tag = _last.split(":", 1)[1] if ":" in _last else ""
+check("the litellm image is declared with a ref", bool(_ref),
+      "no litellm image: line found in compose.yaml")
+if _tag and re.fullmatch(r"v?\d+\.\d+(\.\d+)?", _tag):
+    check("the image tag matches the validated LiteLLM version",
+          _tag.lstrip("v") == configured,
+          f"image tag {_tag} but AILOCAL_LITELLM_VERSION={configured} — "
+          "the ref and the validated version disagree")
+
 if configured:
     major_minor = ".".join(configured.split(".")[:2])
     stale = []
