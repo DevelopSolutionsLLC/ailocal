@@ -1215,6 +1215,13 @@ TOOL_DESCRIPTION = (
     "tool -- the user does not have to say \"publish\". Only return the source "
     "in your reply instead when they explicitly ask for the source, the raw "
     "Mermaid, or text.\n"
+    # Choose the FORM from the question, not a default. [REAL] the model
+    # reached for classDiagram even when asked for "architecture", producing a
+    # class inventory instead of a system view. One line here; the reasoning
+    # (scope, grouping, evidence) is Cadence's, not the renderer's.
+    "Pick the format from what was asked: architecture/topology -> architecture; "
+    "class or type relationships -> mermaid classDiagram; runtime interaction -> "
+    "mermaid sequenceDiagram; process/control flow -> mermaid flowchart.\n"
     "  architecture - system, service, deployment or request/data-flow diagrams. "
     "Send JSON: {\"title\":..., \"groups\":[{\"id\",\"label\"}], "
     "\"nodes\":[{\"id\",\"label\",\"kind\",\"group\",\"subtitle\"}], "
