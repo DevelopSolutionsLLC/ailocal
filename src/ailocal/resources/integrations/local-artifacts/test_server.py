@@ -181,6 +181,31 @@ check("markdown served under the SAME content CSP",
       "connect-src 'none'" in hdrs.get("Content-Security-Policy", ""))
 check("raw <script> in markdown IS present in source (contained, not sanitized)",
       "alert(1)" in page)
+check("prose Markdown does NOT carry the 3.4 MB Mermaid library",
+      "mermaid.initialize" not in page)
+
+# [REAL] the reported failure: a real session published format="markdown" whose
+# body was prose plus a ```mermaid classDiagram fence, and the viewer showed the
+# diagram SOURCE as a grey code block. Routing was correct; the renderer had no
+# Mermaid path at all.
+srv.publish(title="MD+Mermaid", fmt="markdown", content=(
+    "# Title\n\nSome prose.\n\n```mermaid\nclassDiagram\n"
+    "    class ShowRoot {\n        +Path root\n    }\n"
+    "    style ShowRoot fill:#f9f\n```\n\n```python\nprint(1)\n```\n"))
+_, _, page = get("/content")
+# The body is JSON-escaped into the <script>, so the quotes arrive escaped.
+_FIG = '<pre class=\\"mermaid\\">'
+check("Mermaid fence in Markdown becomes a figure, not a code block",
+      _FIG in page and "```mermaid" not in page)
+check("Markdown with a fence loads Mermaid and runs it after marked",
+      "mermaid.initialize" in page and "mermaid.run(" in page
+      and "startOnLoad: false" in page)
+check("classDiagram class DECLARATION survives the fence path",
+      "class ShowRoot" in page)
+check("model-authored colour is stripped inside the fence too",
+      "fill:#f9f" not in page)
+check("a non-Mermaid fence is left as an ordinary code block",
+      "print(1)" in page and page.count(_FIG) == 1 and "```python" in page)
 
 print("\n=== F: persistence ===")
 srv.publish(title="Persisted", content="<h1>survive me</h1>")

@@ -311,6 +311,12 @@ tr:nth-child(2n){{background:#f6f8fa;}}
 img{{max-width:100%;}}
 a{{color:#0969da;}}
 hr{{border:none;border-top:1px solid #d0d7de;margin:2em 0;}}
+/* A rendered Mermaid fence is a figure, not a code block: it must not inherit
+   the <pre> chrome, and it stays hidden until mermaid.run() replaces the
+   source text with the SVG so the reader never sees the raw diagram source. */
+pre.mermaid{{background:none;padding:0;text-align:center;visibility:hidden;}}
+pre.mermaid[data-processed]{{visibility:visible;}}
+pre.mermaid svg{{max-width:100%;height:auto;}}
 </style>
 </head>
 <body>
@@ -323,8 +329,34 @@ document.getElementById('_content').innerHTML =
     ? marked.parse(_md)
     : '<pre>'+_md.replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</pre>';
 </script>
+{mermaid_tail}
 </body>
 </html>"""
+
+
+#: Emitted into a Markdown page ONLY when it contains a Mermaid fence. The
+#: library is ~3.4 MB and a prose artifact must not pay for it: [REAL] the
+#: viewer's memory profile is flat for markdown /content and steps up only for
+#: Mermaid pages, so making every Markdown page carry Mermaid would regress it.
+#: startOnLoad is false because marked injects the content AFTER load; run()
+#: is Mermaid's documented entry point for content rendered later.
+MARKDOWN_MERMAID_TAIL = """<script>{mermaid_js}</script>
+<script>
+{mermaid_init}
+mermaid.run({{ querySelector: 'pre.mermaid' }});
+</script>"""
+
+#: A fenced Mermaid block inside Markdown. [REAL] the failure this exists for:
+#: a real session published `format="markdown"` whose body was prose plus a
+#: ```mermaid classDiagram fence, and the reader got the diagram SOURCE as a
+#: grey code block -- "no diagrams or anything". The routing was correct and the
+#: renderer simply had no Mermaid path. Tilde fences and an indented closing
+#: fence are both legal CommonMark, so both are matched.
+_MARKDOWN_MERMAID_FENCE = re.compile(
+    r"^(?P<indent>[ ]{0,3})(?P<fence>`{3,}|~{3,})[ \t]*mermaid[ \t]*\r?\n"
+    r"(?P<body>.*?)"
+    r"^[ ]{0,3}(?P=fence)[ \t]*$",
+    re.M | re.S)
 
 
 def build_markdown_content(content: str) -> str:
@@ -336,8 +368,40 @@ def build_markdown_content(content: str) -> str:
     runs. json.dumps plus the '</' escape only keep the payload from breaking
     out of the <script> string -- they are not a security control.
     """
+    content, fences = _inline_markdown_mermaid(content)
     escaped = json.dumps(content).replace("</", "<\\/")
-    return MARKDOWN_PAGE.format(marked_js=MARKED_JS, escaped_content=escaped)
+    tail = ""
+    if fences:
+        js = _vendor(MERMAID_JS_PATH)
+        if js:
+            tail = MARKDOWN_MERMAID_TAIL.format(
+                mermaid_js=js, mermaid_init=_mermaid_init(start_on_load=False))
+    return MARKDOWN_PAGE.format(marked_js=MARKED_JS, escaped_content=escaped,
+                                mermaid_tail=tail)
+
+
+def _inline_markdown_mermaid(content: str) -> tuple[str, int]:
+    """Rewrite ```mermaid fences into `<pre class="mermaid">` HTML blocks.
+
+    Done HERE rather than with a marked renderer override so the diagram source
+    passes through exactly the same normalisation as the `mermaid` format --
+    presentation stripping and label quoting, one owner for both. marked passes
+    raw HTML through untouched (see build_markdown_content), and the blank lines
+    keep it a CommonMark HTML block rather than a paragraph.
+
+    Returns the rewritten Markdown and how many fences were converted.
+    """
+    n = 0
+
+    def one(m):
+        nonlocal n
+        n += 1
+        src, _ = strip_mermaid_presentation(m.group("body"))
+        src, _ = normalise_mermaid_labels(src)
+        return ('\n<pre class="mermaid">' + html.escape(src.strip())
+                + "</pre>\n")
+
+    return _MARKDOWN_MERMAID_FENCE.sub(one, content), n
 
 
 def build_html_content(content: str) -> str:
@@ -375,14 +439,24 @@ body{{margin:0;background:var(--bg);color:var(--ink);
 <div class="wrap"><div class="figure"><pre class="mermaid">{source}</pre></div></div>
 <script>{mermaid_js}</script>
 <script>
-// Mermaid reads the SAME canonical tokens as the architecture renderer, mapped
-// onto its documented themeVariables, so a Mermaid diagram and an ELK diagram
-// look like one product rather than two. base + themeVariables is Mermaid's
-// supported customisation path (mermaid.js.org/config/theming.html).
+{mermaid_init}
+</script>
+</body>
+</html>"""
+
+
+#: The ONE mapping from the canonical design tokens onto Mermaid's documented
+#: themeVariables, shared by the `mermaid` format and by Mermaid fences inside a
+#: `markdown` artifact. base + themeVariables is Mermaid's supported
+#: customisation path (mermaid.js.org/config/theming.html). Two copies of this
+#: block is how a Mermaid diagram and an ELK diagram stop looking like one
+#: product, so both pages format the same string.
+MERMAID_INIT = """\
+// Mermaid reads the SAME canonical tokens as the architecture renderer.
 var _dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
 var T = _dark ? {dark_json} : {light_json};
 mermaid.initialize({{
-  startOnLoad: true,
+  startOnLoad: {start_on_load},
   // strict: no HTML labels, no click handlers -- the diagram source is model
   // output and gets no more trust than any other artifact content.
   securityLevel: 'strict',
@@ -405,10 +479,18 @@ mermaid.initialize({{
     fontSize: '14px'
   }},
   flowchart: {{ curve: 'basis', useMaxWidth: true }}
-}});
-</script>
-</body>
-</html>"""
+}});"""
+
+
+def _mermaid_init(start_on_load: bool) -> str:
+    """Format MERMAID_INIT against the live theme."""
+    import architecture as _arch
+    theme = _arch.THEME
+    return MERMAID_INIT.format(
+        start_on_load="true" if start_on_load else "false",
+        light_json=json.dumps(theme["light"]),
+        dark_json=json.dumps(theme["dark"]),
+        sans_json=json.dumps(theme["typography"]["sans"]))
 
 
 #: Mermaid statements that carry PRESENTATION rather than meaning. The model is
@@ -498,8 +580,7 @@ def build_mermaid_content(source: str) -> str:
     theme = _arch.THEME
     return MERMAID_PAGE.format(
         source=html.escape(source), mermaid_js=js,
-        light_json=json.dumps(theme["light"]), dark_json=json.dumps(theme["dark"]),
-        sans_json=json.dumps(theme["typography"]["sans"]),
+        mermaid_init=_mermaid_init(start_on_load=True),
         canvas_light=theme["light"]["canvas"], canvas_dark=theme["dark"]["canvas"],
         surface_light=theme["light"]["surface"], surface_dark=theme["dark"]["surface"],
         ink_light=theme["light"]["ink"], ink_dark=theme["dark"]["ink"],
