@@ -68,6 +68,10 @@ services:
       # Set to /app/captures to dump real client tool payloads for analysis.
       # Empty = no capture. Payloads contain tool schemas, not conversation.
       - AILOCAL_TOOL_GATEWAY_CAPTURE=${AILOCAL_TOOL_GATEWAY_CAPTURE:-}
+      # tool_repair.py reads AILOCAL_TOOL_REPAIR_DEBUG; without this line the
+      # switch is unreachable in deployment. Logs shapes and counts, never
+      # message content, so it is safe to turn on against a real session.
+      - AILOCAL_TOOL_REPAIR_DEBUG=${AILOCAL_TOOL_REPAIR_DEBUG:-}
       # The version this stack was VALIDATED against. `ailocal check` compares
       # it to the running library and fails loudly on drift, so a floating tag or
       # a manual pull can never again leave docs and runtime disagreeing.
