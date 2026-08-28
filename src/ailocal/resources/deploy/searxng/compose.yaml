@@ -23,7 +23,7 @@ services:
     # under us mid-audit, which is precisely why no production service may
     # depend on it. Scout: no vulnerable package detected at this digest.
     # To upgrade: pull, scan, run the gate, then update this line.
-    image: searxng/searxng@sha256:79c2be18a18367484474bae9b18a8cd9085114ab3dcd49cac091cad8c548a0a9
+    image: searxng/searxng:2026.7.31-6bfd82705@sha256:79c2be18a18367484474bae9b18a8cd9085114ab3dcd49cac091cad8c548a0a9
     container_name: ${AILOCAL_SEARXNG_CONTAINER:-ailocal-searxng}
     restart: unless-stopped
     mem_limit: 512m
