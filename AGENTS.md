@@ -38,9 +38,15 @@ Two suites are deliberately OUT of the gate because they take minutes, not secon
 ```sh
 python3 tests/installed-runtime.py [--stack]   # proves the wheel needs no checkout
 python3 tests/measure_geometry.py [--quick]    # re-measures the numbers profiles cite
+./tests/artifact-routing.sh [runs]             # does a real model CALL the artifact tool?
 ```
 
-Run `installed-runtime` whenever packaging, resources or provisioning change. Run `measure_geometry` after an Ollama or MLX upgrade, after changing a model, or when bringing up an unmeasured tier — it asserts nothing and keeps no history; a human reads the numbers and decides whether the profile still holds. It stops and reloads models, so nothing may run beside it.
+Run `artifact-routing` whenever the artifact tool's description, its
+`alwaysLoad`/`searchHint` metadata, or the routing contract in `server.py` changes: the
+contract is a string, so nothing type-checks it, and the failure mode is silent -- the model
+returns fenced Mermaid and the user gets no artifact. It spends minutes of local inference and
+asserts an AGGREGATE rate rather than per-phrase, because sampling variance at n=3 is larger
+than the effect. Run `installed-runtime` whenever packaging, resources or provisioning change. Run `measure_geometry` after an Ollama or MLX upgrade, after changing a model, or when bringing up an unmeasured tier — it asserts nothing and keeps no history; a human reads the numbers and decides whether the profile still holds. It stops and reloads models, so nothing may run beside it.
 
 ## Install and runtime ordering
 
