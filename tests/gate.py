@@ -185,6 +185,8 @@ def _gate_suites(repo: pathlib.Path, full: bool) -> list:
              ["/bin/bash", "tests/compat-routes.sh"]),
             ("documentation matches the implementation (versions, vars, links)",
              [py, "tests/docs.py"]),
+            ("update reporting (contract, local/upstream split)",
+             [py, "tests/update.py"]),
             ("bundled artifact capability (spec, persistence, MCP server)",
              [py, "tests/artifacts.py"] + (["--full"] if full else [])),
         ]),

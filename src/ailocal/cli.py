@@ -17,6 +17,7 @@ COMMANDS: dict[str, tuple[str, tuple]] = {
     "install":        ("ailocal.install", ("install",)),
     "status":         ("ailocal.runtime", ("status",)),
     "check":          ("ailocal.checks.run", ("check",)),
+    "update":         ("ailocal.update", ()),
 
     "start":          ("ailocal.runtime", ("start",)),
     "stop":           ("ailocal.runtime", ("stop",)),
@@ -29,7 +30,7 @@ COMMANDS: dict[str, tuple[str, tuple]] = {
 #: that dispatches what it does not advertise is a surface nobody can trust.
 GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("bootstrap the stack",        ("install",)),
-    ("inspect",                    ("status", "check")),
+    ("inspect",                    ("status", "check", "update")),
     ("lifecycle",                  ("start", "stop")),
     ("point a client at it",       ("clients",)),
     ("remove it",                  ("teardown",)),
