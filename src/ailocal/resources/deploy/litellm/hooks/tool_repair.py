@@ -606,6 +606,83 @@ def _responses_event_name(chunk):
     return getattr(t, "value", t) if t is not None else None
 
 
+def _responses_stream_from_complete(response, request_data=None):
+    """Yield a valid /v1/responses event stream for an already-completed response.
+
+    The event sequence is BUILT BY LITELLM, not by us. _build_synthetic_response_events
+    is the same function behind MockResponsesAPIStreamingIterator (o1-pro and other
+    non-streaming models) and CachedResponsesAPIStreamingIterator (cache hits), so
+    de-streamed responses leave here in exactly the shape every other de-streamed
+    LiteLLM path already produces -- including the content_part, output_text.delta,
+    function_call_arguments.delta/done and reasoning_summary events that a
+    hand-rolled created/completed pair silently drops. Hand-rolling this was the
+    first attempt and it broke tool calls.
+
+    That function is private, so its absence is handled rather than assumed: the
+    fallback emits the minimal created/item/completed sequence, which is degraded
+    (no deltas, no tool-call arguments) but still a valid stream.
+
+    The iterator classes wrapping it are deliberately NOT reused. Both label the
+    call with custom_llm_provider="cached_response" and set
+    _completed_response_cache_hit, which would report a real, freshly executed
+    web-search turn as a cache hit and corrupt spend tracking.
+    """
+    logging_obj = (request_data or {}).get("litellm_logging_obj")
+    status = getattr(response, "status", None)
+
+    def _terminal_override():
+        """LiteLLM always terminates with response.completed, even for a failed
+        response. Announcing a failure as a completion is wrong in a way a client
+        cannot detect, so the terminal event is corrected here. This is the only
+        deliberate divergence from the vendor sequence."""
+        if status not in ("failed", "incomplete"):
+            return None
+        from litellm.types.llms.openai import (
+            ResponseFailedEvent,
+            ResponseIncompleteEvent,
+        )
+        if status == "failed":
+            return ResponseFailedEvent(type="response.failed", response=response)
+        return ResponseIncompleteEvent(type="response.incomplete", response=response)
+
+    try:
+        from litellm.responses.streaming_iterator import (
+            _build_synthetic_response_events,
+            MockResponsesAPIStreamingIterator,
+        )
+        events = _build_synthetic_response_events(
+            transformed=response,
+            logging_obj=logging_obj,
+            chunk_size=MockResponsesAPIStreamingIterator.CHUNK_SIZE,
+        )
+        override = _terminal_override()
+        if override is not None and events:
+            events = list(events[:-1]) + [override]
+        for event in events:
+            yield event
+        return
+    except Exception as exc:  # pragma: no cover - depends on the installed LiteLLM
+        log.warning(
+            "tool_repair: LiteLLM synthetic event builder unavailable (%s) — "
+            "emitting the minimal fallback sequence", exc,
+        )
+
+    def _plain(obj):
+        return obj.model_dump() if hasattr(obj, "model_dump") else obj
+
+    try:
+        opening = response.model_copy(update={"output": []})
+    except Exception:  # pragma: no cover - non-pydantic payload
+        opening = response
+    yield {"type": "response.created", "response": _plain(opening)}
+    for index, item in enumerate(getattr(response, "output", None) or []):
+        for name in ("added", "done"):
+            yield {"type": f"response.output_item.{name}",
+                   "output_index": index, "item": _plain(item)}
+    terminal = "completed" if status not in ("failed", "incomplete") else status
+    yield {"type": f"response.{terminal}", "response": _plain(response)}
+
+
 class ToolRepair(CustomLogger):
     """Registered via litellm_settings.callbacks: tool_repair.proxy_handler_instance"""
 
@@ -969,17 +1046,44 @@ class ToolRepair(CustomLogger):
         text = ""              # accumulated visible text
         suspect = False
         native_seen = False
-        # LiteLLM calls this hook expecting a stream, but for some /v1/responses
-        # requests it hands back an already-materialized ResponsesAPIResponse
-        # (not async-iterable). `async for` on that raised immediately, the
-        # broad except below swallowed it, and the caller got an EMPTY stream —
-        # no content, no completion signal — every single turn. That silently
-        # stalled agentic clients (codex-local looped, re-issuing the same
-        # request every ~10-30s, forever). Nothing here needs repairing on an
-        # already-complete object; pass it through unchanged.
+        # websearch_interception (LiteLLM's own callback, enabled in our config)
+        # converts stream=True -> stream=False internally, runs its agentic search
+        # loop, and returns a materialized response. Its ARCHITECTURE.md states
+        # this outright: "Converts stream=True -> stream=False internally ...
+        # Final response returned to user (non-streaming)".
+        #
+        # On /v1/messages LiteLLM re-wraps that result in a
+        # FakeAnthropicMessagesStreamIterator, so the client still receives a
+        # stream. On /v1/responses that re-wrap is MISSING: the hook is handed a
+        # bare ResponsesAPIResponse that is not async-iterable.
+        #
+        # Neither previous behaviour was correct. `async for` on it raised, the
+        # broad except swallowed the error, and the caller got an EMPTY stream;
+        # yielding it unchanged emits a single SSE frame containing a whole
+        # `"object": "response"` instead of typed events. Either way no client
+        # ever sees response.completed, so agentic clients retry forever
+        # (measured: codex-local, 10/10 reconnects, exponential backoff).
+        #
+        # REPRO   curl /v1/responses -d '{"stream":true,
+        #         "tools":[{"type":"web_search"}], ...}'  -- the built-in tool
+        #         type is the whole trigger; function and custom tools stream fine.
+        # RETIRE  when websearch_interception re-wraps on the responses path as
+        #         it already does on the Anthropic one. Re-run the REPRO: if it
+        #         emits response.completed with this branch removed, delete it.
+        #
+        # Supply the re-wrap LiteLLM omits, using LiteLLM's OWN event builder so
+        # the emitted stream matches every other de-streamed path it serves.
+        # Nothing here needs repairing on an already-complete object, so no repair
+        # is attempted.
         if not hasattr(response, "__aiter__"):
-            log.warning("tool_repair: got non-streaming %s in streaming hook — passthrough", type(response).__name__)
-            yield response
+            log.warning(
+                "tool_repair: %s is not async-iterable in the streaming hook "
+                "(websearch_interception de-streamed this request) — "
+                "synthesizing created/completed events",
+                type(response).__name__,
+            )
+            for event in _responses_stream_from_complete(response, request_data):
+                yield event
             return
         try:
             async for chunk in response:
