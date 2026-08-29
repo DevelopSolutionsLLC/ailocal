@@ -21,10 +21,19 @@ REPO = pathlib.Path(__file__).resolve().parent.parent
 SRC = REPO / "src/ailocal/resources/integrations/local-artifacts"
 
 #: Deterministic, hermetic (each writes only into its own temp dirs).
+#:
+#: test_mermaid_validate.py is the validator's CONTROL FLOW -- the four states
+#: and the publish gate that consumes them -- with the browser replaced through
+#: the runner seam, plus ONE bounded real parse so a green CORE cannot hide a
+#: dead authoritative path. The grammar corpus itself is FULL: it launches a
+#: browser per fixture. That split keeps the invariant CI must never lose
+#: ("invalid or unchecked Mermaid does not publish successfully") in the normal
+#: gate without making CORE browser-heavy.
 CORE = ["test_architecture.py", "test_design.py", "test_lifetime.py",
-        "test_persistence.py", "test_server.py"]
+        "test_persistence.py", "test_server.py",
+        "test_routing_contract.py", "test_mermaid_validate.py"]
 #: Needs a real browser and free loopback ports.
-FULL = ["test_browser.py"]
+FULL = ["test_browser.py", "test_mermaid_grammar.py"]
 
 
 def _runtime() -> pathlib.Path:
@@ -72,7 +81,7 @@ def main() -> int:
             for line in tail:
                 print(f"        {line}")
     if not full:
-        print("  NOTE  test_browser.py (real Chrome, CSP honeypots) runs "
+        print("  NOTE  " + ", ".join(FULL) + " (real Chrome) run "
               "under `ailocal-gate --full`")
 
     print(f"\n  {len(CORE) + (len(FULL) if full else 0) - len(failed)} "

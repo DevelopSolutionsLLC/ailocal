@@ -36,6 +36,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import architecture
+import mermaid_validate
 
 # ── Config ────────────────────────────────────────────────────────────────────
 PORT = int(os.environ.get("LOCAL_ARTIFACTS_PORT", "7891"))
@@ -587,6 +588,62 @@ def build_mermaid_content(source: str) -> str:
         border_light=theme["light"]["border"], border_dark=theme["dark"]["border"])
 
 
+#: The publish-time syntax gate. Normalisers have no opinion about grammar --
+#: [REAL] both returned ZERO changes on the corrupt payload that shipped a bomb
+#: icon to a user -- so the only thing that can reject invalid Mermaid is the
+#: Mermaid grammar itself. See mermaid_validate.py for why that means a browser.
+#:
+#: Validation runs on the NORMALISED source, because that is what the page
+#: renders; validating the raw source would describe a document that is never
+#: served.
+#:
+#: THREE outcomes, and the third is the point. "I could not check it" is NOT
+#: "it is fine": reporting an unvalidated diagram as a successful publish is the
+#: original defect, so UNAVAILABLE refuses too and says why. Only Mermaid is
+#: gated -- html, architecture and prose Markdown never call this.
+def _mermaid_verdict(source: str):
+    normalised, _ = strip_mermaid_presentation(source)
+    normalised, _ = normalise_mermaid_labels(normalised)
+    return mermaid_validate.parse(normalised)
+
+
+def _mermaid_refusal(result, where: str) -> str:
+    if result.state == mermaid_validate.INVALID:
+        return (f"Publish failed: {where} does not parse, so the artifact was "
+                "NOT published -- it would have rendered as \"Syntax error in "
+                "text\".\n" + result.detail.strip()
+                + "\nFix that line and publish again.")
+    return (f"Publish failed: {where} could NOT be checked against the Mermaid "
+            "grammar, so the artifact was not published -- publishing it would "
+            "mean claiming a diagram is valid without having verified it.\n"
+            + result.detail.strip()
+            + "\nInstall Google Chrome or Chromium to enable diagram "
+              "validation, or publish this as format=\"html\" with the diagram "
+              "drawn as inline SVG.")
+
+
+def check_mermaid(text: str, fmt: str) -> str | None:
+    """Publish-time gate. Returns a model-facing message, or None to proceed.
+
+    Markdown is checked fence by fence -- a prose artifact with one broken
+    diagram is exactly as broken as a `mermaid` artifact, and bb15bec routed
+    both through the same normalisation for the same reason. Markdown with NO
+    fence starts no validator at all and costs nothing.
+    """
+    if fmt == "mermaid":
+        result = _mermaid_verdict(text)
+        if result.state == mermaid_validate.VALID:
+            return None
+        return _mermaid_refusal(result, "the Mermaid source")
+    if fmt == "markdown":
+        for i, m in enumerate(_MARKDOWN_MERMAID_FENCE.finditer(text), 1):
+            result = _mermaid_verdict(m.group("body"))
+            if result.state != mermaid_validate.VALID:
+                return _mermaid_refusal(
+                    result, f"the Mermaid block #{i} in this Markdown")
+    return None
+
+
 def build_content_page(state: dict) -> str:
     fmt = state.get("format")
     if fmt == "markdown":
@@ -1107,6 +1164,12 @@ def publish(title, content="", file_path="", fmt="html", emoji="\U0001F4C4",
         except Exception as e:
             return False, f"Publish failed: could not lay out the diagram ({e})."
         fmt = "html"
+
+    # Grammar gate BEFORE anything is persisted or served: a rejected
+    # artifact must leave no trace and must tell the MODEL, not the human.
+    mermaid_err = check_mermaid(text, fmt)
+    if mermaid_err:
+        return False, mermaid_err
 
     remote = external_subresources(text)
     if remote:

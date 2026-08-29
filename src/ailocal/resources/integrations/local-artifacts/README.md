@@ -156,7 +156,9 @@ Provisioning touches exactly two things inside the config dir — `mcpServers.ar
 
 Runtime state lives outside the project; `<project>/.artifacts/` holds your documents and is never removed automatically. Upgrading ailocal upgrades this.
 
-**Node.js** is needed only for `architecture` layout. Without it, every other format works and architecture publishes report the missing dependency rather than failing silently.
+**Node.js** is needed only for `architecture` layout. Without it, architecture publishes report the missing dependency rather than failing silently.
+
+**Chrome or Chromium** is needed for `mermaid` diagrams, including Mermaid fenced inside `markdown`. Every diagram is parsed by the real Mermaid grammar before it is published, and that gate FAILS CLOSED: with no usable browser, Mermaid publication is refused rather than publishing unvalidated source. Refusing is deliberate — an unchecked diagram reported as a successful publish is the defect this exists to prevent — and the tool result says so and suggests `html` with inline SVG instead. `html`, `markdown` without diagrams, and `architecture` never invoke it and are unaffected.
 
 ### Why not a Claude Code plugin?
 
@@ -220,8 +222,11 @@ Markdown gets the *same* boundary rather than sanitization: marked v4.3.0 passes
 ## Tests
 
 ```sh
-./.venv/bin/python test_server.py        # 69: policy, failure modes, headers, persistence
-./.venv/bin/python test_architecture.py  # 24: schema validation, layout, geometry gate
-./.venv/bin/python test_browser.py       # 16: real Chrome + honeypots, no-CSP control
+./.venv/bin/python test_server.py            # 69: policy, failure modes, headers, persistence
+./.venv/bin/python test_architecture.py      # 24: schema validation, layout, geometry gate
+./.venv/bin/python test_mermaid_validate.py  # validator states + publish gate, no browser
+./.venv/bin/python test_routing_contract.py  # what the tool description says (deterministic)
+./.venv/bin/python test_mermaid_grammar.py   # real Mermaid 11.17.2 corpus (needs Chrome)
+./.venv/bin/python test_browser.py           # 16: real Chrome + honeypots, no-CSP control
 ./.venv/bin/python check_diagram.py <artifact.html>   # geometry gate on one artifact
 ```
