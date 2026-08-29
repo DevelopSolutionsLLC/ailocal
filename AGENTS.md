@@ -42,11 +42,29 @@ python3 tests/measure_geometry.py [--quick]    # re-measures the numbers profile
 ```
 
 Run `artifact-routing` whenever the artifact tool's description, its
-`alwaysLoad`/`searchHint` metadata, or the routing contract in `server.py` changes: the
-contract is a string, so nothing type-checks it, and the failure mode is silent -- the model
-returns fenced Mermaid and the user gets no artifact. It spends minutes of local inference and
-asserts an AGGREGATE rate rather than per-phrase, because sampling variance at n=3 is larger
-than the effect. Run `installed-runtime` whenever packaging, resources or provisioning change. Run `measure_geometry` after an Ollama or MLX upgrade, after changing a model, or when bringing up an unmeasured tier — it asserts nothing and keeps no history; a human reads the numbers and decides whether the profile still holds. It stops and reloads models, so nothing may run beside it.
+`alwaysLoad`/`searchHint` metadata, or the routing contract in `server.py` changes. It
+MEASURES a stochastic model and reports a rate; what the description actually SAYS is
+asserted deterministically by `test_routing_contract.py`, which is in the gate and needs no
+inference. Keep the two apart when reading a result: [REAL] gemma4:26b-mlx returned fenced
+Mermaid for a phrase the description already names verbatim, then quoted the rule back
+correctly once corrected. That is a model-dependent routing miss, and adding synonyms does
+not fix it. It spends minutes of local inference and asserts an AGGREGATE rate rather than
+per-phrase, because sampling variance at n=3 is larger than the effect.
+
+Invalid Mermaid can no longer be published: `publish()` parses every diagram with the real
+Mermaid grammar (`mermaid_validate.py`, headless Chrome over `vendor/mermaid.min.js`, ~1.7 s
+per diagram) and returns the parser error to the MODEL instead of serving a bomb icon to the
+human. The verdict has THREE states and the third is the point -- VALID publishes, INVALID is
+refused with the parser message, and UNAVAILABLE (no browser, launch failure, timeout, no
+verdict) is ALSO refused, because reporting an unchecked diagram as a successful publish is
+the original defect. Only the Mermaid path is gated: `html`, `architecture` and Markdown with
+no fence never start a validator and cost nothing. Chrome runs in a throwaway
+`--user-data-dir` and is killed once the verdict is read; it never touches the profile a
+person is using.
+
+`test_mermaid_validate.py` (CORE) asserts the state machine with the browser replaced through
+the `runner` seam, plus one bounded real parse; `test_mermaid_grammar.py` (FULL) is the
+authoritative corpus and launches a browser per fixture. Run `installed-runtime` whenever packaging, resources or provisioning change. Run `measure_geometry` after an Ollama or MLX upgrade, after changing a model, or when bringing up an unmeasured tier — it asserts nothing and keeps no history; a human reads the numbers and decides whether the profile still holds. It stops and reloads models, so nothing may run beside it.
 
 ## Install and runtime ordering
 

@@ -23,6 +23,14 @@
 # The negative controls matter as much: asking for SOURCE must still return
 # source. A description that publishes everything is not a fix.
 #
+# THIS IS A MEASUREMENT, NOT A CONTRACT TEST. It samples a stochastic model and
+# reports a rate. What the description actually SAYS is asserted deterministically
+# by test_routing_contract.py, which needs no inference and gates in CI. Read a
+# miss here as model-dependent routing reliability, not as a missing trigger
+# word: [REAL] gemma4:26b-mlx returned fenced Mermaid for a phrase the
+# description already names verbatim, then quoted the rule back correctly when
+# corrected. That is instruction-following, and more synonyms do not fix it.
+#
 # Usage: ./tests/artifact-routing.sh [runs-per-positive]   (default 3)
 set -uo pipefail
 RUNS="${1:-3}"
@@ -54,6 +62,44 @@ attempt() {
   [ -d "$d/.artifacts" ] && n=$(find "$d/.artifacts" -type f | wc -l | tr -d ' ')
   rm -rf "$d"
   [ "$n" -gt 0 ] && echo 1 || echo 0
+}
+
+# The natural two-turn shape, which is how the real miss actually happened: the
+# model explores and answers in PROSE first, then is asked for a picture. The
+# single-turn cases above never exercise a session that already has a long
+# tool-and-prose history behind it, and [REAL] that is the run that missed --
+# turn 3 of a live session, not a cold -p prompt.
+attempt2() {
+  local t1="$1" t2="$2" d
+  d="$(mktemp -d)"
+  fixture "$d"
+  ( cd "$d" && timeout 400 zsh -c \
+      "source ~/.config/ailocal/configure.zsh >/dev/null 2>&1; \
+       claude-local -p \"$t1\" --allowedTools mcp__artifact__publish,Read,Bash \
+       --output-format json" >/dev/null 2>/dev/null </dev/null )
+  ( cd "$d" && timeout 400 zsh -c \
+      "source ~/.config/ailocal/configure.zsh >/dev/null 2>&1; \
+       claude-local -p --continue \"$t2\" --allowedTools mcp__artifact__publish,Read,Bash \
+       --output-format json" >/dev/null 2>/dev/null </dev/null )
+  local n=0
+  [ -d "$d/.artifacts" ] && n=$(find "$d/.artifacts" -type f | wc -l | tr -d ' ')
+  rm -rf "$d"
+  [ "$n" -gt 0 ] && echo 1 || echo 0
+}
+
+two_turn() {
+  local label="$1" t1="$2" t2="$3" hits=0 i
+  for ((i = 0; i < RUNS; i++)); do
+    [ "$(attempt2 "$t1" "$t2")" = "1" ] && hits=$((hits + 1))
+  done
+  POS_HITS=$((POS_HITS + hits))
+  POS_RUNS=$((POS_RUNS + RUNS))
+  if [ "$hits" -eq 0 ]; then
+    printf "  FAIL  %-46s %s/%s (total miss)\n" "$label" "$hits" "$RUNS"
+    FAILS=$((FAILS + 1))
+  else
+    printf "  ok    %-46s %s/%s\n" "$label" "$hits" "$RUNS"
+  fi
 }
 
 # THRESHOLDS. Per-phrase majority-of-3 was tried first and is itself flaky:
@@ -107,11 +153,19 @@ positive "publish a flowchart"                  "Publish a flowchart showing A -
 positive "visualize the process"                "Visualize the process where A leads to B leads to C."
 
 echo
+echo "  -- the natural two-turn workflow (explore in prose, then ask for a picture) --"
+two_turn "explore-then-draw, the real failing shape" \
+  "explore this repo and explain the code hierarchy to me" \
+  "can you draw me a code architecture diagram of the classes and objects in this pipeline"
+
+echo
 negative "prose answer stays prose" \
   "In two sentences, describe what this pipeline does. Do not create any files or diagrams."
 negative "explicit request for SOURCE" \
   "Show me the raw Mermaid source for this pipeline as text in your reply. Do not publish anything."
 negative "a plain list is not a diagram"        "List the class names in pipeline.py. Nothing else."
+negative "explain the architecture stays prose"  "Explain the architecture of this pipeline in prose. Do not draw anything."
+negative "explain the class hierarchy"           "Explain the class hierarchy in this pipeline in words only."
 
 echo
 RATE=$((POS_HITS * 100 / POS_RUNS))
