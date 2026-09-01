@@ -160,6 +160,27 @@ Runtime state lives outside the project; `<project>/.artifacts/` holds your docu
 
 **Chrome or Chromium** is needed for `mermaid` diagrams, including Mermaid fenced inside `markdown`. Every diagram is parsed by the real Mermaid grammar before it is published, and that gate FAILS CLOSED: with no usable browser, Mermaid publication is refused rather than publishing unvalidated source. Refusing is deliberate — an unchecked diagram reported as a successful publish is the defect this exists to prevent — and the tool result says so and suggests `html` with inline SVG instead. `html`, `markdown` without diagrams, and `architecture` never invoke it and are unaffected.
 
+### When a publish opens a browser
+
+A successful publish opens the OS default browser when auto-open is enabled **and
+nothing is already watching the viewer**. That is decided per publish, not once
+per session: the viewer is a shared process that reaps after `IDLE_EXIT`, so a
+later publish in the same session can legitimately need a new window.
+
+It is decided by watcher count sampled over a grace window, not instantaneously.
+An open tab drops its `EventSource` whenever the viewer restarts and reads as
+zero watchers while it heals, so a live tab is given `LOCAL_ARTIFACTS_PRESENT_-
+GRACE` seconds to reattach before a window is opened on top of it. A closed tab
+never comes back, and the window opens. The wait is only paid when nobody is
+watching on the first check.
+
+The presentation browser is the OS default browser and is unrelated to the
+isolated headless Chrome that validates Mermaid. The two must not be merged.
+
+```bash
+./.venv/bin/python server.py --diagnose    # why a publish would or would not open
+```
+
 ### Why not a Claude Code plugin?
 
 Plugins were tested, not assumed. A skills-dir plugin at `$CLAUDE_CONFIG_DIR/skills/<name>/` does auto-load, spawn its MCP server, and receive `CLAUDE_PLUGIN_ROOT` / `CLAUDE_PLUGIN_DATA` / `CLAUDE_PROJECT_DIR` — no marketplace or `settings.json` entry required. It was rejected for one measured reason: a plugin-provided MCP server is namespaced
@@ -185,7 +206,9 @@ mcp__plugin_<plugin>_<server>__<tool>      e.g. mcp__plugin_testplug_artifact__p
 |---|---|---|
 | `LOCAL_ARTIFACTS_PORT` | `7891` | loopback port |
 | `LOCAL_ARTIFACTS_ROOT` | server cwd at startup | approved root for `file_path` |
-| `LOCAL_ARTIFACTS_AUTO_OPEN` | `1` | `0` disables opening a browser |
+| `LOCAL_ARTIFACTS_AUTO_OPEN` | `1` | `0` disables opening a browser. Takes precedence over the official variable below |
+| `CLAUDE_CODE_ARTIFACT_AUTO_OPEN` | unset | Claude Code's official flag, honoured for compatibility; used only when `LOCAL_ARTIFACTS_AUTO_OPEN` is unset |
+| `LOCAL_ARTIFACTS_PRESENT_GRACE` | `4.5` | seconds a publish waits for an already-open tab to reattach before deciding nobody is watching. Must stay above the viewer's 3 s self-heal reload |
 | `LOCAL_ARTIFACTS_IDLE_EXIT` | `1800` (30 min) | seconds of no request, no publish **and** no open viewer before the shared preview server exits; `0` never |
 | `XDG_STATE_HOME` | `~/.local/state` | state lives in `<here>/local-artifacts` |
 
