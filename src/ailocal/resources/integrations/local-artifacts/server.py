@@ -61,6 +61,24 @@ MAX_SIZE = 16 * 1024 * 1024  # 16 MiB
 # is still on disk under .artifacts/ and republishing brings it straight back.
 IDLE_EXIT = int(os.environ.get("LOCAL_ARTIFACTS_IDLE_EXIT", "1800"))  # 30 min
 
+# An open tab heals itself: when its EventSource drops -- which is exactly what a
+# reaped or replaced viewer looks like from the browser -- the page reloads after
+# this delay and reattaches to whatever is serving the port now. MUST match the
+# setTimeout in VIEWER_JS; test_autoopen.py asserts they agree.
+#
+# The presentation decision is built on it. A viewer restart is NOT on its own
+# evidence that the user needs a window: a tab that was already open comes back
+# by itself. Viewer identity/generation was therefore REJECTED as the signal --
+# it would open a second window on top of every tab that was about to recover.
+VIEWER_RELOAD_MS = 3000
+
+# How long a publish waits for an existing tab to reattach before concluding
+# nobody is watching. Must exceed VIEWER_RELOAD_MS, or a self-healing tab is
+# still mid-reload when we sample and we open a window on top of it. Only paid
+# when no watcher is already connected -- see _needs_presentation().
+PRESENT_GRACE = float(os.environ.get("LOCAL_ARTIFACTS_PRESENT_GRACE",
+                                     str(VIEWER_RELOAD_MS / 1000 + 1.5)))
+
 # State lives in a local-artifacts-owned XDG location. Never ~/.claude: that
 # tree belongs to Claude Code, and ailocal's invariants forbid touching it.
 _xdg_state = os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state")
@@ -143,7 +161,13 @@ _state_lock = threading.Lock()
 _sse_lock = threading.Lock()
 _http_error: str = ""
 _http_ready = threading.Event()   # set once bind succeeded OR failed
-_opened_once = False
+# Outcome of the last presentation attempt, for `--diagnose`. The opener is a
+# detached Popen whose failure is otherwise invisible: [REAL] an investigation
+# into a real "it did not open" report could not establish whether the opener
+# had even been called, because nothing recorded it. Session-local and
+# in-memory: it describes THIS publisher's attempt, so writing it to the shared
+# state file would let concurrent sessions overwrite each other's answer.
+_last_present: str = "not-attempted"
 _last_activity = time.time()      # serve mode: drives the idle reaper
 _content_mtime = 0.0              # serve mode: last CONTENT_FILE we ingested
 
@@ -275,6 +299,7 @@ code{background:#313244;color:#cdd6f4;padding:.25em .6em;border-radius:4px;}
 (function(){
   var es = new EventSource('/events');
   es.onmessage = function(){ window.location.reload(); };
+  es.onerror = function(){ setTimeout(function(){ window.location.reload(); }, 3000); };
 })();
 </script>
 </body></html>"""
@@ -740,6 +765,12 @@ class Handler(BaseHTTPRequestHandler):
             s["http_error"] = _http_error
             s["port"] = PORT
             s["approved_root"] = str(APPROVED_ROOT)
+            # Watcher count is what a publisher needs to decide whether anyone is
+            # actually looking at this viewer. It is the same number the idle
+            # reaper uses, read from the same list under the same lock, so the
+            # two cannot disagree about whether the viewer is being watched.
+            with _sse_lock:
+                s["watchers"] = len(_sse_clients)
             self._send(200, "application/json; charset=utf-8",
                        json.dumps(s, ensure_ascii=False).encode("utf-8"))
 
@@ -968,13 +999,96 @@ def ensure_preview_server(timeout=8.0):
     return False
 
 
+def auto_open_enabled():
+    """Whether a successful publish may open a window, and which switch decided.
+
+    Returns:
+        (enabled, source): `source` names the variable that decided, or
+        "default" when neither is set. Returned rather than logged so the
+        caller can report precedence without this function knowing about
+        diagnostics.
+
+    Precedence is ailocal's own variable first, then the official Claude Code
+    one, then enabled. That is the same shape as every other ailocal knob
+    (`AILOCAL_TOOL_SEARCH`, `LOCAL_ARTIFACTS_PORT`): the product-specific name
+    is the override and the general default sits under it. Honouring
+    CLAUDE_CODE_ARTIFACT_AUTO_OPEN at all is a compatibility obligation -- it
+    is Anthropic's documented flag for the hosted feature and upstream
+    local-artifacts mirrored it deliberately, so a user who sets it is entitled
+    to have it work here. Any value other than "0" enables, matching upstream.
+    """
+    for var in ("LOCAL_ARTIFACTS_AUTO_OPEN", "CLAUDE_CODE_ARTIFACT_AUTO_OPEN"):
+        val = os.environ.get(var)
+        if val is not None:
+            return val != "0", var
+    return True, "default"
+
+
+def _watchers(timeout=0.6):
+    """Live viewer count from /status, or None if the server did not answer."""
+    import urllib.request
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{PORT}/status",
+                                     headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return int(json.loads(r.read().decode("utf-8")).get("watchers", 0))
+    except Exception:
+        return None
+
+
+def _needs_presentation(grace=None):
+    """True when no browser is watching this viewer, so publishing needs a window.
+
+    Returns:
+        True if nothing reattached within the grace window.
+
+    THE SIGNAL, AND WHY IT IS NOT THE OBVIOUS ONE. `_opened_once` used to answer
+    this, and it was wrong: it tracked "this MCP session called the opener", but
+    the viewer is a separate process on a different lifetime that reaps after
+    IDLE_EXIT and is restarted by the next publish. [REAL] reproduced --
+    publish, reap the viewer, publish again: a brand-new viewer came up with no
+    tab attached and no window opened, because a flag from the previous viewer's
+    lifetime was still set.
+
+    A bare `watchers == 0` is not the fix either. An open tab drops its
+    EventSource whenever the viewer restarts, so it reads as zero watchers for
+    VIEWER_RELOAD_MS while it heals -- and opening then would put a second
+    window on top of a tab that was coming back on its own. Viewer
+    identity/generation fails the same way for the same reason.
+
+    So the question is asked over time, not instantaneously: is anyone watching
+    NOW, and if not, does anyone arrive within a window longer than the tab's own
+    reload delay. A live tab reattaches inside it; a closed one never does. The
+    wait is only paid when the fast path finds nobody.
+    """
+    if _watchers():
+        return False                      # someone is already watching
+    deadline = time.time() + (PRESENT_GRACE if grace is None else grace)
+    while time.time() < deadline:
+        time.sleep(0.25)
+        if _watchers():
+            return False                  # a healing tab came back
+    return True
+
+
 def _open_browser(url):
-    global _opened_once
-    if _opened_once:
-        return
-    if os.environ.get("LOCAL_ARTIFACTS_AUTO_OPEN", "1") == "0":
-        _opened_once = True
-        return
+    """Hand `url` to the OS default browser. Returns a diagnostic outcome string.
+
+    Returns:
+        One of "opened", "disabled:<var>", "watched", "failed:<reason>" or
+        "unsupported-platform". The caller records it; nothing here logs.
+
+    This is PRESENTATION and deliberately uses the OS default-browser mechanism.
+    It is not the browser Mermaid validation drives -- that one is an isolated
+    headless Chrome on a throwaway profile in mermaid_validate.py, and the two
+    must never be merged: validating in the user's browser would show them a
+    diagram we are still deciding to reject.
+    """
+    enabled, source = auto_open_enabled()
+    if not enabled:
+        return f"disabled:{source}"
+    if not _needs_presentation():
+        return "watched"
     if sys.platform == "darwin":
         cmd = ["open", url]
     elif sys.platform.startswith("linux"):
@@ -982,12 +1096,12 @@ def _open_browser(url):
     elif sys.platform.startswith("win"):
         cmd = ["cmd", "/c", "start", "", url]
     else:
-        return
+        return "unsupported-platform"
     try:
         subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        _opened_once = True
-    except Exception:
-        pass
+        return "opened"
+    except Exception as e:
+        return f"failed:{type(e).__name__}"
 
 
 # ── Publish logic shared by MCP and tests ─────────────────────────────────────
@@ -1213,8 +1327,11 @@ def publish(title, content="", file_path="", fmt="html", emoji="\U0001F4C4",
                             "source below is saved; publish again to retry.")
 
     url = f"http://127.0.0.1:{PORT}"
+    global _last_present
     if not preview_note:
-        _open_browser(url)
+        _last_present = _open_browser(url)
+    else:
+        _last_present = "not-attempted:publish-not-viewable"
     lines = [("Artifact published." if not preview_note
               else "Artifact saved, but NOT viewable: " + preview_note),
              f"  artifact_id:  {aid}",
@@ -1393,7 +1510,34 @@ def serve_main():
     return 0
 
 
+def diagnose_main():
+    """Print why presentation would or would not open a window right now.
+
+    Answers the question the historical investigation could not: is the opener
+    disabled, is a tab already watching, or was it attempted and did it fail.
+    Reads the same signals publish() does, and prints no artifact content and no
+    environment VALUES -- only which variable decided.
+    """
+    enabled, source = auto_open_enabled()
+    watchers = _watchers()
+    print(f"auto-open:      {'enabled' if enabled else 'disabled'} (decided by {source})")
+    print(f"port:           127.0.0.1:{PORT}")
+    print(f"viewer:         {'up' if watchers is not None else 'not running'}")
+    print(f"watchers:       {'unknown' if watchers is None else watchers}")
+    print(f"present grace:  {PRESENT_GRACE:.1f}s (tab self-heal {VIEWER_RELOAD_MS}ms)")
+    print(f"last attempt:   {_last_present}   (this process only)")
+    if enabled and not watchers:
+        print("\nA publish now WOULD open a window: nothing is watching the viewer.")
+    elif enabled:
+        print("\nA publish now would NOT open a window: a tab is already watching.")
+    else:
+        print(f"\nA publish now would NOT open a window: {source}=0.")
+    return 0
+
+
 if __name__ == "__main__":
+    if "--diagnose" in sys.argv:
+        sys.exit(diagnose_main())
     if "--serve" in sys.argv:
         sys.exit(serve_main())
     # MCP mode binds nothing. The preview server is started lazily by the first
