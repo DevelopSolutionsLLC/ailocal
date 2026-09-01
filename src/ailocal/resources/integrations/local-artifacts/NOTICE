@@ -88,8 +88,19 @@ WHAT THIS FORK CHANGED, AND WHY
 7. CLAUDE_CODE_DISABLE_ARTIFACT is no longer honoured.
    Upstream disabled its own publishing when that variable was set. It is
    Claude Code's switch for the HOSTED tool, and the whole point here is to
-   work while the hosted tool is unavailable. Auto-open is controlled by
-   LOCAL_ARTIFACTS_AUTO_OPEN instead.
+   work while the hosted tool is unavailable, so honouring it would turn this
+   off in exactly the situation it exists for.
+
+   This reasoning covers that variable ONLY. It says nothing about auto-open,
+   and an earlier version of this notice wrongly implied it did.
+
+7a. Auto-open honours both the official and the local variable.
+   CLAUDE_CODE_ARTIFACT_AUTO_OPEN is Anthropic's documented flag for the hosted
+   feature, and upstream mirrored it deliberately. Unlike the disable switch
+   above it carries no hosted/local contradiction -- a user who does not want a
+   window does not want one here either -- so it IS honoured. LOCAL_ARTIFACTS_-
+   AUTO_OPEN is the ailocal-specific override and takes precedence, matching how
+   every other ailocal knob is layered; with neither set, auto-open is enabled.
 
 8. Ported to the mcp 2.x API.
    Upstream targets mcp 1.x (@app.list_tools()/@app.call_tool()). mcp 2.x

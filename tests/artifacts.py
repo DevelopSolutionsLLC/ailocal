@@ -29,8 +29,8 @@ SRC = REPO / "src/ailocal/resources/integrations/local-artifacts"
 #: browser per fixture. That split keeps the invariant CI must never lose
 #: ("invalid or unchecked Mermaid does not publish successfully") in the normal
 #: gate without making CORE browser-heavy.
-CORE = ["test_architecture.py", "test_design.py", "test_lifetime.py",
-        "test_persistence.py", "test_server.py",
+CORE = ["test_architecture.py", "test_autoopen.py", "test_design.py",
+        "test_lifetime.py", "test_persistence.py", "test_server.py",
         "test_routing_contract.py", "test_mermaid_validate.py"]
 #: Needs a real browser and free loopback ports.
 FULL = ["test_browser.py", "test_mermaid_grammar.py"]

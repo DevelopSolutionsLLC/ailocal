@@ -227,7 +227,14 @@ _, _, p2 = get("/content")
 check("same URL serves updated content", "two" in p2 and "two" not in p1)
 _, _, v = get("/")
 check("banner reflects new title", "V2" in v)
-check("auto-open fired at most once", srv._opened_once is True)
+# Presentation is decided per publish, not once per session: the `_opened_once`
+# flag this used to assert outlived the viewer it described, which was the bug.
+# The lifecycle contract lives in test_autoopen.py; this only checks that every
+# publish leaves a diagnosable outcome behind.
+check("presentation outcome is recorded for diagnosis",
+      srv._last_present.startswith(("opened", "watched", "disabled:",
+                                    "failed:", "not-attempted",
+                                    "unsupported-platform")))
 
 print("\n=== E: occupied port is reported honestly ===")
 blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
