@@ -197,6 +197,14 @@ General searches use Brave (when configured), Yahoo and Yep. Developer registrie
 
 GitHub code search (`!ghc`) is optional: add `GITHUB_SEARCH_TOKEN=` to `~/.config/ailocal/.env.local`, then run `ailocal start`. Use a fine-grained PAT restricted to public repositories, read-only, with an expiry. Never reuse the `gh` CLI token, which has `repo` scope. Without this token, the engine stays inactive and startup succeeds.
 
+### Site-scoped research
+
+`ailocal clients claude` provisions the bundled research MCP for claude-local. Its `search(query, sites?, preset?)` tool returns source URLs, snippets and engine attribution; `sites` accepts hostnames such as `["reddit.com"]`. Presets are `web` (default keyless Yahoo/Yep), `code`, `forums`, `research`, and `brave`. `forums` may search Reddit through Brave; `forums` and `brave` can consume Brave credits. Other presets do not escalate to Brave.
+
+The stable stdio launcher is `ailocal mcp research`. Experimental `answer(question, sites?)` additionally reads bounded public pages and synthesizes a cited answer through the local proxy. It is disabled by default because claude-local shares its inference slot; a separately configured caller can explicitly launch `ailocal mcp research --enable-answer`. Hosted Claude, Codex and Copilot registration is separate work owned by Cadence. ailocal changes none of their configuration.
+
+Returned sources distinguish full-page text from search snippets and report failed page reads. Source text is untrusted evidence, not instructions; check substantive claims against the cited URLs. Cached search results expire after 15 minutes and page text after 30 minutes. The bounded cache lives under ailocal's disposable state root, contains queries and public evidence, and stores no conversations or synthesized answers. `ailocal check` checks provisioning without issuing a search. See [the architecture](docs/architecture.md#local-research) for limits and ownership.
+
 ## Artifacts
 
 Anthropic's hosted `Artifact` tool publishes to claude.ai and is unavailable to a

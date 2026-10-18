@@ -23,6 +23,7 @@ COMMANDS: dict[str, tuple[str, tuple]] = {
     "stop":           ("ailocal.runtime", ("stop",)),
     "teardown":       ("ailocal.runtime", ("teardown",)),
     "clients":        ("ailocal.clients", ()),
+    "mcp":            ("ailocal.mcp", ()),
 }
 
 #: Help layout: (heading, [command...]). Every dispatchable command appears
@@ -33,6 +34,7 @@ GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("inspect",                    ("status", "check", "update")),
     ("lifecycle",                  ("start", "stop")),
     ("point a client at it",       ("clients",)),
+    ("bundled research tools",     ("mcp",)),
     ("remove it",                  ("teardown",)),
     ("the active profile",         ("profile",)),
 )
