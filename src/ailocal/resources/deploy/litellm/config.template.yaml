@@ -69,15 +69,14 @@ general_settings:
   cancel_on_disconnect: true
   # No database. Single-user local proxy: master key from env, models from this
   # file. Spend logs / virtual keys / the /ui dashboard need a DB and are unused.
-  # Matched to OLLAMA_NUM_PARALLEL (2). This was 1, which SERIALISED every request
-  # at the proxy while Ollama still allocated two KV slots per model — paying the
-  # memory cost of parallelism with none of the throughput. The two settings must
-  # move together; raising this above OLLAMA_NUM_PARALLEL only queues inside
-  # Ollama instead of inside LiteLLM.
+  # Deliberately ABOVE OLLAMA_NUM_PARALLEL, which is 1 (commit 0c789fb: two slots
+  # halve each model's window). Two requests for one model therefore queue inside
+  # Ollama on its single slot, verified there to complete with no reload. A cap
+  # of 1 here would also serialise requests for different loaded models, such as
+  # autocomplete behind a chat turn, which Ollama can serve side by side.
   #
-  # The prior comment ("Apple Silicon: queue inference; never split GPU") reflects
-  # a real trade-off: concurrent requests share one GPU, so each is slower even
-  # though total throughput rises. Revert to 1 if interactive latency regresses.
+  # Concurrent requests share one GPU, so each is slower even though total
+  # throughput rises. Revert to 1 if interactive latency regresses.
   max_parallel_requests: 2
   # background_health_checks are intentionally OFF — they reload every model on an
   # interval and thrash GPU memory. Check health on demand via /health.
