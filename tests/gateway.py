@@ -381,6 +381,8 @@ def destream_checks() -> None:
           "the replacement is an async stream that ends in response.completed")
     check(getattr(stream, "_hidden_params", None) == {"model_id": "m1"},
           "_hidden_params is carried for the proxy's response headers")
+    check(getattr(stream, "completed_response", None) is resp,
+          "completed_response is exposed for the proxy's container-ownership pass")
 
 
 SECTIONS = {"repair": repair_checks, "native-args": native_arg_checks,
