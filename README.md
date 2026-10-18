@@ -143,6 +143,8 @@ Copilot Chat ships inside VS Code — there is no extension to install and no Co
 
 To upgrade: `pipx upgrade ailocal && ailocal start`.
 
+This upgrades the Python package from its configured installation source and regenerates the runtime; it does not automatically upgrade Ollama, models, or pinned service images. `ailocal update --check --json` reports available image candidates and explicitly incomplete discovery. Review and validation before promoting dependencies are described in [AI development maintenance](docs/maintenance.md).
+
 ## Supported tools
 
 | Tool | Status |
