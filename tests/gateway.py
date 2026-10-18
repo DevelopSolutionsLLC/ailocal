@@ -258,6 +258,16 @@ def native_arg_checks() -> None:
           "SSE: the completed argument reaches the wire")
     check(args and args["prompt"] == "Find the retry helper" and
           args["subagent_type"] == "Explore", "SSE: the model's arguments survive intact")
+
+    print("\nSSE stop_reason — rewritten only after an injected call")
+    end_turn = (b'event: message_delta\ndata: {"type": "message_delta", '
+                b'"delta": {"stop_reason": "end_turn"}}\n\n')
+    fix = tr.ToolRepair._fix_anthropic_sse_stop_reason
+    check(fix(end_turn, {"saw_tool_use": True}) is None,
+          "native tool_use stream: end_turn passes through (fixed upstream, #39010)")
+    fixed = fix(end_turn, {"injected": True})
+    check(fixed is not None and b'"stop_reason": "tool_use"' in fixed,
+          "injected tool_use stream: end_turn -> tool_use")
     start = next(e for e in events if e["type"] == "content_block_start")
     check(start["content_block"]["id"] == "toolu_1" and
           start["content_block"]["name"] == "Agent", "SSE: block identity is preserved")

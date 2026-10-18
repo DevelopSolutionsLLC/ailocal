@@ -150,7 +150,8 @@ mutating_tools:
 # never reach a backend, so the gateway must not count removing them as a saving.
 #
 # Source: litellm/responses/litellm_completion_transformation/transformation.py
-# on the 1.98.0 image (read, not inferred). Re-check after a LiteLLM upgrade.
+# on the 1.98.0 image, re-read unchanged on 1.102.4 (read, not inferred).
+# Re-check after a LiteLLM upgrade.
 #
 # CHANGED AT 1.98.0: `namespace` used to be dropped here and no longer is --
 # the transformation now expands it through `_namespace_chat_tools()`, so those
