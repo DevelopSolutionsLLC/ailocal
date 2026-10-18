@@ -656,6 +656,8 @@ def _set_toml_model(path, model, template=None):
 #: writes into this file itself.
 _CODEX_PROJECTS = re.compile(
     r'(?ms)^\[(?:projects|hooks\.state)\.".*?"\]\n(?:(?!^\[).*?\n)*')
+_CODEX_TUI_FLAG = re.compile(
+    r'(?m)^\[tui\]\n(?:(?!\[)[^\n]*\n)*?(screen_reader_detection_done\s*=[^\n]*)$')
 
 
 def _keep_codex_projects(text: str) -> str:
@@ -679,9 +681,15 @@ def _keep_codex_projects(text: str) -> str:
     regeneration removed it. The hash covers the hook definition, so a changed
     hook is still re-reviewed by Codex itself.
 
-    ONLY these trust records. Everything else in this file is ailocal's and
-    must be rewritten from the template; preserving more would let a stale hand
-    edit outlive the source it was generated from.
+    Plus ONE flag Codex records the same way: `[tui]
+    screen_reader_detection_done`. [REAL] Codex 0.163.0 writes it on the first
+    interactive launch; dropping it reported the file as drifted after every
+    interactive session and made Codex detect again. Only that key is carried,
+    and only while the template has no `[tui]` table of its own.
+
+    ONLY these Codex-written records. Everything else in this file is ailocal's
+    and must be rewritten from the template; preserving more would let a stale
+    hand edit outlive the source it was generated from.
     """
     if not CODEX_CONFIG.exists():
         return text
@@ -689,8 +697,23 @@ def _keep_codex_projects(text: str) -> str:
         live = CODEX_CONFIG.read_text()
     except OSError:
         return text
-    blocks = [b for b in _CODEX_PROJECTS.findall(live) if b.strip()
-              and b.split("\n", 1)[0] not in text]
+    # A block runs to the next table header, so it also takes whatever comment
+    # precedes that header: [REAL] "# ── Model Providers" rode along with the
+    # hook record. Trim each block to its own keys, and keep one block per
+    # header, so a file that already holds a table twice (invalid TOML) is
+    # repaired rather than carried forward.
+    blocks, seen = [], set()
+    for b in _CODEX_PROJECTS.findall(live):
+        lines = b.rstrip("\n").split("\n")
+        while lines and (not lines[-1].strip() or lines[-1].lstrip().startswith("#")):
+            lines.pop()
+        if not lines or lines[0] in seen or lines[0] in text:
+            continue
+        seen.add(lines[0])
+        blocks.append("\n".join(lines) + "\n\n")
+    flag = _CODEX_TUI_FLAG.search(live)
+    if flag and not re.search(r"(?m)^\[tui\]$", text):
+        blocks.append(f"[tui]\n{flag.group(1)}\n")
     if not blocks:
         return text
     return text.rstrip("\n") + "\n\n" + "".join(blocks).rstrip("\n") + "\n"
