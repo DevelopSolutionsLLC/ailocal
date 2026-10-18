@@ -17,6 +17,10 @@ ailocal runs Claude Code, Codex CLI and VS Code Copilot Chat against local model
 
 ## Development
 
+Apply Cadence's engineering policy and available `repository-intelligence`, `tool-maintenance`, `security-review`, and `work-tracking` skills when relevant; do not copy their rules into shipped client instructions. Work as an AI systems engineer: trace client → protocol → proxy → provider/tool, distinguish deterministic checks from model-dependent evaluations, and report evidence rather than persona claims.
+
+For dependency upgrades, install changes, skills, or MCP integration, read [AI development maintenance](docs/maintenance.md) before changing behavior. Seek current upstream releases, advisories, and relevant open/closed regression issues; an old workaround is a hypothesis to revalidate, not a permanent platform limitation. Promote a candidate only after affected paths pass, then commit and push when authorized. Keep ordinary builds pinned and reproducible.
+
 ```sh
 python3 -m venv .venv && . .venv/bin/activate
 pip install -e .
@@ -109,7 +113,7 @@ Only `src/`, `tests/`, `docs/` and project metadata. No generated artifact is ev
 - ailocal holds no conversation state. It never summarises or rewrites a client's history; it generates the compaction *threshold* the client applies. See [docs/architecture.md](docs/architecture.md).
 - ailocal provisions client integrations only inside a root it owns. Never modify hosted `~/.claude`.
 - ailocal installs no language server. It enables the official plugin for a server already on PATH, in its own root only.
-- Codex receives no MCP configuration: it cannot dispatch namespaced tools, so an empty `[mcp_servers.*]` section is correct.
+- The current ailocal local Codex profile withholds MCP configuration. This is a restriction of the tested local client/proxy/model path, not a claim that Codex lacks MCP support. Revalidate that path before changing the generator or extending the restriction to hosted clients.
 - Python is standard library only.
 - Ports bind `127.0.0.1`. Never commit secrets.
 
