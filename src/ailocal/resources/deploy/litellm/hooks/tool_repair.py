@@ -686,6 +686,34 @@ def _responses_stream_from_complete(response, request_data=None):
     yield {"type": f"response.{terminal}", "response": _plain(response)}
 
 
+class _CompletedResponseStream:
+    """An already-completed Responses result, served as the stream the client asked for.
+
+    The proxy streams any AsyncIterator, so this needs no LiteLLM base class.
+    `_hidden_params` is carried because the proxy reads response headers
+    (model id, api base) from it.
+    """
+
+    def __init__(self, response, request_data):
+        self._events = iter(list(_responses_stream_from_complete(response, request_data)))
+        self._hidden_params = getattr(response, "_hidden_params", None) or {}
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._events)
+        except StopIteration:
+            raise StopAsyncIteration from None
+
+
+def _destreamed_responses_result(request_data, response):
+    """Did websearch_interception turn a streamed /v1/responses call into this?"""
+    return (bool((request_data or {}).get("_websearch_interception_converted_stream"))
+            and type(response).__name__ == "ResponsesAPIResponse")
+
+
 class ToolRepair(CustomLogger):
     """Registered via litellm_settings.callbacks: tool_repair.proxy_handler_instance"""
 
@@ -767,6 +795,33 @@ class ToolRepair(CustomLogger):
         attribute(route="/v1/messages", stream=False, native=False, repaired=True)
         log.info("tool_repair: recovered tool_use block(s) on /v1/messages")
         return True
+
+    async def async_post_call_success_deployment_hook(self, request_data, response, call_type):
+        """Re-stream a /v1/responses web search that websearch_interception de-streamed.
+
+        websearch_interception (LiteLLM's own callback, enabled in our config)
+        sets stream=False to run its search loop and hands back a finished
+        ResponsesAPIResponse for a request the client asked to stream. On
+        /v1/messages LiteLLM re-wraps that in a FakeAnthropicMessagesStreamIterator;
+        on /v1/responses the re-wrap is MISSING. Unwrapped, no client ever sees
+        response.completed, so agentic clients retry forever (measured:
+        codex-local, 10/10 reconnects). Up to 1.102 the bare object reached the
+        streaming-iterator hook; from 1.103 the proxy calls `__aiter__()` on it
+        first (`_UpstreamStreamBoundary`) and the request fails with 500. This
+        hook runs on the deployment's result, before either, on both lines --
+        [REAL] w7 completes on 1.102.4 and 1.106.0 with no other handler.
+
+        UPSTREAM  BerriAI/litellm#42770 (open); fix proposed in #42821, which
+          wraps the same flag in the Responses bridge.
+        REPRO     POST /v1/responses stream=true with
+          tools=[{"type":"web_search"}] must end in response.completed; the
+          built-in tool type is the whole trigger.
+        RETIRE    when that request completes with this hook removed.
+        """
+        if not _destreamed_responses_result(request_data, response):
+            return None
+        log.info("tool_repair: re-streaming a de-streamed /v1/responses web search")
+        return _CompletedResponseStream(response, request_data)
 
     async def async_post_call_success_hook(self, data, user_api_key_dict, response):
         try:
@@ -1049,45 +1104,8 @@ class ToolRepair(CustomLogger):
         text = ""              # accumulated visible text
         suspect = False
         native_seen = False
-        # websearch_interception (LiteLLM's own callback, enabled in our config)
-        # converts stream=True -> stream=False internally, runs its agentic search
-        # loop, and returns a materialized response. Its ARCHITECTURE.md states
-        # this outright: "Converts stream=True -> stream=False internally ...
-        # Final response returned to user (non-streaming)".
-        #
-        # On /v1/messages LiteLLM re-wraps that result in a
-        # FakeAnthropicMessagesStreamIterator, so the client still receives a
-        # stream. On /v1/responses that re-wrap is MISSING: the hook is handed a
-        # bare ResponsesAPIResponse that is not async-iterable.
-        #
-        # Neither previous behaviour was correct. `async for` on it raised, the
-        # broad except swallowed the error, and the caller got an EMPTY stream;
-        # yielding it unchanged emits a single SSE frame containing a whole
-        # `"object": "response"` instead of typed events. Either way no client
-        # ever sees response.completed, so agentic clients retry forever
-        # (measured: codex-local, 10/10 reconnects, exponential backoff).
-        #
-        # REPRO   curl /v1/responses -d '{"stream":true,
-        #         "tools":[{"type":"web_search"}], ...}'  -- the built-in tool
-        #         type is the whole trigger; function and custom tools stream fine.
-        # RETIRE  when websearch_interception re-wraps on the responses path as
-        #         it already does on the Anthropic one. Re-run the REPRO: if it
-        #         emits response.completed with this branch removed, delete it.
-        #
-        # Supply the re-wrap LiteLLM omits, using LiteLLM's OWN event builder so
-        # the emitted stream matches every other de-streamed path it serves.
-        # Nothing here needs repairing on an already-complete object, so no repair
-        # is attempted.
-        if not hasattr(response, "__aiter__"):
-            log.warning(
-                "tool_repair: %s is not async-iterable in the streaming hook "
-                "(websearch_interception de-streamed this request) — "
-                "synthesizing created/completed events",
-                type(response).__name__,
-            )
-            for event in _responses_stream_from_complete(response, request_data):
-                yield event
-            return
+        # A de-streamed /v1/responses web search never reaches this hook as a
+        # bare object: async_post_call_success_deployment_hook re-streams it first.
         try:
             async for chunk in response:
                 # ── /v1/responses: typed events, handled before anything else ──
