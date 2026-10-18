@@ -691,12 +691,16 @@ class _CompletedResponseStream:
 
     The proxy streams any AsyncIterator, so this needs no LiteLLM base class.
     `_hidden_params` is carried because the proxy reads response headers
-    (model id, api base) from it.
+    (model id, api base) from it. `completed_response` is where the proxy's
+    /v1/responses container-ownership pass looks for the finished response;
+    without it, every de-streamed web search logged "Container ownership
+    recording skipped".
     """
 
     def __init__(self, response, request_data):
         self._events = iter(list(_responses_stream_from_complete(response, request_data)))
         self._hidden_params = getattr(response, "_hidden_params", None) or {}
+        self.completed_response = response
 
     def __aiter__(self):
         return self
