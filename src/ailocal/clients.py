@@ -614,11 +614,6 @@ def target_codex() -> None:
     if not shutil.which("codex"):
         warn(f"Codex CLI is not installed — {CLIENTS['codex'][1]}")
     print("  Launch with: codex-local exec 'say ok'  (source ~/.zshrc first)")
-    # Stated at deploy time, not only in the README: routing is correct here and
-    # the failure is upstream, so someone whose session hangs should not go
-    # looking for a mistake in this configuration.
-    print("  KNOWN UPSTREAM LIMIT: interactive sessions do not finish streaming")
-    print("    (BerriAI/litellm#27442). `codex-local exec` is unaffected.")
 
 
 
@@ -650,8 +645,12 @@ def provision_local_artifacts(home: Path) -> bool:
     req = src / "requirements.txt"
     if not py.is_file():
         step("Provisioning the artifact runtime")
-        r = _sh(sys.executable, "-m", "venv", str(venv))
-        if r != 0:
+        # --clear: once its interpreter is removed (a Homebrew Python upgrade)
+        # a venv keeps dangling bin/python links, and `venv` over the existing
+        # directory leaves them in place and still exits 0. The venv is in the
+        # disposable state root, so rebuilding it loses nothing.
+        r = _sh(sys.executable, "-m", "venv", "--clear", str(venv))
+        if r != 0 or not py.is_file():
             warn("could not create the artifact venv — artifacts unavailable")
             return False
     stamp = venv / ".requirements.sha"
