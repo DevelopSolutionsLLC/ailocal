@@ -193,6 +193,10 @@ ailocal start                     # re-renders the search settings
 
 The key stays in that file on your machine. It is never committed, never printed, and never leaves the local search container.
 
+General searches use Brave (when configured), Yahoo and Yep. Developer registries use the `it` category, research sources use `science`, and individual engines remain reachable by bang, such as `!gh`, `!hn` or `!oa`. Wiby is bang-only (`!wib`).
+
+GitHub code search (`!ghc`) is optional: add `GITHUB_SEARCH_TOKEN=` to `~/.config/ailocal/.env.local`, then run `ailocal start`. Use a fine-grained PAT restricted to public repositories, read-only, with an expiry. Never reuse the `gh` CLI token, which has `repo` scope. Without this token, the engine stays inactive and startup succeeds.
+
 ## Artifacts
 
 Anthropic's hosted `Artifact` tool publishes to claude.ai and is unavailable to a

@@ -218,7 +218,7 @@ ailocal start     # renders settings and starts the service
 To add or change the Brave key, edit your `.env.local` and restart:
 
 ```sh
-$EDITOR ~/.config/ailocal/.env.local    # set BRAVE_API=your-key
+$EDITOR ~/.config/ailocal/.env.local    # set BRAVE_API=your-key; optional GitHub code search: GITHUB_SEARCH_TOKEN=
 ailocal start                     # re-renders the settings with the key
 ```
 
