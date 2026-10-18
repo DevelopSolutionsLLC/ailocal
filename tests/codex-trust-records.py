@@ -17,6 +17,7 @@ from __future__ import annotations
 import pathlib
 import sys
 import tempfile
+import tomllib
 
 from pathlib import Path
 
@@ -58,6 +59,34 @@ def main() -> int:
             g.CODEX_CONFIG.write_text(out)
             check(g._keep_codex_projects(out) == out,
                   "carrying records over is a fixed point")
+
+            g.CODEX_CONFIG.write_text(
+                TEMPLATE + "\n" + HOOK + "\n[tui]\ntheme = \"hand-edit\"\n"
+                "screen_reader_detection_done = true\n")
+            out = g._keep_codex_projects(TEMPLATE)
+            check("[tui]\nscreen_reader_detection_done = true\n" in out,
+                  "Codex's screen-reader flag survives regeneration")
+            check("hand-edit" not in out, "other [tui] keys are not carried over")
+            check(out.count("[tui]") == 1, "the flag lands in exactly one [tui] table")
+            g.CODEX_CONFIG.write_text(out)
+            check(g._keep_codex_projects(TEMPLATE) == out,
+                  "carrying the flag over is a fixed point")
+            check("screen_reader" not in g._keep_codex_projects(TEMPLATE + "\n[tui]\n"),
+                  "a template [tui] table is never duplicated")
+
+            # OBSERVED: a flag pattern ending in `.*` under DOTALL captured the
+            # rest of the file, and the hook record after [tui] was written twice.
+            g.CODEX_CONFIG.write_text(TEMPLATE + "\n[tui]\nscreen_reader_detection_done = true\n\n"
+                                      + HOOK + "\n# ── Model Providers ──\n")
+            out = g._keep_codex_projects(TEMPLATE)
+            check(out.count("[hooks.state.") == 1, "a table after [tui] is not carried twice")
+            check("Model Providers" not in out,
+                  "a comment that precedes the next table is not carried with a record")
+            g.CODEX_CONFIG.write_text(TEMPLATE + "\n" + HOOK + "\n" + HOOK)
+            check(g._keep_codex_projects(TEMPLATE).count("[hooks.state.") == 1,
+                  "a live file holding a record twice is repaired, not carried")
+            check(tomllib.loads(out).get("tui") == {"screen_reader_detection_done": True},
+                  "the merged file is valid TOML")
         finally:
             g.CODEX_CONFIG = original
     return _suite.report()
