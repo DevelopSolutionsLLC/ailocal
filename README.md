@@ -149,7 +149,7 @@ To upgrade: `pipx upgrade ailocal && ailocal start`.
 |---|---|
 | Claude Code | Fully supported — tools, web search, language servers, and local artifacts |
 | VS Code Copilot | Supported for chat and code completion |
-| Codex CLI | Configured and routed correctly, but interactive sessions do not finish — an upstream bug ([BerriAI/litellm#27442](https://github.com/BerriAI/litellm/issues/27442)) |
+| Codex CLI | Supported — interactive and `exec` sessions, tools, file edits and web search. MCP servers are not provisioned |
 
 Any OpenAI- or Anthropic-compatible app also works directly: point it at `http://127.0.0.1:4000` with the key in `~/.local/state/ailocal/env`.
 

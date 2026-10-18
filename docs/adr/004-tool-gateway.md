@@ -49,7 +49,7 @@ The previous pin, LiteLLM 1.93.0, dropped `namespace` tools when translating `/v
 1. the registry's `drops_tool_types` for `/v1/responses`, which told the gateway not to book removing a namespace tool as a saving; and
 2. `namespace_expansion` — flattening a bundle into `mcp__<server>__<tool>` functions so it could reach the backend at all. It ships **disabled**.
 
-LiteLLM 1.98.0 expands `namespace` itself (`_namespace_chat_tools`), read on the pinned image rather than inferred. So bundles now reach the backend, removing them **is** a real saving, and the drop set is `[computer_use, image_generation, shell]`. The registry and both suites were corrected to the 1.98.0 behaviour.
+Changed at LiteLLM 1.98.0, which expands `namespace` itself (`_namespace_chat_tools`), read on the pinned image rather than inferred, and re-read unchanged on 1.102.4. So bundles now reach the backend, removing them **is** a real saving, and the drop set is `[computer_use, image_generation, shell]`. The registry and both suites were corrected to the 1.98.0 behaviour.
 
 **Open:** `namespace_expansion` has lost its original justification. It is disabled, so it costs nothing at runtime, and deleting a feature is a separate decision from correcting a measurement — it was deliberately not removed during a documentation pass. Decide it explicitly: either name a requirement 1.98's own expansion does not satisfy, or delete the feature, its config, its suite and this paragraph together.
 

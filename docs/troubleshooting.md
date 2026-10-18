@@ -163,7 +163,7 @@ codex-local exec --skip-git-repo-check --ephemeral --json "Reply with exactly PO
 
 **Fix** — repair the backend (`ailocal check` names the step). If the backend is healthy and turns still do not complete, open a session, watch `docker logs -f ailocal-litellm`, and re-check upstream before changing anything locally.
 
-**Status** — [BerriAI/litellm#27442](https://github.com/BerriAI/litellm/issues/27442) was closed on 2026-06-10. [REAL] 2026-10-18 on LiteLLM 1.98.0, Codex CLI 0.163.0 and Ollama 0.33.2 (16gb tier, `qwen3.5:4b`), `exec` and interactive turns, including tool calls and a file edit, reached `turn.completed`/`task_complete`. Do not work around a recurrence by rewriting LiteLLM behaviour locally.
+**Status** — [BerriAI/litellm#27442](https://github.com/BerriAI/litellm/issues/27442) was closed on 2026-06-10. [REAL] 2026-10-18 on LiteLLM 1.102.4, Codex CLI 0.163.0 and Ollama 0.33.2 (16gb tier, `qwen3.5:4b`), `exec` and interactive turns, including web search, tool calls and a file edit, reached `turn.completed`/`task_complete`; the same held on the previous pin, 1.98.0. Do not work around a recurrence by rewriting LiteLLM behaviour locally.
 
 ---
 
