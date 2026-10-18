@@ -26,10 +26,11 @@ The threat model is a developer workstation: it protects against accidental expo
 |---|---|---|
 | `LITELLM_MASTER_KEY` | `$AILOCAL_STATE/env` (generated) | gitignored; the only credential clients present |
 | `BRAVE_API` | `.env.local` (yours; optional, empty disables the engine) | rendered into SearXNG settings at start |
+| `GITHUB_SEARCH_TOKEN` | `.env.local` (yours; optional, empty disables GitHub code search) | fine-grained PAT for public repositories, read-only, with an expiry; never the `gh` CLI token with `repo` scope |
 | `SEARXNG_SECRET` | `$AILOCAL_STATE/env` (generated) | gitignored |
 | Rendered SearXNG settings | `$AILOCAL_STATE/searxng/settings.yml` | mode `0600`, **outside the checkout** |
 
-SearXNG's settings loader supports no `${VAR}` substitution for an engine's `api_key`, so the Brave key cannot be passed as an environment variable the way `SEARXNG_SECRET` is. The tracked `resources/deploy/searxng/settings.yml` carries a placeholder; the rendered copy holding the key is written to the state root, outside Git's tree.
+SearXNG's settings loader supports no `${VAR}` substitution for engine credentials. The tracked `resources/deploy/searxng/settings.yml` carries `__BRAVE_API_KEY__` and `__GITHUB_SEARCH_TOKEN__` placeholders; the rendered copy holding configured credentials is written to the state root, outside Git's tree. Unset credentials disable their respective engines without failing startup.
 
 No secret appears in the generation manifest, in generated artifacts, in logs, or in captured evidence, which redacts key-shaped content before persisting.
 
