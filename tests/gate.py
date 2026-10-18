@@ -167,6 +167,8 @@ def _gate_suites(repo: pathlib.Path, full: bool) -> list:
              [py, "tests/env-ownership.py"]),
             ("search engine categories and optional credential rendering",
              [py, "tests/search-settings.py"]),
+            ("research MCP contracts, provenance and provisioning",
+             [py, "tests/research.py"]),
             ("client target selection (`all`, detected-only) and VS Code outcomes",
              [py, "tests/client-targets.py"]),
             ("Python LSP baseline for claude-local (real documentSymbol)",

@@ -210,23 +210,31 @@ Inference is **always** through LiteLLM. There is no direct-Ollama path for an a
 subagent, in production or otherwise; the proxy is the only route, which is what makes the
 gateway, the registry and the metrics meaningful.
 
-Three things shape what the model actually sees on a `claude-local` request, all per-process
-and none of them written to `~/.claude`:
+Client configuration shapes what the model sees on a `claude-local` request, without writing to `~/.claude`:
 
 - **MCP tool search** (`ENABLE_TOOL_SEARCH=true`) defers what can be deferred. Requires
   LiteLLM ≥ 1.98, which preserves the mid-array `role: "system"` messages the deferred-tool
   listing travels in.
 - **Native Workflow disabled**, because its schema cannot be deferred at all.
 - **The bundled artifact MCP**, which declares `alwaysLoad` and is therefore eager.
+- **The bundled research search tool**, which also declares `alwaysLoad`; local answer synthesis is opt-in.
 
-[REAL] the resulting parent surface is 23 tools / 32,055 bytes. A delegated subagent gets what
-it declares minus `Grep`/`Glob`; the full matrix and its method are in
-[claude-local.md](claude-local.md#known-subagent-limitations).
+A delegated subagent gets what it declares minus `Grep`/`Glob`; the matrix and measurement method are in [claude-local.md](claude-local.md#known-subagent-limitations). Adding research changes the parent tool surface; an exact current tool/byte count has not been measured.
 
 **Cadence is optional and separately owned.** ailocal neither installs nor depends on it, and
 `claude-local` is complete without it.
 
 ---
+
+## Local research
+
+The bundled `resources/integrations/local-research/` subprocess uses the official MCP SDK in its own state-root venv, following ADR 011. `ailocal mcp research` supplies configuration through existing policy and environment readers; the component imports no ailocal code. Provisioning uses Claude Code's native `mcp add-json` command with `CLAUDE_CONFIG_DIR` set to claude-local's owned root, preserves other servers, and refuses a foreign registration collision. Hosted clients remain Cadence's responsibility.
+
+Search uses SearXNG's JSON API, filters by requested engine attribution and DNS site scope, and reports provider failures. Keyless `web` is the default; only explicit `forums` and `brave` presets can use Brave. Optional synthesis uses `ailocal-fast` through LiteLLM with no tools, no conversation history and no hosted fallback. It is disabled in the normal claude-local registration because of the shared inference slot. [ADR 014](adr/014-local-research.md) records this evidence and inference boundary.
+
+Public-page fetching checks all resolved addresses and redirects, pins connections to validated public addresses, verifies TLS hostnames, refuses credentials in URLs, and ignores ambient proxy settings. Only HTML/plain text is read, with no browser, subresources or login bypass. Limits are 10 search results, 4 fetched pages, 1 MiB per response, 8,000 extracted characters per page, 24,000 evidence characters, 800 output tokens and 120 seconds per tool call; the launcher lowers input/output budgets to fit the selected role. Character accounting is approximate; the proxy enforces its actual token window. Failures remain visible as source provenance or MCP tool errors. Cancellation closes pending network work.
+
+SQLite caches search responses for 15 minutes and page text for 30 minutes under `$AILOCAL_STATE/local-research/`, with a 64 MiB cap and bounded entry count. Cache keys include endpoint, scope and engine policy; credentials, conversations and synthesized answers are not stored. Cache failures produce visible warnings. Source IDs are checked before an answer is returned; that check does not establish factual support. `tests/research.py` covers contracts with staged backends and real MCP transport. `tests/measure_research.py` performs opt-in live measurement separately from the deterministic gate.
 
 ## Decisions
 
