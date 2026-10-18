@@ -609,8 +609,9 @@ def _responses_event_name(chunk):
 def _responses_stream_from_complete(response, request_data=None):
     """Yield a valid /v1/responses event stream for an already-completed response.
 
-    The event sequence is BUILT BY LITELLM, not by us. _build_synthetic_response_events
-    is the same function behind MockResponsesAPIStreamingIterator (o1-pro and other
+    The event sequence is BUILT BY LITELLM, not by us. build_synthetic_response_events
+    (private `_build_synthetic_response_events` up to 1.98; public, same keyword
+    signature, by 1.102.4) is the same function behind MockResponsesAPIStreamingIterator (o1-pro and other
     non-streaming models) and CachedResponsesAPIStreamingIterator (cache hits), so
     de-streamed responses leave here in exactly the shape every other de-streamed
     LiteLLM path already produces -- including the content_part, output_text.delta,
@@ -618,9 +619,11 @@ def _responses_stream_from_complete(response, request_data=None):
     hand-rolled created/completed pair silently drops. Hand-rolling this was the
     first attempt and it broke tool calls.
 
-    That function is private, so its absence is handled rather than assumed: the
-    fallback emits the minimal created/item/completed sequence, which is degraded
-    (no deltas, no tool-call arguments) but still a valid stream.
+    Its absence is handled rather than assumed: the fallback emits the minimal
+    created/item/completed sequence, which is degraded (no deltas, no tool-call
+    arguments). [REAL] on 1.102.4 with only the private name tried, that fallback
+    reached the client as an EMPTY stream -- so a missing builder is a broken
+    Codex web search, not a degraded one. Re-run the w7 probe after any upgrade.
 
     The iterator classes wrapping it are deliberately NOT reused. Both label the
     call with custom_llm_provider="cached_response" and set
@@ -646,11 +649,11 @@ def _responses_stream_from_complete(response, request_data=None):
         return ResponseIncompleteEvent(type="response.incomplete", response=response)
 
     try:
-        from litellm.responses.streaming_iterator import (
-            _build_synthetic_response_events,
-            MockResponsesAPIStreamingIterator,
-        )
-        events = _build_synthetic_response_events(
+        from litellm.responses import streaming_iterator as _si
+        build = (getattr(_si, "build_synthetic_response_events", None)
+                 or getattr(_si, "_build_synthetic_response_events"))
+        MockResponsesAPIStreamingIterator = _si.MockResponsesAPIStreamingIterator
+        events = build(
             transformed=response,
             logging_obj=logging_obj,
             chunk_size=MockResponsesAPIStreamingIterator.CHUNK_SIZE,
@@ -681,6 +684,38 @@ def _responses_stream_from_complete(response, request_data=None):
                    "output_index": index, "item": _plain(item)}
     terminal = "completed" if status not in ("failed", "incomplete") else status
     yield {"type": f"response.{terminal}", "response": _plain(response)}
+
+
+class _CompletedResponseStream:
+    """An already-completed Responses result, served as the stream the client asked for.
+
+    The proxy streams any AsyncIterator, so this needs no LiteLLM base class.
+    `_hidden_params` is carried because the proxy reads response headers
+    (model id, api base) from it. `completed_response` is where the proxy's
+    /v1/responses container-ownership pass looks for the finished response;
+    without it, every de-streamed web search logged "Container ownership
+    recording skipped".
+    """
+
+    def __init__(self, response, request_data):
+        self._events = iter(list(_responses_stream_from_complete(response, request_data)))
+        self._hidden_params = getattr(response, "_hidden_params", None) or {}
+        self.completed_response = response
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._events)
+        except StopIteration:
+            raise StopAsyncIteration from None
+
+
+def _destreamed_responses_result(request_data, response):
+    """Did websearch_interception turn a streamed /v1/responses call into this?"""
+    return (bool((request_data or {}).get("_websearch_interception_converted_stream"))
+            and type(response).__name__ == "ResponsesAPIResponse")
 
 
 class ToolRepair(CustomLogger):
@@ -764,6 +799,33 @@ class ToolRepair(CustomLogger):
         attribute(route="/v1/messages", stream=False, native=False, repaired=True)
         log.info("tool_repair: recovered tool_use block(s) on /v1/messages")
         return True
+
+    async def async_post_call_success_deployment_hook(self, request_data, response, call_type):
+        """Re-stream a /v1/responses web search that websearch_interception de-streamed.
+
+        websearch_interception (LiteLLM's own callback, enabled in our config)
+        sets stream=False to run its search loop and hands back a finished
+        ResponsesAPIResponse for a request the client asked to stream. On
+        /v1/messages LiteLLM re-wraps that in a FakeAnthropicMessagesStreamIterator;
+        on /v1/responses the re-wrap is MISSING. Unwrapped, no client ever sees
+        response.completed, so agentic clients retry forever (measured:
+        codex-local, 10/10 reconnects). Up to 1.102 the bare object reached the
+        streaming-iterator hook; from 1.103 the proxy calls `__aiter__()` on it
+        first (`_UpstreamStreamBoundary`) and the request fails with 500. This
+        hook runs on the deployment's result, before either, on both lines --
+        [REAL] w7 completes on 1.102.4 and 1.106.0 with no other handler.
+
+        UPSTREAM  BerriAI/litellm#42770 (open); fix proposed in #42821, which
+          wraps the same flag in the Responses bridge.
+        REPRO     POST /v1/responses stream=true with
+          tools=[{"type":"web_search"}] must end in response.completed; the
+          built-in tool type is the whole trigger.
+        RETIRE    when that request completes with this hook removed.
+        """
+        if not _destreamed_responses_result(request_data, response):
+            return None
+        log.info("tool_repair: re-streaming a de-streamed /v1/responses web search")
+        return _CompletedResponseStream(response, request_data)
 
     async def async_post_call_success_hook(self, data, user_api_key_dict, response):
         try:
@@ -981,31 +1043,31 @@ class ToolRepair(CustomLogger):
 
     @staticmethod
     def _fix_anthropic_sse_stop_reason(raw, state):
-        """Repair stop_reason on the Anthropic SSE byte stream.
+        """Repair stop_reason after _anthropic_sse_repair injected a tool_use block.
 
-        UPSTREAM BUG, 100% reproducible on Ollama streaming. Ollama emits
-        tool_calls in one chunk and done=true in the NEXT, but
-        llms/ollama/chat/transformation.py only applies its tool_calls override
-        when both land in the same chunk (the LiteLLM #18922 fix). So
-        finish_reason stays "stop", the Anthropic adapter maps it to end_turn,
-        and the client sees a turn holding a tool_use block that claims to be
-        finished — Claude Code does not execute the tool.
+        The model finished on prose, so upstream's message_delta says end_turn;
+        the injected tool_use block makes that a contradiction, and Claude Code
+        does not execute a tool in a turn that claims to be finished.
 
-        Provider-agnostic: it keys off a tool_use block appearing in the stream,
-        never a model or provider name, and rewrites exactly one field on
-        exactly one event. Each yielded chunk is one complete SSE event, so no
-        cross-chunk buffering is needed.
+        Only INJECTED streams are touched. A native tool_use stream used to need
+        this too: Ollama emits tool_calls and done=true in separate chunks, and
+        LiteLLM left finish_reason "stop". [REAL] Fixed upstream in 1.101.0
+        (#39010): with this hook removed, 1.98.0 returned end_turn 5/5 and
+        1.102.4 returned tool_use 5/5. A native stream now passes through as
+        LiteLLM emitted it.
+
+        Rewrites exactly one field on exactly one event. Each yielded chunk is one
+        complete SSE event, so no cross-chunk buffering is needed.
 
         Returns replacement bytes, or None to pass the chunk through untouched.
         """
+        if not state.get("injected"):
+            return None
         try:
             text = raw.decode("utf-8", "ignore")
         except Exception:  # noqa: BLE001
             return None
-        if '"type": "tool_use"' in text or '"type":"tool_use"' in text:
-            state["saw_tool_use"] = True
-            return None
-        if "message_delta" not in text or not state.get("saw_tool_use"):
+        if "message_delta" not in text:
             return None
         # Only rewrite a terminal stop_reason that contradicts the tool_use block.
         for wrong in ('"stop_reason": "end_turn"', '"stop_reason":"end_turn"'):
@@ -1026,10 +1088,10 @@ class ToolRepair(CustomLogger):
         so emitting it token-by-token has no user value and leaking half a call as
         assistant text is exactly the bug we are fixing.
 
-        Also repairs stop_reason on the Anthropic SSE byte path — see
-        _fix_anthropic_sse_stop_reason. That path delivers pre-serialized bytes,
-        so structured repair is impossible here, but a targeted field rewrite is
-        both possible and safe.
+        Also repairs stop_reason on the Anthropic SSE byte path when a tool call
+        was injected — see _fix_anthropic_sse_stop_reason. That path delivers
+        pre-serialized bytes, so structured repair is impossible here, but a
+        targeted field rewrite is both possible and safe.
         """
         tools = (request_data or {}).get("tools")
         # Responses-route state. Kept separate from the byte-oriented sse_state so
@@ -1046,45 +1108,8 @@ class ToolRepair(CustomLogger):
         text = ""              # accumulated visible text
         suspect = False
         native_seen = False
-        # websearch_interception (LiteLLM's own callback, enabled in our config)
-        # converts stream=True -> stream=False internally, runs its agentic search
-        # loop, and returns a materialized response. Its ARCHITECTURE.md states
-        # this outright: "Converts stream=True -> stream=False internally ...
-        # Final response returned to user (non-streaming)".
-        #
-        # On /v1/messages LiteLLM re-wraps that result in a
-        # FakeAnthropicMessagesStreamIterator, so the client still receives a
-        # stream. On /v1/responses that re-wrap is MISSING: the hook is handed a
-        # bare ResponsesAPIResponse that is not async-iterable.
-        #
-        # Neither previous behaviour was correct. `async for` on it raised, the
-        # broad except swallowed the error, and the caller got an EMPTY stream;
-        # yielding it unchanged emits a single SSE frame containing a whole
-        # `"object": "response"` instead of typed events. Either way no client
-        # ever sees response.completed, so agentic clients retry forever
-        # (measured: codex-local, 10/10 reconnects, exponential backoff).
-        #
-        # REPRO   curl /v1/responses -d '{"stream":true,
-        #         "tools":[{"type":"web_search"}], ...}'  -- the built-in tool
-        #         type is the whole trigger; function and custom tools stream fine.
-        # RETIRE  when websearch_interception re-wraps on the responses path as
-        #         it already does on the Anthropic one. Re-run the REPRO: if it
-        #         emits response.completed with this branch removed, delete it.
-        #
-        # Supply the re-wrap LiteLLM omits, using LiteLLM's OWN event builder so
-        # the emitted stream matches every other de-streamed path it serves.
-        # Nothing here needs repairing on an already-complete object, so no repair
-        # is attempted.
-        if not hasattr(response, "__aiter__"):
-            log.warning(
-                "tool_repair: %s is not async-iterable in the streaming hook "
-                "(websearch_interception de-streamed this request) — "
-                "synthesizing created/completed events",
-                type(response).__name__,
-            )
-            for event in _responses_stream_from_complete(response, request_data):
-                yield event
-            return
+        # A de-streamed /v1/responses web search never reaches this hook as a
+        # bare object: async_post_call_success_deployment_hook re-streams it first.
         try:
             async for chunk in response:
                 # ── /v1/responses: typed events, handled before anything else ──
@@ -1147,8 +1172,8 @@ class ToolRepair(CustomLogger):
                     delta = chunk.choices[0].delta
                 except Exception:  # noqa: BLE001
                     # Anthropic SSE route delivers pre-serialized bytes. Structured
-                    # repair is impossible here, but the stop_reason field can be
-                    # corrected — and that is the bug that actually stalls the loop.
+                    # repair is impossible here, but after an injected call the
+                    # stop_reason field must be corrected or the loop stalls.
                     if isinstance(chunk, (bytes, bytearray)):
                         for out in self._anthropic_sse_repair(bytes(chunk), sse_state, tools):
                             fixed = self._fix_anthropic_sse_stop_reason(out, sse_state)

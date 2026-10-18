@@ -227,6 +227,7 @@ repeat_penalty = 1.0
 role = "Autocomplete (standby)"
 active = "qwen2.5-coder:3b"
 preferred = ["qwen2.5-coder:3b", "qwen2.5-coder:1.5b"]
+reasoning = false
 context_input = 3968
   # max_output 512, raised from 128. A FIM suggestion is a few lines, not a
   # paragraph, but 128 truncated multi-line completions mid-block. 512 is

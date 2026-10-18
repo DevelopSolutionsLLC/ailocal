@@ -259,10 +259,19 @@ def resolver_checks() -> None:
                        capture_output=True, text=True)
     check(r.returncode == 0 and ":" in r.stdout,
           "role --field prints a bare scalar")
-    r = subprocess.run(cli + ["role", "completion", "--field", "reasoning"],
-                       capture_output=True, text=True)
+    # In a sandbox whose profile really omits the field. Against the shipped
+    # profiles this depended on the machine's active tier: every tier now
+    # declares completion's `reasoning`, so no shipped role is a stable example.
+    box = sandbox(marker="64gb", profile_text=GOOD)
+    shutil.copy(RESOURCES / "profiles/clients.toml", box / "profiles")
+    r = subprocess.run(cli + ["role", "architecture", "--field", "reasoning"],
+                       capture_output=True, text=True,
+                       env={**os.environ, "AILOCAL_CONFIG": str(box),
+                            "AILOCAL_STATE": str(_state(box))})
+    shutil.rmtree(box, ignore_errors=True)
     check(r.returncode == 0 and r.stdout.strip() == "",
-          "an absent optional field prints empty, not the string 'None'")
+          "an absent optional field prints empty, not the string 'None'",
+          (r.stdout + r.stderr).strip())
     r = subprocess.run(cli + ["role", "nosuchrole"], capture_output=True, text=True)
     check(r.returncode != 0 and P.ROLE_MISSING in r.stderr,
           "an unknown role exits non-zero with a code on stderr")
@@ -775,17 +784,27 @@ def hardware_checks() -> None:
     # CLAUDE_CONFIG_DIR only. ailocal writing an output ceiling or a compaction
     # threshold into ~/.claude would silently re-tune the user's hosted sessions
     # against a local model's geometry.
-    hosted = Path.home() / ".claude" / "settings.json"
-    if hosted.exists():
-        try:
-            henv = json.loads(hosted.read_text()).get("env", {}) or {}
-        except ValueError:
-            henv = {}
-        owned = ("CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
-                 "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE")
-        leaked = [k for k in owned if k in henv]
-        check(not leaked, "hosted ~/.claude carries no ailocal-owned env key",
-              f"leaked into hosted settings: {leaked}")
+    #
+    # Asserted on the GENERATOR, in a throwaway HOME, not on the real
+    # ~/.claude: the same key names are legitimate hosted settings the user may
+    # choose for themselves (CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=50 there is not
+    # ailocal's), so their presence proves nothing about who wrote them.
+    for each in P.TIERS:
+        box = Path(tempfile.mkdtemp(prefix="hosted-"))
+        (box / "home").mkdir(); (box / "state").mkdir()
+        shutil.copytree(RESOURCES / "profiles", box / "cfg/profiles")
+        (box / "state/active-profile").write_text(each)
+        env = {**os.environ, "HOME": str(box / "home"), "AILOCAL_CONFIG": str(box / "cfg"),
+               "AILOCAL_CLIENTS": str(box / "clients"), "AILOCAL_STATE": str(box / "state")}
+        r = subprocess.run([sys.executable, "-m", "ailocal.generation"],
+                           env=env, capture_output=True, text=True)
+        local = box / "clients/claude/settings.json"
+        projected = (r.returncode == 0 and local.exists()
+                     and "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" in json.loads(local.read_text()).get("env", {}))
+        check(projected and not (box / "home/.claude").exists(),
+              f"{each}: generation projects compaction into claude-local only, never ~/.claude",
+              r.stderr.strip()[-300:] or f"wrote under {box / 'home'}")
+        shutil.rmtree(box, ignore_errors=True)
 
     # A launch_default with no declared output ceiling must FAIL, not fall back
     # to Claude Code's 32000 — that default is exactly the number the backend

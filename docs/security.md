@@ -77,8 +77,8 @@ Profiles, client templates and the repository itself are not mounted. SearXNG re
 
 Both images are pinned **by digest**, not by tag, so a moving tag cannot change what runs without a commit:
 
-- `ghcr.io/berriai/litellm@sha256:a1745e62…`
-- `searxng/searxng@sha256:79c2be18…`
+- `ghcr.io/berriai/litellm@sha256:2e4c0371…`
+- `searxng/searxng@sha256:8bdd9aa1…`
 
 `ailocal check` gates the running build against the validated version, and the regression gate fails if they diverge.
 
