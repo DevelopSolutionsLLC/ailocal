@@ -13,7 +13,7 @@ Persona injection was the other section; the mechanism it covered is gone (see
 the note below). The docstring also advertised a `trace` section that was never
 in SECTIONS.
 
-Usage: gateway.py [repair|native-args|transport]   (default: all)
+Usage: gateway.py [repair|native-args|destream]   (default: all)
 """
 from __future__ import annotations
 
@@ -346,7 +346,45 @@ def native_arg_checks() -> None:
           "SSE: the sibling Bash call in the same response is untouched")
 
 
-SECTIONS = {"repair": repair_checks, "native-args": native_arg_checks}
+def destream_checks() -> None:
+    """A /v1/responses web search that websearch_interception de-streamed is
+    handed back as a stream, and nothing else is touched. The event sequence
+    itself is LiteLLM's builder; probes.py w7 covers it against a real proxy."""
+    import asyncio as _asyncio
+
+    class ResponsesAPIResponse:  # the name is what the predicate keys on
+        status = "completed"
+        output = []
+        _hidden_params = {"model_id": "m1"}
+
+    print("\nde-streamed /v1/responses web search")
+    flagged = {"_websearch_interception_converted_stream": True}
+    resp = ResponsesAPIResponse()
+    check(tr._destreamed_responses_result(flagged, resp),
+          "flagged request + ResponsesAPIResponse is recognised")
+    check(not tr._destreamed_responses_result({}, resp),
+          "an ordinary non-stream Responses call is left alone")
+    check(not tr._destreamed_responses_result(flagged, object()),
+          "a flagged non-Responses result (the /v1/messages path) is left alone")
+    check(not tr._destreamed_responses_result(None, resp), "no request data -> no crash")
+
+    hook = tr.ToolRepair().async_post_call_success_deployment_hook
+    check(_asyncio.run(hook({}, resp, "aresponses")) is None,
+          "the deployment hook returns None (no replacement) when not de-streamed")
+    stream = _asyncio.run(hook(flagged, resp, "aresponses"))
+
+    async def _drain(s):
+        return [e async for e in s]
+    events = _asyncio.run(_drain(stream)) if stream is not None else []
+    types_ = [e["type"] if isinstance(e, dict) else getattr(e, "type", None) for e in events]
+    check(bool(types_) and types_[-1] == "response.completed",
+          "the replacement is an async stream that ends in response.completed")
+    check(getattr(stream, "_hidden_params", None) == {"model_id": "m1"},
+          "_hidden_params is carried for the proxy's response headers")
+
+
+SECTIONS = {"repair": repair_checks, "native-args": native_arg_checks,
+            "destream": destream_checks}
 
 if __name__ == "__main__":
     which = sys.argv[1] if len(sys.argv) > 1 else None
