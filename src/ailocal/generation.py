@@ -652,9 +652,10 @@ def _set_toml_model(path, model, template=None):
     return True
 
 
-#: `[projects."<path>"]` blocks, which CODEX writes into this file itself.
+#: `[projects."<path>"]` and `[hooks.state."<key>"]` blocks, which CODEX
+#: writes into this file itself.
 _CODEX_PROJECTS = re.compile(
-    r'(?ms)^\[projects\.".*?"\]\n(?:(?!^\[).*?\n)*')
+    r'(?ms)^\[(?:projects|hooks\.state)\.".*?"\]\n(?:(?!^\[).*?\n)*')
 
 
 def _keep_codex_projects(text: str) -> str:
@@ -665,14 +666,22 @@ def _keep_codex_projects(text: str) -> str:
         [projects."/path/to/repo"]
         trust_level = "trusted"
 
-    when you approve a directory, and a generator that rebuilds this file from
-    the template alone deletes it — so every `ailocal start` silently un-trusts
-    every directory the user had approved, and the next session asks again.
-    [REAL] observed as gate drift after one `codex exec` run.
+    when you approve a directory, and
 
-    ONLY `[projects.*]`. Everything else in this file is ailocal's and must be
-    rewritten from the template; preserving more would let a stale hand edit
-    outlive the source it was generated from.
+        [hooks.state."<config.toml>:session_start:0:0"]
+        trusted_hash = "sha256:..."
+
+    when you trust a hook. A generator that rebuilds this file from the
+    template alone deletes both — so every `ailocal start` silently un-trusts
+    every directory the user had approved, and re-arms "Hooks need review" for
+    the scratchpad hook. [REAL] directories: gate drift after one `codex exec`
+    run. [REAL] hooks: Codex 0.163.0 wrote the block above on "Trust all", and
+    regeneration removed it. The hash covers the hook definition, so a changed
+    hook is still re-reviewed by Codex itself.
+
+    ONLY these trust records. Everything else in this file is ailocal's and
+    must be rewritten from the template; preserving more would let a stale hand
+    edit outlive the source it was generated from.
     """
     if not CODEX_CONFIG.exists():
         return text

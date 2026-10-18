@@ -173,6 +173,8 @@ def _gate_suites(repo: pathlib.Path, full: bool) -> list:
              ["/bin/bash", "tests/clients.sh", "roles"]),
             ("codex MCP is withheld (no grepai/lsp/github, no re-sync)",
              ["/bin/bash", "tests/clients.sh", "codex"]),
+            ("codex trust records survive regeneration (projects, hooks)",
+             [py, "tests/codex-trust-records.py"]),
             ("shell output helpers (streams, colour, one owner)",
              ["/bin/bash", "tests/shell-output.sh"]),
             ("validator checks (deterministic, bounded, search quota)",

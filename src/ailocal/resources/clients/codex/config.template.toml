@@ -56,7 +56,9 @@ sandbox_mode = "danger-full-access"
 # ── Reasoning & Verbosity ───────────────────────────────────────────────────
 
 model_reasoning_effort = "medium"
-model_supports_reasoning_summaries = false
+# Summary support is declared per model (`supports_reasoning_summaries` in
+# model_catalog.json). Codex 0.163 ignores the old top-level
+# `model_supports_reasoning_summaries` key and warns on every launch.
 model_reasoning_summary = "none"
 
 # ── Fallback for built-in OpenAI provider ───────────────────────────────────
