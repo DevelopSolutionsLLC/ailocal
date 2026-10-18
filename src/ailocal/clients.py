@@ -650,8 +650,12 @@ def provision_local_artifacts(home: Path) -> bool:
     req = src / "requirements.txt"
     if not py.is_file():
         step("Provisioning the artifact runtime")
-        r = _sh(sys.executable, "-m", "venv", str(venv))
-        if r != 0:
+        # --clear: once its interpreter is removed (a Homebrew Python upgrade)
+        # a venv keeps dangling bin/python links, and `venv` over the existing
+        # directory leaves them in place and still exits 0. The venv is in the
+        # disposable state root, so rebuilding it loses nothing.
+        r = _sh(sys.executable, "-m", "venv", "--clear", str(venv))
+        if r != 0 or not py.is_file():
             warn("could not create the artifact venv — artifacts unavailable")
             return False
     stamp = venv / ".requirements.sha"
