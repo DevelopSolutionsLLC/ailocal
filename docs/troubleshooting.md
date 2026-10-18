@@ -153,13 +153,27 @@ ailocal start && ailocal clients
 
 ## Codex produces content but the turn never completes
 
-**Likely cause** — a streamed Responses turn never emits its terminal event.
+**Likely cause** — check the backend first: if Ollama is not answering, `codex-local` waits on a request LiteLLM cannot complete. Historically, a streamed Responses turn that never emitted its terminal event.
 
-**Verify** — open a session and watch `docker logs -f ailocal-litellm`.
+**Verify** — `ailocal check` must show Ollama responding and every capability serving. Then run a bounded turn and look for `turn.completed`:
 
-**Fix** — none available locally. Configuration, routing, geometry and tool transport are validated; only interactive streaming is affected.
+```sh
+codex-local exec --skip-git-repo-check --ephemeral --json "Reply with exactly PONG."
+```
 
-**Status** — upstream, [BerriAI/litellm#27442](https://github.com/BerriAI/litellm/issues/27442). Do not work around it by rewriting LiteLLM behaviour locally.
+**Fix** — repair the backend (`ailocal check` names the step). If the backend is healthy and turns still do not complete, open a session, watch `docker logs -f ailocal-litellm`, and re-check upstream before changing anything locally.
+
+**Status** — [BerriAI/litellm#27442](https://github.com/BerriAI/litellm/issues/27442) was closed on 2026-06-10. [REAL] 2026-10-18 on LiteLLM 1.106.0, Codex CLI 0.163.0 and Ollama 0.33.2 (16gb tier, `qwen3.5:4b`), `exec` and interactive turns, including web search, tool calls and a file write, reached `turn.completed`/`task_complete`; the same held on the previous pins, 1.102.4 and 1.98.0. On 1.103 and later, streamed web search depends on `tool_repair`'s deployment hook ([BerriAI/litellm#42770](https://github.com/BerriAI/litellm/issues/42770)). Do not work around a recurrence by rewriting LiteLLM behaviour locally.
+
+---
+
+## Codex asks "Hooks need review" on every launch
+
+**Likely cause** — Codex runs a non-managed hook only after you trust its exact definition, and records that trust as `[hooks.state."…"] trusted_hash` inside `config.toml`. Up to 0.13.0, `ailocal start` rewrote that file and dropped the record.
+
+**Fix** — trust the scratchpad hook once: answer "Trust all and continue", or use `/hooks`. Regeneration now carries `[hooks.state.*]` across, as it already did `[projects.*]`. A changed hook definition still needs review, by Codex's design.
+
+**Status** — fixed in ailocal.
 
 ---
 

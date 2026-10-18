@@ -273,18 +273,27 @@ PATCH_MARKER = "_ailocal_fake_stream_guard"
 def _fake_stream_types():
     """The iterator classes the websearch path can hand to success logging.
 
-    Imported defensively: these live under `experimental_pass_through`, so a
-    LiteLLM refactor may move or remove them. A missing class means there is
-    nothing to guard against, not an error worth breaking the proxy over.
+    Imported defensively: a LiteLLM refactor may move or remove them. A missing
+    class means there is nothing to guard against, not an error worth breaking
+    the proxy over. [REAL] 1.105.1 moved the module from
+    `experimental_pass_through` to `pass_through` while the bug it guards still
+    reproduced (3 validation errors per request); importing only the old path
+    turned the guard into a silent no-op. Both locations are tried.
     """
+    import importlib
+
     found = []
-    try:
-        from litellm.llms.anthropic.experimental_pass_through.messages.fake_stream_iterator import (
-            FakeAnthropicMessagesStreamIterator,
-        )
-        found.append(FakeAnthropicMessagesStreamIterator)
-    except Exception as exc:  # noqa: BLE001
-        log.debug("fake stream iterator not importable (%s) — nothing to patch", exc)
+    for module in (
+        "litellm.llms.anthropic.experimental_pass_through.messages.fake_stream_iterator",
+        "litellm.llms.anthropic.pass_through.messages.fake_stream_iterator",
+    ):
+        try:
+            cls = importlib.import_module(module).FakeAnthropicMessagesStreamIterator
+        except Exception as exc:  # noqa: BLE001
+            log.debug("fake stream iterator not importable from %s (%s)", module, exc)
+            continue
+        if cls not in found:
+            found.append(cls)
     return tuple(found)
 
 
