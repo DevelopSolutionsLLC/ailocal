@@ -614,11 +614,6 @@ def target_codex() -> None:
     if not shutil.which("codex"):
         warn(f"Codex CLI is not installed — {CLIENTS['codex'][1]}")
     print("  Launch with: codex-local exec 'say ok'  (source ~/.zshrc first)")
-    # Stated at deploy time, not only in the README: routing is correct here and
-    # the failure is upstream, so someone whose session hangs should not go
-    # looking for a mistake in this configuration.
-    print("  KNOWN UPSTREAM LIMIT: interactive sessions do not finish streaming")
-    print("    (BerriAI/litellm#27442). `codex-local exec` is unaffected.")
 
 
 
