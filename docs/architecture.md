@@ -41,7 +41,7 @@ $AILOCAL_STATE/                 what LiteLLM mounts, plus the marker (inherits u
 │   ├── config.yaml             proxy configuration
 │   └── capabilities.json       capability → backend, context (read by the hooks)
 ├── searxng/
-│   └── settings.yml            rendered; carries the Brave key, mode 0600
+│   └── settings.yml            rendered; may carry the GitHub search token, mode 0600
 ├── env                         GENERATED. the master key and SearXNG secret, mode 0600
 ├── agents/preload.sh           the login LaunchAgent's program
 └── captures/                   writable by the proxy; opt-in payload capture
@@ -91,7 +91,7 @@ The complete on-disk footprint of `ailocal install` and the optional `ailocal cl
 | `active-profile` | `install` | The selected tier; the sole writer is `select_tier()`. |
 | `litellm/config.yaml`, `litellm/capabilities.json` | `generation` | Bind-mounted into the proxy container. |
 | `litellm-config.sha` | `runtime` | Restart fingerprint. *(start path)* |
-| `searxng/settings.yml` | `runtime` | Rendered from the shipped template; carries the Brave key, parent dir 0700. *(start path)* |
+| `searxng/settings.yml` | `runtime` | Rendered from the shipped template; may carry the GitHub search token, parent dir 0700. *(start path)* |
 | `agents/preload.sh` | `install` | Program for the preload LaunchAgent. Resolves the model tag at run time so it can never warm a stale one. *(launchd path)* |
 
 The config root inherits the umask; the state root is `0700`, set when the generated environment is written, because it holds the master key. Secrets are protected per file as well (`env`, `.env.local` at 0600) and by the deployed-client root's own 0700, not by the state root.
@@ -115,6 +115,7 @@ Same directory as the policy root by default, different owner and lifecycle: thi
 | `/Users/Shared/ollama/models` | `install` | Shared model store, group-writable + setgid. Existing `~/.ollama/models` is *moved* here (rename, one file at a time) before `OLLAMA_MODELS` is repointed. *(launchd path)* |
 | `~/.zshrc` | `clients` | Exactly two marker-commented lines (`# ailocal-configure` first, `# ailocal-finalize` last), inserted idempotently after a timestamped backup. |
 | `~/.copilot/instructions/ailocal.instructions.md` | `clients vscode` | The one Copilot instruction file: local-stack facts, terminal protocol, and the shared build checklist appended. |
+| VS Code `User/mcp.json` | `clients vscode` | Registers `research` through VS Code's native `--add-mcp`, with the absolute launcher path because a Dock-launched VS Code has a minimal `PATH`. Other servers are preserved and a foreign `research` entry is left untouched. |
 | VS Code `User/chatLanguageModels.json`, `User/settings.json` | `clients vscode` | Merges the `litellm-connector` provider group and prunes deprecated/harmful settings. The API **key** is not written: it lives in VS Code SecretStorage, which no supported interface lets ailocal touch — that one step stays manual. |
 
 `~/.zshrc` is created if absent and backed up (`.zshrc.bak.<timestamp>`, newest 3 kept) before either line is inserted.
@@ -145,7 +146,7 @@ Profiles and client templates are not visible to the container.
 
 | Mount | Kind | Why |
 |---|---|---|
-| `$AILOCAL_SEARXNG_SETTINGS → /etc/searxng/settings.yml:ro` | generated | carries the Brave key; rendered outside the checkout so committing it is impossible |
+| `$AILOCAL_SEARXNG_SETTINGS → /etc/searxng/settings.yml:ro` | generated | may carry the GitHub search token; rendered outside the checkout so committing it is impossible |
 | `<package>/resources/deploy/searxng/limiter.toml → /etc/searxng/limiter.toml:ro` | shipped | bot-detection policy |
 
 Ollama runs on the host, not in a container, and is reached at `OLLAMA_HOST`.
@@ -210,23 +211,31 @@ Inference is **always** through LiteLLM. There is no direct-Ollama path for an a
 subagent, in production or otherwise; the proxy is the only route, which is what makes the
 gateway, the registry and the metrics meaningful.
 
-Three things shape what the model actually sees on a `claude-local` request, all per-process
-and none of them written to `~/.claude`:
+Client configuration shapes what the model sees on a `claude-local` request, without writing to `~/.claude`:
 
 - **MCP tool search** (`ENABLE_TOOL_SEARCH=true`) defers what can be deferred. Requires
   LiteLLM ≥ 1.98, which preserves the mid-array `role: "system"` messages the deferred-tool
   listing travels in.
 - **Native Workflow disabled**, because its schema cannot be deferred at all.
 - **The bundled artifact MCP**, which declares `alwaysLoad` and is therefore eager.
+- **The bundled research search tool**, which also declares `alwaysLoad`; local answer synthesis is opt-in.
 
-[REAL] the resulting parent surface is 23 tools / 32,055 bytes. A delegated subagent gets what
-it declares minus `Grep`/`Glob`; the full matrix and its method are in
-[claude-local.md](claude-local.md#known-subagent-limitations).
+A delegated subagent gets what it declares minus `Grep`/`Glob`; the matrix and measurement method are in [claude-local.md](claude-local.md#known-subagent-limitations). Adding research changes the parent tool surface; an exact current tool/byte count has not been measured.
 
 **Cadence is optional and separately owned.** ailocal neither installs nor depends on it, and
 `claude-local` is complete without it.
 
 ---
+
+## Local research
+
+The bundled `resources/integrations/local-research/` subprocess uses the official MCP SDK in its own state-root venv, following ADR 011. `ailocal mcp research` supplies configuration through existing policy and environment readers; the component imports no ailocal code. Provisioning uses Claude Code's native `mcp add-json` command with `CLAUDE_CONFIG_DIR` set to claude-local's owned root, preserves other servers, and refuses a foreign registration collision. The generated codex-local template registers the same launcher and receives the same routing skill. VS Code registers it in the user `mcp.json`, which hosted Copilot models share because VS Code has no separate local root. [REAL] Codex 0.163.0 completed `research.search` through the local proxy on 2026-10-18, replacing the earlier version's restriction for this server. Hosted clients remain Cadence's responsibility.
+
+Search plans a bounded set of SearXNG requests per preset, filters by engine attribution and DNS site scope, merges duplicates across providers, and reports coverage, attempts, fallbacks and provider failures. Brave is called directly, only from here, behind a cross-process ledger (`brave-ledger.sqlite3`) that reserves each request before sending it. Optional synthesis uses `ailocal-fast` through LiteLLM with no tools, no conversation history and no hosted fallback. It is disabled in the normal claude-local registration because of the shared inference slot. [ADR 014](adr/014-local-research.md) records this evidence and inference boundary.
+
+Public-page fetching checks all resolved addresses and redirects, pins connections to validated public addresses, verifies TLS hostnames, refuses credentials in URLs, and ignores ambient proxy settings. Only HTML/plain text is read, with no browser, subresources or login bypass. Limits are 10 search results, 4 fetched pages, 1 MiB per response, 8,000 extracted characters per page, 24,000 evidence characters, 800 output tokens and 120 seconds per tool call; the launcher lowers input/output budgets to fit the selected role. Character accounting is approximate; the proxy enforces its actual token window. Failures remain visible as source provenance or MCP tool errors. Cancellation closes pending network work.
+
+SQLite caches search responses for 15 minutes and page text for 30 minutes under `$AILOCAL_STATE/local-research/`, with a 64 MiB cap and bounded entry count. Cache keys include endpoint, scope and engine policy; credentials, conversations and synthesized answers are not stored. Cache failures produce visible warnings. Source IDs are checked before an answer is returned; that check does not establish factual support. `tests/research.py` covers contracts with staged backends and real MCP transport. `tests/measure_research.py` performs opt-in live measurement separately from the deterministic gate.
 
 ## Decisions
 
