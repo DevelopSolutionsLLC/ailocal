@@ -6,6 +6,7 @@ that same table, which is the only way the two cannot drift.
 """
 from __future__ import annotations
 
+import io
 import json
 import sys
 
@@ -24,6 +25,20 @@ COMMANDS: dict[str, tuple[str, tuple]] = {
     "teardown":       ("ailocal.runtime", ("teardown",)),
     "clients":        ("ailocal.clients", ()),
     "mcp":            ("ailocal.mcp", ()),
+}
+
+#: `ailocal <command> --help`, answered here so no command can mistake the flag
+#: for a request: `clients --help` used to configure every client and
+#: `start --help` to start the stack. `install` owns a longer usage, and `check`
+#: owns its own because only checks/run.py may name the metered search flag.
+USAGE: dict[str, str] = {
+    "status":   "usage: ailocal status [--dashboard|--table|--models]",
+    "update":   "usage: ailocal update [--upstream-only] [--json]",
+    "start":    "usage: ailocal start [--no-wait]",
+    "stop":     "usage: ailocal stop [--volumes]",
+    "teardown": "usage: ailocal teardown [--images]",
+    "clients":  "usage: ailocal clients [vscode|codex|claude|all ...] [--dry-run]",
+    "mcp":      "usage: ailocal mcp research [--enable-answer]",
 }
 
 #: Help layout: (heading, [command...]). Every dispatchable command appears
@@ -115,6 +130,11 @@ def _profile(argv: list[str]) -> int:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     cmd = argv.pop(0) if argv else "help"
+    # Redirected stdout is block-buffered, while the docker, brew and code
+    # children it runs write straight to the descriptor: a saved install log
+    # printed their output before the step that started them.
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(line_buffering=True)
 
     if cmd in ("help", "-h", "--help"):
         print(_usage())
@@ -137,6 +157,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ailocal: unknown command '{cmd}' — run 'ailocal help'",
               file=sys.stderr)
         return 1
+
+    if cmd in USAGE and {"-h", "--help"} & set(argv):
+        print(USAGE[cmd])
+        return 0
 
     # A package command runs in THIS process: it is a function, not a program,
     # so there is one dispatch mechanism and no second interpreter to choose.
