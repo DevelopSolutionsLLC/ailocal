@@ -49,10 +49,9 @@ services:
       SEARXNG_SECRET: ${SEARXNG_SECRET}
     volumes:
       # RENDERED settings, not the tracked source. deploy/searxng/settings.yml
-      # holds __BRAVE_API_KEY__ and __GITHUB_SEARCH_TOKEN__ placeholders;
-      # runtime.py renders them
-      # into $AILOCAL_STATE (outside the checkout, mode 0600) with the value of
-      # BRAVE_API and optional GITHUB_SEARCH_TOKEN from .env.local.
+      # holds the __GITHUB_SEARCH_TOKEN__ placeholder; runtime.py renders it
+      # into $AILOCAL_STATE (outside the checkout, mode 0600) from the optional
+      # GITHUB_SEARCH_TOKEN in .env.local. Brave is not a SearXNG engine.
       # SearXNG has no env interpolation for engine
       # api_key, so substitution before mount is the only secret-safe path.
       # Mounted read-only: the container must never write the rendered secret.
