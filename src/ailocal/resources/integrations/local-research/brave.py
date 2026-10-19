@@ -187,6 +187,7 @@ class Ledger:
                 start, end, known = self._period(obs, now)
                 counted = self._counted(db, start)
                 account = (self._account_left(db, obs) if known and obs['limit'] > 0 else None)
+                refused_until = obs.get('quota_limited_until') or 0
             finally:
                 db.close()
         except (OSError, sqlite3.Error):
@@ -198,13 +199,22 @@ class Ledger:
         if not known:
             report['period_basis'] = ('unknown: no current Brave quota observation; counted conservatively '
                                       'over the longest possible window')
-        if account is not None:
+        if refused_until > now:
+            # Brave's own refusal is the one account-wide fact a prepaid key
+            # exposes: it covers every consumer of the key, not just this ledger.
+            report['account_remaining'] = 0
+            report['account_basis'] = (f'Brave refused a request for quota, usage limit or prepaid balance; '
+                                       f'no metered request until {_iso(refused_until)}')
+        elif account is not None:
             report['account_remaining'] = max(0, account)
             report['account_basis'] = 'Brave X-RateLimit headers at quota_observed_at minus requests counted since'
         else:
             report['account_remaining'] = 'unknown'
-            report['account_basis'] = ('Brave reports no monthly cap for this key and publishes no usage API; '
-                                       'other consumers of the key are not visible here (see the Brave dashboard)'
+            # Prepaid keys report a monthly limit of 0: spending is bounded by the
+            # dollar balance and usage limit, which only the dashboard shows.
+            report['account_basis'] = ('Brave reports no request quota for this key (prepaid plans are billed '
+                                       'from a credit balance) and publishes no balance API; the Brave dashboard '
+                                       'shows the balance, and other consumers of the key are not visible here'
                                        if known else 'no current Brave quota observation')
         return report
 
@@ -220,6 +230,8 @@ def summary(report: dict, used: int, refusal: str | None) -> str:
             f'(this machine only')
     if report['account_remaining'] == 'unknown':
         line += '; account-wide usage unknown'
+    elif report['account_basis'].startswith('Brave refused'):
+        line += '; account-wide exhausted per Brave'
     else:
         line += f'; account-wide {report["account_remaining"]} as of {report["quota_observed_at"]}'
     line += ')'

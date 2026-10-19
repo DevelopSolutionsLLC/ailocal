@@ -274,6 +274,9 @@ class Contracts(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['brave']['refusal'], 'BRAVE_HTTP_429_QUOTA_LIMITED')
         result = await self.r.search('third', ['docs.example.org'])
         self.assertEqual(result['brave']['refusal'], 'BRAVE_QUOTA_LIMITED')
+        # Brave's refusal is account-wide evidence, not "unknown".
+        self.assertEqual(result['brave']['account_remaining'], 0)
+        self.assertIn('account-wide exhausted per Brave', result['brave']['summary'])
         self.assertEqual(len(self.backend.brave), 2)
         self.assertTrue(result['sources'])
 
@@ -541,6 +544,19 @@ class BraveLedger(unittest.TestCase):
         self.spend(ledger, 1000, capped)
         self.assertEqual(ledger.status(1001)['account_remaining'], 0)
         self.assertEqual(ledger.reserve(1001).refusal, 'BRAVE_ACCOUNT_LIMIT')
+
+    def test_brave_refusal_is_reported_account_wide_until_reset(self):
+        ledger = B.Ledger(self.path, 1000)
+        self.spend(ledger, 1000, self.HEADERS)
+        refused = ledger.reserve(1001)
+        ledger.settle(refused, 402, self.HEADERS, now=1001, error_code='QUOTA_LIMITED')
+        report = ledger.status(1002)
+        self.assertEqual(report['account_remaining'], 0)
+        self.assertIn(B._iso(1001 + 1120380), report['account_basis'])
+        self.assertIn('account-wide exhausted per Brave', B.summary(report, 0, 'BRAVE_QUOTA_LIMITED'))
+        # The ledger's own budget is untouched: the refusal was not billed.
+        self.assertEqual(report['budget_remaining'], 999)
+        self.assertEqual(ledger.status(1001 + 1120380 + 5)['account_remaining'], 'unknown')
 
     def test_budget_counts_unknown_and_not_billed(self):
         ledger = B.Ledger(self.path, 2)
