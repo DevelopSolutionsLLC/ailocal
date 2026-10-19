@@ -24,7 +24,7 @@ def build_mcp(config):
         'coverage. Brave spending is governed by the operator\'s budget, so do not ask the user before '
         'searching. In the final answer, cite results as snippets rather than pages read, flag '
         'login_walled sources, name any provider failure or fallback the conclusion depends on, and '
-        'include the brave.summary line from each search.'))
+        'end with the last search\'s brave.summary value, verbatim, on its own line.'))
     research = Research(config)
 
     async def invoke(method, *args):

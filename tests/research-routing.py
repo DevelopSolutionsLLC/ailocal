@@ -16,12 +16,17 @@ from research import Config
 from server import build_mcp
 from transport import request
 
+# Natural phrasing: no prompt names the tool, a preset, a provider or a site.
+# (expected_search, acceptable presets or None, prompt)
 PROMPTS = [
-    (True, 'Find current Python TaskGroup documentation on docs.python.org. Search the web with the keyless web preset and cite sources.'),
-    (True, 'Search doc.rust-lang.org for E0507 and return source links. Use keyless web search.'),
-    (True, 'Find papers about structured concurrency using the research preset.'),
-    (False, 'What is 2 + 2? Answer directly.'),
-    (False, 'Rewrite this sentence more simply: The cat was situated upon the mat.'),
+    (True, {'forums'}, 'Search the forums online for challenges people face developing cybersecurity tools with AI'),
+    (True, {'forums'}, 'What do developers on Reddit and Hacker News think about Bun vs Node in production?'),
+    (True, {'web', None}, 'What changed in the latest Python asyncio TaskGroup documentation?'),
+    (True, {'research'}, 'Find recent papers on structured concurrency.'),
+    (True, {'code'}, 'Are there open-source GitHub projects that fuzz MCP servers?'),
+    (False, None, 'What is 2 + 2?'),
+    (False, None, 'Rewrite this sentence more simply: The cat was situated upon the mat.'),
+    (False, None, 'In this repository, which function in src/ailocal/mcp.py builds the launch environment?'),
 ]
 
 
@@ -34,27 +39,43 @@ async def main():
     tools = await app.list_tools()
     wire_tools = [{'type': 'function', 'function': {'name': 'mcp__research__'+t.name, 'description': t.description,
                                                   'parameters': t.input_schema}} for t in tools]
+    # Stand-ins for the client's own repository tools, so a repository question
+    # has somewhere correct to go. Without them the negative control is unfair.
+    for name, text in (('Read', 'Read a file from the local repository.'),
+                       ('Grep', 'Search file contents in the local repository with a regular expression.')):
+        wire_tools.append({'type': 'function', 'function': {'name': name, 'description': text, 'parameters': {
+            'type': 'object', 'properties': {'pattern' if name == 'Grep' else 'file_path': {'type': 'string'}}}}})
     hits = positives = negatives_clean = negatives = 0
     runs = int(sys.argv[1]) if len(sys.argv) > 1 else 1
-    for expected, prompt in PROMPTS:
+    preset_hits = 0
+    for expected, presets, prompt in PROMPTS:
         for _ in range(runs):
             payload = {'model': cfg.model, 'max_tokens': 500, 'stream': False,
-                       'messages': [{'role': 'system', 'content': 'Use available tools when external evidence is needed. Answer directly otherwise.'},
+                       # A client places server instructions in its system prompt; nothing else steers.
+                       'messages': [{'role': 'system', 'content': 'You are a coding assistant. ' + (app.instructions or '')},
                                     {'role': 'user', 'content': prompt}], 'tools': wire_tools}
             status, _, data = await request(cfg.model_url+'/chat/completions', payload=payload,
                                            headers={'Authorization': 'Bearer '+cfg.key}, timeout=180)
             if status != 200:
                 sys.exit('routing measurement failed: local proxy returned an HTTP error')
             result = json.loads(data)
-            names = [c.get('function', {}).get('name') for c in result['choices'][0]['message'].get('tool_calls', [])]
-            selected = 'mcp__research__search' in names
+            calls = [c.get('function', {}) for c in result['choices'][0]['message'].get('tool_calls') or []]
+            search = [c for c in calls if c.get('name') == 'mcp__research__search']
+            selected = bool(search)
+            try:
+                preset = json.loads(search[0].get('arguments') or '{}').get('preset') if search else None
+            except ValueError:
+                preset = 'UNPARSEABLE'
+            preset_hits += int(expected and selected and preset in presets)
             positives += int(expected)
             hits += int(expected and selected)
             negatives += int(not expected)
             negatives_clean += int(not expected and not selected)
-            print(json.dumps({'expected_search': expected, 'selected_search': selected, 'prompt': prompt}), flush=True)
-    print(json.dumps({'positive_hits': hits, 'positive_runs': positives, 'negative_clean': negatives_clean,
-                      'negative_runs': negatives, 'scope': 'REAL local inference; APPROX reduced MCP search-only surface; tools not executed; full Claude surface unmeasured'}))
+            print(json.dumps({'expected_search': expected, 'selected_search': selected, 'preset': preset,
+                              'prompt': prompt}), flush=True)
+    print(json.dumps({'positive_hits': hits, 'preset_hits': preset_hits, 'positive_runs': positives,
+                      'negative_clean': negatives_clean,
+                      'negative_runs': negatives, 'scope': 'REAL local inference; APPROX reduced surface (research search plus Read/Grep stand-ins); tools not executed; full client surface unmeasured'}))
 
 
 if __name__ == '__main__':
