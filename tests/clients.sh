@@ -92,6 +92,10 @@ check "$([ -n "$ovr" ] && [ "$ovr" -gt "$gen_end" ] && echo 0 || echo 1)" \
   "override logic sits outside the generated region" "ovr=$ovr gen=$gen_begin-$gen_end"
 check "$([ "$(grep -c 'AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE' "$CONFIGURE")" -ge 1 ] && echo 0 || echo 1)" \
   "override logic survives generation.py regeneration"
+# `code --profile <new name>` creates an EMPTY profile, which has none of the
+# configuration `ailocal clients vscode` writes to the default one.
+check "$(grep -q '^ailocal-code() { code "${1:-.}"; }$' "$tpl" && echo 0 || echo 1)" \
+  "ailocal-code opens the VS Code profile ailocal configures"
 }
 
 claude_workflow_checks() {
