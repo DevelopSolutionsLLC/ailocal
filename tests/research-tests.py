@@ -644,6 +644,38 @@ class Provisioning(unittest.TestCase):
             self.assertEqual(data['session'], initial['session'])
             self.assertNotIn('fixture-secret', first.decode())
 
+    def test_vscode_registration_is_absolute_idempotent_and_preserves_foreign(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mcp_json = Path(tmp)/'mcp.json'
+            mcp_json.write_text(json.dumps({'servers': {'foreign': {'command': 'keep'}}, 'inputs': []}))
+            calls = []
+            def add_mcp(*args):
+                self.assertEqual(args[0], '--add-mcp')
+                spec = json.loads(args[1])
+                data = json.loads(mcp_json.read_text())
+                data['servers'][spec.pop('name')] = spec
+                mcp_json.write_text(json.dumps(data))
+                calls.append(args)
+                return ''
+            with patch.object(C.shutil, 'which', return_value='/opt/bin/ailocal'), \
+                 patch.object(C, 'provision_mcp_runtime', return_value=Path(tmp)/'python'), \
+                 patch.object(C, '_code', side_effect=add_mcp), contextlib.redirect_stdout(io.StringIO()):
+                self.assertTrue(C.provision_vscode_research(mcp_json))
+                self.assertTrue(C.provision_vscode_research(mcp_json))
+            self.assertEqual(len(calls), 1)
+            servers = json.loads(mcp_json.read_text())['servers']
+            # A Dock-launched VS Code has no ~/.local/bin on PATH.
+            self.assertEqual(servers['research'], {'command': '/opt/bin/ailocal', 'args': ['mcp', 'research']})
+            self.assertEqual(servers['foreign'], {'command': 'keep'})
+            for original in ('{broken', json.dumps({'servers': {'research': {'command': 'foreign'}}})):
+                mcp_json.write_text(original)
+                with patch.object(C.shutil, 'which', return_value='/opt/bin/ailocal'), \
+                     patch.object(C, '_code') as code, contextlib.redirect_stdout(io.StringIO()), \
+                     contextlib.redirect_stderr(io.StringIO()):
+                    self.assertFalse(C.provision_vscode_research(mcp_json))
+                    code.assert_not_called()
+                self.assertEqual(mcp_json.read_text(), original)
+
     def test_collision_and_invalid_json_fail_without_writes(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)

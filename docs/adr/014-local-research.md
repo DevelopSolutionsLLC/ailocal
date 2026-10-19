@@ -21,7 +21,7 @@ A bundled MCP component, packaged per [ADR 011](011-bundled-artifacts.md), expos
 - **Routing.** The tool description, server instructions and the client skill route requests for outside information to `search` without the user naming it.
 - **Synthesis.** `answer` uses keyless providers only and the configured local LiteLLM route, receives evidence rather than client history, has no tools and no hosted fallback. claude-local registers it only on explicit opt-in because of the shared inference slot.
 
-ailocal registers the component only in client roots it owns. Hosted client registration belongs to Cadence.
+ailocal registers the component in the client roots it owns and in VS Code's user `mcp.json`, beside the provider configuration it already manages there, without replacing a foreign entry. Hosted Claude and Codex registration belongs to Cadence.
 
 ## Alternatives and consequences
 

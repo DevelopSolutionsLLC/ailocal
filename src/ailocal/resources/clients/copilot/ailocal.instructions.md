@@ -16,6 +16,10 @@ This chat runs on a local model served by Ollama through the ailocal LiteLLM pro
 
 The active profile and the generated capability catalog are authoritative for which capabilities exist, what backs them and their context limits.
 
+# External research
+
+For information from outside the workspace (documentation, current versions, community discussion, open-source projects, papers), use the `research` MCP server's `search` tool without waiting to be asked, in preference to built-in web fetching. Refine across calls using its coverage and fallbacks, cite results as snippets rather than pages read, and end the answer with the `brave.summary` line from the last search.
+
 # Terminal rules
 
 These rules prevent failures specific to running a local model in VS Code's integrated terminal.
