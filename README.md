@@ -184,22 +184,24 @@ instead — static analysis, not LSP.
 
 Claude Code may display **0 searches** on a clearly sourced answer. That counter tracks Anthropic-hosted search, which never runs here; retrieval still happened.
 
-**Brave Search is optional.** Without a key, search uses the keyless engines. Adding a Brave API key enables an API-backed general-web engine, which is more reliable for broad questions:
+**Brave Search is optional** and is used only by the research MCP, within a budget. Without a key, research uses the keyless engines:
 
 ```bash
-$EDITOR ~/.config/ailocal/.env.local    # set BRAVE_API=your-key
-ailocal start                     # re-renders the search settings
+$EDITOR ~/.config/ailocal/.env.local    # set BRAVE_API=your-key; optional AILOCAL_BRAVE_BUDGET=1000
+ailocal clients claude                  # or: ailocal clients codex
 ```
 
-The key stays in that file on your machine. It is never committed, never printed, and never leaves the local search container.
+The key stays in that file on your machine. It is never committed or printed, and it is sent only to Brave's API.
 
-General searches use Brave (when configured), Yahoo and Yep. Developer registries use the `it` category, research sources use `science`, and individual engines remain reachable by bang, such as `!gh`, `!hn` or `!oa`. Wiby is bang-only (`!wib`).
+General searches use Yahoo and Yep. Developer registries use the `it` category, research sources use `science`, and individual engines remain reachable by bang, such as `!gh`, `!hn` or `!oa`. Wiby is bang-only (`!wib`).
 
 GitHub code search (`!ghc`) is optional: add `GITHUB_SEARCH_TOKEN=` to `~/.config/ailocal/.env.local`, then run `ailocal start`. Use a fine-grained PAT restricted to public repositories, read-only, with an expiry. Never reuse the `gh` CLI token, which has `repo` scope. Without this token, the engine stays inactive and startup succeeds.
 
 ### Site-scoped research
 
-`ailocal clients claude` and `ailocal clients codex` provision the bundled research MCP for their respective local clients. Its `search(query, sites?, preset?)` tool returns source URLs, snippets and engine attribution; `sites` accepts hostnames such as `["reddit.com"]`. Presets are `web` (default keyless Yahoo/Yep), `code`, `forums`, `research`, and `brave`. `forums` may search Reddit through Brave; `forums` and `brave` can consume Brave credits. Other presets do not escalate to Brave.
+`ailocal clients claude` and `ailocal clients codex` provision the bundled research MCP for their respective local clients. Requests that need external information (documentation, community discussion, projects or papers) route to its `search(query, sites?, preset?, use_brave?)` tool without the user naming it. The server plans providers itself: specialist engines plus keyless Yahoo and Yep, site narrowing across Reddit, Hacker News, Stack Exchange and lobste.rs for `forums`, and a keyword retry for AND-only APIs. Results are deduplicated, keep provider attribution, and report coverage, attempts, fallbacks and failures. Every source is an indexed snippet, not a page read; Reddit sources are marked `login_walled`.
+
+When keyless coverage is thin and a Brave key is configured, the server adds at most two Brave requests per call, within `AILOCAL_BRAVE_BUDGET` (default 1,000 per Brave billing period). Each request is reserved in a ledger under the state root before it is sent, so concurrent sessions cannot overspend. Every response carries a `brave.summary` line: requests used, the remaining budget as counted by ailocal on this machine, and the period reset. Account-wide remaining allowance is reported as unknown unless Brave reports a monthly cap; usage by other consumers of the key is not visible. When the budget is exhausted or the quota is unknown, research continues keyless and says why. See [ADR 015](docs/adr/015-research-routing-and-brave-budget.md).
 
 The stable stdio launcher is `ailocal mcp research`. Experimental `answer(question, sites?)` additionally reads bounded public pages and synthesizes a cited answer through the local proxy. It is disabled by default because claude-local shares its inference slot; a separately configured caller can explicitly launch `ailocal mcp research --enable-answer`. Hosted Claude, Codex and Copilot registration is separate work owned by Cadence. ailocal changes none of their configuration.
 
@@ -261,7 +263,7 @@ What a fresh install gives you, without configuring anything.
 | Tool search (`claude-local`) | on (`ENABLE_TOOL_SEARCH=true`) | `AILOCAL_TOOL_SEARCH=…` |
 | Native Workflow (`claude-local`) | off | `AILOCAL_NATIVE_WORKFLOWS=1` |
 | Local artifacts | on, bundled | — |
-| Web search | ailocal's own SearXNG, keyless | add `BRAVE_API` |
+| Web search | ailocal's own SearXNG, keyless | `BRAVE_API` adds budgeted Brave to research |
 | Context | the profile's `num_ctx`; 1M-context beta off | profile |
 | Hosted `claude`, `~/.claude` | never touched | — |
 
@@ -280,7 +282,7 @@ None of these are required, and ailocal does not install them.
   deferred and it was never invoked in 148 measured sessions.
 - **Language servers** — install a server binary and re-run `ailocal clients claude`; the
   plugin follows, in ailocal's root only.
-- **Brave Search** — an API-backed general-web engine for broad questions.
+- **Brave Search** — budgeted coverage for thin research results.
 - **Node.js** — only the `architecture` artifact format needs it.
 
 ## Documentation

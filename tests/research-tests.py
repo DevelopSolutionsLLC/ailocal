@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, urlsplit
 REPO = Path(__file__).resolve().parent.parent
 SRC = REPO / 'src/ailocal/resources/integrations/local-research'
 sys.path[:0] = [str(SRC), str(REPO / 'src')]
+import brave as B
 import research as R
 import transport as T
 from server import build_mcp
@@ -28,8 +29,16 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 class Backend:
     def __init__(self):
         self.searches = []
-        self.engines = ['yahoo', 'yep', 'github', 'stackoverflow', 'hackernews', 'meta.discourse', 'braveapi', 'openalex', 'arxiv']
+        self.engines = ['yahoo', 'yep', 'github', 'stackoverflow', 'hackernews', 'meta.discourse', 'openalex', 'arxiv']
         self.prompt = None
+        self.brave = []
+        self.brave_status = 200
+        self.brave_error = None
+        # [REAL] shape of this account's headers, 2026-10-19: no monthly cap.
+        self.brave_headers = {'X-RateLimit-Limit': '50, 0', 'X-RateLimit-Policy': '50;w=1, 0;w=2678400',
+                              'X-RateLimit-Remaining': '49, 0', 'X-RateLimit-Reset': '1, 1120380'}
+        self.shared = False
+        self.and_only = False
         self.answer = 'Supported by the supplied evidence [S1].'
 
     async def handle(self, reader, writer):
@@ -38,26 +47,48 @@ class Backend:
             path = lines[0].split()[1]
             headers = dict(line.split(': ', 1) for line in lines[1:] if ': ' in line)
             body = await reader.readexactly(int(headers.get('Content-Length', '0')))
+            extra = b''
             if path == '/config':
                 data = {'engines': [{'name': e} for e in self.engines]}
+            elif path.startswith('/brave?'):
+                args = parse_qs(urlsplit(path).query)
+                self.brave.append({'args': args, 'headers': headers})
+                q = args['q'][0]
+                domain = q.split('site:')[-1] if 'site:' in q else 'www.reddit.com'
+                data = ({'error': {'code': self.brave_error}} if self.brave_status != 200 else
+                        {'discussions': {'results': [{'url': f'https://{domain}/r/brave/thread', 'title': 'thread',
+                                                      'description': 'Discussion evidence.', 'data': {'forum_name': 'r/x'}}]},
+                         'web': {'results': [{'url': f'https://{domain}/brave/page', 'title': 'page',
+                                              'description': 'Brave evidence.'}]}})
+                extra = ''.join(f'{k}: {v}\r\n' for k, v in self.brave_headers.items()).encode()
             elif path.startswith('/search?'):
                 args = parse_qs(urlsplit(path).query)
                 self.searches.append(args)
-                engine = args['engines'][0]
+                # One SearXNG request may name several engines; results carry them all.
+                also = args['engines'][0].split(',')
+                engine = also[0]
                 native_domains = {'hackernews':'news.ycombinator.com', 'meta.discourse':'meta.discourse.org',
                                   'github':'github.com', 'stackoverflow':'stackoverflow.com'}
                 domain = args['q'][0].split('site:')[-1] if 'site:' in args['q'][0] else native_domains.get(engine, 'docs.example.org')
                 data = {'results': [
-                    {'url': f'https://{domain}/{engine}/page', 'title': '<b>source</b>', 'content': 'Useful indexed evidence.', 'engines': [engine]},
+                    {'url': f'https://{domain}/{engine}/page', 'title': '<b>source</b>', 'content': 'Useful indexed evidence.', 'engines': also},
                     {'url': 'https://evil.example.net/fallback', 'title': 'wrong site', 'content': 'x', 'engines': [engine]},
                     {'url': f'https://{domain}/silent-fallback', 'title': 'wrong engine', 'content': 'x', 'engines': ['docker hub']},
                     {'url': 'https://user:credential@docs.example.org/private', 'title': 'credential URL', 'content': 'x', 'engines': [engine]}],
                     'unresponsive_engines': [['stackoverflow', 'HTTP error with fixture-secret']] if engine == 'stackoverflow' else []}
+                if self.and_only and engine == 'hackernews' and len(args['q'][0].split()) > 3:
+                    data['results'] = []
+                if self.shared:
+                    # The same page through two providers: www., trailing slash, tracking parameter.
+                    url = f'https://{domain}/shared/' if engine == 'yahoo' else f'https://www.{domain}/shared?utm_source=x'
+                    data['results'].append({'url': url, 'title': 'shared', 'content': 'x', 'engines': [engine]})
             else:
                 self.prompt = json.loads(body)
                 data = {'choices': [{'message': {'content': self.answer}}], 'usage': {'prompt_tokens': 10, 'completion_tokens': 8}}
             wire = json.dumps(data).encode()
-            writer.write(b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ' + str(len(wire)).encode() + b'\r\n\r\n' + wire)
+            status = self.brave_status if path.startswith('/brave?') else 200
+            writer.write(f'HTTP/1.1 {status} X\r\n'.encode() + extra + b'Content-Type: application/json\r\nContent-Length: '
+                         + str(len(wire)).encode() + b'\r\n\r\n' + wire)
             await writer.drain()
         finally:
             writer.close()
@@ -96,18 +127,139 @@ class Contracts(unittest.IsolatedAsyncioTestCase):
         self.assertFalse((await self.r.search('task groups', ['docs.example.org']))['cache_hit'])
         self.assertEqual((Path(self.tmp.name) / 'cache.sqlite3').stat().st_mode & 0o777, 0o600)
 
-    async def test_provider_opt_in_and_missing_token(self):
-        await self.r.search('runtimes')
-        self.assertNotIn('braveapi', [a['engines'][0] for a in self.backend.searches])
+    def with_brave(self, budget=1000):
+        self.config.brave_key = 'fixture-brave-key'
+        self.config.brave_budget = budget
+        self.config.brave_url = self.url + '/brave'
+        self.r = R.Research(self.config)
+
+    async def test_provider_selection_and_missing_token(self):
+        result = await self.r.search('runtimes')
+        self.assertEqual([a['engines'][0] for a in self.backend.searches], ['yahoo,yep'])
+        self.assertEqual(result['sources'][0]['engines'], ['yahoo', 'yep'])
+        self.assertEqual(result['brave'], {'summary': 'Brave: not configured; keyless providers only.'})
         result = await self.r.search('runtimes', preset='code')
         self.assertIn('ENGINE_UNAVAILABLE: github code', result['warnings'])
         self.assertEqual(result['unresponsive_engines'], [{'engine': 'stackoverflow', 'status': 'unresponsive'}])
+        self.assertIn('optional GITHUB_SEARCH_TOKEN is absent', result['github']['code_search'])
+        self.assertIn('GitHub MCP', result['github']['precise_inspection'])
         self.assertNotIn('fixture-secret', json.dumps(result))
-        await self.r.search('runtimes', ['reddit.com'], 'forums')
-        self.assertTrue(any(a['engines'] == ['braveapi'] and 'site:reddit.com' in a['q'][0] for a in self.backend.searches))
-        self.backend.engines.remove('braveapi')
-        with self.assertRaisesRegex(T.ResearchError, 'NO_ENGINES'):
-            await self.r.search('runtimes', preset='brave')
+        result = await self.r.search('runtimes', ['reddit.com'], 'forums')
+        self.assertTrue(any(a['engines'] == ['yahoo'] and 'site:reddit.com' in a['q'][0] for a in self.backend.searches))
+        self.assertTrue(all(s['read'] == 'login_walled' for s in result['sources']))
+        # An explicit Brave request without a key is disclosed and served keyless.
+        result = await self.r.search('runtimes', preset='brave')
+        self.assertIn({'from': 'brave', 'to': 'keyless', 'reason': 'BRAVE_NOT_CONFIGURED'}, result['fallbacks'])
+        self.assertTrue(result['sources'])
+        self.assertEqual(self.backend.brave, [])
+
+    async def test_forums_cover_communities_not_one_discourse(self):
+        result = await self.r.search('rust async pain', preset='forums')
+        queried = {a['q'][0].split('site:')[-1] for a in self.backend.searches if 'site:' in a['q'][0]}
+        self.assertEqual(queried, {'reddit.com', 'news.ycombinator.com', 'stackexchange.com', 'lobste.rs'})
+        self.assertNotIn('meta.discourse', [a['engines'][0] for a in self.backend.searches])
+        self.assertTrue(all(s['evidence'] == 'search_snippet' and s['read'] in ('not_read', 'login_walled')
+                            for s in result['sources']))
+        self.assertLessEqual(len(self.backend.searches), R.MAX_SEARX_REQUESTS)
+
+    async def test_and_only_native_search_is_retried_with_keywords(self):
+        self.backend.and_only = True
+        result = await self.r.search('challenges people face developing cybersecurity tools with AI', preset='forums')
+        retry = [a for a in result['attempts'] if a['query_form'] == 'keywords']
+        self.assertEqual([(a['engines'], a['query']) for a in retry], [(['hackernews'], 'cybersecurity tools AI')])
+        self.assertTrue(any(f['to'] == 'keywords' for f in result['fallbacks']))
+        self.assertTrue(any('hackernews' in s['engines'] for s in result['sources']))
+
+    async def test_duplicates_merge_attribution(self):
+        self.backend.shared = True
+        result = await self.r.search('query', ['docs.example.org'])
+        shared = [s for s in result['sources'] if '/shared' in s['url']]
+        self.assertEqual(len(shared), 1)
+        self.assertEqual(shared[0]['engines'], ['yahoo', 'yep'])
+
+    async def test_brave_fills_thin_coverage_and_reports_budget(self):
+        self.with_brave()
+        result = await self.r.search('task groups', ['docs.example.org'])
+        self.assertEqual(len(self.backend.brave), 1)
+        sent = self.backend.brave[0]
+        self.assertEqual(sent['headers']['X-Subscription-Token'], 'fixture-brave-key')
+        self.assertIn('site:docs.example.org', sent['args']['q'][0])
+        self.assertTrue(any(s['engines'] == ['brave'] for s in result['sources']))
+        self.assertIn({'from': 'keyless', 'to': 'brave', 'reason': 'thin keyless coverage'}, result['fallbacks'])
+        brave = result['brave']
+        self.assertEqual((brave['used'], brave['budget_remaining'], brave['account_remaining']), (1, 999, 'unknown'))
+        self.assertIn('999 of 1000 left by ailocal count', brave['summary'])
+        self.assertIn('account-wide usage unknown', brave['summary'])
+        self.assertRegex(brave['period_resets_at'], r'^\d{4}-\d\d-\d\dT')
+        self.assertNotIn('fixture-brave-key', json.dumps(result))
+        # A cache hit spends nothing and is reported as such.
+        again = await self.r.search('task groups', ['docs.example.org'])
+        self.assertTrue(again['cache_hit'])
+        self.assertEqual(len(self.backend.brave), 1)
+        self.assertEqual((again['brave']['used'], again['brave']['cache_hits'], again['brave']['budget_remaining']), (0, 1, 999))
+        mode = (Path(self.tmp.name) / 'brave-ledger.sqlite3').stat().st_mode & 0o777
+        self.assertEqual(mode, 0o600)
+
+    async def test_enough_keyless_coverage_does_not_spend(self):
+        self.with_brave()
+        sites = ['a.example.org', 'b.example.org', 'c.example.org']
+        result = await self.r.search('query', sites)
+        self.assertEqual(self.backend.brave, [])
+        self.assertFalse(result['coverage']['thin'])
+        self.assertTrue(result['brave']['summary'].startswith('Brave: not used this call'))
+
+    async def test_brave_opt_out_early_use_and_answer_never_spend(self):
+        self.with_brave()
+        await self.r.search('query', ['docs.example.org'], use_brave=False)
+        self.assertEqual(self.backend.brave, [])
+        fake_page = AsyncMock(return_value={'text': 'Evidence ' * 20, 'evidence': 'page_text', 'fetch_status': 'read'})
+        with patch.object(self.r, 'page', fake_page):
+            await self.r.answer('other question', ['docs.example.org'])
+        self.assertEqual(self.backend.brave, [])
+        result = await self.r.search('forum pain', preset='forums', use_brave=True)
+        self.assertEqual(len(self.backend.brave), 1)
+        self.assertEqual(self.backend.brave[0]['args']['result_filter'], ['discussions'])
+        self.assertEqual(result['attempts'][-1]['reason'], 'requested')
+
+    async def test_fan_out_is_bounded(self):
+        self.with_brave()
+        self.backend.and_only = True
+        sites = [f's{i}.example.org' for i in range(8)]
+        result = await self.r.search('one two three four five', sites, 'forums')
+        self.assertLessEqual(len(self.backend.searches), R.MAX_SEARX_REQUESTS * 2)
+        self.assertLessEqual(len(self.backend.brave), R.MAX_BRAVE_PER_CALL)
+        self.assertLessEqual(len(result['sources']), R.MAX_SOURCES)
+
+    async def test_budget_exhaustion_continues_keyless(self):
+        self.with_brave(budget=1)
+        await self.r.search('first', ['docs.example.org'])
+        result = await self.r.search('second', ['docs.example.org'])
+        self.assertEqual(len(self.backend.brave), 1)
+        self.assertTrue(result['sources'])
+        self.assertEqual(result['brave']['refusal'], 'BRAVE_BUDGET_EXHAUSTED')
+        self.assertIn({'from': 'brave', 'to': 'keyless', 'reason': 'BRAVE_BUDGET_EXHAUSTED'}, result['fallbacks'])
+        self.assertIn('BRAVE_BUDGET_EXHAUSTED', result['brave']['summary'])
+
+    async def test_quota_limited_stops_and_rate_limit_does_not(self):
+        self.with_brave()
+        self.backend.brave_status, self.backend.brave_error = 429, 'RATE_LIMITED'
+        result = await self.r.search('first', ['docs.example.org'])
+        self.assertEqual(result['brave']['refusal'], 'BRAVE_HTTP_429_RATE_LIMITED')
+        self.assertEqual(result['brave']['counted_this_period'], 0)
+        self.backend.brave_error = 'QUOTA_LIMITED'
+        result = await self.r.search('second', ['docs.example.org'])
+        self.assertEqual(result['brave']['refusal'], 'BRAVE_HTTP_429_QUOTA_LIMITED')
+        result = await self.r.search('third', ['docs.example.org'])
+        self.assertEqual(result['brave']['refusal'], 'BRAVE_QUOTA_LIMITED')
+        self.assertEqual(len(self.backend.brave), 2)
+        self.assertTrue(result['sources'])
+
+    async def test_scoped_forums_keep_native_queries_intact(self):
+        result = await self.r.search('structured concurrency', ['news.ycombinator.com'], 'forums')
+        self.assertTrue(any('hackernews' in s['engines'] for s in result['sources']))
+        native = [a for a in self.backend.searches if a['engines'] == ['hackernews']]
+        self.assertTrue(native and all('site:' not in a['q'][0] for a in native))
+        self.assertNotIn('meta.discourse', [a['engines'][0] for a in self.backend.searches])
 
     async def test_input_routing_and_domains(self):
         for query in ('!braveapi foo', 'foo !braveapi', '!!google foo', 'foo site:evil.org', 'foo\nbar'):
@@ -119,13 +271,6 @@ class Contracts(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(T.allowed('notexample.org', ['example.org']))
         self.assertTrue(T.allowed('docs.example.org', ['example.org']))
         self.assertEqual(T.hostname('BÜCHER.example'), 'xn--bcher-kva.example')
-
-    async def test_scoped_forums_keep_native_queries_and_do_not_spend_brave(self):
-        result = await self.r.search('structured concurrency', ['news.ycombinator.com'], 'forums')
-        self.assertTrue(result['sources'])
-        self.assertTrue(all('hackernews' in s['engines'] for s in result['sources']))
-        self.assertTrue(all('site:' not in args['q'][0] for args in self.backend.searches))
-        self.assertNotIn('braveapi', [args['engines'][0] for args in self.backend.searches])
 
     async def test_disabled_answer_and_citations(self):
         self.config.enable_answer = False
@@ -323,6 +468,111 @@ class Contracts(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([t.name for t in (await session.list_tools()).tools], ['search', 'answer'])
 
 
+class BraveLedger(unittest.TestCase):
+    HEADERS = {'x-ratelimit-limit': '50, 0', 'x-ratelimit-policy': '50;w=1, 0;w=2678400',
+               'x-ratelimit-remaining': '49, 0', 'x-ratelimit-reset': '1, 1120380'}
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self.tmp.name) / 'ledger.sqlite3'
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def spend(self, ledger, now, headers=None, status=200):
+        grant = ledger.reserve(now)
+        self.assertIsNone(grant.refusal)
+        ledger.settle(grant, status, headers, now=now)
+
+    def test_parse_headers(self):
+        parsed = B.parse_headers(self.HEADERS, 1000)
+        self.assertEqual(parsed, {'observed_at': 1000, 'limit': 0, 'remaining': 0,
+                                  'reset_at': 1000 + 1120380, 'window': 2678400})
+        capped = dict(self.HEADERS, **{'x-ratelimit-limit': '1, 2000', 'x-ratelimit-remaining': '1, 1500'})
+        self.assertEqual(B.parse_headers(capped, 0)['remaining'], 1500)
+        for broken in ({}, dict(self.HEADERS, **{'x-ratelimit-remaining': '49'}),
+                       dict(self.HEADERS, **{'x-ratelimit-reset': '1, x'}),
+                       {'x-ratelimit-limit': '50', 'x-ratelimit-policy': '50;w=1',
+                        'x-ratelimit-remaining': '49', 'x-ratelimit-reset': '1'},
+                       dict(self.HEADERS, **{'x-ratelimit-reset': '1, 99999999'})):
+            self.assertIsNone(B.parse_headers(broken, 0))
+
+    def test_known_period_and_stale_observation(self):
+        ledger = B.Ledger(self.path, 1000)
+        self.spend(ledger, 1000, self.HEADERS)
+        report = ledger.status(2000)
+        self.assertEqual((report['counted_this_period'], report['budget_remaining']), (1, 999))
+        self.assertEqual(report['period_resets_at'], B._iso(1000 + 1120380))
+        self.assertEqual(report['account_remaining'], 'unknown')
+        self.assertEqual(report['quota_observed_at'], B._iso(1000))
+        # After the reset the old observation must not be presented as current.
+        stale = ledger.status(1000 + 1120380 + 5)
+        self.assertEqual(stale['counted_this_period'], 0)
+        self.assertIsNone(stale['period_resets_at'])
+        self.assertIn('unknown', stale['period_basis'])
+        self.assertIn('reset time unknown', B.summary(stale, 0, None))
+
+    def test_account_cap_from_headers(self):
+        ledger = B.Ledger(self.path, 1000)
+        capped = dict(self.HEADERS, **{'x-ratelimit-limit': '50, 2000', 'x-ratelimit-remaining': '49, 1'})
+        self.spend(ledger, 1000, capped)
+        self.assertEqual(ledger.status(1001)['account_remaining'], 0)
+        self.assertEqual(ledger.reserve(1001).refusal, 'BRAVE_ACCOUNT_LIMIT')
+
+    def test_budget_counts_unknown_and_not_billed(self):
+        ledger = B.Ledger(self.path, 2)
+        self.spend(ledger, 1000, self.HEADERS)
+        self.spend(ledger, 1001, self.HEADERS, status=422)
+        self.assertEqual(ledger.status(1002)['counted_this_period'], 1)
+        lost = ledger.reserve(1002)
+        ledger.settle(lost, None, now=1002)  # sent, response lost: may be billed
+        self.assertEqual(ledger.reserve(1003).refusal, 'BRAVE_BUDGET_EXHAUSTED')
+
+    def test_missing_headers_and_establishing_period(self):
+        ledger = B.Ledger(self.path, 1000)
+        first = ledger.reserve(1000)
+        self.assertIsNone(first.refusal)
+        # Until one response establishes the period, concurrent callers wait.
+        self.assertEqual(ledger.reserve(1001).refusal, 'BRAVE_QUOTA_ESTABLISHING')
+        ledger.settle(first, 200, {}, now=1002)
+        self.assertEqual(ledger.reserve(1003).refusal, 'BRAVE_QUOTA_UNKNOWN')
+        self.assertEqual(ledger.status(1003)['account_remaining'], 'unknown')
+
+    def test_concurrent_reservations_never_exceed_budget(self):
+        import threading
+        ledger = B.Ledger(self.path, 1000)
+        self.spend(ledger, 1000, self.HEADERS)
+        budgeted = B.Ledger(self.path, 6)
+        grants, barrier = [], threading.Barrier(20)
+        def reserve():
+            barrier.wait()
+            grants.append(B.Ledger(self.path, 6).reserve(1001))
+        threads = [threading.Thread(target=reserve) for _ in range(20)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(sum(g.refusal is None for g in grants), 5)
+        self.assertEqual({g.refusal for g in grants if g.refusal}, {'BRAVE_BUDGET_EXHAUSTED'})
+        self.assertEqual(budgeted.status(1002)['counted_this_period'], 6)
+
+    def test_ledger_unavailable_refuses(self):
+        blocker = Path(self.tmp.name) / 'file'
+        blocker.write_text('x')
+        ledger = B.Ledger(blocker / 'ledger.sqlite3', 1000)
+        self.assertEqual(ledger.reserve().refusal, 'BRAVE_LEDGER_UNAVAILABLE')
+        self.assertIn('unavailable', B.summary(ledger.status(), 0, None))
+
+    def test_network_failure_never_leaks_the_key(self):
+        brave = B.Brave('fixture-brave-key', B.Ledger(self.path, 1000), 'http://127.0.0.1:9')
+        with self.assertRaises(T.ResearchError) as error:
+            asyncio.run(brave.search('query'))
+        self.assertTrue(str(error.exception).startswith('BRAVE_'))
+        self.assertNotIn('fixture-brave-key', str(error.exception))
+        self.assertEqual(B.Ledger(self.path, 1000).status()['counted_this_period'], 1)
+        self.assertNotIn(b'fixture-brave-key', self.path.read_bytes())
+
+
 class Provisioning(unittest.TestCase):
     def test_codex_template_uses_the_public_launcher(self):
         import tomllib
@@ -411,7 +661,8 @@ class Provisioning(unittest.TestCase):
                 launcher.launch_environment(True)
 
     def test_descriptions_expose_credit_and_provenance_contract(self):
-        for text in ('sites', 'forums', 'metered', 'untrusted', 'repository-local'):
+        for text in ('sites', 'forums', 'metered', 'budget', 'untrusted', 'repository-local', 'not pages read',
+                     'outside this workspace', 'GitHub tools or gh'):
             self.assertIn(text, R.SEARCH_DESCRIPTION)
         self.assertIn('No Brave escalation', R.ANSWER_DESCRIPTION)
 

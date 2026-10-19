@@ -120,9 +120,8 @@ def main() -> None:
     # pre-split `$AILOCAL_CONFIG/.env` leaves the generated secrets where
     # nothing reads them, and `start` then fails its pre-flight check.
     #
-    # BRAVE_API is a placeholder: settings.yml configures the engine, so
-    # rendering requires a value, but this suite never issues a search and so
-    # spends no quota.
+    # BRAVE_API is a placeholder: it proves the key reaches the research
+    # launcher, but this suite never issues a search and so spends no quota.
     (state / "env").write_text("LITELLM_MASTER_KEY=sk-integration-test-only\n"
                                "SEARXNG_SECRET=integration-test-only\n")
     (state / "env").chmod(0o600)
@@ -138,6 +137,8 @@ def main() -> None:
              'from ailocal import mcp; e=mcp.launch_environment(); '
              'assert e["LOCAL_RESEARCH_MODEL"] == "ailocal-fast"; '
              'assert e["LOCAL_RESEARCH_ENABLE_ANSWER"] == "0"; '
+             'assert e["LOCAL_RESEARCH_BRAVE_BUDGET"] == "1000"; '
+             'assert e["LOCAL_RESEARCH_BRAVE_KEY"] == "integration-test-placeholder"; '
              'print("research launch config ok")'], env)
     check(r.returncode == 0 and 'research launch config ok' in r.stdout,
           'research launcher resolves installed policy without a checkout', r.stderr[-300:])

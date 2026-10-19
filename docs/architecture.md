@@ -41,7 +41,7 @@ $AILOCAL_STATE/                 what LiteLLM mounts, plus the marker (inherits u
 │   ├── config.yaml             proxy configuration
 │   └── capabilities.json       capability → backend, context (read by the hooks)
 ├── searxng/
-│   └── settings.yml            rendered; carries the Brave key, mode 0600
+│   └── settings.yml            rendered; may carry the GitHub search token, mode 0600
 ├── env                         GENERATED. the master key and SearXNG secret, mode 0600
 ├── agents/preload.sh           the login LaunchAgent's program
 └── captures/                   writable by the proxy; opt-in payload capture
@@ -91,7 +91,7 @@ The complete on-disk footprint of `ailocal install` and the optional `ailocal cl
 | `active-profile` | `install` | The selected tier; the sole writer is `select_tier()`. |
 | `litellm/config.yaml`, `litellm/capabilities.json` | `generation` | Bind-mounted into the proxy container. |
 | `litellm-config.sha` | `runtime` | Restart fingerprint. *(start path)* |
-| `searxng/settings.yml` | `runtime` | Rendered from the shipped template; carries the Brave key, parent dir 0700. *(start path)* |
+| `searxng/settings.yml` | `runtime` | Rendered from the shipped template; may carry the GitHub search token, parent dir 0700. *(start path)* |
 | `agents/preload.sh` | `install` | Program for the preload LaunchAgent. Resolves the model tag at run time so it can never warm a stale one. *(launchd path)* |
 
 The config root inherits the umask; the state root is `0700`, set when the generated environment is written, because it holds the master key. Secrets are protected per file as well (`env`, `.env.local` at 0600) and by the deployed-client root's own 0700, not by the state root.
@@ -145,7 +145,7 @@ Profiles and client templates are not visible to the container.
 
 | Mount | Kind | Why |
 |---|---|---|
-| `$AILOCAL_SEARXNG_SETTINGS → /etc/searxng/settings.yml:ro` | generated | carries the Brave key; rendered outside the checkout so committing it is impossible |
+| `$AILOCAL_SEARXNG_SETTINGS → /etc/searxng/settings.yml:ro` | generated | may carry the GitHub search token; rendered outside the checkout so committing it is impossible |
 | `<package>/resources/deploy/searxng/limiter.toml → /etc/searxng/limiter.toml:ro` | shipped | bot-detection policy |
 
 Ollama runs on the host, not in a container, and is reached at `OLLAMA_HOST`.
@@ -230,7 +230,7 @@ A delegated subagent gets what it declares minus `Grep`/`Glob`; the matrix and m
 
 The bundled `resources/integrations/local-research/` subprocess uses the official MCP SDK in its own state-root venv, following ADR 011. `ailocal mcp research` supplies configuration through existing policy and environment readers; the component imports no ailocal code. Provisioning uses Claude Code's native `mcp add-json` command with `CLAUDE_CONFIG_DIR` set to claude-local's owned root, preserves other servers, and refuses a foreign registration collision. The generated codex-local template registers the same launcher and receives the same routing skill. [REAL] Codex 0.163.0 completed `research.search` through the local proxy on 2026-10-18, replacing the earlier version's restriction for this server. Hosted clients remain Cadence's responsibility.
 
-Search uses SearXNG's JSON API, filters by requested engine attribution and DNS site scope, and reports provider failures. Keyless `web` is the default; only explicit `forums` and `brave` presets can use Brave. Optional synthesis uses `ailocal-fast` through LiteLLM with no tools, no conversation history and no hosted fallback. It is disabled in the normal claude-local registration because of the shared inference slot. [ADR 014](adr/014-local-research.md) records this evidence and inference boundary.
+Search plans a bounded set of SearXNG requests per preset, filters by engine attribution and DNS site scope, merges duplicates across providers, and reports coverage, attempts, fallbacks and provider failures. Brave is called directly, only from here, behind a cross-process ledger (`brave-ledger.sqlite3`) that reserves each request before sending it; see [ADR 015](adr/015-research-routing-and-brave-budget.md). Optional synthesis uses `ailocal-fast` through LiteLLM with no tools, no conversation history and no hosted fallback. It is disabled in the normal claude-local registration because of the shared inference slot. [ADR 014](adr/014-local-research.md) records this evidence and inference boundary.
 
 Public-page fetching checks all resolved addresses and redirects, pins connections to validated public addresses, verifies TLS hostnames, refuses credentials in URLs, and ignores ambient proxy settings. Only HTML/plain text is read, with no browser, subresources or login bypass. Limits are 10 search results, 4 fetched pages, 1 MiB per response, 8,000 extracted characters per page, 24,000 evidence characters, 800 output tokens and 120 seconds per tool call; the launcher lowers input/output budgets to fit the selected role. Character accounting is approximate; the proxy enforces its actual token window. Failures remain visible as source provenance or MCP tool errors. Cancellation closes pending network work.
 
