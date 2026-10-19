@@ -324,6 +324,23 @@ class Contracts(unittest.IsolatedAsyncioTestCase):
 
 
 class Provisioning(unittest.TestCase):
+    def test_codex_template_uses_the_public_launcher(self):
+        import tomllib
+        template = (REPO/'src/ailocal/resources/clients/codex/config.template.toml').read_text()
+        servers = tomllib.loads(template)['mcp_servers']
+        self.assertEqual(servers, {'research': {'command': 'ailocal', 'args': ['mcp', 'research']}})
+        from ailocal.checks.config import check_codex_no_mcp
+        from ailocal.checks import PASS, FAIL
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root/'codex/config.toml'
+            path.parent.mkdir()
+            path.write_text(template)
+            with patch('ailocal.checks.config.P.deployed_client_root', return_value=root):
+                self.assertEqual(check_codex_no_mcp().status, PASS)
+                path.write_text(template.replace('args = ["mcp", "research"]', 'args = ["mcp", "wrong"]'))
+                self.assertEqual(check_codex_no_mcp().status, FAIL)
+
     def test_registration_preserves_other_servers_and_is_idempotent(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)

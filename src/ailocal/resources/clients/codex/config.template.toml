@@ -7,16 +7,8 @@
 # from the active profile on every sync. Hand edits to those keys are silently
 # overwritten.
 #
-# NO [mcp_servers.*] BLOCKS, BY POLICY. codex-local intentionally has no grepai
-# MCP, no LSP MCP and no GitHub MCP. TWO layers block it, and they are recorded
-# separately in Cadence's client-capabilities.yaml rather than competing as one
-# explanation: the TRANSPORT layer (LiteLLM strips type:"namespace" before the
-# local backend) and the CLIENT layer (Codex's router refuses both the bare and
-# the mcp__-prefixed name — openai/codex#20652, version-scoped, not a property
-# of Codex). Either alone is sufficient, so an MCP server here advertises a
-# surface it cannot drive. ailocal
-# used to re-run `cadence mcp sync` after this rewrite to put them back --
-# that behaviour was removed. An empty MCP section is the correct state.
+# [REAL] Codex 0.163.0 completed research.search through the local proxy on
+# 2026-10-18. Other servers remain outside this component's measured scope.
 model_auto_compact_token_limit = 0
 model_context_window = 0
 # ── ailocal provider — injected by `ailocal clients` ────────────────────
@@ -98,6 +90,10 @@ wire_api   = "responses"
 stream_idle_timeout_ms = 600000   # 10 min — cover cold prompt-processing on large contexts
 stream_max_retries     = 10
 request_max_retries    = 4
+
+[mcp_servers.research]
+command = "ailocal"
+args = ["mcp", "research"]
 
 # ── Skills budget ───────────────────────────────────────────────────────────
 # Codex reserves a hardcoded ~2% of the context window for skill metadata. Its
