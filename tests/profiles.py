@@ -970,6 +970,32 @@ def policy_checks() -> None:
     check(not missing, "every command resolves to a real implementation",
           "; ".join(missing))
 
+    # --help must never reach an implementation: `clients --help` once
+    # configured every client. A stub main proves nothing was dispatched.
+    own_help = {"install", "check"}
+    check(set(cli.USAGE) == set(cli.COMMANDS) - own_help,
+          "every command without its own help has a --help usage",
+          f"missing={sorted(set(cli.COMMANDS) - own_help - set(cli.USAGE))}")
+    import contextlib, io
+    dispatched = []
+    real_import = importlib.import_module
+    importlib.import_module = lambda _name: type("M", (), {"main": staticmethod(
+        lambda argv: dispatched.append(argv) or 0)})
+    try:
+        for name in cli.USAGE:
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                code = cli.main([name, "--help"])
+            check(code == 0 and out.getvalue().startswith(f"usage: ailocal {name}"),
+                  f"`ailocal {name} --help` prints usage", out.getvalue()[:80])
+    finally:
+        importlib.import_module = real_import
+    check(not dispatched, "--help dispatches no command", repr(dispatched))
+    from ailocal.checks import run as check_run
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        code = check_run.main(["check", "--help"])
+    check(code == 0 and out.getvalue().startswith("usage: ailocal check"),
+          "`ailocal check --help` prints usage and runs no check", out.getvalue()[:80])
+
     _suite.section("GENERATOR CONSUMES POLICY")
 
 

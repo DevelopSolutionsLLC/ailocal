@@ -123,6 +123,9 @@ def main(argv: list[str]) -> int:
         print("usage: python -m ailocal.checks.run check [--updates] "
               "[--external-search]", file=sys.stderr)
         return 2
+    if {"-h", "--help"} & set(argv):
+        print("usage: ailocal check [--updates] [--external-search]")
+        return 0
     return _check(argv[1:])
 
 
