@@ -1,6 +1,6 @@
 # ADR 015: Research routes itself, and Brave is spent through one budgeted path
 
-**Status:** Accepted · **Date:** 2026-10-19 · **Issue:** [#13](https://github.com/DevelopSolutionsLLC/ailocal/issues/13) · **Revises:** [ADR 014](014-local-research.md)'s Brave clause
+**Status:** Accepted · **Date:** 2026-10-18 · **Issue:** [#13](https://github.com/DevelopSolutionsLLC/ailocal/issues/13) · **Revises:** [ADR 014](014-local-research.md)'s Brave clause
 
 ## Context
 
@@ -8,7 +8,7 @@ ADR 014 spent Brave only through an explicit `forums` or `brave` preset. A reque
 
 An allowance can only be enforced where requests are counted. SearXNG's `braveapi` engine discards Brave's response headers, so neither the SearXNG path nor LiteLLM's WebSearch interception (which queries SearXNG's `general` category) could observe or bound spending. Two uncounted paths reached the same key.
 
-Brave's [rate-limiting guide](https://api-dashboard.search.brave.com/documentation/guides/rate-limiting) (read 2026-10-19) states that `X-RateLimit-Limit`, `-Policy`, `-Remaining` and `-Reset` carry one comma-separated value per window, that a monthly quota of 0 means unlimited, and that only successful requests are counted and billed. It documents a 429 for exceeding a limit and no account-usage API. [REAL] A probe of this account's key returned `Limit: 50, 0`, `Policy: 50;w=1, 0;w=2678400`: no monthly cap is reported, so account-wide remaining allowance is not observable from responses.
+Brave's [rate-limiting guide](https://api-dashboard.search.brave.com/documentation/guides/rate-limiting) (read 2026-10-18) states that `X-RateLimit-Limit`, `-Policy`, `-Remaining` and `-Reset` carry one comma-separated value per window, that a monthly quota of 0 means unlimited, and that only successful requests are counted and billed. It documents a 429 for exceeding a limit and no account-usage API. [REAL] A probe of this account's key returned `Limit: 50, 0`, `Policy: 50;w=1, 0;w=2678400`: no monthly cap is reported, so account-wide remaining allowance is not observable from responses.
 
 ## Decision
 

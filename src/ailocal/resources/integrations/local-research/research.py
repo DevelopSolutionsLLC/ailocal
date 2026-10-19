@@ -19,7 +19,7 @@ from transport import SECRET_PARAMETERS, ResearchError, allowed, hostname, reque
 
 # Each preset is a bounded plan. `native` engines speak their own API and are
 # bound to a host; `broad` engines take web query syntax; `communities` are
-# reached by site narrowing. [REAL] 2026-10-19: Yahoo honoured site: on reddit,
+# reached by site narrowing. [REAL] 2026-10-18: Yahoo honoured site: on reddit,
 # HN, Stack Exchange, lobste.rs and community.openai.com; Yep mostly ignored it,
 # so it narrows only explicitly requested sites, where off-site results are
 # filtered anyway. Hacker News search is AND-only: a sentence returned 0
