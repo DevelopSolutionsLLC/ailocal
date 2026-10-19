@@ -526,6 +526,7 @@ def install_vscode(argv: list[str]) -> int:
         _prune_deprecated(user_dir / "settings.json", dry)
         if not dry:
             _ensure_recommended(user_dir / "settings.json")
+            provision_vscode_research(user_dir / "mcp.json")
     except OSError as exc:
         warn(f"VS Code configuration failed under {user_dir}: {exc}")
         return VSCODE_FAILED
@@ -729,6 +730,44 @@ def provision_local_research(home: Path) -> bool:
             warn('native research MCP registration failed; install Claude Code, then run: ailocal clients claude')
             return False
     install_managed_dir(src / 'skill', home / 'skills/local-research')
+    return True
+
+
+def provision_vscode_research(mcp_json: Path) -> bool:
+    """Register research in VS Code's user mcp.json beside the LiteLLM provider.
+
+    VS Code launched from the Dock inherits launchd's minimal PATH, so the entry
+    names the launcher absolutely. A server named `research` that is not this
+    launcher is someone else's and is left in place."""
+    launcher = shutil.which('ailocal')
+    if not launcher:
+        warn('ailocal is not on PATH; VS Code research MCP not registered')
+        return False
+    entry = {'command': launcher, 'args': ['mcp', 'research']}
+    try:
+        data = json.loads(mcp_json.read_text(encoding='utf-8')) if mcp_json.is_file() else {}
+        existing = data.get('servers', {}).get('research')
+    except (ValueError, AttributeError):
+        warn(f'invalid {mcp_json}; VS Code research MCP registration left untouched')
+        return False
+    if existing is not None and (existing.get('args') != entry['args']
+                                 or Path(existing.get('command', '')).name != 'ailocal'):
+        warn('VS Code already has a different `research` MCP server; it is preserved')
+        return False
+    if provision_mcp_runtime(policy.data_root() / 'integrations/local-research',
+                             'local-research') is None:
+        return False
+    if existing != entry:
+        # VS Code's own CLI owns the write and the file format.
+        _code('--add-mcp', json.dumps({'name': 'research', **entry}))
+        try:
+            written = json.loads(mcp_json.read_text(encoding='utf-8'))['servers']['research']
+        except (OSError, ValueError, KeyError, TypeError):
+            written = None
+        if written != entry:
+            warn('VS Code research MCP registration failed; run: ailocal clients vscode')
+            return False
+    info('research MCP registered for VS Code Copilot Chat')
     return True
 
 
