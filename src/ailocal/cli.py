@@ -6,6 +6,7 @@ that same table, which is the only way the two cannot drift.
 """
 from __future__ import annotations
 
+import io
 import json
 import sys
 
@@ -129,6 +130,11 @@ def _profile(argv: list[str]) -> int:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     cmd = argv.pop(0) if argv else "help"
+    # Redirected stdout is block-buffered, while the docker, brew and code
+    # children it runs write straight to the descriptor: a saved install log
+    # printed their output before the step that started them.
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(line_buffering=True)
 
     if cmd in ("help", "-h", "--help"):
         print(_usage())
