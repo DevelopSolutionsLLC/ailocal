@@ -111,6 +111,8 @@ def main() -> None:
     check((installed_data / "deploy" / "litellm" / "hooks"
            / "tool_gateway.py").is_file(),
           "the proxy hooks ship in the wheel and are read from it")
+    check((installed_data / 'integrations/local-research/server.py').is_file(),
+          'research MCP source ships in the wheel')
     (state / "active-profile").write_text("64gb\n")
     # Neither file is shipped, so both are synthesized here — with the SAME two
     # owners the runtime uses, because `install` is what migrates a legacy
@@ -132,6 +134,13 @@ def main() -> None:
     # THE POINT OF THIS SUITE. From here the source does not exist.
     shutil.rmtree(source)
     check(not source.exists(), "the source checkout is gone")
+    r = run([str(venv / 'bin/python3'), '-c',
+             'from ailocal import mcp; e=mcp.launch_environment(); '
+             'assert e["LOCAL_RESEARCH_MODEL"] == "ailocal-fast"; '
+             'assert e["LOCAL_RESEARCH_ENABLE_ANSWER"] == "0"; '
+             'print("research launch config ok")'], env)
+    check(r.returncode == 0 and 'research launch config ok' in r.stdout,
+          'research launcher resolves installed policy without a checkout', r.stderr[-300:])
 
     _suite.section("ORDINARY COMMANDS RUN WITH NO CHECKOUT")
 

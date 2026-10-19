@@ -147,17 +147,20 @@ def check_no_raw_backend_tags() -> CheckResult:
 # ── deployed client state ───────────────────────────────────────────────────
 
 def check_codex_no_mcp() -> CheckResult:
-    """Codex cannot dispatch namespaced tools, so an empty MCP section is correct."""
+    """The bundled research entry must match the public launcher contract."""
     out = []
     path = P.deployed_client_root() / "codex" / "config.toml"
     if path.is_file():
-        n = sum(1 for ln in path.read_text().splitlines()
-                if ln.startswith("[mcp_servers"))
-        if n:
-            out.append(f"{n} block(s)")
+        import tomllib
+        try:
+            servers = tomllib.loads(path.read_text()).get('mcp_servers', {})
+            if servers.get('research') != {'command': 'ailocal', 'args': ['mcp', 'research']}:
+                out.append('research launcher differs')
+        except (OSError, ValueError):
+            out.append('invalid Codex configuration')
     return CheckResult("codex-mcp", FAIL if out else PASS,
-                       "codex declares zero [mcp_servers.*] blocks" if not out
-                       else f"codex declares MCP blocks — {'; '.join(out)}",
+                       "codex research MCP matches the public launcher" if not out
+                       else f"codex research MCP — {'; '.join(out)}",
                        remediation=None if not out else "ailocal clients codex")
 
 
