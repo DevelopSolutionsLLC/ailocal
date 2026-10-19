@@ -37,15 +37,21 @@ NATIVE_HOSTS = {'hackernews': 'news.ycombinator.com', 'meta.discourse': 'meta.di
                 'codeberg': 'codeberg.org', 'arxiv': 'arxiv.org'}
 # [REAL] issue #9: Reddit pages and JSON require login for direct reads.
 LOGIN_WALLED = ['reddit.com']
-STOPWORDS = set('a an and are as at be by can do does for from how i in is it its me my of on or our people '
-                'search find look online forum forums opinions discussion discussions about the their them '
-                'they this to was what when where which who why with you your face faced facing challenges '
-                'problems issues experiences developing building using making'.split())
+# Keyword reformulation drops English function words and request framing
+# ("search online for what people say about"), never content-bearing terms.
+STOPWORDS = set('a about all an and any are as at be by can do does for from how i in is it its me my of on '
+                'or our that the their them they this to was what when where which who why with you your '
+                'search find look online web forum forums opinion opinions discussion discussions people '
+                'say says think recent latest'.split())
 MAX_SEARX_REQUESTS = 12
 MAX_BRAVE_PER_CALL = 2
 MAX_SOURCES = 12
 THIN_SOURCES = 5
 SEARCH_DEADLINE = 45
+# Identical calls a session may make: the second is served with a warning, later
+# ones are refused so a looping caller gets a definite signal instead of the
+# same cached result indefinitely.
+REPEAT_LIMIT = 2
 SEARCH_DESCRIPTION = (
     'Search external sources (the web, technical forums, code hosts and academic indexes) and return '
     'attributed result snippets.\n\n'
@@ -234,9 +240,19 @@ def page_excerpt(value, question):
 
 
 def keywords(query):
-    """At most three distinctive terms, for AND-only native search APIs."""
-    terms = [t for t in re.findall(r"[\w][\w.+#-]*", query) if t.lower() not in STOPWORDS]
-    return ' '.join(terms[:3])
+    """At most three distinctive terms, in query order, for AND-only native search APIs.
+
+    Technical tokens (acronyms, mixed case, digits) rank first, then longer
+    words; ordinary short words are the most likely to over-constrain an AND
+    match without narrowing the topic.
+    """
+    terms = list(dict.fromkeys(t for t in re.findall(r"[\w][\w./+#-]*", query) if t.lower() not in STOPWORDS))
+    def rank(item):
+        index, term = item
+        technical = term.isupper() or any(c.isdigit() for c in term) or any(c.isupper() for c in term[1:])
+        return (not technical, -len(term), index)
+    keep = sorted(sorted(enumerate(terms), key=rank)[:3])
+    return ' '.join(term for _, term in keep)
 
 
 def identity(url):
@@ -253,6 +269,7 @@ class Research:
         self.cache = Cache(config.state)
         self.brave = Brave(config.brave_key, Ledger(config.state / 'brave-ledger.sqlite3', config.brave_budget),
                            config.brave_url)
+        self.calls: dict[str, int] = {}
 
     @staticmethod
     def validate(query, sites):
@@ -282,11 +299,23 @@ class Research:
 
     async def search(self, query: str, sites: list[str] | None = None,
                      preset: str | None = None, use_brave: bool | None = None) -> dict:
+        q, scope = self.validate(query, sites)
+        signature = json.dumps([' '.join(q.lower().split()), scope, preset or 'web', use_brave])
+        seen = self.calls.get(signature, 0)
+        if seen >= REPEAT_LIMIT:
+            raise ResearchError('REPEATED_CALL: this exact search already ran in this session and its results '
+                                'have not changed; change the query, sites or preset, or answer from the '
+                                'sources already returned')
         try:
             async with asyncio.timeout(min(self.config.deadline, SEARCH_DEADLINE)):
-                return await self._search(query, sites, preset, use_brave)
+                result = await self._search(query, sites, preset, use_brave)
         except TimeoutError:
             raise ResearchError('DEADLINE_EXCEEDED: narrow the research request') from None
+        self.calls[signature] = seen + 1
+        if seen:
+            result['warnings'].append('REPEATED_CALL: identical to an earlier search in this session; '
+                                      'refine it or answer from these sources')
+        return result
 
     def plan(self, query, sites, preset, names):
         """Stage-one attempts: (engines, query, site, form). Bounded by construction."""
