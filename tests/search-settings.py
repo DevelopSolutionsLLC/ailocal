@@ -46,7 +46,7 @@ class SearchSettings(unittest.TestCase):
         self.assertRegex(text, r'(?m)^      - github code$')
 
     def test_brave_is_never_a_searxng_engine(self):
-        # Brave is spent only through the research ledger (ADR 015); an engine
+        # Brave is spent only through the research ledger (ADR 014); an engine
         # here would be a second, uncounted path to the same allowance.
         text, _ = self.render({'BRAVE_API': 'fixture-brave-value'})
         self.assertNotIn('fixture-brave-value', text)
