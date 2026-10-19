@@ -132,22 +132,22 @@ check "$([ "${h:-0}" -eq 0 ] && echo 0 || echo 1)" \
 codex_checks() {
 GEN="$(_config_root)/codex/config.toml"
 
-echo "CODEX MCP IS WITHHELD"
+echo "CODEX RESEARCH MCP"
 
 check "$([ -f "$GEN" ] && echo 0 || echo 1)" "generated codex config exists"
 
-# 1. The generated artifact carries no MCP server blocks.
+# 1. Only the measured bundled research server is declared.
 n=$(grep -cE '^\[mcp_servers' "$GEN" 2>/dev/null || true)
-check "$([ "${n:-0}" -eq 0 ] && echo 0 || echo 1)" \
-  "generated codex config declares zero [mcp_servers.*] blocks (found ${n:-0})"
+check "$([ "${n:-0}" -eq 1 ] && grep -q '^\[mcp_servers.research\]' "$GEN" && echo 0 || echo 1)" \
+  "generated codex config declares the research MCP only (found ${n:-0})"
 
-# 2. The DEPLOYED artifact, if this machine has one, also carries none. This is
+# 2. The DEPLOYED artifact, if this machine has one, declares the same server.
 #    the copy Codex actually reads, and it is where a re-sync would show up.
 DEPLOYED="${XDG_CONFIG_HOME:-$HOME/.config}/ailocal/codex/config.toml"
 if [ -f "$DEPLOYED" ]; then
   d=$(grep -cE '^\[mcp_servers' "$DEPLOYED" 2>/dev/null || true)
-  check "$([ "${d:-0}" -eq 0 ] && echo 0 || echo 1)" \
-    "deployed codex config declares zero [mcp_servers.*] blocks (found ${d:-0})"
+  check "$([ "${d:-0}" -eq 1 ] && grep -q '^\[mcp_servers.research\]' "$DEPLOYED" && echo 0 || echo 1)" \
+    "deployed codex config declares the research MCP only (found ${d:-0})"
   # Named servers, in case a future template nests them differently.
   for srv in grepai lsp github; do
     h=$(grep -cE "^\[mcp_servers\.${srv}" "$DEPLOYED" 2>/dev/null || true)
@@ -203,10 +203,10 @@ if [ -f "$CONTRACT" ] && command -v jq >/dev/null 2>&1; then
 
   exec_codex=$(jq -r '.compatibility.codex_mcp_lsp.execution' "$CONTRACT")
   check "$([ "$exec_codex" = "withheld_client_incompatible" ] && echo 0 || echo 1)" \
-    "codex MCP is classified as withheld, not as a failure (got $exec_codex)"
+    "unmeasured Codex LSP remains withheld (got $exec_codex)"
 
-  # The contract claim and the artifact must not diverge: zero blocks <=> false.
-  blocks=$(grep -cE '^\[mcp_servers' "$GEN" 2>/dev/null || true)
+  # Research dispatch does not establish LSP capability.
+  blocks=$(grep -cE '^\[mcp_servers\.(lsp|grepai)' "$GEN" 2>/dev/null || true)
   check "$([ "$cfg_codex" = "false" ] && [ "${blocks:-0}" -eq 0 ] && echo 0 || echo 1)" \
     "contract and generated codex config agree (configured=$cfg_codex, blocks=${blocks:-0})"
 

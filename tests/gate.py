@@ -177,7 +177,7 @@ def _gate_suites(repo: pathlib.Path, full: bool) -> list:
         ("INTEGRATION", [
             ("client role alias overrides (defaults intact, fails closed)",
              ["/bin/bash", "tests/clients.sh", "roles"]),
-            ("codex MCP is withheld (no grepai/lsp/github, no re-sync)",
+            ("codex research MCP (no unrelated servers or global re-sync)",
              ["/bin/bash", "tests/clients.sh", "codex"]),
             ("codex trust records survive regeneration (projects, hooks)",
              [py, "tests/codex-trust-records.py"]),

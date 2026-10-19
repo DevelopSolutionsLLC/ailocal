@@ -149,7 +149,7 @@ To upgrade: `pipx upgrade ailocal && ailocal start`.
 |---|---|
 | Claude Code | Fully supported — tools, web search, language servers, and local artifacts |
 | VS Code Copilot | Supported for chat and code completion |
-| Codex CLI | Supported — interactive and `exec` sessions, tools, file edits and web search. MCP servers are not provisioned |
+| Codex CLI | Supported — interactive and `exec` sessions, tools, file edits, web search and the bundled research MCP (dispatch measured on 0.163.0) |
 
 Any OpenAI- or Anthropic-compatible app also works directly: point it at `http://127.0.0.1:4000` with the key in `~/.local/state/ailocal/env`.
 
@@ -199,7 +199,7 @@ GitHub code search (`!ghc`) is optional: add `GITHUB_SEARCH_TOKEN=` to `~/.confi
 
 ### Site-scoped research
 
-`ailocal clients claude` provisions the bundled research MCP for claude-local. Its `search(query, sites?, preset?)` tool returns source URLs, snippets and engine attribution; `sites` accepts hostnames such as `["reddit.com"]`. Presets are `web` (default keyless Yahoo/Yep), `code`, `forums`, `research`, and `brave`. `forums` may search Reddit through Brave; `forums` and `brave` can consume Brave credits. Other presets do not escalate to Brave.
+`ailocal clients claude` and `ailocal clients codex` provision the bundled research MCP for their respective local clients. Its `search(query, sites?, preset?)` tool returns source URLs, snippets and engine attribution; `sites` accepts hostnames such as `["reddit.com"]`. Presets are `web` (default keyless Yahoo/Yep), `code`, `forums`, `research`, and `brave`. `forums` may search Reddit through Brave; `forums` and `brave` can consume Brave credits. Other presets do not escalate to Brave.
 
 The stable stdio launcher is `ailocal mcp research`. Experimental `answer(question, sites?)` additionally reads bounded public pages and synthesizes a cited answer through the local proxy. It is disabled by default because claude-local shares its inference slot; a separately configured caller can explicitly launch `ailocal mcp research --enable-answer`. Hosted Claude, Codex and Copilot registration is separate work owned by Cadence. ailocal changes none of their configuration.
 
