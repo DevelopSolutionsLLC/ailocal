@@ -606,7 +606,8 @@ def target_codex() -> None:
                    home / "AGENTS.md", claude_only=False)
     info(f"{home / 'AGENTS.md'} written (protocol + build checklist)")
     retire_managed_dir(home / "prompts")
-
+    provision_mcp_runtime(data / 'integrations/local-research', 'local-research')
+    install_managed_dir(data / 'integrations/local-research/skill', home / 'skills/local-research')
 
     if (Path.home() / ".codex" / "config.toml").is_file():
         warn("~/.codex/config.toml still exists — plain 'codex' keeps using it "
@@ -622,6 +623,25 @@ def target_codex() -> None:
 def _artifact_source() -> Path:
     """The component ships inside the package, like deploy/ and clients/."""
     return policy.data_root() / "integrations/local-artifacts"
+
+
+def provision_mcp_runtime(src: Path, name: str) -> Path | None:
+    """One runtime lifecycle for bundled MCP components, separate from core."""
+    venv = policy.state_root() / name / '.venv'
+    py = venv / 'bin/python'
+    req = src / 'requirements.txt'
+    if not py.is_file():
+        if _sh(sys.executable, '-m', 'venv', '--clear', str(venv)) or not py.is_file():
+            warn(f'could not create {name} runtime')
+            return None
+    stamp = venv / '.requirements.sha'
+    want = hashlib.sha256(req.read_bytes()).hexdigest()
+    if not stamp.is_file() or stamp.read_text().strip() != want:
+        if _sh(str(py), '-m', 'pip', 'install', '-q', '-r', str(req)):
+            warn(f'could not install {name} runtime dependencies')
+            return None
+        stamp.write_text(want + '\n')
+    return py
 
 
 def provision_local_artifacts(home: Path) -> bool:
@@ -640,33 +660,9 @@ def provision_local_artifacts(home: Path) -> bool:
         warn("bundled artifact component missing from the package")
         return False
 
-    venv = policy.state_root() / "local-artifacts" / ".venv"
-    py = venv / "bin" / "python"
-    req = src / "requirements.txt"
-    if not py.is_file():
-        step("Provisioning the artifact runtime")
-        # --clear: once its interpreter is removed (a Homebrew Python upgrade)
-        # a venv keeps dangling bin/python links, and `venv` over the existing
-        # directory leaves them in place and still exits 0. The venv is in the
-        # disposable state root, so rebuilding it loses nothing.
-        r = _sh(sys.executable, "-m", "venv", "--clear", str(venv))
-        if r != 0 or not py.is_file():
-            warn("could not create the artifact venv — artifacts unavailable")
-            return False
-    stamp = venv / ".requirements.sha"
-    want = (hashlib.sha256(req.read_bytes()).hexdigest()
-            if req.is_file() else "")
-    have = stamp.read_text().strip() if stamp.is_file() else ""
-    if have != want:
-        _sh(str(py), "-m", "pip", "install", "-q", "--upgrade", "pip")
-        r = _sh(str(py), "-m", "pip", "install", "-q", "-r", str(req))
-        if r != 0:
-            warn("could not install the artifact runtime dependency (mcp)")
-            return False
-        stamp.write_text(want + "\n")
-        info(f"artifact runtime ready ({venv})")
-    else:
-        skip("artifact runtime already provisioned")
+    py = provision_mcp_runtime(src, 'local-artifacts')
+    if py is None:
+        return False
 
     # MCP registration, merged.
     cj = home / ".claude.json"
@@ -696,6 +692,43 @@ def provision_local_artifacts(home: Path) -> bool:
     if not shutil.which("node"):
         warn("node is not on PATH — every artifact format works except "
              "'architecture', which uses the bundled elkjs for layout")
+    return True
+
+
+def provision_local_research(home: Path) -> bool:
+    """Merge only ailocal's research entry; never displace a foreign server."""
+    src = policy.data_root() / 'integrations/local-research'
+    cj = home / '.claude.json'
+    try:
+        data = json.loads(cj.read_text()) if cj.is_file() else {}
+        servers = data.setdefault('mcpServers', {})
+        if not isinstance(servers, dict):
+            raise ValueError
+        from .mcp import registration
+        entry = registration()
+        existing = servers.get('research')
+        if existing is not None and existing != entry:
+            warn('research MCP registration collision; existing server preserved')
+            return False
+    except (ValueError, AttributeError):
+        warn('invalid .claude.json; research MCP registration left untouched')
+        return False
+    if provision_mcp_runtime(src, 'local-research') is None:
+        return False
+    if existing != entry:
+        # Native registration owns the write. Explicit isolation is essential:
+        # default user scope would otherwise change the hosted client's home.
+        try:
+            result = subprocess.run(
+                ['claude', 'mcp', 'add-json', '--scope', 'user', 'research', json.dumps(entry)],
+                env=dict(os.environ, CLAUDE_CONFIG_DIR=str(home)),
+                capture_output=True, text=True, timeout=30)
+            if result.returncode or json.loads(cj.read_text()).get('mcpServers', {}).get('research') != entry:
+                raise ValueError
+        except (OSError, ValueError, AttributeError, subprocess.SubprocessError):
+            warn('native research MCP registration failed; install Claude Code, then run: ailocal clients claude')
+            return False
+    install_managed_dir(src / 'skill', home / 'skills/local-research')
     return True
 
 
@@ -739,6 +772,7 @@ def target_claude() -> None:
         info(f"{claude_json} seeded (skips first-run onboarding)")
 
     provision_local_artifacts(home)
+    provision_local_research(home)
 
     print("  Launch with: claude-local  (source ~/.zshrc first)")
     print("  Plain 'claude' still talks to Anthropic's cloud — untouched.")
@@ -930,10 +964,8 @@ def main(argv: list[str]) -> int:
     for name in selected:
         _TARGETS[name]()
 
-    # Codex MCP is WITHHELD BY POLICY, not missing: an empty [mcp_servers.*]
-    # section is the correct outcome, and nothing here may invoke another
-    # tool's global MCP sync to "repair" it.
-    info("Codex MCP intentionally withheld (Codex cannot dispatch namespaced tools)")
+    # Only bundled integrations are provisioned here, never a global MCP sync.
+    info("Codex research MCP enabled (native dispatch measured on Codex 0.163.0)")
     info("  claude-local MCP registrations in .claude.json are preserved.")
 
     report_missing(TARGETS)

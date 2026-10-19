@@ -149,7 +149,7 @@ To upgrade: `pipx upgrade ailocal && ailocal start`.
 |---|---|
 | Claude Code | Fully supported — tools, web search, language servers, and local artifacts |
 | VS Code Copilot | Supported for chat and code completion |
-| Codex CLI | Supported — interactive and `exec` sessions, tools, file edits and web search. MCP servers are not provisioned |
+| Codex CLI | Supported — interactive and `exec` sessions, tools, file edits, web search and the bundled research MCP (dispatch measured on 0.163.0) |
 
 Any OpenAI- or Anthropic-compatible app also works directly: point it at `http://127.0.0.1:4000` with the key in `~/.local/state/ailocal/env`.
 
@@ -196,6 +196,14 @@ The key stays in that file on your machine. It is never committed, never printed
 General searches use Brave (when configured), Yahoo and Yep. Developer registries use the `it` category, research sources use `science`, and individual engines remain reachable by bang, such as `!gh`, `!hn` or `!oa`. Wiby is bang-only (`!wib`).
 
 GitHub code search (`!ghc`) is optional: add `GITHUB_SEARCH_TOKEN=` to `~/.config/ailocal/.env.local`, then run `ailocal start`. Use a fine-grained PAT restricted to public repositories, read-only, with an expiry. Never reuse the `gh` CLI token, which has `repo` scope. Without this token, the engine stays inactive and startup succeeds.
+
+### Site-scoped research
+
+`ailocal clients claude` and `ailocal clients codex` provision the bundled research MCP for their respective local clients. Its `search(query, sites?, preset?)` tool returns source URLs, snippets and engine attribution; `sites` accepts hostnames such as `["reddit.com"]`. Presets are `web` (default keyless Yahoo/Yep), `code`, `forums`, `research`, and `brave`. `forums` may search Reddit through Brave; `forums` and `brave` can consume Brave credits. Other presets do not escalate to Brave.
+
+The stable stdio launcher is `ailocal mcp research`. Experimental `answer(question, sites?)` additionally reads bounded public pages and synthesizes a cited answer through the local proxy. It is disabled by default because claude-local shares its inference slot; a separately configured caller can explicitly launch `ailocal mcp research --enable-answer`. Hosted Claude, Codex and Copilot registration is separate work owned by Cadence. ailocal changes none of their configuration.
+
+Returned sources distinguish full-page text from search snippets and report failed page reads. Source text is untrusted evidence, not instructions; check substantive claims against the cited URLs. Cached search results expire after 15 minutes and page text after 30 minutes. The bounded cache lives under ailocal's disposable state root, contains queries and public evidence, and stores no conversations or synthesized answers. `ailocal check` checks provisioning without issuing a search. See [the architecture](docs/architecture.md#local-research) for limits and ownership.
 
 ## Artifacts
 
