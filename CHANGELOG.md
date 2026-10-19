@@ -2,6 +2,24 @@
 
 Release policy and the meaning of each bump: [RELEASING.md](RELEASING.md).
 
+## Unreleased (0.14.0, minor) — research routes itself, and Brave is budgeted
+
+### Research without naming the tool
+
+`ailocal clients claude`, `codex` and `vscode` provision the bundled research MCP, and each client's instructions route requests for external information to its `search` tool. VS Code registers it in the user `mcp.json` through `code --add-mcp`; other servers and a foreign `research` entry are preserved, and hosted Copilot models see it too because VS Code has no separate local root.
+
+### One budgeted Brave path
+
+**Behaviour change.** `braveapi` is no longer a SearXNG engine, because its engine discards the quota headers. With `BRAVE_API` set, Brave is used only by the research MCP, at most two requests per call when keyless coverage is thin, within `AILOCAL_BRAVE_BUDGET` (default 1,000 per Brave billing period), counted in a ledger under the state root. Every result carries a `brave.summary` line. Brave publishes no usage or balance API, so account-wide usage is `unknown` until Brave refuses a request for quota or balance; set a usage limit in the Brave dashboard for a server-enforced bound.
+
+No migration step: the existing key keeps working, and keyless search is unchanged.
+
+### Fixes
+
+- `ailocal <command> --help` prints usage for every command; `clients --help` used to configure every client and `start --help` to start the stack.
+- `ailocal-code` opens the VS Code profile ailocal configures. `code --profile ailocal` created an empty profile with no connector, provider or research server.
+- Saved logs keep step order; redirected stdout is line-buffered.
+
 ## v0.13.0 — local artifacts, and a smaller `claude-local`
 
 Three things change what a `claude-local` session actually carries, and one corrects a fact this repository had wrong.
