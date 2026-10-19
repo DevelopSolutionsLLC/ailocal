@@ -51,7 +51,7 @@ def _vscode(user_dir, which_code: bool, writes_fail: bool = False) -> int:
     """Run install_vscode against a stubbed VS Code; return its outcome code."""
     saved = (C._vscode_user_dir, C.shutil.which, C._code, C._extensions,
              C._install_extension, C._provider_group, C._prune_deprecated,
-             C._ensure_recommended)
+             C._ensure_recommended, C.provision_vscode_research)
 
     def boom(*a, **k):
         raise OSError(13, "Permission denied")
@@ -65,11 +65,12 @@ def _vscode(user_dir, which_code: bool, writes_fail: bool = False) -> int:
         C._provider_group = boom if writes_fail else (lambda p, dry: None)
         C._prune_deprecated = lambda p, dry: None
         C._ensure_recommended = lambda p: None
+        C.provision_vscode_research = lambda p: True
         return C.install_vscode([])
     finally:
         (C._vscode_user_dir, C.shutil.which, C._code, C._extensions,
          C._install_extension, C._provider_group, C._prune_deprecated,
-         C._ensure_recommended) = saved
+         C._ensure_recommended, C.provision_vscode_research) = saved
 
 
 def main() -> None:

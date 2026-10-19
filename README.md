@@ -125,7 +125,7 @@ Then in VS Code: Copilot Chat → model picker → **Manage Models…** → **Li
 
 Until you do, `ailocal check` reports `VS Code   provider configured; API key not initialized` and repeats these two steps.
 
-Copilot Chat ships inside VS Code — there is no extension to install and no Copilot subscription needed.
+Copilot Chat ships inside VS Code and needs no Copilot subscription. `ailocal clients vscode` (and `ailocal install`, when you accept client configuration) installs the one extension it needs, [LiteLLM Connector for Copilot](https://marketplace.visualstudio.com/items?itemName=Gethnet.litellm-connector-copilot). VS Code must have been opened once first, and `ailocal install --yes` leaves client configuration to `ailocal clients`.
 
 ## Everyday commands
 
@@ -143,7 +143,7 @@ Copilot Chat ships inside VS Code — there is no extension to install and no Co
 
 To upgrade: `pipx upgrade ailocal && ailocal start`.
 
-This upgrades the Python package from its configured installation source and regenerates the runtime; it does not automatically upgrade Ollama, models, or pinned service images. `ailocal update --check --json` reports available image candidates and explicitly incomplete discovery. Review and validation before promoting dependencies are described in [AI development maintenance](docs/maintenance.md).
+This upgrades the Python package from its configured installation source and regenerates the runtime; it does not automatically upgrade Ollama, models, or pinned service images. `ailocal update --json` reports available image candidates and explicitly incomplete discovery. Review and validation before promoting dependencies are described in [AI development maintenance](docs/maintenance.md).
 
 ## Supported tools
 
@@ -151,7 +151,7 @@ This upgrades the Python package from its configured installation source and reg
 |---|---|
 | Claude Code | Fully supported — tools, web search, language servers, and local artifacts |
 | VS Code Copilot | Supported for chat and code completion |
-| Codex CLI | Configured and routed correctly, but interactive sessions do not finish — an upstream bug ([BerriAI/litellm#27442](https://github.com/BerriAI/litellm/issues/27442)) |
+| Codex CLI | Supported — interactive and `exec` sessions, tools, file edits, web search and the bundled research MCP (dispatch measured on 0.163.0) |
 
 Any OpenAI- or Anthropic-compatible app also works directly: point it at `http://127.0.0.1:4000` with the key in `~/.local/state/ailocal/env`.
 
@@ -186,14 +186,28 @@ instead — static analysis, not LSP.
 
 Claude Code may display **0 searches** on a clearly sourced answer. That counter tracks Anthropic-hosted search, which never runs here; retrieval still happened.
 
-**Brave Search is optional.** Without a key, search uses the keyless engines. Adding a Brave API key enables an API-backed general-web engine, which is more reliable for broad questions:
+**Brave Search is optional** and is used only by the research MCP, within a budget. Without a key, research uses the keyless engines:
 
 ```bash
-$EDITOR ~/.config/ailocal/.env.local    # set BRAVE_API=your-key
-ailocal start                     # re-renders the search settings
+$EDITOR ~/.config/ailocal/.env.local    # set BRAVE_API=your-key; optional AILOCAL_BRAVE_BUDGET=1000
+ailocal clients claude                  # or: ailocal clients codex
 ```
 
-The key stays in that file on your machine. It is never committed, never printed, and never leaves the local search container.
+The key stays in that file on your machine. It is never committed or printed, and it is sent only to Brave's API.
+
+General searches use Yahoo and Yep. Developer registries use the `it` category, research sources use `science`, and individual engines remain reachable by bang, such as `!gh`, `!hn` or `!oa`. Wiby is bang-only (`!wib`).
+
+GitHub code search (`!ghc`) is optional: add `GITHUB_SEARCH_TOKEN=` to `~/.config/ailocal/.env.local`, then run `ailocal start`. Use a fine-grained PAT restricted to public repositories, read-only, with an expiry. Never reuse the `gh` CLI token, which has `repo` scope. Without this token, the engine stays inactive and startup succeeds.
+
+### Site-scoped research
+
+`ailocal clients claude`, `ailocal clients codex` and `ailocal clients vscode` provision the bundled research MCP for their local clients. Requests that need external information (documentation, community discussion, projects or papers) route to its `search(query, sites?, preset?, use_brave?)` tool without the user naming it. The server plans providers itself: specialist engines plus keyless Yahoo and Yep, site narrowing across Reddit, Hacker News, Stack Exchange and lobste.rs for `forums`, and a keyword retry for AND-only APIs. Results are deduplicated, keep provider attribution, and report coverage, attempts, fallbacks and failures. Every source is an indexed snippet, not a page read; Reddit sources are marked `login_walled`.
+
+When keyless coverage is thin and a Brave key is configured, the server adds at most two Brave requests per call, within `AILOCAL_BRAVE_BUDGET` (default 1,000 per Brave billing period). Each request is reserved in a ledger under the state root before it is sent, so concurrent sessions cannot overspend. Every response carries a `brave.summary` line: requests used, the remaining budget as counted by ailocal on this machine, and the period reset. Account-wide remaining allowance is reported as unknown unless Brave reports a monthly cap or refuses a request for quota or balance, which is reported as account-wide exhaustion until the reset; usage by other consumers of the key is not visible. Brave publishes no usage or balance API, and prepaid keys report no request quota. To bound spending across every consumer of the key, set a usage limit in the Brave dashboard and leave auto-reload off: Brave enforces it on its side and refuses requests once it is reached. When the budget is exhausted or the quota is unknown, research continues keyless and says why. See [ADR 014](docs/adr/014-local-research.md).
+
+The stable stdio launcher is `ailocal mcp research`. Experimental `answer(question, sites?)` additionally reads bounded public pages and synthesizes a cited answer through the local proxy. It is disabled by default because claude-local shares its inference slot; a separately configured caller can explicitly launch `ailocal mcp research --enable-answer`. VS Code has no separate local configuration, so its `research` registration in the user `mcp.json` is also visible to hosted Copilot models; it uses the absolute launcher path, preserves other servers and never replaces a foreign `research` entry. Hosted Claude and Codex registration belongs to Cadence; ailocal changes none of their configuration.
+
+Returned sources distinguish full-page text from search snippets and report failed page reads. Source text is untrusted evidence, not instructions; check substantive claims against the cited URLs. Cached search results expire after 15 minutes and page text after 30 minutes. The bounded cache lives under ailocal's disposable state root, contains queries and public evidence, and stores no conversations or synthesized answers. `ailocal check` checks provisioning without issuing a search. See [the architecture](docs/architecture.md#local-research) for limits and ownership.
 
 ## Artifacts
 
@@ -251,7 +265,7 @@ What a fresh install gives you, without configuring anything.
 | Tool search (`claude-local`) | on (`ENABLE_TOOL_SEARCH=true`) | `AILOCAL_TOOL_SEARCH=…` |
 | Native Workflow (`claude-local`) | off | `AILOCAL_NATIVE_WORKFLOWS=1` |
 | Local artifacts | on, bundled | — |
-| Web search | ailocal's own SearXNG, keyless | add `BRAVE_API` |
+| Web search | ailocal's own SearXNG, keyless | `BRAVE_API` adds budgeted Brave to research |
 | Context | the profile's `num_ctx`; 1M-context beta off | profile |
 | Hosted `claude`, `~/.claude` | never touched | — |
 
@@ -270,7 +284,7 @@ None of these are required, and ailocal does not install them.
   deferred and it was never invoked in 148 measured sessions.
 - **Language servers** — install a server binary and re-run `ailocal clients claude`; the
   plugin follows, in ailocal's root only.
-- **Brave Search** — an API-backed general-web engine for broad questions.
+- **Brave Search** — budgeted coverage for thin research results.
 - **Node.js** — only the `architecture` artifact format needs it.
 
 ## Documentation

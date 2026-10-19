@@ -526,6 +526,7 @@ def install_vscode(argv: list[str]) -> int:
         _prune_deprecated(user_dir / "settings.json", dry)
         if not dry:
             _ensure_recommended(user_dir / "settings.json")
+            provision_vscode_research(user_dir / "mcp.json")
     except OSError as exc:
         warn(f"VS Code configuration failed under {user_dir}: {exc}")
         return VSCODE_FAILED
@@ -584,7 +585,7 @@ def target_vscode() -> None:
     print("    Copilot Chat → model picker → \"Manage Models…\" → \"LiteLLM\" → "
           "paste it")
     print(f"  (base URL, if asked: {BASE_URL})")
-    print("  Launcher: `ailocal-code [path]` opens the isolated 'ailocal' profile.")
+    print("  Launcher: `ailocal-code [path]` opens VS Code in the profile configured above.")
 
 
 # ── Codex CLI ───────────────────────────────────────────────────────────────
@@ -606,7 +607,10 @@ def target_codex() -> None:
                    home / "AGENTS.md", claude_only=False)
     info(f"{home / 'AGENTS.md'} written (protocol + build checklist)")
     retire_managed_dir(home / "prompts")
-
+    research = provision_mcp_runtime(data / 'integrations/local-research', 'local-research')
+    install_managed_dir(data / 'integrations/local-research/skill', home / 'skills/local-research')
+    if research is not None:
+        info("research MCP enabled for codex-local (native dispatch measured on Codex 0.163.0)")
 
     if (Path.home() / ".codex" / "config.toml").is_file():
         warn("~/.codex/config.toml still exists — plain 'codex' keeps using it "
@@ -614,11 +618,6 @@ def target_codex() -> None:
     if not shutil.which("codex"):
         warn(f"Codex CLI is not installed — {CLIENTS['codex'][1]}")
     print("  Launch with: codex-local exec 'say ok'  (source ~/.zshrc first)")
-    # Stated at deploy time, not only in the README: routing is correct here and
-    # the failure is upstream, so someone whose session hangs should not go
-    # looking for a mistake in this configuration.
-    print("  KNOWN UPSTREAM LIMIT: interactive sessions do not finish streaming")
-    print("    (BerriAI/litellm#27442). `codex-local exec` is unaffected.")
 
 
 
@@ -627,6 +626,25 @@ def target_codex() -> None:
 def _artifact_source() -> Path:
     """The component ships inside the package, like deploy/ and clients/."""
     return policy.data_root() / "integrations/local-artifacts"
+
+
+def provision_mcp_runtime(src: Path, name: str) -> Path | None:
+    """One runtime lifecycle for bundled MCP components, separate from core."""
+    venv = policy.state_root() / name / '.venv'
+    py = venv / 'bin/python'
+    req = src / 'requirements.txt'
+    if not py.is_file():
+        if _sh(sys.executable, '-m', 'venv', '--clear', str(venv)) or not py.is_file():
+            warn(f'could not create {name} runtime')
+            return None
+    stamp = venv / '.requirements.sha'
+    want = hashlib.sha256(req.read_bytes()).hexdigest()
+    if not stamp.is_file() or stamp.read_text().strip() != want:
+        if _sh(str(py), '-m', 'pip', 'install', '-q', '-r', str(req)):
+            warn(f'could not install {name} runtime dependencies')
+            return None
+        stamp.write_text(want + '\n')
+    return py
 
 
 def provision_local_artifacts(home: Path) -> bool:
@@ -645,29 +663,9 @@ def provision_local_artifacts(home: Path) -> bool:
         warn("bundled artifact component missing from the package")
         return False
 
-    venv = policy.state_root() / "local-artifacts" / ".venv"
-    py = venv / "bin" / "python"
-    req = src / "requirements.txt"
-    if not py.is_file():
-        step("Provisioning the artifact runtime")
-        r = _sh(sys.executable, "-m", "venv", str(venv))
-        if r != 0:
-            warn("could not create the artifact venv — artifacts unavailable")
-            return False
-    stamp = venv / ".requirements.sha"
-    want = (hashlib.sha256(req.read_bytes()).hexdigest()
-            if req.is_file() else "")
-    have = stamp.read_text().strip() if stamp.is_file() else ""
-    if have != want:
-        _sh(str(py), "-m", "pip", "install", "-q", "--upgrade", "pip")
-        r = _sh(str(py), "-m", "pip", "install", "-q", "-r", str(req))
-        if r != 0:
-            warn("could not install the artifact runtime dependency (mcp)")
-            return False
-        stamp.write_text(want + "\n")
-        info(f"artifact runtime ready ({venv})")
-    else:
-        skip("artifact runtime already provisioned")
+    py = provision_mcp_runtime(src, 'local-artifacts')
+    if py is None:
+        return False
 
     # MCP registration, merged.
     cj = home / ".claude.json"
@@ -697,6 +695,81 @@ def provision_local_artifacts(home: Path) -> bool:
     if not shutil.which("node"):
         warn("node is not on PATH — every artifact format works except "
              "'architecture', which uses the bundled elkjs for layout")
+    return True
+
+
+def provision_local_research(home: Path) -> bool:
+    """Merge only ailocal's research entry; never displace a foreign server."""
+    src = policy.data_root() / 'integrations/local-research'
+    cj = home / '.claude.json'
+    try:
+        data = json.loads(cj.read_text()) if cj.is_file() else {}
+        servers = data.setdefault('mcpServers', {})
+        if not isinstance(servers, dict):
+            raise ValueError
+        from .mcp import registration
+        entry = registration()
+        existing = servers.get('research')
+        if existing is not None and existing != entry:
+            warn('research MCP registration collision; existing server preserved')
+            return False
+    except (ValueError, AttributeError):
+        warn('invalid .claude.json; research MCP registration left untouched')
+        return False
+    if provision_mcp_runtime(src, 'local-research') is None:
+        return False
+    if existing != entry:
+        # Native registration owns the write. Explicit isolation is essential:
+        # default user scope would otherwise change the hosted client's home.
+        try:
+            result = subprocess.run(
+                ['claude', 'mcp', 'add-json', '--scope', 'user', 'research', json.dumps(entry)],
+                env=dict(os.environ, CLAUDE_CONFIG_DIR=str(home)),
+                capture_output=True, text=True, timeout=30)
+            if result.returncode or json.loads(cj.read_text()).get('mcpServers', {}).get('research') != entry:
+                raise ValueError
+        except (OSError, ValueError, AttributeError, subprocess.SubprocessError):
+            warn('native research MCP registration failed; install Claude Code, then run: ailocal clients claude')
+            return False
+    install_managed_dir(src / 'skill', home / 'skills/local-research')
+    return True
+
+
+def provision_vscode_research(mcp_json: Path) -> bool:
+    """Register research in VS Code's user mcp.json beside the LiteLLM provider.
+
+    VS Code launched from the Dock inherits launchd's minimal PATH, so the entry
+    names the launcher absolutely. A server named `research` that is not this
+    launcher is someone else's and is left in place."""
+    launcher = shutil.which('ailocal')
+    if not launcher:
+        warn('ailocal is not on PATH; VS Code research MCP not registered')
+        return False
+    entry = {'command': launcher, 'args': ['mcp', 'research']}
+    try:
+        data = json.loads(mcp_json.read_text(encoding='utf-8')) if mcp_json.is_file() else {}
+        existing = data.get('servers', {}).get('research')
+    except (ValueError, AttributeError):
+        warn(f'invalid {mcp_json}; VS Code research MCP registration left untouched')
+        return False
+    if existing is not None and (existing.get('args') != entry['args']
+                                 or Path(existing.get('command', '')).name != 'ailocal'):
+        warn('VS Code already has a different `research` MCP server; it is preserved')
+        return False
+    if provision_mcp_runtime(policy.data_root() / 'integrations/local-research',
+                             'local-research') is None:
+        return False
+    if existing != entry:
+        # VS Code's own CLI owns the write and the file format.
+        _code('--add-mcp', json.dumps({'name': 'research', **entry}))
+        try:
+            written = json.loads(mcp_json.read_text(encoding='utf-8'))['servers']['research']
+        except (OSError, ValueError, KeyError, TypeError):
+            written = None
+        if written != entry:
+            warn('VS Code research MCP registration failed; run: ailocal clients vscode')
+            return False
+    info('research MCP registered for VS Code Copilot Chat')
     return True
 
 
@@ -740,6 +813,8 @@ def target_claude() -> None:
         info(f"{claude_json} seeded (skips first-run onboarding)")
 
     provision_local_artifacts(home)
+    if provision_local_research(home):
+        info("research MCP registered for claude-local; other registrations preserved")
 
     print("  Launch with: claude-local  (source ~/.zshrc first)")
     print("  Plain 'claude' still talks to Anthropic's cloud — untouched.")
@@ -928,14 +1003,9 @@ def main(argv: list[str]) -> int:
 
     key = _master_key()
     ensure_shell_sourcing(key)
+    # Only bundled integrations are provisioned here, never a global MCP sync.
     for name in selected:
         _TARGETS[name]()
-
-    # Codex MCP is WITHHELD BY POLICY, not missing: an empty [mcp_servers.*]
-    # section is the correct outcome, and nothing here may invoke another
-    # tool's global MCP sync to "repair" it.
-    info("Codex MCP intentionally withheld (Codex cannot dispatch namespaced tools)")
-    info("  claude-local MCP registrations in .claude.json are preserved.")
 
     report_missing(TARGETS)
 

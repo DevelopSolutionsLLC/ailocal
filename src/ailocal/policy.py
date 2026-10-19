@@ -141,7 +141,7 @@ def ollama_url() -> str:
 def state_root(override_path=None) -> Path:
     """Generated and machine-selected state, OUTSIDE the checkout.
 
-    One artifact -- the rendered SearXNG settings -- carries the Brave API key,
+    One artifact -- the rendered SearXNG settings -- can carry a search token,
     and living outside Git's tree makes committing it impossible rather than
     merely discouraged.
     """

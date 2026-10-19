@@ -24,8 +24,8 @@ assumed tier reports on a configuration the machine is not running.
 
 Two flags, both opt-in because both reach the network beyond the local stack:
 `--updates` asks upstream what image versions exist (it never pulls and never
-rewrites a pin), and `--external-search` issues one federated query, which
-DOES consume metered Brave allowance. Never use it in a loop.
+rewrites a pin), and `--external-search` issues one federated query to the
+keyless general-web engines. It never spends Brave allowance; never loop it.
 """
 
 from __future__ import annotations
@@ -102,7 +102,8 @@ def _check(argv: list[str]) -> int:
     section("Runtime", runtime)
 
     section("Supply chain", S.supply_chain_checks("--updates" in argv))
-    section("Clients", install.client_audit())
+    from ailocal.checks.research import check_research
+    section("Clients", [*install.client_audit(), check_research()])
     section("Installation", install.audit())
     section("Host", H.doctor_only_checks(arch["active"], arch["context_input"]))
 
@@ -122,6 +123,9 @@ def main(argv: list[str]) -> int:
         print("usage: python -m ailocal.checks.run check [--updates] "
               "[--external-search]", file=sys.stderr)
         return 2
+    if {"-h", "--help"} & set(argv):
+        print("usage: ailocal check [--updates] [--external-search]")
+        return 0
     return _check(argv[1:])
 
 

@@ -113,8 +113,7 @@ LiteLLM's response streaming are separate layers and neither implies the other.
 skills and agents. It is **separately owned and entirely optional**; ailocal does not depend
 on it and does not install it.
 
-- **Without Cadence:** `claude-local` works normally. No skills, no Cadence agents, no
-  composed policy file — just Claude Code on local models.
+- **Without Cadence:** `claude-local` works with its bundled artifact and research integrations and their routing skills. No Cadence agents or composed policy file is required.
 - **With Cadence installed later:** it writes into its own instruction and skill roots, which
   `claude-local` already reads. Nothing in ailocal needs to change.
 
@@ -126,8 +125,7 @@ tool.
 
 A subagent receives exactly the tools its definition declares, **minus `Grep` and `Glob`**.
 
-[REAL CURRENT] measured on the wire (Claude Code 2.1.231, this stack), by recording the
-`tools` array of every request:
+[REAL] These wire measurements (Claude Code 2.1.231) record the `tools` array without the research integration. They establish the observed delegation behavior, not the current parent tool count:
 
 | Execution mode | tools | schema bytes |
 |---|---|---|
@@ -143,9 +141,7 @@ tools, so `ToolSearch` cannot acquire them anywhere — and the built-in `Explor
 not have them either. Tool search is not the cause; the same runs with it disabled behave
 identically.
 
-Note the parent figures corroborate the tool-search and Workflow numbers above: 23 tools /
-32,055 bytes against the 24 / 31,221 recorded then, the difference being the bundled artifact
-tool, which did not exist at that measurement.
+The research integration adds an eager search tool. Exact current tool and schema-byte counts have not been remeasured.
 
 Write agent definitions that declare only what arrives, and search with `grep`/`rg` and
 `find` through `Bash`. A subagent also gets `ToolSearch` only if it declares it, so an

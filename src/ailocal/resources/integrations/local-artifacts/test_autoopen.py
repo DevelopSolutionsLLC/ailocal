@@ -62,9 +62,15 @@ def fresh_server_module(tmp, shim, env_extra=None):
     """Import server.py in a subprocess-free way is not possible (module globals
     are per-process), so each scenario runs as its own child process."""
     env = dict(os.environ)
+    # The approved root otherwise falls back to cwd -- this package directory --
+    # and every run leaves .artifacts/ inside the checkout.
+    env.pop("CLAUDE_PROJECT_DIR", None)
+    root = Path(tmp) / "root"
+    root.mkdir(exist_ok=True)
     env.update({
         "PATH": f"{shim}:{env['PATH']}",
         "PYTHONPATH": str(HERE),
+        "LOCAL_ARTIFACTS_ROOT": str(root),
         "XDG_STATE_HOME": str(Path(tmp) / "state"),
         "LOCAL_ARTIFACTS_PORT": str(PORT),
         "LOCAL_ARTIFACTS_IDLE_EXIT": "0",

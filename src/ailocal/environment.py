@@ -49,7 +49,7 @@ GENERATED = ("LITELLM_MASTER_KEY", "SEARXNG_SECRET")
 
 #: Always present in the user file, even when empty. An empty provider key is a
 #: STATEMENT — "I am not using the cloud" — and the renderers already treat it
-#: as one (SearXNG disables the Brave engine rather than failing). Dropping the
+#: as one (research then uses keyless providers only). Dropping the
 #: line would turn that statement back into a question at every upgrade.
 USER_ALWAYS = ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "BRAVE_API", "ENABLE_CLOUD")
 
