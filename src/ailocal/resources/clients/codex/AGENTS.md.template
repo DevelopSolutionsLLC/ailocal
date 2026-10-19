@@ -19,10 +19,10 @@ commands, architecture, or documentation policy.
 
 ## Tool boundary
 
-Codex receives no MCP servers because the validated transport path cannot
-dispatch namespaced tools. Use native filesystem and shell tools. Do not add
-MCP configuration unless the compatibility decision is explicitly revalidated
-and changed.
+The bundled research MCP provides external web search with explicit site and
+provider scope. Native dispatch was measured on Codex 0.163.0 through the local
+proxy. Other MCP servers require separate validation before registration.
+Use filesystem and shell tools for repository code.
 
 ## Context discipline
 
