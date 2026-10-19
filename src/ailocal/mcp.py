@@ -36,8 +36,23 @@ def launch_environment(enable_answer: bool = False) -> dict:
                 'LOCAL_RESEARCH_STATE': str(policy.state_root() / 'local-research'),
                 'LOCAL_RESEARCH_ENABLE_ANSWER': '1' if enable_answer else '0',
                 'LOCAL_RESEARCH_INPUT_CHARS': str(chars),
-                'LOCAL_RESEARCH_OUTPUT_TOKENS': str(min(800, cfg['max_output']))})
+                'LOCAL_RESEARCH_OUTPUT_TOKENS': str(min(800, cfg['max_output'])),
+                # The user's allowance per Brave billing period, not the provider's.
+                'LOCAL_RESEARCH_BRAVE_BUDGET': str(brave_budget()),
+                'LOCAL_RESEARCH_BRAVE_KEY': runtime.env_value('BRAVE_API')})
     return env
+
+
+def brave_budget() -> int:
+    """AILOCAL_BRAVE_BUDGET from the user's .env.local; 0 disables Brave."""
+    value = runtime.env_value('AILOCAL_BRAVE_BUDGET') or '1000'
+    try:
+        budget = int(value)
+    except ValueError:
+        raise RuntimeError('AILOCAL_BRAVE_BUDGET must be a whole number of requests') from None
+    if not 0 <= budget <= 100000:
+        raise RuntimeError('AILOCAL_BRAVE_BUDGET must be between 0 and 100000')
+    return budget
 
 
 def main(argv: list[str]) -> int:

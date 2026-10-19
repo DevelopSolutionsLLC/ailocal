@@ -30,7 +30,9 @@ outgoing:
 #
 # General web is the default for LiteLLM searches. Developer registries and
 # research sources belong to their own categories and remain reachable by bang.
-# Yahoo and Yep are keyless; Brave is enabled only when its optional key is set.
+# Yahoo and Yep are keyless. Brave is deliberately NOT a SearXNG engine: the
+# braveapi engine discards Brave's quota headers, so every Brave request goes
+# through the research MCP's budget ledger instead (docs/adr/014).
 #
 # Weights bias results toward documentation and standards over forum chatter.
 use_default_settings:
@@ -47,19 +49,11 @@ use_default_settings:
       - pypi
       - npm
       - docker hub
-      # Research tier, added 2026-08-03. All three are API-backed and keyless,
-      # so they never take the scraper/CAPTCHA path. Chosen over wikipedia
-      # because they populate results[] -- see the wikipedia note below.
+      # Research tier: API-backed and keyless, so never on the scraper/CAPTCHA
+      # path, and unlike wikipedia they populate results[].
       - arxiv
       - crossref
-      # General-web tier. `braveapi` is the API-backed engine
-      # (api.search.brave.com, X-Subscription-Token) and is NOT the same as
-      # `brave`, which scrapes search.brave.com and takes no key. Upstream
-      # ships braveapi `inactive: true` with an empty api_key, and it already
-      # fails closed on its own: "No API key provided" is raised by the engine.
-      - braveapi
-      # Keyless general web, added for issue #8. Both declare
-      # require_api_key: False in their engine source.
+      # Keyless general web; both declare require_api_key: False upstream.
       - yahoo
       - yep
       - wiby
@@ -84,7 +78,7 @@ engines:
   # ── Scraped general-web: opt-in only ────────────────────────────────────────
   #
   # Disabled by default: scraping becomes unreliable under sustained volume and
-  # fails with CAPTCHAs, not errors. Enable one deliberately if Brave is absent.
+  # fails with CAPTCHAs, not errors. Enable one deliberately if keyless web is thin.
   - name: google cse
     disabled: true
 
@@ -162,8 +156,8 @@ engines:
   # The `general` category is what LiteLLM's web search queries -- it sends no
   # categories. Before issue #8 the registries above were ALSO general, so a
   # question like "how long to boil an egg" came back as npm packages. Now
-  # general is Brave plus two keyless scrapers, so one provider's 429 or an
-  # absent Brave key no longer means zero web results.
+  # general is two keyless scrapers, so one provider's 429 does not mean zero
+  # web results and no general search spends a metered allowance.
   - name: yahoo
     shortcut: yh
     categories: [general]
@@ -181,7 +175,7 @@ engines:
 
   # ── Code forges and registries (category: it, reached with !it or a bang) ──
   # github code needs a token: GitHub's code-search API rejects anonymous calls.
-  # The token is rendered from GITHUB_SEARCH_TOKEN like the Brave key; without
+  # The token is rendered from GITHUB_SEARCH_TOKEN; without
   # one the engine renders inactive. Use a fine-grained, public-repositories,
   # read-only token -- never the gh CLI token, which carries `repo` scope.
   - name: github code
@@ -237,18 +231,6 @@ engines:
     timeout: 6.0
     disabled: false
 
-  # ── General web: Brave Search API ───────────────────────────────────────────
-  #
-  # The default general-web source: an API key instead of scraping, so it does
-  # not CAPTCHA. The key is injected at render time from the environment -- this
-  # file is a template and must never contain the secret.
-  - name: braveapi
-    engine: braveapi
-    shortcut: brv
-    categories: [general, web]
-    api_key: "__BRAVE_API_KEY__"
-    inactive: false
-    disabled: false
 
 ui:
   show_about: false

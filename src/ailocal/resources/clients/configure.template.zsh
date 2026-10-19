@@ -199,4 +199,6 @@ codex-local() {
   CODEX_HOME="$cfg/codex" OPENAI_API_KEY="$key" OPENAI_BASE_URL="$base/v1" command codex "$@"
 }
 
-ailocal-code() { code --profile ailocal "${1:-.}"; }
+# The profile ailocal configures. `--profile ailocal` created an EMPTY profile:
+# no connector, provider group, instructions setting or research server.
+ailocal-code() { code "${1:-.}"; }

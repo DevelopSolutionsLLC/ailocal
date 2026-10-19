@@ -4,44 +4,32 @@ applyTo: "**"
 
 # Local AI stack
 
-You are connected to local Ollama models through a LiteLLM proxy at
-`http://localhost:4000`. No cloud API calls are made. Models are addressed by
-capability name, never by backend model name.
+This chat runs on a local model served by Ollama through the ailocal LiteLLM proxy at `http://localhost:4000`. Models are addressed by capability, never by backend model tag:
 
 | Capability | Use it for |
 |---|---|
-| `architecture` | design, complex refactor, multi-step debugging |
+| `architecture` | design, complex refactoring, multi-step debugging |
 | `implementation` | everyday coding, features, tests |
 | `review` | code review, bug and security detection |
-| `fast` | quick reasoning where latency matters more than depth |
-| `completion` | small completions and IDE autocomplete (FIM) |
+| `fast` | quick answers where latency matters more than depth |
+| `completion` | inline completion (FIM) |
 
-Which capabilities exist, what backs them and how much context they have come
-from the active profile and the generated catalog, which are authoritative and
-deliberately not copied here — an earlier copy of that table drifted three
-context budgets and dropped a capability without anything noticing.
+The active profile and the generated capability catalog are authoritative for which capabilities exist, what backs them and their context limits.
 
-The proxy speaks both OpenAI (`/v1/chat/completions`) and Anthropic
-(`/v1/messages`) formats.
+# External research
 
-# Terminal rules that exist because of this setup
+For information from outside the workspace (documentation, current versions, community discussion, open-source projects, papers), use the `research` MCP server's `search` tool without waiting to be asked, in preference to built-in web fetching. Refine across calls using its coverage and fallbacks, cite results as snippets rather than pages read, and end the answer with the `brave.summary` line from the last search.
 
-Only three, each for a failure specific to running a local model inside VS
-Code's agent terminal. General shell etiquette is not repeated here.
+# Terminal rules
 
-**Never append `exit`, `exit 0`, or `& exit 0`.** It closes the integrated
-terminal before VS Code registers that the command finished, and the turn hangs
-with no error. This is the most common way the agent gets stuck.
+These rules prevent failures specific to running a local model in VS Code's integrated terminal.
 
-**Detach anything long-running** — installs, servers, watchers — with a trailing
-`&` and a log, then read the log in a follow-up call. A local model's turn can
-outlast the terminal's patience, and a blocked terminal blocks the session:
+**Never append `exit`, `exit 0` or `& exit 0` to a command.** It closes the terminal before VS Code registers that the command finished, and the turn hangs without an error.
+
+**Run long-running commands in the background** (installs, servers, watchers) with output redirected to a log, then read the log in a later call. A blocked terminal blocks the whole session:
 
 ```bash
 ailocal start > /tmp/compose.log 2>&1 &
 ```
 
-**Never broadly kill node.** `pkill -f node` or `killall node` in the integrated
-terminal kills VS Code's own extension host *and* the litellm-connector, which
-disconnects your model mid-session. Target a port or PID instead:
-`lsof -ti tcp:PORT | xargs kill`.
+**Never kill processes by name pattern such as `node`.** `pkill -f node` or `killall node` also kills VS Code's extension host and the LiteLLM connector, which disconnects the model mid-session. Target a port or PID instead: `lsof -ti tcp:PORT | xargs kill`.

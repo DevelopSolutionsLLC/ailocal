@@ -526,6 +526,7 @@ def install_vscode(argv: list[str]) -> int:
         _prune_deprecated(user_dir / "settings.json", dry)
         if not dry:
             _ensure_recommended(user_dir / "settings.json")
+            provision_vscode_research(user_dir / "mcp.json")
     except OSError as exc:
         warn(f"VS Code configuration failed under {user_dir}: {exc}")
         return VSCODE_FAILED
@@ -584,7 +585,7 @@ def target_vscode() -> None:
     print("    Copilot Chat → model picker → \"Manage Models…\" → \"LiteLLM\" → "
           "paste it")
     print(f"  (base URL, if asked: {BASE_URL})")
-    print("  Launcher: `ailocal-code [path]` opens the isolated 'ailocal' profile.")
+    print("  Launcher: `ailocal-code [path]` opens VS Code in the profile configured above.")
 
 
 # ── Codex CLI ───────────────────────────────────────────────────────────────
@@ -606,8 +607,10 @@ def target_codex() -> None:
                    home / "AGENTS.md", claude_only=False)
     info(f"{home / 'AGENTS.md'} written (protocol + build checklist)")
     retire_managed_dir(home / "prompts")
-    provision_mcp_runtime(data / 'integrations/local-research', 'local-research')
+    research = provision_mcp_runtime(data / 'integrations/local-research', 'local-research')
     install_managed_dir(data / 'integrations/local-research/skill', home / 'skills/local-research')
+    if research is not None:
+        info("research MCP enabled for codex-local (native dispatch measured on Codex 0.163.0)")
 
     if (Path.home() / ".codex" / "config.toml").is_file():
         warn("~/.codex/config.toml still exists — plain 'codex' keeps using it "
@@ -732,6 +735,44 @@ def provision_local_research(home: Path) -> bool:
     return True
 
 
+def provision_vscode_research(mcp_json: Path) -> bool:
+    """Register research in VS Code's user mcp.json beside the LiteLLM provider.
+
+    VS Code launched from the Dock inherits launchd's minimal PATH, so the entry
+    names the launcher absolutely. A server named `research` that is not this
+    launcher is someone else's and is left in place."""
+    launcher = shutil.which('ailocal')
+    if not launcher:
+        warn('ailocal is not on PATH; VS Code research MCP not registered')
+        return False
+    entry = {'command': launcher, 'args': ['mcp', 'research']}
+    try:
+        data = json.loads(mcp_json.read_text(encoding='utf-8')) if mcp_json.is_file() else {}
+        existing = data.get('servers', {}).get('research')
+    except (ValueError, AttributeError):
+        warn(f'invalid {mcp_json}; VS Code research MCP registration left untouched')
+        return False
+    if existing is not None and (existing.get('args') != entry['args']
+                                 or Path(existing.get('command', '')).name != 'ailocal'):
+        warn('VS Code already has a different `research` MCP server; it is preserved')
+        return False
+    if provision_mcp_runtime(policy.data_root() / 'integrations/local-research',
+                             'local-research') is None:
+        return False
+    if existing != entry:
+        # VS Code's own CLI owns the write and the file format.
+        _code('--add-mcp', json.dumps({'name': 'research', **entry}))
+        try:
+            written = json.loads(mcp_json.read_text(encoding='utf-8'))['servers']['research']
+        except (OSError, ValueError, KeyError, TypeError):
+            written = None
+        if written != entry:
+            warn('VS Code research MCP registration failed; run: ailocal clients vscode')
+            return False
+    info('research MCP registered for VS Code Copilot Chat')
+    return True
+
+
 # ── Claude Code ─────────────────────────────────────────────────────────────
 
 def target_claude() -> None:
@@ -772,7 +813,8 @@ def target_claude() -> None:
         info(f"{claude_json} seeded (skips first-run onboarding)")
 
     provision_local_artifacts(home)
-    provision_local_research(home)
+    if provision_local_research(home):
+        info("research MCP registered for claude-local; other registrations preserved")
 
     print("  Launch with: claude-local  (source ~/.zshrc first)")
     print("  Plain 'claude' still talks to Anthropic's cloud — untouched.")
@@ -961,12 +1003,9 @@ def main(argv: list[str]) -> int:
 
     key = _master_key()
     ensure_shell_sourcing(key)
+    # Only bundled integrations are provisioned here, never a global MCP sync.
     for name in selected:
         _TARGETS[name]()
-
-    # Only bundled integrations are provisioned here, never a global MCP sync.
-    info("Codex research MCP enabled (native dispatch measured on Codex 0.163.0)")
-    info("  claude-local MCP registrations in .claude.json are preserved.")
 
     report_missing(TARGETS)
 
