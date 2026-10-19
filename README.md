@@ -125,7 +125,7 @@ Then in VS Code: Copilot Chat → model picker → **Manage Models…** → **Li
 
 Until you do, `ailocal check` reports `VS Code   provider configured; API key not initialized` and repeats these two steps.
 
-Copilot Chat ships inside VS Code — there is no extension to install and no Copilot subscription needed.
+Copilot Chat ships inside VS Code and needs no Copilot subscription. `ailocal clients vscode` (and `ailocal install`, when you accept client configuration) installs the one extension it needs, [LiteLLM Connector for Copilot](https://marketplace.visualstudio.com/items?itemName=Gethnet.litellm-connector-copilot). VS Code must have been opened once first, and `ailocal install --yes` leaves client configuration to `ailocal clients`.
 
 ## Everyday commands
 
