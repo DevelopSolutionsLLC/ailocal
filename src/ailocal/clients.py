@@ -585,7 +585,7 @@ def target_vscode() -> None:
     print("    Copilot Chat → model picker → \"Manage Models…\" → \"LiteLLM\" → "
           "paste it")
     print(f"  (base URL, if asked: {BASE_URL})")
-    print("  Launcher: `ailocal-code [path]` opens the isolated 'ailocal' profile.")
+    print("  Launcher: `ailocal-code [path]` opens VS Code in the profile configured above.")
 
 
 # ── Codex CLI ───────────────────────────────────────────────────────────────
