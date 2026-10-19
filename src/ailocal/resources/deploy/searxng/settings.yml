@@ -49,13 +49,11 @@ use_default_settings:
       - pypi
       - npm
       - docker hub
-      # Research tier, added 2026-08-03. All three are API-backed and keyless,
-      # so they never take the scraper/CAPTCHA path. Chosen over wikipedia
-      # because they populate results[] -- see the wikipedia note below.
+      # Research tier: API-backed and keyless, so never on the scraper/CAPTCHA
+      # path, and unlike wikipedia they populate results[].
       - arxiv
       - crossref
-      # Keyless general web, added for issue #8. Both declare
-      # require_api_key: False in their engine source.
+      # Keyless general web; both declare require_api_key: False upstream.
       - yahoo
       - yep
       - wiby
