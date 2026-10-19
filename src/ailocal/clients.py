@@ -607,8 +607,10 @@ def target_codex() -> None:
                    home / "AGENTS.md", claude_only=False)
     info(f"{home / 'AGENTS.md'} written (protocol + build checklist)")
     retire_managed_dir(home / "prompts")
-    provision_mcp_runtime(data / 'integrations/local-research', 'local-research')
+    research = provision_mcp_runtime(data / 'integrations/local-research', 'local-research')
     install_managed_dir(data / 'integrations/local-research/skill', home / 'skills/local-research')
+    if research is not None:
+        info("research MCP enabled for codex-local (native dispatch measured on Codex 0.163.0)")
 
     if (Path.home() / ".codex" / "config.toml").is_file():
         warn("~/.codex/config.toml still exists — plain 'codex' keeps using it "
@@ -811,7 +813,8 @@ def target_claude() -> None:
         info(f"{claude_json} seeded (skips first-run onboarding)")
 
     provision_local_artifacts(home)
-    provision_local_research(home)
+    if provision_local_research(home):
+        info("research MCP registered for claude-local; other registrations preserved")
 
     print("  Launch with: claude-local  (source ~/.zshrc first)")
     print("  Plain 'claude' still talks to Anthropic's cloud — untouched.")
@@ -1000,12 +1003,9 @@ def main(argv: list[str]) -> int:
 
     key = _master_key()
     ensure_shell_sourcing(key)
+    # Only bundled integrations are provisioned here, never a global MCP sync.
     for name in selected:
         _TARGETS[name]()
-
-    # Only bundled integrations are provisioned here, never a global MCP sync.
-    info("Codex research MCP enabled (native dispatch measured on Codex 0.163.0)")
-    info("  claude-local MCP registrations in .claude.json are preserved.")
 
     report_missing(TARGETS)
 
