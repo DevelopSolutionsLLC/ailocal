@@ -197,17 +197,17 @@ A non-zero count with search content in the answer confirms retrieval ran.
 
 ## Search returns nothing, or Brave fails
 
-**Likely cause** — SearXNG is not running. Brave is optional: with no key, ailocal renders the `braveapi` engine inactive and search falls back to the keyless engines, which is a supported configuration, not a fault.
+**Likely cause** — SearXNG is not running. Brave is optional and is used only by the research MCP: with no key, research uses the keyless engines, which is a supported configuration, not a fault. A research response's `brave.summary` names any refusal, such as `BRAVE_BUDGET_EXHAUSTED`, `BRAVE_QUOTA_LIMITED` or `BRAVE_QUOTA_UNKNOWN`.
 
 **Verify**
 
 ```sh
 ailocal check     # searxng: JSON API reachable from LiteLLM (no query issued)
                   # searxng-query: one free-engine search really returned results
-                  # brave-key: whether braveapi is configured, and whether it is ACTIVE
+                  # brave-key: whether research has a Brave key; WARN on a stale braveapi render
 ```
 
-`brave-key` reads the rendered settings only — no default check ever spends a Brave query.
+`brave-key` reads configuration only — no default check ever spends a Brave query.
 
 **Fix**
 
@@ -219,12 +219,12 @@ To add or change the Brave key, edit your `.env.local` and restart:
 
 ```sh
 $EDITOR ~/.config/ailocal/.env.local    # set BRAVE_API=your-key; optional GitHub code search: GITHUB_SEARCH_TOKEN=
-ailocal start                     # re-renders the settings with the key
+ailocal start                     # re-renders the settings; the research MCP reads BRAVE_API at launch
 ```
 
 `.env.local` is yours and survives every upgrade; see [security.md](security.md) for where each secret lives.
 
-Search is coding-first: scraped general-web engines are disabled because they fail with CAPTCHAs under sustained use. Brave's API-backed engine restores general-web coverage.
+Search is coding-first: scraped general-web engines are disabled because they fail with CAPTCHAs under sustained use. Research adds budgeted Brave requests when keyless coverage is thin.
 
 **Status** — configuration issue.
 
@@ -262,7 +262,7 @@ ls -ld "${AILOCAL_STATE:-$HOME/.local/state/ailocal}"
 ls -l  "${AILOCAL_STATE:-$HOME/.local/state/ailocal}/searxng/settings.yml"
 ```
 
-Expect `0700` on the root and `0600` on the rendered settings, which carry the Brave key.
+Expect `0700` on the root and `0600` on the rendered settings and the Brave ledger.
 
 **Fix**
 

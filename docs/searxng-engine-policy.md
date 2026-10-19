@@ -2,7 +2,7 @@
 
 [REAL] Measured on 2026-10-18 through the live `127.0.0.1:8080/search?format=json` endpoint, before and after installing the issue #8 change and restarting ailocal. The image remained pinned at `2026.10.17-1c10abe2d`. This is a six-query smoke measurement, with relevance judged manually from the top three titles, not a broad search-quality benchmark. Results and provider availability can change.
 
-LiteLLM sends no category, so SearXNG selects `general`. Developer registries previously participated in that category and displaced web results. Registries now use `it`, literature sources use `science`, and default web search uses Brave (optional key), Yahoo and Yep. Wikipedia and Wiby remain available by bang. GitHub code search is inactive when its optional token is absent.
+LiteLLM sends no category, so SearXNG selects `general`. Developer registries previously participated in that category and displaced web results. Registries now use `it`, literature sources use `science`, and default web search uses Yahoo and Yep. Brave was removed from SearXNG by [ADR 015](adr/015-research-routing-and-brave-budget.md); the tables below record the measurement as taken. Wikipedia and Wiby remain available by bang. GitHub code search is inactive when its optional token is absent.
 
 ## Before
 

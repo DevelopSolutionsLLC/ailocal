@@ -24,8 +24,8 @@ assumed tier reports on a configuration the machine is not running.
 
 Two flags, both opt-in because both reach the network beyond the local stack:
 `--updates` asks upstream what image versions exist (it never pulls and never
-rewrites a pin), and `--external-search` issues one federated query, which
-DOES consume metered Brave allowance. Never use it in a loop.
+rewrites a pin), and `--external-search` issues one federated query to the
+keyless general-web engines. It never spends Brave allowance; never loop it.
 """
 
 from __future__ import annotations

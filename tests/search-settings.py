@@ -37,28 +37,29 @@ class SearchSettings(unittest.TestCase):
     def test_set_credentials(self):
         keys = {'BRAVE_API': 'fixture-brave-value', 'GITHUB_SEARCH_TOKEN': 'fixture-github-value'}
         text, log = self.render(keys)
+        self.assertIn(keys['GITHUB_SEARCH_TOKEN'], text)
         for key in keys.values():
-            self.assertIn(key, text)
             self.assertNotIn(key, log)
         self.assertNotIn('__GITHUB_SEARCH_TOKEN__', text)
-        for engine in ('braveapi', 'github code'):
-            block = re.search(rf'  - name: {engine}\n((?:    .*\n)+)', text)[0]
-            self.assertIn('inactive: false', block)
-            self.assertRegex(text, rf'(?m)^      - {engine}$')
+        block = re.search(r'  - name: github code\n((?:    .*\n)+)', text)[0]
+        self.assertIn('inactive: false', block)
+        self.assertRegex(text, r'(?m)^      - github code$')
+
+    def test_brave_is_never_a_searxng_engine(self):
+        # Brave is spent only through the research ledger (ADR 015); an engine
+        # here would be a second, uncounted path to the same allowance.
+        text, _ = self.render({'BRAVE_API': 'fixture-brave-value'})
+        self.assertNotIn('fixture-brave-value', text)
+        self.assertNotRegex(text, r'(?m)^\s+- (name: )?braveapi\s*$')
+        self.assertNotIn('__BRAVE_API_KEY__', SOURCE.read_text())
 
     def test_unset_credentials(self):
         text, log = self.render({})
-        for engine in ('braveapi', 'github code'):
-            block = re.search(rf'  - name: {engine}\n((?:    .*\n)+)', text)[0]
-            self.assertIn('inactive: true', block)
-            self.assertNotRegex(text, rf'(?m)^      - {engine}$')
+        block = re.search(r'  - name: github code\n((?:    .*\n)+)', text)[0]
+        self.assertIn('inactive: true', block)
+        self.assertNotRegex(text, r'(?m)^      - github code$')
         self.assertIn('GITHUB_SEARCH_TOKEN is unset', log)
         self.assertNotIn('__GITHUB_SEARCH_TOKEN__', text)
-
-    def test_missing_github_does_not_disable_brave(self):
-        text, _ = self.render({'BRAVE_API': 'fixture-brave-value'})
-        self.assertIn('      - braveapi\n', text)
-        self.assertNotIn('      - github code\n', text)
 
     def test_leaks_fail_without_exposing_value(self):
         for variable in ('BRAVE_API', 'GITHUB_SEARCH_TOKEN'):
