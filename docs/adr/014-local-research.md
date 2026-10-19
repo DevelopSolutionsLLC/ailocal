@@ -10,7 +10,7 @@ Search providers may ignore site filters, and some source pages cannot be read. 
 
 Expose `search(query, sites?, preset?)` and optional `answer(question, sites?)` through a bundled MCP component, using [ADR 011's packaging and ownership model](011-bundled-artifacts.md). Enforce site scope on returned URLs and redirects, retain requested-engine attribution, and distinguish page text from indexed snippets in source records. Only public pages may be fetched.
 
-Default search and all delegated answers use keyless engines. Brave use requires an explicit preset that discloses metered usage. Synthesis uses the configured local LiteLLM route, receives evidence rather than client history, and has no tools. There is no hosted fallback. claude-local exposes search by default; delegated answers require an explicit opt-in because of the shared inference slot.
+Default search and all delegated answers use keyless engines. Brave use requires an explicit preset that discloses metered usage. *(Revised by [ADR 015](015-research-routing-and-brave-budget.md): Brave is spent automatically within a ledger-enforced budget; `answer` stays keyless.)* Synthesis uses the configured local LiteLLM route, receives evidence rather than client history, and has no tools. There is no hosted fallback. claude-local exposes search by default; delegated answers require an explicit opt-in because of the shared inference slot.
 
 ailocal registers only its own claude-local integration. Hosted client registration remains separately owned by Cadence.
 

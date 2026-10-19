@@ -15,7 +15,7 @@ import subprocess
 import urllib.error
 import urllib.request
 
-from .. import policy
+from .. import policy, runtime
 from . import BLOCKED, FAIL, PASS, WARN, CheckResult
 
 # One timeout policy. Callers may tighten or extend it for a specific call, but
@@ -373,8 +373,8 @@ def check_generation(token: str, alias: str = "ailocal-fast") -> CheckResult:
 
 #: The one SearXNG query any DEFAULT check may issue. `!wp` restricts dispatch
 #: to Wikipedia, which costs nothing. A bare query fans out to every enabled
-#: engine — including braveapi, which spends a metered Brave allowance on each
-#: call. A local health check must never consume an external quota.
+#: general-web engine, and an optional token-backed engine such as github code
+#: consumes its owner's quota. A local health check must never consume one.
 FREE_ENGINE_QUERY = "!wp test"
 FREE_ENGINE_NAME = "wikipedia"
 
@@ -418,7 +418,7 @@ def check_searxng_query() -> CheckResult:
     """One real search, pinned to a free engine, and PROVE only that engine ran.
 
     Asserting on the returned engine names is the point: a configuration change
-    that re-enables federation would otherwise silently start spending Brave
+    that re-enables federation would otherwise silently start spending external
     quota on every smoke run.
     """
     guard = _searxng_state()
@@ -453,28 +453,23 @@ def check_searxng_query() -> CheckResult:
 
 
 def check_brave_key_configured() -> CheckResult:
-    """Report whether a Brave key is present WITHOUT spending a query."""
+    """Report where Brave can be spent, WITHOUT spending a query or printing the key.
+
+    Brave is spent only through the research MCP's budget ledger. A rendered
+    SearXNG settings file that still names braveapi is a stale render: an
+    uncounted path to the same allowance, until `ailocal start` rewrites it.
+    """
     override = os.environ.get("AILOCAL_SEARXNG_SETTINGS")
     # The state root has one owner; do not re-derive it here.
     settings = (pathlib.Path(override) if override
                 else policy.state_root() / "searxng" / "settings.yml")
-    if not settings.is_file():
-        return CheckResult("brave-key", BLOCKED, "rendered SearXNG settings not readable")
-    text = settings.read_text(errors="replace")
-    m = re.search(r"- name:\s*braveapi(.*?)(?=\n  - name:|\Z)", text, re.S)
-    if not m:
-        return CheckResult("brave-key", PASS, "braveapi engine not configured")
-    body = m.group(1)
-    km = re.search(r"api_key:\s*(\S+)", body)
-    configured = bool(km) and km.group(1) not in ('""', "''", "null", "~")
-    inactive = bool(re.search(r"(inactive|disabled):\s*true", body))
-    if not configured:
-        return CheckResult("brave-key", PASS,
-                           "braveapi present, no key configured "
-                           "(optional; keyless search engines remain available)")
-    return CheckResult("brave-key", PASS,
-                       f"braveapi key configured (engine {'inactive' if inactive else 'ACTIVE'}); "
-                       "default checks never query it")
+    if settings.is_file() and re.search(r"(?m)^  - name:\s*braveapi\s*$", settings.read_text(errors="replace")):
+        return CheckResult("brave-key", WARN, "rendered SearXNG settings still define braveapi "
+                           "(an uncounted Brave path)", remediation="ailocal start")
+    if not runtime.env_value("BRAVE_API"):
+        return CheckResult("brave-key", PASS, "no Brave key; research uses keyless providers only")
+    return CheckResult("brave-key", PASS, "Brave key configured for research only, behind its budget "
+                       "ledger; default checks never query it")
 
 
 def check_searxng_external() -> CheckResult:
@@ -482,7 +477,7 @@ def check_searxng_external() -> CheckResult:
 
     Reached exclusively through `ailocal check --external-search`. Never call
     this from doctor, smoke's default path, the gate, install validation or any
-    stress loop: each call spends a metered Brave query.
+    stress loop: each call reaches every enabled external engine.
     """
     guard = _searxng_state()
     if guard is not None:
@@ -501,7 +496,7 @@ def check_searxng_external() -> CheckResult:
     return CheckResult("searxng-external", PASS,
                        f"federated search returned {lines[0] if lines else 0} result(s) "
                        f"from {lines[1] if len(lines) > 1 else 'no engines'} "
-                       "(external API quota consumed)")
+                       "(keyless external engines queried; no Brave)")
 
 
 def check_search_tool_registered() -> CheckResult:
