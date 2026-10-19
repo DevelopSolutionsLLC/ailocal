@@ -32,7 +32,7 @@ outgoing:
 # research sources belong to their own categories and remain reachable by bang.
 # Yahoo and Yep are keyless. Brave is deliberately NOT a SearXNG engine: the
 # braveapi engine discards Brave's quota headers, so every Brave request goes
-# through the research MCP's budget ledger instead (docs/adr/015).
+# through the research MCP's budget ledger instead (docs/adr/014).
 #
 # Weights bias results toward documentation and standards over forum chatter.
 use_default_settings:
