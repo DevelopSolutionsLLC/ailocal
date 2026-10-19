@@ -124,7 +124,9 @@ class Contracts(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(len(self.backend.searches), calls)
         self.r.cache.db.execute('UPDATE cache SET expires=0')
         self.r.cache.db.commit()
-        self.assertFalse((await self.r.search('task groups', ['docs.example.org']))['cache_hit'])
+        # A third identical call in one session is refused by the repeat guard,
+        # so expiry is observed from a new session sharing the same cache.
+        self.assertFalse((await R.Research(self.config).search('task groups', ['docs.example.org']))['cache_hit'])
         self.assertEqual((Path(self.tmp.name) / 'cache.sqlite3').stat().st_mode & 0o777, 0o600)
 
     def with_brave(self, budget=1000):
@@ -164,11 +166,32 @@ class Contracts(unittest.IsolatedAsyncioTestCase):
 
     async def test_and_only_native_search_is_retried_with_keywords(self):
         self.backend.and_only = True
-        result = await self.r.search('challenges people face developing cybersecurity tools with AI', preset='forums')
+        result = await self.r.search('what do people say about SQLite WAL mode checkpoint starvation in production',
+                                     preset='forums')
         retry = [a for a in result['attempts'] if a['query_form'] == 'keywords']
-        self.assertEqual([(a['engines'], a['query']) for a in retry], [(['hackernews'], 'cybersecurity tools AI')])
+        self.assertEqual([(a['engines'], a['query']) for a in retry], [(['hackernews'], 'SQLite WAL checkpoint')])
         self.assertTrue(any(f['to'] == 'keywords' for f in result['fallbacks']))
         self.assertTrue(any('hackernews' in s['engines'] for s in result['sources']))
+
+    def test_keywords_keep_distinctive_terms_and_drop_request_framing(self):
+        self.assertEqual(R.keywords('search online for what people say about Rust async runtimes'),
+                         'Rust async runtimes')
+        # Content-bearing words are kept; only framing and function words are dropped.
+        self.assertEqual(R.keywords('SQLite WAL issues'), 'SQLite WAL issues')
+        self.assertEqual(R.keywords('HTTP/3 adoption problems in CDN edge networks'), 'HTTP/3 adoption CDN')
+
+    async def test_repeated_identical_search_warns_then_refuses(self):
+        first = await self.r.search('task groups', ['docs.example.org'])
+        self.assertFalse(any(w.startswith('REPEATED_CALL') for w in first['warnings']))
+        second = await self.r.search('Task  groups', ['docs.example.org'])
+        self.assertTrue(any(w.startswith('REPEATED_CALL') for w in second['warnings']))
+        calls = len(self.backend.searches)
+        with self.assertRaisesRegex(T.ResearchError, '^REPEATED_CALL'):
+            await self.r.search('task groups', ['docs.example.org'])
+        self.assertEqual(len(self.backend.searches), calls)
+        # A refinement is a different search and is served normally.
+        refined = await self.r.search('task groups', ['docs.example.org'], preset='forums')
+        self.assertFalse(any(w.startswith('REPEATED_CALL') for w in refined['warnings']))
 
     async def test_duplicates_merge_attribution(self):
         self.backend.shared = True
