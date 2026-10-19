@@ -26,6 +26,20 @@ COMMANDS: dict[str, tuple[str, tuple]] = {
     "mcp":            ("ailocal.mcp", ()),
 }
 
+#: `ailocal <command> --help`, answered here so no command can mistake the flag
+#: for a request: `clients --help` used to configure every client and
+#: `start --help` to start the stack. `install` owns a longer usage, and `check`
+#: owns its own because only checks/run.py may name the metered search flag.
+USAGE: dict[str, str] = {
+    "status":   "usage: ailocal status [--dashboard|--table|--models]",
+    "update":   "usage: ailocal update [--upstream-only] [--json]",
+    "start":    "usage: ailocal start [--no-wait]",
+    "stop":     "usage: ailocal stop [--volumes]",
+    "teardown": "usage: ailocal teardown [--images]",
+    "clients":  "usage: ailocal clients [vscode|codex|claude|all ...] [--dry-run]",
+    "mcp":      "usage: ailocal mcp research [--enable-answer]",
+}
+
 #: Help layout: (heading, [command...]). Every dispatchable command appears
 #: exactly once; the gate asserts it. There is no hidden command: a surface
 #: that dispatches what it does not advertise is a surface nobody can trust.
@@ -137,6 +151,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ailocal: unknown command '{cmd}' — run 'ailocal help'",
               file=sys.stderr)
         return 1
+
+    if cmd in USAGE and {"-h", "--help"} & set(argv):
+        print(USAGE[cmd])
+        return 0
 
     # A package command runs in THIS process: it is a function, not a program,
     # so there is one dispatch mechanism and no second interpreter to choose.
