@@ -17,6 +17,10 @@ ailocal runs Claude Code, Codex CLI and VS Code Copilot Chat against local model
 
 ## Development
 
+Apply Cadence's engineering policy and available `repository-intelligence`, `tool-maintenance`, `security-review`, and `work-tracking` skills when relevant; do not copy their rules into shipped client instructions. Work as an AI systems engineer: trace client → protocol → proxy → provider/tool, distinguish deterministic checks from model-dependent evaluations, and report evidence rather than persona claims.
+
+For dependency upgrades, install changes, skills, or MCP integration, read [AI development maintenance](docs/maintenance.md) before changing behavior. Seek current upstream releases, advisories, and relevant open/closed regression issues; an old workaround is a hypothesis to revalidate, not a permanent platform limitation. Promote a candidate only after affected paths pass, then commit and push when authorized. Keep ordinary builds pinned and reproducible.
+
 ```sh
 python3 -m venv .venv && . .venv/bin/activate
 pip install -e .
