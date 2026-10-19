@@ -113,7 +113,7 @@ Only `src/`, `tests/`, `docs/` and project metadata. No generated artifact is ev
 - ailocal holds no conversation state. It never summarises or rewrites a client's history; it generates the compaction *threshold* the client applies. See [docs/architecture.md](docs/architecture.md).
 - ailocal provisions client integrations only inside a root it owns. Never modify hosted `~/.claude`.
 - ailocal installs no language server. It enables the official plugin for a server already on PATH, in its own root only.
-- The current ailocal local Codex profile withholds MCP configuration. This is a restriction of the tested local client/proxy/model path, not a claim that Codex lacks MCP support. Revalidate that path before changing the generator or extending the restriction to hosted clients.
+- Codex research MCP dispatch is measured on Codex 0.163.0 through the local proxy. Other MCP servers require their own evidence before registration.
 - Python is standard library only.
 - Ports bind `127.0.0.1`. Never commit secrets.
 

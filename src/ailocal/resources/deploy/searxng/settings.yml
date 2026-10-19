@@ -28,9 +28,11 @@ outgoing:
 
 # ── Engine policy ───────────────────────────────────────────────────────────
 #
-# Coding-first. The engines that answer a developer question are API-backed and
-# reliable; scraped general-web engines are opt-in because they degrade under
-# sustained volume and return CAPTCHAs rather than errors.
+# General web is the default for LiteLLM searches. Developer registries and
+# research sources belong to their own categories and remain reachable by bang.
+# Yahoo and Yep are keyless. Brave is deliberately NOT a SearXNG engine: the
+# braveapi engine discards Brave's quota headers, so every Brave request goes
+# through the research MCP's budget ledger instead (docs/adr/014).
 #
 # Weights bias results toward documentation and standards over forum chatter.
 use_default_settings:
@@ -47,17 +49,27 @@ use_default_settings:
       - pypi
       - npm
       - docker hub
-      # Research tier, added 2026-08-03. All three are API-backed and keyless,
-      # so they never take the scraper/CAPTCHA path. Chosen over wikipedia
-      # because they populate results[] -- see the wikipedia note below.
+      # Research tier: API-backed and keyless, so never on the scraper/CAPTCHA
+      # path, and unlike wikipedia they populate results[].
       - arxiv
       - crossref
-      # General-web tier. `braveapi` is the API-backed engine
-      # (api.search.brave.com, X-Subscription-Token) and is NOT the same as
-      # `brave`, which scrapes search.brave.com and takes no key. Upstream
-      # ships braveapi `inactive: true` with an empty api_key, and it already
-      # fails closed on its own: "No API key provided" is raised by the engine.
-      - braveapi
+      # Keyless general web; both declare require_api_key: False upstream.
+      - yahoo
+      - yep
+      - wiby
+      # Code forges. github code takes a token; see its entry.
+      - github code
+      - codeberg
+      - sourcehut
+      # Package registries and model hub.
+      - crates.io
+      - pkg.go.dev
+      - huggingface
+      # Forums, keyless.
+      - hackernews
+      - meta.discourse
+      # Research.
+      - openalex
       # semantic scholar is deliberately absent: its public API rate-limits hard
       # enough that it returns nothing under normal use, which reads as a broken
       # engine rather than a throttled one.
@@ -66,7 +78,7 @@ engines:
   # ── Scraped general-web: opt-in only ────────────────────────────────────────
   #
   # Disabled by default: scraping becomes unreliable under sustained volume and
-  # fails with CAPTCHAs, not errors. Enable one deliberately if Brave is absent.
+  # fails with CAPTCHAs, not errors. Enable one deliberately if keyless web is thin.
   - name: google cse
     disabled: true
 
@@ -78,13 +90,13 @@ engines:
   # API-backed, no CAPTCHA, directly useful for coding queries.
   - name: github
     shortcut: gh
-    categories: [general, it]
+    categories: [it]
     timeout: 6.0
     disabled: false
 
   - name: stackoverflow
     shortcut: so
-    categories: [general, it]
+    categories: [it]
     disabled: false
 
   # Wikipedia returns infobox content that is not model-visible downstream, so it
@@ -92,32 +104,32 @@ engines:
   - name: wikipedia
     shortcut: wp
     categories: [general]
-    disabled: false
+    disabled: true
 
   # ── API-backed engines ──────────────────────────────────────────────────────
   - name: askubuntu
     shortcut: ubuntu
-    categories: [general, it]
+    categories: [it]
     disabled: false
   - name: superuser
     shortcut: su
-    categories: [general, it]
+    categories: [it]
     disabled: false
   - name: mdn
     shortcut: mdn
-    categories: [general, it]
+    categories: [it]
     disabled: false
   - name: pypi
     shortcut: pypi
-    categories: [general, it]
+    categories: [it]
     disabled: false
   - name: npm
     shortcut: npm
-    categories: [general, it]
+    categories: [it]
     disabled: false
   - name: docker hub
     shortcut: dh
-    categories: [general, it]
+    categories: [it]
     disabled: false
 
   # ── Research tier ───────────────────────────────────────────────────────────
@@ -126,31 +138,99 @@ engines:
   # to the coding engines and only earn their latency on research prompts.
   - name: arxiv
     shortcut: arx
-    categories: [general, science]
+    categories: [science]
     weight: 0.3
     disabled: false
   # Crossref asks for a contact address and paces unauthenticated callers. The
   # polite-pool mailto and a conservative timeout keep it from rate-limiting.
   - name: crossref
     shortcut: cr
-    categories: [general, science]
+    categories: [science]
     timeout: 30
     weight: 0.3
     disabled: false
   # semantic scholar is intentionally absent -- see the keep_only note above.
 
-  # ── General web: Brave Search API ───────────────────────────────────────────
+  # ── Keyless general web ─────────────────────────────────────────────────────
   #
-  # The default general-web source: an API key instead of scraping, so it does
-  # not CAPTCHA. The key is injected at render time from the environment -- this
-  # file is a template and must never contain the secret.
-  - name: braveapi
-    engine: braveapi
-    shortcut: brv
-    categories: [general, web]
-    api_key: "__BRAVE_API_KEY__"
+  # The `general` category is what LiteLLM's web search queries -- it sends no
+  # categories. Before issue #8 the registries above were ALSO general, so a
+  # question like "how long to boil an egg" came back as npm packages. Now
+  # general is two keyless scrapers, so one provider's 429 does not mean zero
+  # web results and no general search spends a metered allowance.
+  - name: yahoo
+    shortcut: yh
+    categories: [general]
+    timeout: 6.0
+    disabled: false
+  - name: yep
+    shortcut: yep
+    categories: [general]
+    timeout: 6.0
+    disabled: false
+  # Small-web index: niche results, so bang-only (!wib), not in general.
+  - name: wiby
+    shortcut: wib
+    disabled: true
+
+  # ── Code forges and registries (category: it, reached with !it or a bang) ──
+  # github code needs a token: GitHub's code-search API rejects anonymous calls.
+  # The token is rendered from GITHUB_SEARCH_TOKEN; without
+  # one the engine renders inactive. Use a fine-grained, public-repositories,
+  # read-only token -- never the gh CLI token, which carries `repo` scope.
+  - name: github code
+    shortcut: ghc
+    categories: [it]
+    timeout: 6.0
+    ghc_auth:
+      type: personal_access_token
+      token: "__GITHUB_SEARCH_TOKEN__"
     inactive: false
     disabled: false
+  # Measured 3.0s timeout at the global default (2026-10-18); give it room.
+  - name: codeberg
+    shortcut: cb
+    categories: [it]
+    timeout: 8.0
+    disabled: false
+  - name: sourcehut
+    shortcut: srht
+    categories: [it]
+    disabled: false
+  # GitLab is absent on purpose: "unexpected crash" in this image (2026-10-18).
+  - name: crates.io
+    shortcut: crates
+    categories: [it]
+    disabled: false
+  - name: pkg.go.dev
+    shortcut: pgo
+    categories: [it]
+    disabled: false
+  - name: huggingface
+    shortcut: hf
+    categories: [it]
+    disabled: false
+
+  # ── Forums (category: social media, reached with !social or a bang) ────────
+  - name: hackernews
+    shortcut: hn
+    categories: [social media]
+    disabled: false
+  # One entry per Discourse forum; add more with a different base_url.
+  - name: meta.discourse
+    engine: discourse
+    shortcut: dmeta
+    base_url: "https://meta.discourse.org/"
+    categories: [social media]
+    disabled: false
+
+  # ── Research (category: science) ───────────────────────────────────────────
+  - name: openalex
+    shortcut: oa
+    categories: [science]
+    timeout: 6.0
+    disabled: false
+
 
 ui:
   show_about: false
