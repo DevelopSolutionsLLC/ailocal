@@ -77,8 +77,7 @@ def main() -> int:
         print(f"  {'PASS' if ok else 'FAIL'}  {name}")
         if not ok:
             failed.append(name)
-            tail = (r.stdout + r.stderr).strip().splitlines()[-15:]
-            for line in tail:
+            for line in (r.stdout + r.stderr).strip().splitlines():
                 print(f"        {line}")
     if not full:
         print("  NOTE  " + ", ".join(FULL) + " (real Chrome) run "

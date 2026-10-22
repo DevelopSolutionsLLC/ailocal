@@ -16,9 +16,11 @@ Local models. Local data. One configuration.
 
 ## What is ailocal?
 
-ailocal runs the coding tools you already use against models on your own machine. Nothing is sent to Anthropic or OpenAI, and there is nothing to pay per token.
+ailocal runs the coding tools you already use against models on your own machine. Local inference has no per-token charge. Documentation MCP lookups contact the vendors' public documentation services when the agent uses them.
 
 **What it configures for you:** the models, the local API they are served on, and every supported client you have installed. You do not edit a config file by hand.
+
+Every `ailocal install`, including `--yes`, registers the official Claude Code, OpenAI and Microsoft Learn documentation MCP servers for installed Claude Code and Codex CLIs, in both their regular and local client roots. No API keys or extra processes are required. Existing settings and foreign servers are preserved; a conflicting same-name server is reported rather than replaced. Run `ailocal clients claude codex` to add them later. Copilot documentation registration is deferred. These public documentation registrations remain in hosted client settings after ailocal teardown.
 
 **What it does not do:** install software. You install the prerequisites and whichever clients you want; ailocal detects what is present and configures it. Every client is optional.
 
@@ -79,6 +81,8 @@ ailocal install
 ```
 
 `ailocal install` measures your Mac, picks models that fit its memory, downloads them, starts the services, and configures the clients it finds. It will ask you before touching any client configuration.
+
+Installation ends with `ailocal check` and exits nonzero if validation fails, with findings and recovery commands. Preview client setup without changing anything with `ailocal clients --dry-run`.
 
 Expect a download of roughly 6–40 GB of models, depending on your Mac. Run it once; it is safe to re-run.
 
@@ -205,7 +209,7 @@ GitHub code search (`!ghc`) is optional: add `GITHUB_SEARCH_TOKEN=` to `~/.confi
 
 When keyless coverage is thin and a Brave key is configured, the server adds at most two Brave requests per call, within `AILOCAL_BRAVE_BUDGET` (default 1,000 per Brave billing period). Each request is reserved in a ledger under the state root before it is sent, so concurrent sessions cannot overspend. Every response carries a `brave.summary` line: requests used, the remaining budget as counted by ailocal on this machine, and the period reset. Account-wide remaining allowance is reported as unknown unless Brave reports a monthly cap or refuses a request for quota or balance, which is reported as account-wide exhaustion until the reset; usage by other consumers of the key is not visible. Brave publishes no usage or balance API, and prepaid keys report no request quota. To bound spending across every consumer of the key, set a usage limit in the Brave dashboard and leave auto-reload off: Brave enforces it on its side and refuses requests once it is reached. When the budget is exhausted or the quota is unknown, research continues keyless and says why. See [ADR 014](docs/adr/014-local-research.md).
 
-The stable stdio launcher is `ailocal mcp research`. Experimental `answer(question, sites?)` additionally reads bounded public pages and synthesizes a cited answer through the local proxy. It is disabled by default because claude-local shares its inference slot; a separately configured caller can explicitly launch `ailocal mcp research --enable-answer`. VS Code has no separate local configuration, so its `research` registration in the user `mcp.json` is also visible to hosted Copilot models; it uses the absolute launcher path, preserves other servers and never replaces a foreign `research` entry. Hosted Claude and Codex registration belongs to Cadence; ailocal changes none of their configuration.
+The stable stdio launcher is `ailocal mcp research`. Experimental `answer(question, sites?)` additionally reads bounded public pages and synthesizes a cited answer through the local proxy. It is disabled by default because claude-local shares its inference slot; a separately configured caller can explicitly launch `ailocal mcp research --enable-answer`. VS Code has no separate local configuration, so its `research` registration in the user `mcp.json` is also visible to hosted Copilot models; it uses the absolute launcher path, preserves other servers and never replaces a foreign `research` entry. Hosted research registration belongs to Cadence; ailocal adds only the public documentation MCPs to hosted Claude and Codex settings.
 
 Returned sources distinguish full-page text from search snippets and report failed page reads. Source text is untrusted evidence, not instructions; check substantive claims against the cited URLs. Cached search results expire after 15 minutes and page text after 30 minutes. The bounded cache lives under ailocal's disposable state root, contains queries and public evidence, and stores no conversations or synthesized answers. `ailocal check` checks provisioning without issuing a search. See [the architecture](docs/architecture.md#local-research) for limits and ownership.
 
@@ -234,7 +238,7 @@ every time rather than depending on the model's sense of geometry.
 opaque origin under `connect-src 'none'`, served separately from the viewer that frames it.
 Every asset is vendored; nothing is fetched from a CDN.
 
-Your hosted `claude` is untouched — it keeps the real `Artifact` tool.
+Your hosted `claude` keeps its real `Artifact` tool.
 
 ## Your Mac's profile
 
@@ -253,6 +257,14 @@ A long conversation compacts automatically before it reaches that window. Your c
 
 To change which model a profile uses, edit the file in `~/.config/ailocal/profiles/` and run `ailocal start`. Your edits are preserved across upgrades.
 
+Profiles also control sampling, including `temperature`, `top_p`, `top_k`, `min_p`, `presence_penalty` and Ollama's `repeat_penalty`. Shipped settings follow model-specific guidance with documented role exceptions; see [model evaluation](docs/maintenance.md#local-model-evaluation).
+
+Every profile exposes **Cyber** as `ailocal-cyber`. The 16 GB tier uses a pinned Huihui Qwen3.5 4B MLX conversion with 12K input/4K output; the 32 GB tier uses a pinned Huihui Qwen3.5 9B MLX conversion with 24K input/8K output. Both start with thinking off and Qwen's published non-thinking sampling preset. They remain community model candidates: coding/tool quality and memory headroom on actual 16/32 GB machines require measurement. The installer downloads the pinned assets, verifies their hashes and uses Ollama's native importer; no separate serving backend is installed. The 64/128 GB tiers retain `orcarouter/Qwen3.8-27B-Uncensored:mlx-4bit`, with 24K input/8K output and thinking enabled. The default coding capabilities are unchanged.
+
+Run `codex-local`, then use `/model` to select `ailocal-cyber` or another capability. Each selection automatically uses its own context and compaction limits from the generated catalog. No extra launch preset is required. The API and gateway catalog use the same model IDs.
+
+`ailocal start` preserves other MCP servers registered in Codex's configuration, including their nested settings. Cadence owns repository-intelligence integrations; ailocal supplies its bundled research server.
+
 ## Defaults
 
 What a fresh install gives you, without configuring anything.
@@ -267,7 +279,7 @@ What a fresh install gives you, without configuring anything.
 | Local artifacts | on, bundled | — |
 | Web search | ailocal's own SearXNG, keyless | `BRAVE_API` adds budgeted Brave to research |
 | Context | the profile's `num_ctx`; 1M-context beta off | profile |
-| Hosted `claude`, `~/.claude` | never touched | — |
+| Hosted Claude/Codex settings | public documentation MCPs only | native client configuration, retained after teardown |
 
 Every `claude-local` variable is **process-scoped** — set it inline for one session. The full
 table, with accepted values and effects, is in [docs/claude-local.md](docs/claude-local.md#configuration).

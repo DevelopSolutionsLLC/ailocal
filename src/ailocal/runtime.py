@@ -245,8 +245,7 @@ def _find(loaded: dict, backend: str) -> dict | None:
         return loaded[backend]
     if f"{backend}:latest" in loaded:
         return loaded[f"{backend}:latest"]
-    stem = backend.split(":", 1)[0]
-    return next((m for n, m in loaded.items() if n.split(":", 1)[0] == stem), None)
+    return loaded.get(backend[:-7]) if backend.endswith(":latest") else None
 
 
 def _expires(raw: str | None) -> datetime | None:
@@ -412,10 +411,9 @@ def _preflight() -> None:
 
     # The model set comes from the GENERATED artifact, never the profile.
     present = {m.get("name", "") for m in json.loads(tags).get("models", [])}
-    stems = {n.split(":", 1)[0] for n in present}
     required = {r["model"] for r in policy.effective_summary()["roles"].values()}
     missing = sorted(m for m in required
-                     if m not in present and m.split(":", 1)[0] not in stems)
+                     if m not in present and f"{m}:latest" not in present)
     if missing:
         warn(f"Missing Ollama models: {' '.join(missing)}")
         print("  Run ailocal install to pull the full model set.")
@@ -433,6 +431,8 @@ def cmd_start(argv: list[str]) -> int:
     from . import generation
     if generation.main([]):
         raise _fail("generation failed — nothing was started")
+    from . import install
+    install.retire_generated_clients()
 
     # No `docker compose pull` here by design: start (including the boot
     # LaunchAgent) must be reproducible and offline-safe, so it runs whatever
@@ -504,14 +504,16 @@ def cmd_teardown(argv: list[str]) -> int:
         return 0
 
     step("Stopping containers and removing volumes")
-    compose("down", "--volumes", "--remove-orphans", check=False)
+    result = compose("down", "--volumes", "--remove-orphans", check=False)
+    if result.returncode:
+        bad("Teardown incomplete: Docker could not remove the containers and volumes.")
+        print("  Start Docker Desktop, resolve the error above, then re-run ailocal teardown.")
+        print("  Login agents have not been removed.")
+        return result.returncode
 
     from . import install
     install.remove_login_agents()
-
-    if "ailocal_net" in _docker("network", "ls", "--format", "{{.Name}}").splitlines():
-        step("Removing Docker network")
-        _docker("network", "rm", "ailocal_net")
+    install.retire_generated_clients()
 
     if remove_images:
         step("Removing Docker images")

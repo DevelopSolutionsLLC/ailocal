@@ -16,15 +16,17 @@ whether the numbers were good.
     python3 tests/measure_geometry.py --tier 32gb
     python3 tests/measure_geometry.py --quick    # skip the slow prefill probe
 
-Nothing else may import this: it stops and reloads models, which would wreck any
-suite running beside it.
+Importing the helpers does not run measurements. Executing this script stops
+and reloads models; never run it beside another inference suite.
 """
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import json
 import pathlib
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -42,6 +44,43 @@ GIB = 2 ** 30
 CHUNK = "def process_record(record, index):\n    value = record.get('value')\n"
 
 
+class BudgetExpired(RuntimeError):
+    """The whole-run deadline, distinct from an individual socket timeout."""
+
+
+@contextmanager
+def measurement_budget(seconds):
+    """Bound an entire opt-in run, including blocked I/O, on macOS/Linux."""
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    previous_timer = signal.getitimer(signal.ITIMER_REAL)
+    started = time.monotonic()
+
+    def expired(signum, frame):
+        raise BudgetExpired("measurement wall-clock budget exhausted; results are incomplete")
+
+    signal.signal(signal.SIGALRM, expired)
+    signal.setitimer(signal.ITIMER_REAL, min(seconds, previous_timer[0])
+                     if previous_timer[0] else seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+        if previous_timer[0]:
+            remaining = max(0.000001, previous_timer[0] - (time.monotonic() - started))
+            signal.setitimer(signal.ITIMER_REAL, remaining, previous_timer[1])
+
+
+def release_model(model):
+    """Bound cleanup without replacing the original measurement failure."""
+    try:
+        api('/api/generate', {'model': model, 'keep_alive': 0}, timeout=10)
+    except BudgetExpired:
+        raise
+    except (OSError, ValueError) as exc:
+        print(f"model release failed for {model}: {type(exc).__name__}", file=sys.stderr)
+
+
 def api(path, payload=None, timeout=1800):
     data = json.dumps(payload).encode() if payload is not None else None
     req = urllib.request.Request(HOST + path, data=data,
@@ -50,13 +89,21 @@ def api(path, payload=None, timeout=1800):
         return json.load(r)
 
 
-def resident(model):
-    """Resident bytes for a loaded model, or None. /api/ps reports LOAD-time
-    context, so the caller must not read a window back from it."""
+def loaded_model(model):
+    """Resolve one exact model tag; variants of the same family are distinct."""
+    def canonical(name):
+        return name if ":" in name.rsplit("/", 1)[-1] else name + ":latest"
+
     for m in api("/api/ps").get("models", []):
-        if m["name"].split(":")[0] == model.split(":")[0]:
-            return m["size"]
+        if canonical(m["name"]) == canonical(model):
+            return m
     return None
+
+
+def resident(model):
+    """Resident bytes, or None. The reported context is LOAD-time context."""
+    entry = loaded_model(model)
+    return entry["size"] if entry else None
 
 
 def load_cold(model, num_ctx):
@@ -100,14 +147,21 @@ def ceiling(model, num_ctx, want):
 
 
 def engine_of(model):
-    """Same rule registry.yaml matches on: the RUNNER decides KV behaviour, not
-    the model family."""
-    return "mlx" if re.search(r"-mlx(:|$)", model) else "llama_cpp"
+    """Read the actual runner after loading; names and formats do not decide."""
+    entry = loaded_model(model)
+    runner = entry.get("runner") if entry else None
+    if runner == "mlx":
+        return "mlx"
+    if runner == "llamacpp":
+        return "llama_cpp"
+    raise RuntimeError(f"runner unavailable for {model}; load it before measuring")
 
 
 def versions():
     try:
         ollama = api("/api/version", timeout=10).get("version", "?")
+    except BudgetExpired:
+        raise
     except Exception:
         ollama = "unreachable"
     mlx = "unavailable"
@@ -128,7 +182,21 @@ def main(argv=None):
     ap.add_argument("--tier", help="default: the active profile")
     ap.add_argument("--quick", action="store_true",
                     help="skip the cold-prefill probe (the slow one)")
+    ap.add_argument("--time-budget", type=int, default=900,
+                    help="whole-run wall-clock budget in seconds (default 900)")
     args = ap.parse_args(argv)
+    if args.time_budget < 1:
+        ap.error('--time-budget must be positive')
+    models = []
+    try:
+        with measurement_budget(args.time_budget):
+            return measure(args, models)
+    finally:
+        for model in dict.fromkeys(models):
+            release_model(model)
+
+
+def measure(args, models):
     # A probe here costs minutes and a human is watching it. Block-buffered
     # stdout would print nothing until the end, which is indistinguishable from
     # hung -- the exact confusion docs/troubleshooting.md warns about.
@@ -150,7 +218,8 @@ def main(argv=None):
         if not cfg.get("enabled") or cfg.get("max_output") is None:
             print(f"\n[{role}] {model} — no generation route, skipped")
             continue
-        print(f"\n[{role}] {model}  engine={engine_of(model)}")
+        models.append(model)
+        print(f"\n[{role}] {model}")
         print(f"  geometry     input {cfg['context_input']} + output "
               f"{cfg['max_output']} = num_ctx {num_ctx}")
 
@@ -160,7 +229,12 @@ def main(argv=None):
             print(f"  kv           (same backend and window as {seen[key]})")
         else:
             seen[key] = role
+            # A small load identifies the runner before choosing an eager/lazy
+            # KV measurement. Recent Ollama versions auto-select MLX even for
+            # tags that do not end in -mlx.
+            load_cold(model, min(num_ctx, 8192))
             eng = engine_of(model)
+            print(f"  runner       {eng} (reported by Ollama)")
             if eng == "llama_cpp":
                 # The low anchor scales with the window. A fixed 16384 exceeded
                 # the FIM role's whole 4480-token window, so that role silently
@@ -226,5 +300,5 @@ if __name__ == "__main__":
         sys.exit(main())
     except KeyboardInterrupt:
         sys.exit(130)
-    except (urllib.error.URLError, OSError) as exc:
+    except (urllib.error.URLError, OSError, RuntimeError) as exc:
         sys.exit(f"measurement could not run: {exc}")
