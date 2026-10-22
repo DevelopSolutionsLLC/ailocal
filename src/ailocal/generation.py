@@ -16,6 +16,7 @@ import os
 import re
 import shutil
 import sys
+import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -56,12 +57,8 @@ RETIRED_CLAUDE_ENV = {
 }
 CODEX_HOME     = _CLIENTS / "codex"
 CODEX_TPL        = _DATA / "clients/codex/config.template.toml"
-CODEX_PLAN_TPL   = _DATA / "clients/codex/plan.config.template.toml"
-CODEX_REVIEW_TPL = _DATA / "clients/codex/review.config.template.toml"
 CODEX_CATALOG  = CODEX_HOME / "model_catalog.json"
 CODEX_CONFIG   = CODEX_HOME / "config.toml"
-CODEX_PLAN     = CODEX_HOME / "plan.config.toml"
-CODEX_REVIEW   = CODEX_HOME / "review.config.toml"
 CONFIGURE_ZSH_TPL = _DATA / "clients/configure.template.zsh"
 CONFIGURE_ZSH  = _CLIENTS / "configure.zsh"
 
@@ -206,14 +203,15 @@ def gen_role_block(role, info):
         f"      api_base: os.environ/OLLAMA_URL",
         f"      num_ctx: {num_ctx}",
     ]
-    # repeat_penalty is OLLAMA's option name; repetition_penalty is LiteLLM's.
-    # Only the former reaches the backend, so both are forwarded and the profile
-    # decides which to set. A value of 1.0 means NO penalty and is set
-    # explicitly rather than relying on a backend default.
-    for key in ("temperature", "top_p", "top_k", "repetition_penalty",
-                "repeat_penalty"):
+    # Use Ollama's native option names. repeat_penalty=1 disables the penalty.
+    for key in ("temperature", "top_p", "top_k", "min_p",
+                "presence_penalty", "repeat_penalty"):
         if info.get(key) not in (None, ""):
             params.append(f"      {key}: {info[key]}")
+    if info.get("presence_penalty") is not None:
+        # LiteLLM 1.106.0 omits this native Ollama option from its supported
+        # OpenAI list. Its documented allowlist forwards it without a shim.
+        params.append('      allowed_openai_params: ["presence_penalty"]')
     # num_predict is the only ceiling the backend honours: [REAL] a per-request
     # max_tokens of 512 against an alias declaring 32768 returned 4,199 tokens
     # (LiteLLM 1.93.0, ollama_chat). Re-verified on 1.98.0: max_tokens 512
@@ -376,17 +374,14 @@ def write_integration_contract(models):
                 "verified_by": "tests/lsp-baseline.py",
                 "scope": "python",
             },
-            # WITHHELD, not missing: Codex declares MCP servers as namespace
-            # BUNDLES, which LiteLLM discards before the backend, and flattening
-            # them makes Codex's own dispatcher refuse the call
-            # (openai/codex#20652). `reason` exists so a consumer does not read
-            # this as a transient failure and retry.
+            # ailocal provisions no Codex LSP bridge. Current research/grepai
+            # dispatch evidence does not establish an LSP server's capability;
+            # external registrations remain their registrar's responsibility.
             "codex_mcp_lsp": {
                 "configured": False,
                 "schema_preserved": False,
-                "execution": "withheld_client_incompatible",
-                "reason": "codex_cannot_dispatch_namespaced_tools",
-                "upstream": "openai/codex#20652",
+                "execution": "not_configured",
+                "reason": "no_validated_lsp_bridge",
                 "verified_by": "tests/clients.sh codex",
             },
         },
@@ -426,6 +421,13 @@ def regen_catalog(models):
         backend = backend_of(info)
         num_ctx = ctx_of(info)
         role = info.get("role", name)
+        geometry = _geom(info)
+        window, pct = COMPACTION.get("window"), COMPACTION.get("pct")
+        if not window or not pct:
+            raise SystemExit("codex compaction requires a profile window and percentage")
+        compact = min(int(window), geometry["context_input"]) * int(pct) // 100
+        if not 0 < compact <= geometry["context_input"]:
+            raise SystemExit(f"invalid Codex compaction threshold for {name}: {compact}")
         instr = "\n\n".join([CATALOG_PREAMBLE,
                              CATALOG_ROLE_SENTENCE.get(name, f"You are the {role} capability."),
                              CATALOG_TOOLING])
@@ -440,6 +442,7 @@ def regen_catalog(models):
             "priority": CATALOG_PRIORITY.get(name, prio),
             "context_window": num_ctx,
             "max_context_window": num_ctx,
+            "auto_compact_token_limit": compact,
             "effective_context_window_percent": 90,
             "input_modalities": ["text"],
             "supports_parallel_tool_calls": not bool(info.get("reasoning")),
@@ -638,26 +641,14 @@ def regen_claude_settings(models, clients):
 
 
 # ── Codex config.toml + profiles ───────────────────────────────────────────────
-def _set_toml_model(path, model, template=None):
-    """Render a Codex profile template to its runtime destination."""
-    src = template if template is not None else path
-    if not src.exists():
-        return False
-    text = MARKER_TOML + src.read_text()
-    if re.search(r'(?m)^model\s*=', text):
-        text = re.sub(r'(?m)^model\s*=.*$', f'model = "{model}"', text, count=1)
-    else:
-        text = f'model = "{model}"\n' + text
-    stage(path, text)
-    return True
-
-
 #: `[projects."<path>"]` and `[hooks.state."<key>"]` blocks, which CODEX
 #: writes into this file itself.
 _CODEX_PROJECTS = re.compile(
     r'(?ms)^\[(?:projects|hooks\.state)\.".*?"\]\n(?:(?!^\[).*?\n)*')
 _CODEX_TUI_FLAG = re.compile(
     r'(?m)^\[tui\]\n(?:(?!\[)[^\n]*\n)*?(screen_reader_detection_done\s*=[^\n]*)$')
+_CODEX_MCP = re.compile(
+    r'(?ms)^\[mcp_servers\.[^\n]+\][ \t]*(?:#[^\n]*)?\n(?:(?!^\[).*?\n)*')
 
 
 def _keep_codex_projects(text: str) -> str:
@@ -687,9 +678,9 @@ def _keep_codex_projects(text: str) -> str:
     interactive session and made Codex detect again. Only that key is carried,
     and only while the template has no `[tui]` table of its own.
 
-    ONLY these Codex-written records. Everything else in this file is ailocal's
-    and must be rewritten from the template; preserving more would let a stale
-    hand edit outlive the source it was generated from.
+    MCP servers outside the template belong to their registrars (for example,
+    Cadence), including their nested env/tool tables. Preserve those native
+    tables too. Template-owned servers and model settings are always regenerated.
     """
     if not CODEX_CONFIG.exists():
         return text
@@ -703,7 +694,14 @@ def _keep_codex_projects(text: str) -> str:
     # header, so a file that already holds a table twice (invalid TOML) is
     # repaired rather than carried forward.
     blocks, seen = [], set()
-    for b in _CODEX_PROJECTS.findall(live):
+    owned_servers = tomllib.loads(text).get("mcp_servers", {})
+    external_mcp = []
+    for block in _CODEX_MCP.findall(live):
+        header = block.split("\n", 1)[0]
+        server = next(iter(tomllib.loads(header)["mcp_servers"]))
+        if server not in owned_servers:
+            external_mcp.append(block)
+    for b in _CODEX_PROJECTS.findall(live) + external_mcp:
         lines = b.rstrip("\n").split("\n")
         while lines and (not lines[-1].strip() or lines[-1].lstrip().startswith("#")):
             lines.pop()
@@ -722,7 +720,6 @@ def _keep_codex_projects(text: str) -> str:
 def regen_codex(models, clients):
     cx = clients.get("codex", {})
     default = cx.get("default", next(iter(models)))
-    profiles = cx.get("profiles", {})
     done = False
     if CODEX_TPL.exists():
         text = (MARKER_TOML + CODEX_TPL.read_text()
@@ -732,42 +729,11 @@ def regen_codex(models, clients):
                       "# Valid models: " + " | ".join(mn(k) for k in models.keys()), text, count=1)
         stage(CODEX_CONFIG, text)
         done = True
-        # Codex's own compactor, same policy as claude-local. These keys must be
-        # TOP-LEVEL: Codex does not reliably honour them inside a named profile.
-        # Both are derived from the capability CODEX DEFAULTS TO, never from
-        # architecture: a window describing a different model makes compaction
-        # unreachable, because the backend 400s on context length first.
-        win, pct = COMPACTION.get("window"), COMPACTION.get("pct")
-        _cx = _geom(models.get(default) or {})
-        cx_ctx = _cx["total_context"]        # the window Codex advertises
-        cx_in = _cx["context_input"]         # what the backend will ADMIT
-        if not (win and pct and cx_ctx and cx_in):
-            raise SystemExit(
-                "codex compaction cannot be derived: "
-                f"window={win!r} pct={pct!r} total_context={cx_ctx!r} "
-                f"context_input={cx_in!r}")
-        # The trigger is capped by context_input, NOT total_context: the output
-        # half of the window is space the input can never occupy, so a fraction
-        # of the total can still exceed the admission limit and take an HTTP 400
-        # before Codex ever compacts.
-        trigger = min(int(win) * int(pct) // 100, int(int(cx_in) * int(pct) / 100))
-        if trigger > int(cx_in):
-            raise SystemExit(
-                "codex compaction trigger exceeds admissible input: "
-                f"trigger={trigger} context_input={cx_in}")
-        text = _staged_text(CODEX_CONFIG)
-        for key, val in (("model_context_window", cx_ctx),
-                         ("model_auto_compact_token_limit", trigger)):
-            if re.search(rf'(?m)^{key}\s*=', text):
-                text = re.sub(rf'(?m)^{key}\s*=.*$', f'{key} = {val}', text, count=1)
-            else:
-                text = f'{key} = {val}\n' + text
+        # Limits belong to each catalog entry. Global overrides would make a
+        # model selected through --model or the picker inherit the default's
+        # window and compaction threshold.
         text = _keep_codex_projects(text)
         stage(CODEX_CONFIG, text)
-    if "plan" in profiles:
-        _set_toml_model(CODEX_PLAN, mn(profiles["plan"]), CODEX_PLAN_TPL)
-    if "review" in profiles:
-        _set_toml_model(CODEX_REVIEW, mn(profiles["review"]), CODEX_REVIEW_TPL)
     return done
 
 
