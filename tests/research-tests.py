@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import io
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -126,10 +127,17 @@ class Contracts(unittest.IsolatedAsyncioTestCase):
         self.r.cache.db.commit()
         # A third identical call in one session is refused by the repeat guard,
         # so expiry is observed from a new session sharing the same cache.
-        self.assertFalse((await R.Research(self.config).search('task groups', ['docs.example.org']))['cache_hit'])
+        other = R.Research(self.config)
+        try:
+            self.assertFalse((await other.search('task groups', ['docs.example.org']))['cache_hit'])
+        finally:
+            if other.cache.db:
+                other.cache.db.close()
         self.assertEqual((Path(self.tmp.name) / 'cache.sqlite3').stat().st_mode & 0o777, 0o600)
 
     def with_brave(self, budget=1000):
+        if self.r.cache.db:
+            self.r.cache.db.close()
         self.config.brave_key = 'fixture-brave-key'
         self.config.brave_budget = budget
         self.config.brave_url = self.url + '/brave'
@@ -730,6 +738,41 @@ class Provisioning(unittest.TestCase):
         with patch.object(launcher.runtime, 'proxy_url', return_value='https://api.example.org'):
             with self.assertRaises(RuntimeError):
                 launcher.launch_environment(True)
+
+    def test_launcher_reads_search_port_from_operator_configuration(self):
+        with patch.dict(os.environ):
+            os.environ.pop('AILOCAL_SEARXNG_PORT', None)
+            with patch.object(launcher.runtime, 'env_value', side_effect=lambda name:
+                              '18123' if name == 'AILOCAL_SEARXNG_PORT' else ''):
+                self.assertEqual(launcher.launch_environment()['LOCAL_RESEARCH_SEARCH_URL'],
+                                 'http://127.0.0.1:18123')
+                os.environ['AILOCAL_SEARXNG_PORT'] = '18124'
+                self.assertEqual(launcher.launch_environment()['LOCAL_RESEARCH_SEARCH_URL'],
+                                 'http://127.0.0.1:18124')
+
+    def test_research_check_detects_a_wrong_backend_without_searching(self):
+        from ailocal.checks import research as diagnostics, FAIL, PASS
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / 'claude'
+            home.mkdir()
+            (home / '.claude.json').write_text(json.dumps({'mcpServers': {
+                'research': launcher.registration()}}))
+            state = root / 'local-research/.venv'
+            (state / 'bin').mkdir(parents=True)
+            (state / 'bin/python').touch()
+            digest = hashlib.sha256((SRC / 'requirements.txt').read_bytes()).hexdigest()
+            (state / '.requirements.sha').write_text(digest)
+            with patch.object(diagnostics.policy, 'deployed_client_root', return_value=root), \
+                    patch.object(diagnostics.policy, 'state_root', return_value=root), \
+                    patch.object(diagnostics, 'launch_environment', return_value={
+                        'LOCAL_RESEARCH_SEARCH_URL': 'http://127.0.0.1:18123'}), \
+                    patch.object(diagnostics, 'http_json') as request:
+                request.return_value = {'engines': []}
+                self.assertIs(diagnostics.check_research().status, PASS)
+                request.assert_called_once_with('http://127.0.0.1:18123/config')
+                request.return_value = {'unrelated': 'service'}
+                self.assertIs(diagnostics.check_research().status, FAIL)
 
     def test_descriptions_expose_credit_and_provenance_contract(self):
         for text in ('sites', 'forums', 'metered', 'budget', 'untrusted', 'repository-local', 'not pages read',

@@ -39,7 +39,7 @@ def digest(p: pathlib.Path) -> str:
 
 def destinations(sm) -> list[pathlib.Path]:
     return [sm.LITELLM_CONFIG, sm.CAPS_JSON, sm.CODEX_CATALOG, sm.CLAUDE_SETTINGS,
-            sm.CODEX_CONFIG, sm.CODEX_PLAN, sm.CODEX_REVIEW,
+            sm.CODEX_CONFIG,
             sm.CONFIGURE_ZSH, sm.CONTRACT_JSON]
 
 

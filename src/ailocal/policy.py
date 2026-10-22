@@ -12,10 +12,37 @@ ONE READER, NO FALLBACK: this module fails closed, because a tier guessed on a
 from __future__ import annotations
 
 import os
+import re
 import tomllib
 from pathlib import Path
 
 TIERS = ("16gb", "32gb", "64gb", "128gb")
+
+
+def documentation_servers() -> dict[str, str]:
+    """The shipped public documentation endpoints, read in place."""
+    with (data_root() / "clients/documentation.toml").open("rb") as stream:
+        return tomllib.load(stream)["servers"]
+
+
+def ollama_model_store() -> Path:
+    """The daemon and native Safetensors importer must use the same store."""
+    return Path(os.environ.get("OLLAMA_MODELS", "/Users/Shared/ollama/models"))
+
+
+def client_mcp_path(client: str, *, local: bool) -> Path:
+    """Native user-scope MCP locations, respecting hosted client overrides."""
+    if client not in ("claude", "codex"):
+        raise ValueError("unsupported documentation client")
+    if local:
+        root = deployed_client_root() / client
+    elif client == "codex":
+        root = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
+    elif os.environ.get("CLAUDE_CONFIG_DIR"):
+        root = Path(os.environ["CLAUDE_CONFIG_DIR"])
+    else:
+        return Path.home() / ".claude.json"
+    return root / ("config.toml" if client == "codex" else ".claude.json")
 
 #: Capability roles. `compaction` is a CLIENT tuning knob, not a capability: it
 #: has no model and must never be published as one.
@@ -28,7 +55,7 @@ TIERS = ("16gb", "32gb", "64gb", "128gb")
 #: capability ailocal advertised, provisioned and kept resident for no reader.
 #: Embedding ownership belongs to whoever indexes; Ollama is the shared
 #: prerequisite underneath both.
-ROLES = ("architecture", "implementation", "review", "fast", "completion")
+ROLES = ("architecture", "implementation", "review", "fast", "completion", "cyber")
 #: Sections that may appear in a profile and are NOT capabilities.
 #:
 #: `embeddings` is here because it USED to be one. Profiles live in the
@@ -74,8 +101,8 @@ LEGACY_CONTEXT_FIELD = "context"
 #:   num_predict    -> DERIVED from max_output by geometry(); never configured
 #:   keep_alive     -> None; omitted, Ollama default applies
 #:   preferred/purpose/strengths/weaknesses -> [] (documentation only)
-OPTIONAL_ROLE_FIELDS = ("provider", "max_output", "reasoning", "temperature",
-                        "top_p", "top_k",
+OPTIONAL_ROLE_FIELDS = ("provider", "source", "max_output", "reasoning", "temperature",
+                        "top_p", "top_k", "min_p", "presence_penalty",
                         "repeat_penalty", "keep_alive",
                         "preferred", "purpose", "strengths",
                         "weaknesses")
@@ -368,6 +395,12 @@ def _validate_role(role: str, cfg) -> None:
     if missing:
         raise ProfileError(PROFILE_SCHEMA_INVALID,
                            f"{role} missing {', '.join(missing)}")
+    source = cfg.get("source")
+    if source is not None and (
+            not isinstance(source, dict) or set(source) != {"repository", "revision"}
+            or not re.fullmatch(r"[\w.-]+/[\w.-]+", str(source.get("repository", "")))
+            or not re.fullmatch(r"[0-9a-f]{40}", str(source.get("revision", "")))):
+        raise ProfileError(PROFILE_SCHEMA_INVALID, f"{role}.source requires a repository and pinned commit")
     ci = cfg.get("context_input")
     if not isinstance(ci, int) or ci <= 0:
         raise ProfileError(ROLE_CONFIG_INVALID, f"{role}.context_input invalid")

@@ -2,7 +2,12 @@
 
 Release policy and the meaning of each bump: [RELEASING.md](RELEASING.md).
 
-## Unreleased (0.14.0, minor) — research routes itself, and Brave is budgeted
+## v0.14.0 (unreleased, minor) — research routes itself, and Brave is budgeted
+
+- Add bounded, non-thinking Cyber candidates to the 16/32 GB profiles using pinned Huihui Qwen3.5 4B/9B MLX snapshots. Verify downloaded assets and import through Ollama's native CLI into the serving daemon's model store. Model installation failures now stop install instead of being silently skipped.
+- Coding/decode measurements exercise the chat protocol; short decode pilots use 128 tokens to avoid spending minutes on throughput-only output.
+
+- Fresh installs, including unattended `--yes`, register public Claude Code, OpenAI and Microsoft Learn documentation MCPs through the native Claude and Codex CLIs, in hosted and local roots. Existing settings survive; registration failures and name collisions return a nonzero status. Copilot documentation provisioning remains deferred.
 
 ### Research without naming the tool
 
@@ -16,6 +21,18 @@ No migration step: the existing key keeps working, and keyless search is unchang
 
 ### Fixes
 
+- Preserve externally registered Codex MCP servers and their nested settings across `ailocal start`; the template remains authoritative for ailocal's own research server.
+- Add the `cyber` capability on 64/128 GB tiers, serving unrestricted Qwen MLX as `ailocal-cyber`; installation includes the backend.
+- Codex model selection now takes context and compaction limits from each generated catalog entry. Remove global limits and redundant plan/review/cyber launch presets. Install/start and teardown retire only ailocal-generated legacy presets, preserving authored profiles and symlinks.
+- The 64/128 GB profiles name the explicit MLX 4-bit unrestricted Qwen alternative; its publisher's `latest` tag selects GGUF. Model installation accepts only the selected tag (or its omitted `:latest` equivalent), never a similarly named variant.
+- Profiles support native `min_p` and `presence_penalty`, including LiteLLM's required allowlist. The 16/32 GB Qwen coding roles use current task-specific vendor presets; measured fast-agent and autocomplete exceptions remain explicit.
+- Preserve `xhigh` reasoning requests through LiteLLM's Ollama adapter for both Chat Completions and Codex's Responses protocol instead of silently disabling thinking. Model presence and residency checks distinguish exact variants rather than accepting any tag in the same family.
+- Opt-in model measurements read the actual Ollama runner and distinguish model variants. The agentic driver uses the active architecture context and rejects unknown candidates. A separate benign over-refusal measurement records answers for manual review without executing generated text.
+- Add `tests/measure_cache.py`, an opt-in diagnostic for KV prefix-cache reuse across turns — the lever that keeps agent prefill off the critical path on Apple Silicon. An active probe runs a cold then a warm turn and reports the warm turn's `prompt_eval_count` collapse with a plain ACTIVE/INACTIVE verdict; `--tail N` passively summarises reuse of the last N real requests from the Ollama log with no inference. Out of the gate, keeps no history, asserts nothing. The client and LiteLLM do not surface cached-token counts, so the Ollama log was the only window onto per-request reuse.
+- The research MCP launcher honors `AILOCAL_SEARXNG_PORT` in operator configuration, with process environment taking precedence as it does for Compose.
+- Teardown reports Docker removal failures without claiming completion or removing login agents. Install validates after optional client setup and exits nonzero when checks fail.
+- `ailocal clients --dry-run` previews targets without changing files or installing integrations.
+- Supply-chain checks use Compose ownership, so unrelated projects and isolated test installs cannot affect this installation's verdict. An unconfigured optional Claude artifact integration no longer fails a fresh install.
 - `ailocal <command> --help` prints usage for every command; `clients --help` used to configure every client and `start --help` to start the stack.
 - `ailocal-code` opens the VS Code profile ailocal configures. `code --profile ailocal` created an empty profile with no connector, provider or research server.
 - Saved logs keep step order; redirected stdout is line-buffered.

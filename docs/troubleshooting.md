@@ -125,6 +125,17 @@ ailocal check     # reports whether the model is resident and whether a
 
 Memory and swap staying flat while the model is resident means it is working, not stuck.
 
+A *first* turn pays cold prefill once and is expected to. A *repeat* stall — every turn slow, not just the first — usually means the KV prefix cache is not being reused, so each turn re-prefills the whole conversation instead of only the new tokens. Confirm which it is:
+
+```sh
+python3 tests/measure_cache.py --tail 20   # passive: reuse% of the last 20 real
+                                           # requests, from the Ollama log, no inference
+python3 tests/measure_cache.py --quick     # active: a cold then a warm turn, with a
+                                           # plain ACTIVE/INACTIVE verdict
+```
+
+A healthy warm turn re-prefills only a few dozen tokens ([REAL] ~99.8% reuse on `qwen3.5:4b`, 16 GB). A warm turn that re-prefills the whole prompt is a genuine cache miss — look for an engine upgrade, a newly introduced hybrid/recurrent model, or interleaving background requests (fast/haiku) evicting the single resident slot on the 16 GB tier, where `architecture` and `fast` share one `qwen3.5:4b` backend (`OLLAMA_NUM_PARALLEL=1`). That last case is a memory limit, not a bug: more memory would give each role its own slot.
+
 **Fix** — wait; client and proxy share a 900 s timeout and give up together. To avoid the stall, keep sessions shorter or use a smaller capability for routine work.
 
 **Status** — hardware limitation.

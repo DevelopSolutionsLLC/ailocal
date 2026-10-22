@@ -6,7 +6,10 @@
 #
 # Engine behaviour (context enforcement, truncation) is owned by
 # deploy/litellm/registry.yaml.
-disk_gb = 40
+disk_gb = 56
+
+# The cyber capability below owns unrestricted Qwen sampling and geometry.
+# Other coding roles remain on Gemma; no implicit model fallback is used.
 
 # ── architecture — shared large-context coding/reasoning tier ─────────────────
 # The one big-context capability every client shares (Claude Code, Codex, VS Code):
@@ -58,7 +61,7 @@ max_output = 32768
   # CHARACTERS on reasoning and returning an EMPTY response 7 times in 25.
   # That failure is silent: the client sees a short answer, not an error.
   # A ceiling cannot fix looping, it only moves where the truncation lands,
-  # so this is headroom, not a cure -- the sampling change is the cure.
+  # This is output headroom; sampling guidance alone does not prove a cure.
   # Costs nothing: MLX allocates KV lazily, and num_ctx 196608 was verified
   # to load at 16.15 GiB resident, identical to a small window.
 temperature = 1.0
@@ -74,9 +77,9 @@ repeat_penalty = 1.0
   # which was chosen for run-to-run reproducibility. Two measurements drove
   # the change (2026-08-21, Ollama 0.32.14): sampling costs NOTHING in
   # throughput here -- draft acceptance was 0.79 at temp 0.1 and 0.77 at
-  # temp 1.0, a gap far inside the run-to-run spread -- and Gemma 4 is
-  # reported to degrade on coding when held far below its recommended
-  # temperature. Reproducibility was being bought with quality, not speed.
+  # temp 1.0, a gap inside the measured spread. This does not establish
+  # equal throughput on every workload or improved coding quality. The
+  # vendor preset is the baseline; quality requires scored task results.
   # Anything needing determinism should pass a per-request temperature
   # rather than pinning the whole role.
 # ── implementation — everyday working coder ──────────────────────────────────
@@ -84,11 +87,10 @@ repeat_penalty = 1.0
 role = "Daily coding"
 active = "gemma4:26b-mlx"
   # Same physical model as architecture, deliberately: this is a role boundary
-  # (persona, sampling, output ceiling), not a model boundary.
+  # (sampling, output ceiling), not a model boundary.
   #
-  # Same context_input as architecture, also deliberately. Context capacity and
-  # role semantics are different concerns: review and implementation benefit from
-  # seeing a whole change, and starving them of input bought nothing. The MLX
+  # Implementation and review reserve 128K input; architecture reserves 160K.
+  # The MLX
   # runner enforces context per-request (registry.yaml), so three roles declaring
   # three different num_ctx still share ONE resident copy of the weights -- the
   # differing windows cost no extra memory.
@@ -106,7 +108,7 @@ max_output = 32768
   # CHARACTERS on reasoning and returning an EMPTY response 7 times in 25.
   # That failure is silent: the client sees a short answer, not an error.
   # A ceiling cannot fix looping, it only moves where the truncation lands,
-  # so this is headroom, not a cure -- the sampling change is the cure.
+  # This is output headroom; sampling guidance alone does not prove a cure.
   # Costs nothing: MLX allocates KV lazily, and num_ctx 196608 was verified
   # to load at 16.15 GiB resident, identical to a small window.
 temperature = 1.0
@@ -130,9 +132,9 @@ repeat_penalty = 1.0
   # which was chosen for run-to-run reproducibility. Two measurements drove
   # the change (2026-08-21, Ollama 0.32.14): sampling costs NOTHING in
   # throughput here -- draft acceptance was 0.79 at temp 0.1 and 0.77 at
-  # temp 1.0, a gap far inside the run-to-run spread -- and Gemma 4 is
-  # reported to degrade on coding when held far below its recommended
-  # temperature. Reproducibility was being bought with quality, not speed.
+  # temp 1.0, a gap inside the measured spread. This does not establish
+  # equal throughput on every workload or improved coding quality. The
+  # vendor preset is the baseline; quality requires scored task results.
   # Anything needing determinism should pass a per-request temperature
   # rather than pinning the whole role.
 # ── review — code review / bug & security detection ──────────────────────────
@@ -152,7 +154,7 @@ max_output = 32768
   # CHARACTERS on reasoning and returning an EMPTY response 7 times in 25.
   # That failure is silent: the client sees a short answer, not an error.
   # A ceiling cannot fix looping, it only moves where the truncation lands,
-  # so this is headroom, not a cure -- the sampling change is the cure.
+  # This is output headroom; sampling guidance alone does not prove a cure.
   # Costs nothing: MLX allocates KV lazily, and num_ctx 196608 was verified
   # to load at 16.15 GiB resident, identical to a small window.
 temperature = 1.0
@@ -176,16 +178,16 @@ repeat_penalty = 1.0
   # which was chosen for run-to-run reproducibility. Two measurements drove
   # the change (2026-08-21, Ollama 0.32.14): sampling costs NOTHING in
   # throughput here -- draft acceptance was 0.79 at temp 0.1 and 0.77 at
-  # temp 1.0, a gap far inside the run-to-run spread -- and Gemma 4 is
-  # reported to degrade on coding when held far below its recommended
-  # temperature. Reproducibility was being bought with quality, not speed.
+  # temp 1.0, a gap inside the measured spread. This does not establish
+  # equal throughput on every workload or improved coding quality. The
+  # vendor preset is the baseline; quality requires scored task results.
   # Anything needing determinism should pass a per-request temperature
   # rather than pinning the whole role.
   # Reasoning is on for architecture, implementation AND review -- this block
   # previously claimed "here and nowhere else", which contradicted the two
   # roles above it. Review is the tier where thinking most clearly
-  # earns its latency. Per-request reasoning_effort is UNRELIABLE (BerriAI/litellm
-  # #15059 maps it incorrectly for Ollama); the per-role default below works.
+  # earns its latency. The proxy translates per-request reasoning_effort into
+  # native thinking control; Gemma supports on/off rather than graded effort.
 # ── fast — lightweight tool-enabled agent (NOT autocomplete) ────────────────
 # Deliberately not the completion tier: this model exposes no FIM/insert
 # capability, so inline autocomplete would fail QUIETLY.
@@ -240,16 +242,16 @@ context_input = 126976
 max_output = 8192
 temperature = 0.0
 keep_alive = "20m"
-  # No deploy/litellm/instructions/fast.md on purpose: this tier gets _core.md only, so
-  # every extra system-prompt token is a larger share of its small budget. Adding
-  # the file is enough to change that -- the injector needs no code change.
 purpose = ["task classification", "doc summarisation", "quick edits", "tool-driven lookups"]
 strengths = ["tiny footprint", "native tool calling", "124K input, 8K output", "fastest prefill of any tier model"]
 weaknesses = ["no FIM/insert - cannot do inline autocomplete", "weaker on large refactors"]
 top_p = 0.9
 top_k = 20
 repeat_penalty = 1.0
-  # Low temperature: answers must be reproducible across runs.
+min_p = 0.0
+presence_penalty = 1.5
+  # Measured fast-agent exception: retain t0/p0.9 and the installed model presence penalty.
+  # Deliberate low-temperature role setting; not a guarantee of determinism.
 # ── completion — inline autocomplete (FIM) ───────────────────────────────────
 # STANDBY — not in active use. Zero recorded requests across every trace, and the
 # only consumer (Continue) is not installed. Kept mapped so inline autocomplete
@@ -275,7 +277,29 @@ weaknesses = ["no deep reasoning", "short context"]
 top_p = 0.9
 top_k = 20
 repeat_penalty = 1.0
-  # Low temperature: answers must be reproducible across runs.
+  # Deliberate low-temperature role setting; not a guarantee of determinism.
+
+# ── cyber — unrestricted Qwen MLX coding alternative ────────────────────────
+[cyber]
+role = "Cyber (unrestricted coding)"
+active = "orcarouter/Qwen3.8-27B-Uncensored:mlx-4bit"
+# The publisher's :latest tag is GGUF. This explicit MLX variant was loaded on
+# Ollama 0.40.6 / M3 Max 64 GB. Short prompts only: 3 x 128-token thinking
+# samples, median 23.6 tok/s; 2/2 fixture tool rounds, one failure recovered.
+# Full-window prefill and repository-scale coding quality remain unmeasured.
+reasoning = true
+context_input = 24576
+max_output = 8192
+temperature = 1.0
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+presence_penalty = 0.0
+repeat_penalty = 1.0
+keep_alive = "20m"
+purpose = ["coding", "debugging", "security research"]
+strengths = ["native tool calls", "MLX on Apple Silicon", "benign translation pilot answered directly"]
+weaknesses = ["repository coding quality unmeasured", "full 32K prefill latency unmeasured", "delegation and parallel tool calls unmeasured"]
 
 [compaction]
 window = 163840  # effective window handed to the client's compactor

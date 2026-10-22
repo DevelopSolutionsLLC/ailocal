@@ -25,6 +25,7 @@ import json
 import shutil
 import subprocess
 import tempfile
+import tomllib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -329,21 +330,18 @@ def resolver_checks() -> None:
           "compaction window never exceeds LiteLLM's admitted input")
 
     codex = (P.deployed_client_root() / "codex/config.toml").read_text()
-    import re as _r
-    cw = int(_r.search(r"model_context_window\s*=\s*(\d+)", codex).group(1))
-    cl = int(_r.search(r"model_auto_compact_token_limit\s*=\s*(\d+)", codex).group(1))
-    impl = P.effective_role("implementation")
-    check(cw == impl["total_context"],
-          f"Codex context window == implementation total_context ({cw})")
-    # Same percentage policy, but capped by ADMISSIBLE INPUT, not total
-    # context. Deriving from total_context produced a trigger 2,048 tokens
-    # above what the backend admits, so the session 400s before compacting.
-    check(cl == min(comp["window"] * comp["pct"] // 100,
-                    int(impl["context_input"] * comp["pct"] / 100)),
-          f"Codex trigger derives from the SAME percentage policy ({cl})")
-    check(cl <= impl["context_input"],
-          f"Codex trigger ({cl}) is within admissible input "
-          f"({impl['context_input']})")
+    native = tomllib.loads(codex)
+    check("model_context_window" not in native and
+          "model_auto_compact_token_limit" not in native,
+          "Codex has no global limits that override the selected model")
+    catalog = json.loads((P.deployed_client_root() / "codex/model_catalog.json").read_text())
+    for model in catalog["models"]:
+        cap = model["slug"].removeprefix("ailocal-")
+        role = P.effective_role(cap)
+        limit = model["auto_compact_token_limit"]
+        check(model["context_window"] == role["total_context"] and
+              0 < limit <= role["context_input"],
+              f"{cap}: catalog carries model-specific context and safe compaction")
     # The regression this guards: the codex block read a key the geometry
     # migration deleted, so it silently never regenerated and kept stale values.
 
@@ -357,11 +355,26 @@ def resolver_checks() -> None:
         "max_output": 10, "role": "F"})
     check("model: ollama_chat/nomic-shaped-name:1b" in blk,
           "a nomic-SHAPED name no longer forces a non-chat route")
+    for penalty in (0.0, 1.5):
+        root = sandbox(marker="64gb", profile_text=GOOD +
+                       f"min_p = 0.0\npresence_penalty = {penalty}\n")
+        try:
+            tuned = P.load_profile("64gb", root)["architecture"]
+            block = _sm4.gen_role_block("architecture", tuned)
+            check("      min_p: 0.0" in block and
+                  f"      presence_penalty: {penalty}" in block and
+                  'allowed_openai_params: ["presence_penalty"]' in block,
+                  f"native Qwen sampling survives parsing and generation ({penalty})")
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
     cfg = (P.state_root() / "litellm" / "config.yaml").read_text()
     check("ollama/nomic-embed-text" not in cfg,
           "no embedding route is generated: ailocal no longer serves embeddings")
-    check(cfg.count("model: ollama_chat/") == 5,
-          "all five capabilities use ollama_chat")
+    role_count = len(P.profile_summary(P.active_tier())["roles"])
+    check(cfg.count("model: ollama_chat/") == role_count,
+          "every capability uses ollama_chat")
+    check("cyber" not in P.load_client_policy(RESOURCES).get("compat", {}),
+          "cyber has one canonical model ID, without a bare compatibility alias")
 
     print("\nEXPLICIT CONTEXT AND OUTPUT GEOMETRY")
     for t in P.TIERS:
@@ -546,6 +559,30 @@ def hardware_checks() -> None:
     # geometry is free to diverge upward.
     c64, _ = PARSED["64gb"]
     c128, _ = PARSED["128gb"]
+    for tier in PROFILES:
+        caps, _ = PARSED[tier]
+        large = tier in ("64gb", "128gb")
+        check("cyber" in caps, f"{tier}: cyber is available")
+        if large:
+            cyber = P.resolve_role(tier, "cyber", RESOURCES)
+            check(cyber["model"] == "orcarouter/Qwen3.8-27B-Uncensored:mlx-4bit"
+                  and cyber["total_context"] == 32768
+                  and cyber["context_input"] == 24576
+                  and cyber["max_output"] == 8192,
+                  f"{tier}: cyber selects exact MLX model and bounded geometry")
+            check(cyber["model"] in P.required_models(tier, RESOURCES),
+                  f"{tier}: installer model set includes cyber")
+        else:
+            cyber = P.resolve_role(tier, "cyber", RESOURCES)
+            source = cyber["source"]
+            check(bool(source) and len(source["revision"]) == 40,
+                  f"{tier}: small MLX source is commit-pinned")
+            check(cyber["total_context"] == (16384 if tier == "16gb" else 32768)
+                  and cyber["max_output"] == (4096 if tier == "16gb" else 8192)
+                  and cyber["reasoning"] is False,
+                  f"{tier}: cyber has bounded geometry and explicit thinking mode")
+            check(cyber["model"] in P.required_models(tier, RESOURCES),
+                  f"{tier}: installer includes the imported model")
     for cap in CAPABILITIES:
         for field in ("active", "keep_alive", "temperature"):
             check(c64[cap].get(field) == c128[cap].get(field),
@@ -652,7 +689,7 @@ def hardware_checks() -> None:
         caps, _ = PARSED[tier]
         out = {}
         for cap, f in caps.items():
-            if cap not in CAPABILITIES:
+            if cap not in P.ROLES:
                 continue
             if (f.get("enabled") or "true").lower() == "false":
                 continue
@@ -662,12 +699,12 @@ def hardware_checks() -> None:
 
     for tier in PROFILES:
         u = unique_models(tier)
-        check(len(u) <= len(CAPABILITIES),
-              f"{tier} unique models ({len(u)}) do not exceed capabilities ({len(CAPABILITIES)})")
+        check(len(u) <= len(P.ROLES),
+              f"{tier} unique models ({len(u)}) do not exceed capabilities ({len(P.ROLES)})")
 
-    check(len(unique_models("16gb")) == 2, "16gb resolves to 2 unique models",
+    check(len(unique_models("16gb")) == 3, "16gb resolves to 3 unique models including cyber",
           str(sorted(unique_models("16gb"))))
-    check(len(unique_models("32gb")) == 2, "32gb resolves to 2 unique models",
+    check(len(unique_models("32gb")) == 3, "32gb resolves to 3 unique models including cyber",
           str(sorted(unique_models("32gb"))))
     check(sorted(unique_models("64gb")) == sorted(unique_models("128gb")),
           "64gb and 128gb pull the identical model set, so their storage cost is equal")
@@ -804,6 +841,15 @@ def hardware_checks() -> None:
         check(projected and not (box / "home/.claude").exists(),
               f"{each}: generation projects compaction into claude-local only, never ~/.claude",
               r.stderr.strip()[-300:] or f"wrote under {box / 'home'}")
+        check(not any((box / "clients/codex").glob("*.config.toml")),
+              f"{each}: selecting a model needs no generated launch presets")
+        catalog = json.loads((box / "clients/codex/model_catalog.json").read_text())
+        for entry in catalog["models"]:
+            capability = entry["slug"].removeprefix("ailocal-")
+            geometry = P.resolve_role(each, capability, RESOURCES)
+            check(entry["context_window"] == geometry["total_context"] and
+                  0 < entry["auto_compact_token_limit"] <= geometry["context_input"],
+                  f"{each}.{capability}: catalog limits follow model selection")
         shutil.rmtree(box, ignore_errors=True)
 
     # A launch_default with no declared output ceiling must FAIL, not fall back
@@ -825,27 +871,11 @@ def hardware_checks() -> None:
         check("max_output" in str(exc),
               "a launch_default without max_output is rejected", str(exc))
 
-    # Codex's numbers must describe the model CODEX defaults to, not architecture.
-    # Deriving them from architecture wrote a compaction limit of 49,152 against a
-    # default model whose entire context is 24,576 -- unreachable, because the model
-    # 400s on context length long before compaction could fire.
-    codex = P.deployed_client_root() / "codex/config.toml"
-    cx_cap = P.load_client_policy().get("codex", {}).get("default", "implementation")
-    if codex.exists() and cc and cx_cap in PARSED[tier][0]:
-        txt = codex.read_text()
-        _cx = PARSED[tier][0][cx_cap]
-        cx_in = int(_cx["context_input"])
-        cx_ctx = cx_in + int(_cx.get("max_output") or 0)
-        # The advertised WINDOW is total context; the compaction TRIGGER is capped
-        # by admissible INPUT. Deriving the trigger from cx_ctx put it 2,048 tokens
-        # above what the backend admits -- see the admission invariant above.
-        want = min(int(cc["window"]) * int(cc["pct"]) // 100, int(cx_in * int(cc["pct"]) / 100))
-        check(f"model_context_window = {cx_ctx}" in txt,
-              f"codex window is its OWN default capability '{cx_cap}' ({cx_ctx}), not architecture")
-        check(f"model_auto_compact_token_limit = {want}" in txt,
-              f"codex compaction limit is {want}")
-        check(want <= cx_in,
-              f"codex compaction limit ({want}) is within admissible input ({cx_in})")
+    # Every selected model owns its client limits. There are no global
+    # default-role overrides to become stale after /model selection.
+    check("model_context_window" not in tomllib.loads(
+              (P.deployed_client_root() / "codex/config.toml").read_text()),
+          "Codex model selection is governed by catalog metadata")
 
     # ── README cannot drift from the profiles ───────────────────────────────────
     print("\nDOCUMENTATION")

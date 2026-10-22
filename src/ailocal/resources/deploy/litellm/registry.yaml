@@ -321,6 +321,20 @@ model_capabilities:
 
 model_classes:
 
+  # [REAL] Ollama 0.40.6 / M3 Max 64 GB, 2026-10-22: native MLX,
+  # two fixture tool rounds complete, including one transient-error recovery.
+  # [APPROX] This is a bounded fixture pilot, not a repository coding eval.
+  # Delegation and parallel tool use have not been established for this build.
+  local_cyber:
+    match_models: ["orcarouter/Qwen3.8-27B-Uncensored:mlx-4bit"]
+    supports_tools: true
+    supports_mcp: true
+    supports_parallel_tools: false
+    supports_structured_output: false
+    supports_reasoning: true
+    preferred_groups: [edit_and_run, search, lsp, mcp_plumbing, planning]
+    denied_groups: [orchestration, scheduling, worktree, interactive, delegation]
+
   # ── Local: agentic ────────────────────────────────────────────────────────
   # The default class for a general-purpose local model. A model is described
   # by what it can do, not by the ROLE it happens to be filling: architecture,
