@@ -31,13 +31,18 @@ services:
     # a commit. `ailocal check` gates the running build against
     # the validated version.
     #
-    # 1.106.0 carries the GHSA-7hp6-4w63-5g45 fix (>= 1.102.2). From 1.103 the
-    # proxy opens the upstream stream before any callback runs, so a streamed
-    # /v1/responses web search returns 500 (BerriAI/litellm#42770, open) unless
-    # tool_repair's async_post_call_success_deployment_hook re-streams it first.
-    # Re-run the websearch probes before moving. Signature verified with
-    # BerriAI's cosign.pub.
-    image: ghcr.io/berriai/litellm:v1.106.0@sha256:2e4c0371f3a8c28e4da131d77abaa8341cd3b0c2fcc4d34d7c5900431af7b9d0
+    # Pinned to 1.106.2 — the clean release BerriAI blessed after the 2026-10-21
+    # supply-chain compromise, when v1.107.0 shipped a credential-stealer + RAT to
+    # PyPI and to the floating latest/main-stable/main-latest tags
+    # (BerriAI/litellm#47826; compromised digest sha256:1bbcb144…). A digest pin was
+    # never affected; holding ~N-2 behind newest is the point. 1.106.2 carries the
+    # GHSA-7hp6-4w63-5g45 fix (>= 1.102.2). From 1.103 the proxy opens the upstream
+    # stream before any callback runs, so a streamed /v1/responses web search returns
+    # 500 (BerriAI/litellm#42770, open) unless tool_repair's
+    # async_post_call_success_deployment_hook re-streams it first. Re-run the
+    # websearch probes before moving. Digest read from ghcr 2026-10-22; re-verify the
+    # 1.106.2 signature against BerriAI's cosign.pub before relying on it.
+    image: ghcr.io/berriai/litellm:v1.106.2@sha256:7294b90f868c5c38c99b83021c7ba46f9b439e95f8e32964c925c7d2563a03f7
     container_name: ${AILOCAL_LITELLM_CONTAINER:-ailocal-litellm}
     restart: unless-stopped
     mem_limit: 2g
@@ -82,7 +87,7 @@ services:
       # The version this stack was VALIDATED against. `ailocal check` compares
       # it to the running library and fails loudly on drift, so a floating tag or
       # a manual pull can never again leave docs and runtime disagreeing.
-      - AILOCAL_LITELLM_VERSION=1.106.0
+      - AILOCAL_LITELLM_VERSION=1.106.2
       # capability_registry.py — the Local Agent Gateway's registry (Phase A).
       - AILOCAL_REGISTRY=/app/config/registry.yaml
       # Phase D task negotiation: infer the tools a task needs from the first
