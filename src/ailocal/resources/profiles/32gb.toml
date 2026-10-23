@@ -5,7 +5,7 @@
 # to ONE model (qwen3.5:9b). That is deliberate, not an oversight: on 32 GB there is
 # room for one resident agent model, and rotating several role-specific models would
 # spend the tier's whole memory budget on load/evict churn. The capability aliases
-# still differ — persona, sampling, reasoning and num_predict are per-capability —
+# still differ — sampling, reasoning and num_predict are per-capability —
 # they simply share a backend. One model resident, no swapping.
 #
 # ONE SHARED num_ctx, NOT FOUR. qwen3.5 runs on the llama_cpp runner, where
@@ -37,8 +37,11 @@
 # Field meanings are documented in profiles/64gb.toml, the reference schema.
 # 32 GB targets useful daily coding and agent work on one shared 9b backend.
 status = "configuration-verified"  # schema, selection and size are tested; not measured on 32 GB hardware
-disk_gb = 9
+disk_gb = 15
 
+# Sampling audited 2026-10-22 against Qwen guidance:
+# https://huggingface.co/Qwen/Qwen3.5-9B#best-practices
+# Vendor-aligned defaults are not a measured quality improvement on this tier.
 [architecture]
 role = "Lead architect (shared primary)"
 active = "qwen3.5:9b"
@@ -46,14 +49,17 @@ preferred = ["qwen3.5:9b"]
 reasoning = true
 context_input = 122880
 max_output = 16384
-temperature = 0.1
+temperature = 0.6
 keep_alive = "6h"
 purpose = ["architecture", "refactoring", "multi-step debugging", "design"]
 strengths = ["shared resident primary - no load/evict churn", "native tool calling", "120K input, 16K output"]
 weaknesses = ["smaller than the 64 GB tier's specialised models", "one backend serves four roles"]
-top_p = 0.9
+top_p = 0.95
 top_k = 20
 repeat_penalty = 1.0
+min_p = 0.0
+presence_penalty = 0.0
+  # Qwen precise-coding thinking preset; see the source card linked above.
 
 [implementation]
 role = "Daily coding (shared primary)"
@@ -62,14 +68,17 @@ preferred = ["qwen3.5:9b"]
 reasoning = false
 context_input = 131072
 max_output = 8192
-temperature = 0.1
+temperature = 0.7
 keep_alive = "6h"
 purpose = ["everyday coding", "features", "tests"]
 strengths = ["same resident backend as architecture - no reload between roles"]
 weaknesses = ["shares its budget with every other chat capability"]
-top_p = 0.9
+top_p = 0.8
 top_k = 20
 repeat_penalty = 1.0
+min_p = 0.0
+presence_penalty = 1.5
+  # Qwen non-thinking general preset; keep reasoning off for this role.
 
 [review]
 role = "Code review (shared primary)"
@@ -78,14 +87,17 @@ preferred = ["qwen3.5:9b"]
 reasoning = true
 context_input = 122880
 max_output = 16384
-temperature = 0.2
+temperature = 0.6
 keep_alive = "6h"
 purpose = ["code review", "bug detection", "security review"]
 strengths = ["reasoning enabled for review depth", "no separate model to load"]
 weaknesses = ["not a dedicated review model as on the 64 GB tier"]
-top_p = 0.9
+top_p = 0.95
 top_k = 20
 repeat_penalty = 1.0
+min_p = 0.0
+presence_penalty = 0.0
+  # Qwen precise-coding thinking preset; see the source card linked above.
 
 [fast]
 role = "Fast agent (shared primary)"
@@ -104,6 +116,9 @@ weaknesses = ["larger than a dedicated 2b would be", "so marginally slower per t
 top_p = 0.9
 top_k = 20
 repeat_penalty = 1.0
+min_p = 0.0
+presence_penalty = 1.5
+  # Measured fast-agent exception: retain t0/p0.9 and the installed model presence penalty.
 
 [completion]
 role = "Autocomplete (FIM)"
@@ -129,6 +144,29 @@ top_p = 0.9
 top_k = 20
 repeat_penalty = 1.0
 
+
+# Qwen's non-thinking preset is a starting point, not a measured optimum.
+# https://huggingface.co/huihui-ai/Huihui-Qwen3.5-9B-abliterated
+# https://huggingface.co/Qwen/Qwen3.5-9B#best-practices
+# [APPROX] This geometry must still be measured on actual 32 GB hardware.
+[cyber]
+role = "Unrestricted assistant (MLX 9B)"
+active = "ailocal-qwen3.5-9b-uncensored:mlx-7b09418"
+source = { repository = "vanch007/Huihui-Qwen3.5-9B-abliterated-mlx-4bit", revision = "7b094180782d187b6f76242d085882914e6af181" }
+preferred = ["ailocal-qwen3.5-9b-uncensored:mlx-7b09418"]
+reasoning = false
+context_input = 24576
+max_output = 8192
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+min_p = 0.0
+presence_penalty = 1.5
+repeat_penalty = 1.0
+keep_alive = "5m"
+purpose = ["benign refusal-sensitive work", "coding and tool-use candidate"]
+strengths = ["community abliterated weights", "native MLX 4-bit"]
+weaknesses = ["not measured on 32 GB hardware", "coding and tool reliability require evaluation"]
 
 [compaction]
 window = 108544  # effective window handed to the client's compactor

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-ailocal runs Claude Code, Codex CLI and VS Code Copilot Chat against local models on Apple Silicon. Ollama serves the models; LiteLLM fronts them on `127.0.0.1:4000` as an OpenAI- and Anthropic-compatible proxy. ailocal owns inference and routing only — not repository intelligence, MCP registration, or agent definitions — and must stay usable on its own.
+ailocal runs Claude Code, Codex CLI and VS Code Copilot Chat against local models on Apple Silicon. Ollama serves the models; LiteLLM fronts them on `127.0.0.1:4000` as an OpenAI- and Anthropic-compatible proxy. ailocal owns inference, routing and its bundled integrations, not repository intelligence or agent definitions, and must stay usable on its own.
 
 ## Source of truth
 
@@ -42,6 +42,7 @@ Two suites are deliberately OUT of the gate because they take minutes, not secon
 ```sh
 python3 tests/installed-runtime.py [--stack]   # proves the wheel needs no checkout
 python3 tests/measure_geometry.py [--quick]    # re-measures the numbers profiles cite
+python3 tests/measure_cache.py [--quick|--tail N]  # is the KV prefix cache being reused?
 ./tests/artifact-routing.sh [runs]             # does a real model CALL the artifact tool?
 ```
 
@@ -69,6 +70,8 @@ person is using.
 `test_mermaid_validate.py` (CORE) asserts the state machine with the browser replaced through
 the `runner` seam, plus one bounded real parse; `test_mermaid_grammar.py` (FULL) is the
 authoritative corpus and launches a browser per fixture. Run `installed-runtime` whenever packaging, resources or provisioning change. Run `measure_geometry` after an Ollama or MLX upgrade, after changing a model, or when bringing up an unmeasured tier — it asserts nothing and keeps no history; a human reads the numbers and decides whether the profile still holds. It stops and reloads models, so nothing may run beside it.
+
+Run `measure_cache` to confirm the KV prefix cache is actually reused across turns — the lever that keeps agent prefill off the critical path on Apple Silicon. On a 16 GB host [REAL] the active probe on `qwen3.5:4b` collapsed a warm turn's prefill from ~18.6K tokens to a few dozen (~99.8% reuse, ~115× faster prefill), end to end through the `claude-local` path; a regression that silently turns every turn cold (an engine upgrade, a new hybrid/recurrent model, interleaving background requests evicting the single 16 GB slot) is invisible without it. The default active probe stops and reloads the probed model, so it may not run beside another inference suite; `--tail N` is passive — it summarises the last N real requests from the Ollama log and runs no inference, so use it right after a `claude-local`/`codex-local` session. Run it after an Ollama or MLX upgrade, after changing a model, or when bringing up an unmeasured tier. `--tier 64gb` is the validation tool to run on the MLX (`gemma4:26b-mlx`) path, whose reuse is unmeasured on 16 GB hardware. Like `measure_geometry` it asserts nothing and keeps no history.
 
 ## Install and runtime ordering
 
@@ -111,7 +114,7 @@ Only `src/`, `tests/`, `docs/` and project metadata. No generated artifact is ev
 - Geometry is derived, never restated: `num_ctx = context_input + max_output`, `num_predict = max_output`, `max_input_tokens = context_input`.
 - Claude Code's process-wide context and output variables are projected from the launch-default role. They cannot describe the smaller background slots; `settings.json` lists those limits rather than implying parity.
 - ailocal holds no conversation state. It never summarises or rewrites a client's history; it generates the compaction *threshold* the client applies. See [docs/architecture.md](docs/architecture.md).
-- ailocal provisions client integrations only inside a root it owns. Never modify hosted `~/.claude`.
+- ailocal provisions inference and bundled runtime integrations only inside a root it owns. Public documentation MCP registration through native Claude/Codex CLIs is the explicit hosted-root exception; never change hosted model, auth, instruction or plugin settings.
 - ailocal installs no language server. It enables the official plugin for a server already on PATH, in its own root only.
 - Codex research MCP dispatch is measured on Codex 0.163.0 through the local proxy. Other MCP servers require their own evidence before registration.
 - Python is standard library only.

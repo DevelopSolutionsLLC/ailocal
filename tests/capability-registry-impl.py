@@ -63,6 +63,11 @@ d = reg.describe()
 check(d["groups"] >= 8, f"groups present ({d['groups']})")
 check(d["model_classes"] >= 5, f"model classes present ({d['model_classes']})")
 check(d["routes"] == 3, f"all three routes described ({d['routes']})")
+if reg.backend_of("ailocal-cyber"):
+    check(reg.model_class("ailocal-cyber")[0] == "local_cyber",
+          "cyber is classified by its measured local backend")
+    check(reg.max_context("ailocal-cyber") == 32768,
+          "cyber has its own 32K context")
 check(d["contexts_from_generated"] >= 5,
       f"context windows come from the GENERATED file, not the registry "
       f"({d['contexts_from_generated']} found)")

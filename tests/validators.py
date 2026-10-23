@@ -19,13 +19,16 @@ import os
 import re
 import socket
 import sys
+import tempfile
 import urllib.request
+from types import SimpleNamespace
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from harness import REPO, Suite  # noqa: E402
 
-from ailocal.checks import BLOCKED, FAIL, PASS, WARN, CheckResult, exit_code  # noqa: E402
+from ailocal.checks import BLOCKED, FAIL, PASS, SKIP, WARN, CheckResult, exit_code  # noqa: E402
 from ailocal.checks import config as C  # noqa: E402
 from ailocal import policy as P
 from ailocal.checks import services as S  # noqa: E402
@@ -111,6 +114,13 @@ def classification_checks() -> None:
 
 def bounded_checks() -> None:
     """No public validator may issue an unbounded network call."""
+    with patch.object(S, "ollama_installed", return_value={"fixture:gguf", "alias:latest"}):
+        check(S.check_models_present(["fixture:mlx"]).status == FAIL,
+              "a different quantization/tag cannot satisfy a required model")
+        check(S.check_models_present(["fixture:gguf", "alias"]).status == PASS,
+              "exact tags and omitted :latest resolve normally")
+    check(S.runtime._find({"fixture:gguf": {"size": 1}}, "fixture:mlx") is None,
+          "residency cannot borrow another variant's memory or expiry")
     for name in PUBLIC:
         path = REPO / name
         if not path.is_file():
@@ -251,7 +261,55 @@ def gate_drift_checks() -> None:
         check(not refuse(status)[0], f"{label} does not stop the gate")
 
 
+def supply_scope_checks() -> None:
+    """Other projects and isolated installs must not change this install's verdict."""
+    names = {"foreign": "/unrelated-service", "isolated": "/test-service",
+             "local": "/custom-container-name"}
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        if "compose" in argv and "ps" in argv:
+            value = "local"
+        elif argv[1:3] == ["ps", "-q"]:
+            value = "foreign isolated local"
+        elif argv[1] == "port":
+            value = "4000/tcp -> 127.0.0.1:4000"
+        elif argv[-1] == "{{.Name}}":
+            value = names[argv[2]]
+        elif argv[-1] == "{{.Config.Image}}":
+            value = "example/proxy:test@sha256:expected"
+        elif argv[-1] == "{{.Image}}":
+            value = "sha256:image"
+        else:
+            value = "example/proxy@sha256:expected"
+        return SimpleNamespace(stdout=value, returncode=0)
+
+    with patch.object(S, "_run", side_effect=run):
+        results = S.check_loopback()
+        name, digest = S._running_digest("example/proxy")
+    check(len(results) == 1 and "custom-container-name" in results[0].summary,
+          "reachability reports only this installation's containers")
+    check([a for a in calls if a[1] == "port"] == [["docker", "port", "local"]],
+          "unrelated projects and isolated test containers are not audited")
+    check((name, digest) == ("custom-container-name", "sha256:expected"),
+          "digest comparison selects this installation, not another container of the image")
+    check(not any(a[1:3] == ["ps", "-q"] for a in calls),
+          "supply-chain checks never enumerate all projects on the host")
+
+    with tempfile.TemporaryDirectory() as box, \
+            patch.object(P, "deployed_client_root", return_value=Path(box)):
+        check(C.check_local_artifacts().status is SKIP,
+              "a fresh install does not require an optional Claude integration")
+        home = Path(box) / "claude"
+        home.mkdir()
+        (home / ".claude.json").write_text('{"mcpServers": {"artifact": {"command": "missing"}}}')
+        check(C.check_local_artifacts().status is FAIL,
+              "an explicitly registered artifact runtime must exist")
+
+
 SECTIONS = {"deterministic": deterministic_checks,
+            "supply-scope": supply_scope_checks,
             "search-quota": search_quota_checks,
             "classification": classification_checks,
             "bounded": bounded_checks,
