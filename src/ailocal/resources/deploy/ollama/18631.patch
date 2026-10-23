@@ -1,0 +1,252 @@
+diff --git a/mlxrunner/model/gemma4/gemma4.go b/mlxrunner/model/gemma4/gemma4.go
+index 48fa0a8c93e..5e45263a3f7 100644
+--- a/mlxrunner/model/gemma4/gemma4.go
++++ b/mlxrunner/model/gemma4/gemma4.go
+@@ -309,6 +309,72 @@ func collectExpertProjections(tensors map[string]*mlx.Array, cfg *TextConfig, pr
+ 	return
+ }
+ 
++// loadStackedExpertProjection loads one pre-stacked [experts, out, in]
++// projection stored under base, with or without a ".weight" suffix. It stays
++// packed for GatherQMM when scale companions are present.
++func loadStackedExpertProjection(tensors map[string]*mlx.Array, cfg *TextConfig, base string) *stackedExpertResult {
++	key, w := firstTensorKey(tensors, base+".weight", base)
++	if w == nil {
++		return nil
++	}
++	scales := tensors[key+"_scale"]
++	if scales == nil {
++		return &stackedExpertResult{Weight: w}
++	}
++	globalScale, _ := model.ReadGlobalScale(tensors, key)
++	groupSize, bits, mode := model.ResolveLinearQuantParams(
++		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant, key, w, scales)
++	return &stackedExpertResult{
++		Weight:       w,
++		Scales:       scales,
++		Biases:       tensors[key+"_qbias"],
++		GlobalScales: model.PrepareGatherQMMGlobalScale(globalScale, w.Dim(0)),
++		Bits:         bits,
++		GroupSize:    groupSize,
++		Mode:         mode,
++	}
++}
++
++// loadStackedExpertProjections loads unfused, pre-stacked gate/up/down
++// projections from the first prefix that has a gate projection. up and down
++// are nil when that prefix is incomplete.
++func loadStackedExpertProjections(tensors map[string]*mlx.Array, cfg *TextConfig, prefixes ...string) (gate, up, down *stackedExpertResult) {
++	for _, prefix := range prefixes {
++		if gate = loadStackedExpertProjection(tensors, cfg, prefix+".gate_proj"); gate != nil {
++			up = loadStackedExpertProjection(tensors, cfg, prefix+".up_proj")
++			down = loadStackedExpertProjection(tensors, cfg, prefix+".down_proj")
++			return gate, up, down
++		}
++	}
++	return nil, nil, nil
++}
++
++// setUnfusedExperts configures an MoE block from separate stacked gate, up and
++// down projections: GatherQMM when all three are quantized, GatherMM
++// otherwise.
++func setUnfusedExperts(moe *MoEBlock, gate, up, down *stackedExpertResult) {
++	if gate.Scales == nil || up.Scales == nil || down.Scales == nil {
++		// Unquantized: transpose for GatherMM (expects [experts, in, out]).
++		moe.GateWeight = transposeForGatherMM(denseStackedExpertResult(gate))
++		moe.UpWeight = transposeForGatherMM(denseStackedExpertResult(up))
++		moe.DownWeight = transposeForGatherMM(denseStackedExpertResult(down))
++		return
++	}
++
++	moe.UseQuantized = true
++	moe.GateWeightQ, moe.GateScales, moe.GateBiases = gate.Weight, gate.Scales, gate.Biases
++	moe.UpWeightQ, moe.UpScales, moe.UpBiases = up.Weight, up.Scales, up.Biases
++	moe.DownWeightQ, moe.DownScales, moe.DownBiases = down.Weight, down.Scales, down.Biases
++	moe.GateGlobalScales = gate.GlobalScales
++	moe.UpGlobalScales = up.GlobalScales
++	moe.DownGlobalScales = down.GlobalScales
++	moe.GateGroupSize, moe.GateBits = gate.GroupSize, gate.Bits
++	moe.UpGroupSize, moe.UpBits = up.GroupSize, up.Bits
++	moe.DownGroupSize, moe.DownBits = down.GroupSize, down.Bits
++	moe.QuantMode = gate.Mode
++	moe.DownQuantMode = down.Mode
++}
++
+ func denseStackedExpertResult(w *stackedExpertResult) *mlx.Array {
+ 	if w.Scales == nil {
+ 		return w.Weight
+@@ -939,18 +1005,16 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
+ 					return fmt.Errorf("layer %d: missing MoE down_proj for fused gate_up_proj %q", i, gateUpKey)
+ 				}
+ 				m.loadFusedExperts(moe, tensors, gateUpKey, gateUp, downKey, down)
+-			} else if gateW := firstNonNil(tensors,
+-				layerPrefix+".experts.gate_proj", layerPrefix+".moe.gate_proj"); gateW != nil {
+-				// Separate (non-fused) pre-stacked gate/up projections (older HF
+-				// layout, dense only). Transpose for GatherMM.
+-				moe.GateWeight = transposeForGatherMM(gateW)
+-				moe.UpWeight = transposeForGatherMM(firstNonNil(tensors,
+-					layerPrefix+".experts.up_proj", layerPrefix+".moe.up_proj"))
+-				moe.DownWeight = transposeForGatherMM(firstNonNil(tensors,
+-					layerPrefix+".experts.down_proj", layerPrefix+".moe.down_proj"))
+-				if moe.UpWeight == nil || moe.DownWeight == nil {
++			} else if gate, up, down := loadStackedExpertProjections(tensors, m.TextConfig,
++				layerPrefix+".experts", layerPrefix+".moe", layerPrefix+".experts.switch_glu",
++			); gate != nil {
++				// Separate (non-fused) pre-stacked gate/up/down projections: the
++				// older HF layout (dense) and the SwitchGLU layout mlx-lm and
++				// mlx-vlm write (dense or quantized).
++				if up == nil || down == nil {
+ 					return fmt.Errorf("layer %d: incomplete pre-stacked MoE weights", i)
+ 				}
++				setUnfusedExperts(moe, gate, up, down)
+ 			} else {
+ 				// Per-expert tensors (from create path).
+ 				// Try separate gate_proj/up_proj first, then fused gate_up_proj.
+@@ -1002,35 +1066,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
+ 				if gateStacked == nil || upStacked == nil || downStacked == nil {
+ 					return fmt.Errorf("layer %d: missing MoE expert weights", i)
+ 				}
+-				// Use GatherQMM if all projections have quantized weights.
+-				if gateStacked.Scales != nil && upStacked.Scales != nil && downStacked.Scales != nil {
+-					moe.GateWeightQ = gateStacked.Weight
+-					moe.GateScales = gateStacked.Scales
+-					moe.GateBiases = gateStacked.Biases
+-					moe.GateGlobalScales = gateStacked.GlobalScales
+-					moe.UpWeightQ = upStacked.Weight
+-					moe.UpScales = upStacked.Scales
+-					moe.UpBiases = upStacked.Biases
+-					moe.UpGlobalScales = upStacked.GlobalScales
+-					moe.DownWeightQ = downStacked.Weight
+-					moe.DownScales = downStacked.Scales
+-					moe.DownBiases = downStacked.Biases
+-					moe.DownGlobalScales = downStacked.GlobalScales
+-					moe.UseQuantized = true
+-					moe.GateGroupSize = gateStacked.GroupSize
+-					moe.GateBits = gateStacked.Bits
+-					moe.UpGroupSize = upStacked.GroupSize
+-					moe.UpBits = upStacked.Bits
+-					moe.DownGroupSize = downStacked.GroupSize
+-					moe.DownBits = downStacked.Bits
+-					moe.QuantMode = gateStacked.Mode
+-					moe.DownQuantMode = downStacked.Mode
+-				} else {
+-					// Unquantized: transpose for GatherMM (expects [experts, in, out]).
+-					moe.GateWeight = transposeForGatherMM(denseStackedExpertResult(gateStacked))
+-					moe.UpWeight = transposeForGatherMM(denseStackedExpertResult(upStacked))
+-					moe.DownWeight = transposeForGatherMM(denseStackedExpertResult(downStacked))
+-				}
++				setUnfusedExperts(moe, gateStacked, upStacked, downStacked)
+ 			}
+ 			layer.MoE = moe
+ 
+diff --git a/mlxrunner/model/gemma4/gemma4_moe_test.go b/mlxrunner/model/gemma4/gemma4_moe_test.go
+index 8bd6144da88..7b20dd4f434 100644
+--- a/mlxrunner/model/gemma4/gemma4_moe_test.go
++++ b/mlxrunner/model/gemma4/gemma4_moe_test.go
+@@ -229,6 +229,106 @@ func TestLoadFusedExpertsDense(t *testing.T) {
+ 	})
+ }
+ 
++// variedLike creates a deterministic, non-constant tensor of the given shape so
++// that quantization and expert selection have something to distinguish.
++func variedLike(freq float32, shape ...int) *mlx.Array {
++	n := 1
++	dims := make([]int32, len(shape))
++	for i, d := range shape {
++		n *= d
++		dims[i] = int32(d)
++	}
++	a := mlx.Sin(mlx.MulScalar(mlx.Arange(0, float64(n), 1, mlx.DTypeFloat32), freq))
++	return mlx.Reshape(a, dims...)
++}
++
++// TestLoadStackedExpertsSwitchGLU verifies that the unfused, pre-stacked
++// experts mlx-lm and mlx-vlm write (experts.switch_glu.{gate,up,down}_proj)
++// load onto the GatherQMM path and produce the same output as the dense
++// GatherMM path over the dequantized weights.
++func TestLoadStackedExpertsSwitchGLU(t *testing.T) {
++	mlxtest.Run(t, func(t *mlxtest.T) {
++		const groupSize, bits = 64, 4
++		cfg := tinyMoEConfig()
++		cfg.HiddenSize = 128
++		cfg.ExpertIntermediateSize = 64
++		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = groupSize, bits, "affine"
++		E, I, H := int(cfg.NumExperts), int(cfg.ExpertIntermediateSize), int(cfg.HiddenSize)
++
++		layer := "language_model.model.layers.0"
++		prefixes := []string{layer + ".experts", layer + ".moe", layer + ".experts.switch_glu"}
++
++		quantized := make(map[string]*mlx.Array)
++		dense := make(map[string]*mlx.Array)
++		for i, p := range []struct {
++			name       string
++			rows, cols int
++		}{
++			{"gate_proj", I, H},
++			{"up_proj", I, H},
++			{"down_proj", H, I},
++		} {
++			key := layer + ".experts.switch_glu." + p.name + ".weight"
++			w, scales, biases := mlx.Quantize(variedLike(float32(i+1)*0.37, E, p.rows, p.cols), groupSize, bits, "affine")
++			quantized[key] = w
++			quantized[key+"_scale"] = scales
++			quantized[key+"_qbias"] = biases
++			dense[key] = mlx.Dequantize(w, scales, biases, groupSize, bits, "affine", nil)
++		}
++
++		gate, up, down := loadStackedExpertProjections(quantized, cfg, prefixes...)
++		if gate == nil || up == nil || down == nil {
++			t.Fatal("switch_glu experts not found")
++		}
++		qMoE := &MoEBlock{PerExpertScale: onesLike(E)}
++		setUnfusedExperts(qMoE, gate, up, down)
++		if !qMoE.UseQuantized || qMoE.UseFusedGateUp {
++			t.Fatalf("UseQuantized = %v, UseFusedGateUp = %v, want true, false", qMoE.UseQuantized, qMoE.UseFusedGateUp)
++		}
++		if qMoE.GateWeight != nil || qMoE.UpWeight != nil || qMoE.DownWeight != nil {
++			t.Fatal("dense weights set on a quantized block")
++		}
++		for name, got := range map[string][2]int{
++			"gate": {qMoE.GateGroupSize, qMoE.GateBits},
++			"up":   {qMoE.UpGroupSize, qMoE.UpBits},
++			"down": {qMoE.DownGroupSize, qMoE.DownBits},
++		} {
++			if got != [2]int{groupSize, bits} {
++				t.Errorf("%s group size, bits = %v, want [%d %d]", name, got, groupSize, bits)
++			}
++		}
++
++		gate, up, down = loadStackedExpertProjections(dense, cfg, prefixes...)
++		if gate == nil || up == nil || down == nil {
++			t.Fatal("dense switch_glu experts not found")
++		}
++		dMoE := &MoEBlock{PerExpertScale: onesLike(E)}
++		setUnfusedExperts(dMoE, gate, up, down)
++		if dMoE.UseQuantized {
++			t.Fatal("UseQuantized = true for dense experts")
++		}
++		if got := dMoE.GateWeight.Dims(); len(got) != 3 || got[0] != E || got[1] != H || got[2] != I {
++			t.Fatalf("dense gate shape = %v, want [%d %d %d]", got, E, H, I)
++		}
++
++		x := variedLike(0.11, 1, 5, H)
++		scores, inds := newRouter(cfg).Forward(x, cfg)
++		qOut := qMoE.Forward(x, scores, inds, cfg).AsType(mlx.DTypeFloat32)
++		dOut := dMoE.Forward(x, scores, inds, cfg).AsType(mlx.DTypeFloat32)
++		diff := mlx.Sub(qOut, dOut).Abs().MaxAxis(-1, false).MaxAxis(-1, false)
++		scale := dOut.Abs().MaxAxis(-1, false).MaxAxis(-1, false)
++		mlx.Eval(diff, scale)
++		if d, s := diff.Floats()[0], scale.Floats()[0]; s == 0 || d > 1e-4*s {
++			t.Fatalf("quantized output differs from dense: max |diff| = %g, max |dense| = %g", d, s)
++		}
++
++		delete(quantized, layer+".experts.switch_glu.up_proj.weight")
++		if gate, up, _ := loadStackedExpertProjections(quantized, cfg, prefixes...); gate == nil || up != nil {
++			t.Fatal("incomplete switch_glu experts not reported as incomplete")
++		}
++	})
++}
++
+ func TestCollectExpertProjectionsPrefixes(t *testing.T) {
+ 	mlxtest.Run(t, func(t *mlxtest.T) {
+ 		const experts, intermediate, hidden = 2, 16, 32
