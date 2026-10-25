@@ -7,10 +7,31 @@ that same table, which is the only way the two cannot drift.
 from __future__ import annotations
 
 import io
+import contextlib
+import fcntl
 import json
+import os
 import sys
 
 from . import __version__
+
+
+@contextlib.contextmanager
+def _lifecycle_lock():
+    """Two independent install/start/stop commands must not race over services."""
+    from . import policy
+    root = policy.state_root()
+    root.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(root / "lifecycle.lock", os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise SystemExit("Another ailocal lifecycle command is running. "
+                             "Let it finish, then retry.") from None
+        yield
+    finally:
+        os.close(descriptor)
 
 
 #: command -> (implementing module, fixed args prepended to argv)
@@ -77,6 +98,9 @@ def _profile(argv: list[str]) -> int:
         return rest[rest.index(name) + 1] if name in rest else None
 
     try:
+        if query == "guide":
+            from . import guidance
+            return guidance.main(rest)
         if query == "use":
             from . import install
             if not rest:
@@ -119,7 +143,7 @@ def _profile(argv: list[str]) -> int:
             print("usage: ailocal profile <use TIER|active-tier|state-root|"
                   "config-root|data-root|active-profile-path|"
                   "role NAME [--field F] [--tier T]|"
-                  "profile-summary [--tier T]|validate>", file=sys.stderr)
+                  "profile-summary [--tier T]|guide [MODEL] [--tier T] [--json]|validate>", file=sys.stderr)
             return 2
     except P.ProfileError as e:
         print(f"{e.code}: {e.detail}", file=sys.stderr)
@@ -166,7 +190,10 @@ def main(argv: list[str] | None = None) -> int:
     # so there is one dispatch mechanism and no second interpreter to choose.
     import importlib
     module, fixed = COMMANDS[cmd]
-    return importlib.import_module(module).main([str(a) for a in [*fixed, *argv]])
+    with (_lifecycle_lock() if cmd in ("install", "start", "stop", "teardown")
+          and not {"-h", "--help"}.intersection(argv)
+          else contextlib.nullcontext()):
+        return importlib.import_module(module).main([str(a) for a in [*fixed, *argv]])
 
 
 if __name__ == "__main__":

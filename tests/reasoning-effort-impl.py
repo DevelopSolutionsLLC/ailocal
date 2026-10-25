@@ -70,6 +70,9 @@ try:
         'temperature': 0.7, 'top_p': 0.8, 'top_k': 20, 'min_p': 0.0,
         'presence_penalty': 1.5, 'repeat_penalty': 1.0},
         'Qwen sampling survives the installed SDK at the Ollama HTTP boundary')
+    body = send({'stop': ['<|im_end|>', '<|im_start|>'], 'think': False})
+    suite.check(body.get('options', {}).get('stop') == ['<|im_end|>', '<|im_start|>'],
+                'profile chat boundaries survive the installed SDK at the Ollama HTTP boundary')
 finally:
     server.shutdown()
     server.server_close()

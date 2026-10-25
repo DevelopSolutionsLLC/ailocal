@@ -24,6 +24,7 @@ from pathlib import Path
 COMPACTION = {}
 
 from ailocal import policy as _pc
+from ailocal.guidance import render as render_guidance
 
 # Every path comes from policy. Four roots, each with ONE owner:
 #   config root   authored policy (profiles/, .env) — the operator's
@@ -136,6 +137,10 @@ def load_models_yaml(path):
     # where profiles live in the user's config root and are not rewritten.
     for section in _pc.NON_ROLE_SECTIONS:
         models.pop(section, None)
+    models = {role: info for role, info in models.items()
+              if _pc.resolve_role(Path(path).stem, role, _data=data)["enabled"]}
+    for role, info in models.items():
+        info["guidance"] = _pc.guidance_for(data, role)
     return models
 
 
@@ -212,6 +217,8 @@ def gen_role_block(role, info):
         # LiteLLM 1.106.0 omits this native Ollama option from its supported
         # OpenAI list. Its documented allowlist forwards it without a shim.
         params.append('      allowed_openai_params: ["presence_penalty"]')
+    if info.get("stop"):
+        params.append(f"      stop: {json.dumps(info['stop'])}")
     # num_predict is the only ceiling the backend honours: [REAL] a per-request
     # max_tokens of 512 against an alias declaring 32768 returned 4,199 tokens
     # (LiteLLM 1.93.0, ollama_chat). Re-verified on 1.98.0: max_tokens 512
@@ -316,6 +323,7 @@ def write_caps_json(models):
             "purpose": flow_list(info.get("purpose")),
             "strengths": flow_list(info.get("strengths")),
             "weaknesses": flow_list(info.get("weaknesses")),
+            "guidance": info.get("guidance", {}),
         })
     # JSON cannot carry comments, so ownership travels in a "//" key -- every
     # other generated artifact states its owner and how to regenerate it, and a
@@ -401,16 +409,14 @@ CATALOG_PREAMBLE = (
 )
 CATALOG_TOOLING = (
     "Use `rg` / `rg --files` for search. Use `apply_patch` for edits — never write files with "
-    "`cat` or heredocs. Set the git author locally: `git config user.name \"Victor T. Chevalier\"` "
-    "and `user.email \"13876123+VTChevalier@users.noreply.github.com\"`. Format in GitHub-flavored "
-    "Markdown; no emojis or em dashes."
+    "`cat` or heredocs. Preserve the repository's configured git identity. Format in GitHub-flavored "
+    "Markdown; no emojis or em dashes.\n\n"
+    "The apply_patch parameter content is the entire patch text. Use this exact envelope, "
+    "replacing the path and lines for the real edit:\n"
+    "*** Begin Patch\n*** Update File: example.py\n@@\n-old_value = 1\n+old_value = 2\n*** End Patch\n"
+    "Do not put a blank line after Begin Patch. Use a plain @@ line, not a numbered unified-diff "
+    "header. Context lines start with a space; added lines start with +; removed lines start with -."
 )
-CATALOG_ROLE_SENTENCE = {
-    "architecture":  "You are the architect tier: architecture, complex refactoring, multi-step debugging, and design. Decompose the work, map the system before committing, and pivot if an approach keeps failing.",
-    "implementation":"You are the everyday coder for repository work, logic, and syntax. Plan the change briefly, then implement it fully; trace a bug to its source before fixing it.",
-    "review":        "You review; you do not fix. Read the full file, its tests, and the diff, then report findings ranked by severity (correctness, security, error handling, test gaps, design) with file:line and a concrete fix each.",
-    "completion":    "You handle quick, small tasks fast. If a task needs multi-file analysis or architecture, say so and hand off rather than doing it at low quality.",
-}
 CATALOG_PRIORITY = {"architecture": 10, "implementation": 15, "review": 40, "completion": 30}
 
 
@@ -428,12 +434,13 @@ def regen_catalog(models):
         compact = min(int(window), geometry["context_input"]) * int(pct) // 100
         if not 0 < compact <= geometry["context_input"]:
             raise SystemExit(f"invalid Codex compaction threshold for {name}: {compact}")
-        instr = "\n\n".join([CATALOG_PREAMBLE,
-                             CATALOG_ROLE_SENTENCE.get(name, f"You are the {role} capability."),
-                             CATALOG_TOOLING])
+        guide = info.get("guidance", _pc.guidance_for({name: info}, name))
+        instr = "\n\n".join([CATALOG_PREAMBLE, CATALOG_TOOLING,
+                             render_guidance(mn(name), {"model": backend, **geometry,
+                                 "reasoning": info.get("reasoning"), **guide})])
         entries.append({
             "slug": mn(name),
-            "display_name": f"{role} ({backend})",
+            "display_name": f"{mn(name)} — {role}",
             "description": f"{role} — {backend}, {num_ctx // 1024}K ctx",
             "base_instructions": instr,
             "shell_type": "shell_command",
@@ -453,7 +460,9 @@ def regen_catalog(models):
             "apply_patch_tool_type": "freeform",
             "web_search_tool_type": "text",
             "experimental_supported_tools": [],
+            "default_reasoning_level": "medium" if info.get("reasoning") else "none",
             "supported_reasoning_levels": [
+                {"effort": "none", "description": "Disable native thinking"},
                 {"effort": "low", "description": "Fast, lighter reasoning"},
                 {"effort": "medium", "description": "Balanced speed and depth"},
                 {"effort": "high", "description": "Deep reasoning for complex problems"},
@@ -535,6 +544,15 @@ def regen_claude_settings(models, clients):
     slots = (clients.get("claude") or {}).get("slots", {})
     slot_txt = ", ".join(f"{k.title()}->{mn(v)}" for k, v in slots.items())
     data["model"] = mn(default)
+    # Model selection is client-owned. Native hooks deliver the corresponding
+    # profile facts on startup/resume and after /model, without a proxy injector.
+    hooks = data.setdefault("hooks", {})
+    command = "ailocal profile guide --hook"
+    for event in ("SessionStart", "PostModelSwitch"):
+        entries = hooks.setdefault(event, [])
+        if not any(h.get("command") == command for entry in entries
+                   for h in entry.get("hooks", [])):
+            entries.append({"hooks": [{"type": "command", "command": command, "timeout": 5}]})
     data["//"] = [
         "Claude Code settings — deployed to ~/.config/ailocal/claude/settings.json",
         "(CLAUDE_CONFIG_DIR for the local variant; ~/.claude is never touched).",

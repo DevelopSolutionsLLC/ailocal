@@ -227,6 +227,27 @@ def ensure_user() -> dict[str, str]:
     return parse(path)
 
 
+def set_ollama_patch(selected: str) -> None:
+    """Persist an explicit installer choice without rewriting other overrides."""
+    ensure_user()
+    path = user_file()
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    lines = [line for line in lines if not (
+        (match := _LINE.match(line)) and match.group(1) == "AILOCAL_OLLAMA_PATCH")]
+    text = "".join(lines)
+    if text and not text.endswith("\n"):
+        text += "\n"
+    text += f"AILOCAL_OLLAMA_PATCH={selected}\n"
+    temporary = path.with_name(path.name + ".incoming")
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(text)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def ensure() -> None:
     """Both owners exist, with correct modes. Safe to call on every install."""
     ensure_generated()

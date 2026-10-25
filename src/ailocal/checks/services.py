@@ -352,6 +352,21 @@ def check_models_present(required: list[str]) -> CheckResult:
                        remediation="ailocal install")
 
 
+def check_selected_ollama_runtime() -> CheckResult:
+    """Check the explicit patched selection, including the actual daemon identity."""
+    try:
+        policy.ollama_binary()  # includes owned payload integrity verification
+        expected = policy.ollama_patch_spec()["version"]
+        actual = http_json(f"{OLLAMA}/api/version").get("version")
+        if actual == expected:
+            return CheckResult("ollama-runtime", PASS, f"selected patched Ollama {actual} is running")
+        return CheckResult("ollama-runtime", FAIL, "selected Ollama runtime differs from the running daemon",
+                           remediation="ailocal install")
+    except (SystemExit, OSError, ValueError, Unreachable):
+        return CheckResult("ollama-runtime", FAIL, "selected patched Ollama is unavailable or modified",
+                           remediation="ailocal install")
+
+
 def check_generation(token: str, alias: str = "ailocal-fast") -> CheckResult:
     """One bounded model response. The only call here that loads a model."""
     try:
@@ -515,13 +530,24 @@ def check_search_tool_registered() -> CheckResult:
                        remediation="check search_tools placement in config.yaml, then: ailocal start")
 
 
-def check_context_window(token: str, alias: str = "ailocal-completion") -> CheckResult:
+def check_context_window(token: str, alias: str | None = None) -> CheckResult:
     """An oversized prompt must be rejected, not silently truncated.
 
     Without enforcement the request returns 200 with a garbage answer, so this
     is worth the one large bounded request it costs.
     """
-    filler = "the quick brown fox jumps over the lazy dog. " * 6000
+    roles = {"ailocal-" + role: cfg
+             for role, cfg in policy.effective_summary()["roles"].items()
+             if cfg["enabled"] and cfg.get("max_input_tokens")}
+    if alias is None and roles:
+        alias = min(roles, key=lambda name: roles[name]["max_input_tokens"])
+    if alias not in roles:
+        return CheckResult("context-window", FAIL,
+                           "context-window probe has no enabled selected capability")
+    # Each repeated ' x' is one token for the proxy's admission tokenizer.
+    # Derive the request from the selected limit; a disabled completion role
+    # must not turn an admission check into a missing-model request.
+    filler = " x" * (roles[alias]["max_input_tokens"] + 128)
     try:
         doc = http_json(f"{PROXY}/v1/chat/completions", token=token, payload={
             "model": alias, "max_tokens": 16,

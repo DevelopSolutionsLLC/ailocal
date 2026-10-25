@@ -14,7 +14,7 @@ whether the numbers were good.
 
     python3 tests/measure_geometry.py            # active tier
     python3 tests/measure_geometry.py --tier 32gb
-    python3 tests/measure_geometry.py --quick    # skip the slow prefill probe
+    python3 tests/measure_geometry.py --quick    # short prefixes, no output-ceiling probe
 
 Importing the helpers does not run measurements. Executing this script stops
 and reloads models; never run it beside another inference suite.
@@ -123,8 +123,7 @@ def fill(model, target_tokens, num_ctx):
     """One cold, uncached prefill. Returns the API's own token accounting."""
     subprocess.run(["ollama", "stop", model], capture_output=True)
     time.sleep(4)
-    prompt = (CHUNK * max(1, target_tokens // 18)).replace(
-        "record", f"rec_{target_tokens}")
+    prompt = f"# geometry probe {target_tokens} {time.time_ns()}\n" + CHUNK * max(1, target_tokens // 18)
     r = api("/api/generate", {"model": model, "prompt": prompt, "stream": False,
                              "options": {"num_ctx": num_ctx, "num_predict": 8},
                              "keep_alive": "120s"})
@@ -134,8 +133,8 @@ def fill(model, target_tokens, num_ctx):
 
 def ceiling(model, num_ctx, want):
     """Does the role's output ceiling actually deliver? finish_reason is the
-    signal: 'length' means num_predict bound it, 'stop' means the model chose to
-    end below it. Either proves the ceiling is not silently smaller."""
+    signal: 'length' at the requested count demonstrates that budget. A natural
+    'stop' below it leaves the advertised ceiling unmeasured."""
     r = api("/api/generate", {
         "model": model,
         "prompt": "List 400 distinct short code-review rules, numbered, one per "
@@ -181,7 +180,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n")[0])
     ap.add_argument("--tier", help="default: the active profile")
     ap.add_argument("--quick", action="store_true",
-                    help="skip the cold-prefill probe (the slow one)")
+                    help="short resident/KV probe; skip deep prefill and output ceilings")
     ap.add_argument("--time-budget", type=int, default=900,
                     help="whole-run wall-clock budget in seconds (default 900)")
     args = ap.parse_args(argv)
@@ -207,6 +206,8 @@ def measure(args, models):
     ollama, mlx = versions()
     print(f"profile {tier}   {datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC}")
     print(f"ollama {ollama}   mlx {mlx}")
+    if args.quick:
+        print("quick scope: short-prefix residency; deep cache growth and output ceilings are unmeasured")
     comp = summary.get("compaction") or {}
     if comp.get("window") and comp.get("pct"):
         trig = int(comp["window"]) * int(comp["pct"]) // 100
@@ -259,13 +260,16 @@ def measure(args, models):
                               f"upper bound, not a KV rate")
             else:
                 base = load_cold(model, num_ctx)
-                depth = min(cfg["context_input"], 40000)
+                depth = min(cfg["context_input"], 4096 if args.quick else 40000)
                 n, _, after = fill(model, depth, num_ctx)
                 if base and after and n:
                     print(f"  resident     {base/GIB:.2f} GiB loaded, "
                           f"{after/GIB:.2f} GiB after {n} tokens")
-                    print(f"  kv/token     {(after-base)/n/1024:.1f} KB  (lazy: "
-                          f"charged per token in use, not per window)")
+                    if args.quick:
+                        print("  kv/token     not estimated from the short quick-mode prefix")
+                    else:
+                        print(f"  kv/token     {(after-base)/n/1024:.1f} KB  (lazy: "
+                              f"charged per token in use, not per window)")
 
         if not args.quick:
             depth = min(int(comp.get("window", 0)) * int(comp.get("pct", 0)) // 100
@@ -275,6 +279,10 @@ def measure(args, models):
                 print(f"  cold prefill {n} tokens in {secs:.1f}s "
                       f"({n/secs:.0f} tok/s) — the cost of resuming a session "
                       f"at the compaction point")
+
+        if args.quick:
+            print("  output       not measured in quick mode")
+            continue
 
         # Deduped like KV, and for a sharper reason: this probe GENERATES up to
         # max_output tokens, which on a local 26B is minutes. architecture and

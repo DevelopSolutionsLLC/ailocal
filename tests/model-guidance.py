@@ -22,7 +22,9 @@ class GuidanceTests(unittest.TestCase):
     def test_each_tier_has_exact_backend_knowledge(self):
         for tier in policy.TIERS:
             guides = policy.model_guides(tier, RES)
-            self.assertEqual(set(guides['models']), {'ailocal-' + r for r in policy.ROLES})
+            self.assertEqual(set(guides['models']), {
+                'ailocal-' + r for r, cfg in policy.profile_summary(tier, RES)['roles'].items()
+                if cfg['enabled']})
             for alias, guide in guides['models'].items():
                 role = policy.resolve_role(tier, alias.removeprefix('ailocal-'), RES)
                 self.assertEqual(guide['model'], role['model'])
@@ -39,7 +41,7 @@ class GuidanceTests(unittest.TestCase):
 
     def test_invalid_guidance_fails_closed(self):
         data = policy.load_profile('16gb', RES)
-        data['model_guidance']['qwen3.5:4b']['prompting'] = 'wrong shape'
+        data['model_guidance'][data['implementation']['active']]['prompting'] = 'wrong shape'
         with self.assertRaises(policy.ProfileError):
             policy._validate_guidance(data)
 
@@ -49,7 +51,7 @@ class GuidanceTests(unittest.TestCase):
                     'hook_event_name': 'PostModelSwitch', 'to_model': 'ailocal-cyber'}))), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
             self.assertEqual(guidance.main(['--tier', '16gb', '--hook']), 0)
-        self.assertIn('3/5 baseline, 1/5', out.getvalue())
+        self.assertIn(policy.resolve_role('16gb', 'cyber', RES)['model'], out.getvalue())
         self.assertNotIn('Lead architect', out.getvalue())
 
     def test_missing_model_is_explicit_not_wrong_default(self):
@@ -59,12 +61,21 @@ class GuidanceTests(unittest.TestCase):
             self.assertEqual(guidance.main(['--tier', '16gb', '--hook']), 0)
         self.assertIn('not supplied', out.getvalue())
         self.assertIn('apply only the entry matching', out.getvalue())
-        self.assertIn('Experimental unrestricted Qwen3.5 4B', out.getvalue())
-        self.assertEqual(out.getvalue().count('Stock GGUF on a 64 GB host'), 1)
+        self.assertIn('Unrestricted Qwen3.5 4B reasoning-distilled MLX', out.getvalue())
+        stock_guide = policy.model_guides('16gb', RES)['models']['ailocal-implementation']
+        self.assertEqual(out.getvalue().count(stock_guide['evidence']), 1)
 
     def test_generators_share_guidance_and_preserve_external_hooks(self):
         models = generation.load_models_yaml(RES / 'profiles/16gb.toml')
         self.assertNotIn('model_guidance', models)
+        self.assertNotIn('completion', models)
+        with tempfile.TemporaryDirectory() as disabled_root:
+            path = Path(disabled_root) / '16gb.toml'
+            path.write_text((RES / 'profiles/16gb.toml').read_text().replace(
+                '[cyber]\n', '[cyber]\nenabled = false\n', 1))
+            selected = generation.load_models_yaml(path)
+            self.assertNotIn('cyber', selected)
+            self.assertIn('implementation', selected)
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / 'settings.json'
             external = {'hooks': [{'type': 'command', 'command': 'external-hook'}]}
