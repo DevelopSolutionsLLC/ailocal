@@ -176,6 +176,31 @@ def main() -> None:
           "no client installed and no argument: clean exit, nothing configured",
           f"rc={rc} order={order}")
 
+    _suite.section("VS CODE PRESENCE IS THE APP OR ITS CLI, NEVER LEFTOVER SETTINGS")
+    saved = (C._vscode_app, C._vscode_user_dir, C.shutil.which)
+    try:
+        C._vscode_user_dir = lambda: Path("/leftover/Code/User")
+        C.shutil.which = lambda name: None
+        C._vscode_app = lambda: None
+        check(not C.present("vscode"), "a user directory with no app and no CLI is absent")
+        C._vscode_app = lambda: Path("/Applications/Visual Studio Code.app")
+        check(C.present("vscode"), "an intact app bundle without the CLI is present")
+        C._vscode_app = lambda: None
+        C.shutil.which = lambda name: "/usr/local/bin/code" if name == "code" else None
+        check(C.present("vscode"), "the code CLI alone is present")
+    finally:
+        C._vscode_app, C._vscode_user_dir, C.shutil.which = saved
+    with tempfile.TemporaryDirectory() as box:
+        empty = Path(box) / "Applications" / "Visual Studio Code.app"
+        empty.mkdir(parents=True)
+        home = Path.home
+        try:
+            Path.home = classmethod(lambda cls: Path(box))
+            found = C._vscode_app()
+        finally:
+            Path.home = home
+        check(found != empty, "an emptied .app directory is not a bundle")
+
     _suite.section("install_vscode REPORTS WHICH KIND OF OUTCOME IT WAS")
 
     got = _vscode(Path("/tmp/does-not-need-to-exist"), which_code=True)
