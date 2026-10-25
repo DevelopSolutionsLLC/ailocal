@@ -21,7 +21,7 @@ import sys
 import tempfile
 import urllib.error
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from types import SimpleNamespace
 import contextlib
 import io
@@ -219,6 +219,36 @@ def main() -> None:
         check(result == (verdict or int(not docs_ok)), f"install returns validation status {verdict}, docs {docs_ok}")
         check(("proxy is ready" in output.getvalue()) == (verdict == 0 and docs_ok),
               f"install only claims readiness after passing validation (status {verdict})")
+
+    _suite.section("--yes PROVISIONS AILOCAL-OWNED ROOTS ONLY")
+    with contextlib.ExitStack() as stack:
+        for name in ("require_prerequisites", "configure_ollama_services",
+                     "_write_env", "_print_plan", "_write_model_warmup"):
+            stack.enter_context(patch.object(I, name))
+        stack.enter_context(patch.object(I, "pull_models", return_value=0))
+        stack.enter_context(patch.object(I.policy, "required_runtime_patch", return_value=None))
+        stack.enter_context(patch.object(I, "distribution_source"))
+        stack.enter_context(patch.object(I, "provision", return_value={
+            "installed": [], "preserved": [], "absent": [], "retired": []}))
+        stack.enter_context(patch.object(I, "_memory_gb", return_value=64))
+        stack.enter_context(patch.object(I, "select_tier", return_value="64gb"))
+        stack.enter_context(patch.object(generation, "main", return_value=0))
+        stack.enter_context(patch.object(runtime, "compose"))
+        stack.enter_context(patch.object(runtime, "cmd_start", return_value=0))
+        stack.enter_context(patch.object(clients, "present", return_value=True))
+        stack.enter_context(patch.object(clients, "report_missing"))
+        stack.enter_context(patch.object(clients, "provision_documentation", return_value=True))
+        targets = {n: MagicMock() for n in clients.TARGETS}
+        stack.enter_context(patch.dict(clients._TARGETS, targets))
+        shell = stack.enter_context(patch.object(clients, "ensure_shell_sourcing"))
+        agent = stack.enter_context(patch.object(clients, "provision_local_agent"))
+        stack.enter_context(patch.object(checks_run, "main", return_value=0))
+        stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+        I.cmd_install(["--yes"])
+    check(targets["claude"].called and targets["codex"].called,
+          "--yes provisions the claude-local and codex-local roots its own check requires")
+    check(not targets["vscode"].called and not shell.called and not agent.called,
+          "--yes never merges VS Code settings, edits ~/.zshrc or registers local-agent in hosted roots")
 
     _suite.section("CONCURRENT LIFECYCLE COMMANDS FAIL FAST")
     from ailocal import cli
