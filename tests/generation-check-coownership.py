@@ -75,6 +75,18 @@ def main() -> int:
 
         dest.write_text("{not json")
         check(not g._same(dest, text), "unparseable JSON is drift, not a crash")
+
+        # config.toml: `codex mcp add` inserts its table mid-file; regeneration
+        # appends the same table at the end.
+        toml = pathlib.Path(td) / "config.toml"
+        server = '[mcp_servers.docs]\nurl = "https://docs.invalid/mcp"\n'
+        generated = 'model = "ailocal-fast"\n\n[tui]\nx = 1\n\n' + server
+        toml.write_text('model = "ailocal-fast"\n\n' + server + "\n[tui]\nx = 1\n")
+        check(g._same(toml, generated), "a co-owner's TOML table order is NOT drift")
+        toml.write_text(generated.replace("ailocal-fast", "ailocal-review"))
+        check(not g._same(toml, generated), "a changed TOML value IS still drift")
+        toml.write_text("[unclosed\n")
+        check(not g._same(toml, generated), "unparseable TOML is drift, not a crash")
     return _suite.report()
 
 
