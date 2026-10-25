@@ -91,6 +91,8 @@ def _check(argv: list[str]) -> int:
     runtime = [S.check_docker(), S.check_container(), S.check_config_mount(), S.check_litellm_version(),
                S.check_proxy_health(), S.check_ollama(),
                S.check_models_present(backends)]
+    if P.ollama_patch_selection():
+        runtime.append(S.check_selected_ollama_runtime())
     runtime += S.check_aliases(token, aliases)
     runtime += S.check_geometry(token, geometry)
     runtime += [S.check_generation(token), S.check_context_window(token),

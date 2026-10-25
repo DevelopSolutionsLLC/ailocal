@@ -140,24 +140,18 @@ echo "CODEX RESEARCH MCP"
 
 check "$([ -f "$GEN" ] && echo 0 || echo 1)" "generated codex config exists"
 
-# 1. Only the measured bundled research server is declared.
-n=$(grep -cE '^\[mcp_servers' "$GEN" 2>/dev/null || true)
-check "$([ "${n:-0}" -eq 1 ] && grep -q '^\[mcp_servers.research\]' "$GEN" && echo 0 || echo 1)" \
-  "generated codex config declares the research MCP only (found ${n:-0})"
+# 1. The bundled research server is declared once; external servers are co-owned.
+n=$(grep -cE '^\[mcp_servers.research\]' "$GEN" 2>/dev/null || true)
+check "$([ "${n:-0}" -eq 1 ] && echo 0 || echo 1)" \
+  "generated codex config declares research exactly once (found ${n:-0})"
 
 # 2. The DEPLOYED artifact, if this machine has one, declares the same server.
 #    the copy Codex actually reads, and it is where a re-sync would show up.
 DEPLOYED="${XDG_CONFIG_HOME:-$HOME/.config}/ailocal/codex/config.toml"
 if [ -f "$DEPLOYED" ]; then
-  d=$(grep -cE '^\[mcp_servers' "$DEPLOYED" 2>/dev/null || true)
-  check "$([ "${d:-0}" -eq 1 ] && grep -q '^\[mcp_servers.research\]' "$DEPLOYED" && echo 0 || echo 1)" \
-    "deployed codex config declares the research MCP only (found ${d:-0})"
-  # Named servers, in case a future template nests them differently.
-  for srv in grepai lsp github; do
-    h=$(grep -cE "^\[mcp_servers\.${srv}" "$DEPLOYED" 2>/dev/null || true)
-    check "$([ "${h:-0}" -eq 0 ] && echo 0 || echo 1)" \
-      "deployed codex config has no ${srv} MCP server"
-  done
+  d=$(grep -cE '^\[mcp_servers.research\]' "$DEPLOYED" 2>/dev/null || true)
+  check "$([ "${d:-0}" -eq 1 ] && echo 0 || echo 1)" \
+    "deployed codex config declares research exactly once (found ${d:-0})"
 else
   printf '  \033[33mSKIP\033[0m  codex not deployed on this machine\n'
 fi
@@ -206,13 +200,13 @@ if [ -f "$CONTRACT" ] && command -v jq >/dev/null 2>&1; then
     "contract reports codex_mcp_lsp.configured=false (got $cfg_codex)"
 
   exec_codex=$(jq -r '.compatibility.codex_mcp_lsp.execution' "$CONTRACT")
-  check "$([ "$exec_codex" = "withheld_client_incompatible" ] && echo 0 || echo 1)" \
-    "unmeasured Codex LSP remains withheld (got $exec_codex)"
+  check "$([ "$exec_codex" = "not_configured" ] && echo 0 || echo 1)" \
+    "ailocal does not claim an unmeasured Codex LSP bridge (got $exec_codex)"
 
   # Research dispatch does not establish LSP capability.
-  blocks=$(grep -cE '^\[mcp_servers\.(lsp|grepai)' "$GEN" 2>/dev/null || true)
+  blocks=$(grep -cE '^\[mcp_servers\.lsp' "$ROOT_DIR/src/ailocal/resources/clients/codex/config.template.toml" 2>/dev/null || true)
   check "$([ "$cfg_codex" = "false" ] && [ "${blocks:-0}" -eq 0 ] && echo 0 || echo 1)" \
-    "contract and generated codex config agree (configured=$cfg_codex, blocks=${blocks:-0})"
+    "contract and ailocal's template agree on LSP provisioning (configured=$cfg_codex, blocks=${blocks:-0})"
 
   exec_lsp=$(jq -r '.compatibility.claude_native_lsp.execution' "$CONTRACT")
   check "$([ "$exec_lsp" != "failing" ] && echo 0 || echo 1)" \

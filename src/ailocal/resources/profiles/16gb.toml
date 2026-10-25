@@ -1,105 +1,91 @@
 # profile: 16gb
 # Declarative capability registry for 16 GB unified memory (Apple Silicon).
-#
-# SHARED PRIMARY BACKEND. architecture, implementation, review and fast all resolve
-# to ONE model (qwen3.5:4b). That is deliberate, not an oversight: on 16 GB there is
-# room for one resident agent model, and rotating several role-specific models would
-# spend the tier's whole memory budget on load/evict churn. The capability aliases
-# still differ — persona, sampling, reasoning and num_predict are per-capability —
-# they simply share a backend. One model resident, no swapping.
-#
-# ONE SHARED num_ctx, NOT FOUR. qwen3.5 runs on the llama_cpp runner, where
-# num_ctx is a FIXED RUNNER WINDOW set at first load and an over-long prompt is
-# TRUNCATED FROM THE FRONT with HTTP 200 and no error to the caller
-# (registry.yaml, runtime_engines.llama_cpp). Four roles sharing one backend must
-# declare an IDENTICAL total_context, or whichever loads the runner first
-# silently decides the window for the other three. Each role's context_input is
-# therefore 106496 minus ITS OWN max_output: 90112 for the 16384 roles, 98304 for
-# the 8192 ones. The split is a role boundary; the total is a runner constraint.
-#
-# KV IS ALLOCATED EAGERLY HERE, for the whole declared window, so num_ctx is a
-# real memory commitment rather than a ceiling. [REAL] measured by loading
-# qwen3.5:4b at each window with a one-token prompt (nothing else resident):
-#     num_ctx  65536 -> 4.30 GiB      num_ctx 106496 -> 5.12 GiB
-# i.e. ~21 KB per ctx-token, and the +0.82 GiB between those two IS the cost of
-# this tier's context increase. That figure already includes whatever
-# OLLAMA_NUM_PARALLEL does; do not multiply it by the parallel count again.
-#
-# WHAT ACTUALLY CAPS THIS TIER IS LATENCY, NOT MEMORY. num_ctx 131072 would cost
-# only ~5.6 GiB and even the model's native 262144 only ~8.2 GiB, so memory would
-# permit far more. A 16 GB Mac has the slowest GPU ailocal supports, and a full
-# cold prefill at those depths costs minutes; 106496 is the largest window worth
-# offering on hardware nobody has measured. qwen3.5:4b supports 262144 natively.
-# With the FIM model the tier sits near 6.5 GiB of 16 GB.
-#
-# An output ceiling is charged eagerly here, so it is spent where it earns its
-# keep: architecture and review get 16384 (long plans, long review reports),
-# implementation and fast get 8192. Because the tier total is fixed, a larger
-# ceiling is paid for out of that role's OWN input, not out of tier memory.
-#
-# num_predict is a generation CEILING, not an expected output length and not an
-# extra fixed allocation.
-#
-# Field meanings are documented in profiles/64gb.toml, the reference schema.
-# 16 GB is the minimum supported tier. Quality is below the larger tiers by design.
+# Architecture, implementation, review and fast share the official Qwen3.5 4B MLX backend.
+# Sampling, reasoning and output reserves remain per capability. The existing
+# 106496-token total is retained as configuration, not a measured full-window
+# guarantee for this MLX checkpoint or physical 16 GB hardware.
+# MLX grows its cache with processed input; the former GGUF eager-allocation
+# measurements do not describe this runner. Measure geometry and cache reuse
+# on target hardware before claiming memory headroom or interactive latency.
+# Ollama's official -mlx tags use its native pull path; no snapshot adapter is needed.
 status = "configuration-verified"  # schema, selection and size are tested; not measured on 16 GB hardware
-disk_gb = 6
+disk_gb = 8
 
+# Sampling audited 2026-10-22 against Qwen guidance:
+# https://huggingface.co/Qwen/Qwen3.5-4B#best-practices
+# Vendor-aligned defaults are not a measured quality improvement on this tier.
 [architecture]
 role = "Lead architect (shared primary)"
-active = "qwen3.5:4b"
-preferred = ["qwen3.5:4b"]
+active = "qwen3.5:4b-mlx"
+runtime_patch = "gemma4-switch-glu"
+stop = ["<|im_end|>", "<|im_start|>"]
+preferred = ["qwen3.5:4b-mlx"]
 reasoning = true
 context_input = 90112
 max_output = 16384
-temperature = 0.1
+temperature = 0.6
 keep_alive = "6h"
 purpose = ["architecture", "refactoring", "multi-step debugging", "design"]
 strengths = ["shared resident primary - no load/evict churn", "native tool calling", "88K input, 16K output"]
 weaknesses = ["smaller than the 64 GB tier's specialised models", "one backend serves four roles"]
-top_p = 0.9
+top_p = 0.95
 top_k = 20
 repeat_penalty = 1.0
+min_p = 0.0
+presence_penalty = 0.0
+  # Qwen precise-coding thinking preset; see the source card linked above.
 
 [implementation]
 role = "Daily coding (shared primary)"
-active = "qwen3.5:4b"
-preferred = ["qwen3.5:4b"]
+active = "qwen3.5:4b-mlx"
+runtime_patch = "gemma4-switch-glu"
+stop = ["<|im_end|>", "<|im_start|>"]
+preferred = ["qwen3.5:4b-mlx"]
 reasoning = false
 context_input = 98304
 max_output = 8192
-temperature = 0.1
+temperature = 0.7
 keep_alive = "6h"
 purpose = ["everyday coding", "features", "tests"]
 strengths = ["same resident backend as architecture - no reload between roles"]
 weaknesses = ["shares its budget with every other chat capability"]
-top_p = 0.9
+top_p = 0.8
 top_k = 20
 repeat_penalty = 1.0
+min_p = 0.0
+presence_penalty = 1.5
+  # Qwen non-thinking general preset; keep reasoning off for this role.
 
 [review]
 role = "Code review (shared primary)"
-active = "qwen3.5:4b"
-preferred = ["qwen3.5:4b"]
+active = "qwen3.5:4b-mlx"
+runtime_patch = "gemma4-switch-glu"
+stop = ["<|im_end|>", "<|im_start|>"]
+preferred = ["qwen3.5:4b-mlx"]
 reasoning = true
 context_input = 90112
 max_output = 16384
-temperature = 0.2
+temperature = 0.6
 keep_alive = "6h"
 purpose = ["code review", "bug detection", "security review"]
 strengths = ["reasoning enabled for review depth", "no separate model to load"]
 weaknesses = ["not a dedicated review model as on the 64 GB tier"]
-top_p = 0.9
+top_p = 0.95
 top_k = 20
 repeat_penalty = 1.0
+min_p = 0.0
+presence_penalty = 0.0
+  # Qwen precise-coding thinking preset; see the source card linked above.
 
 [fast]
 role = "Fast agent (shared primary)"
-active = "qwen3.5:4b"
+active = "qwen3.5:4b-mlx"
+runtime_patch = "gemma4-switch-glu"
+stop = ["<|im_end|>", "<|im_start|>"]
   # reasoning OFF for the same reason the 64 GB tier disables it on `fast`: a
   # classification tier that thinks past its budget returns empty content.
 reasoning = false
-preferred = ["qwen3.5:4b"]
+preferred = ["qwen3.5:4b-mlx"]
 context_input = 98304
 max_output = 8192
 temperature = 0.0
@@ -110,14 +96,19 @@ weaknesses = ["larger than a dedicated 2b would be", "so marginally slower per t
 top_p = 0.9
 top_k = 20
 repeat_penalty = 1.0
+min_p = 0.0
+presence_penalty = 1.5
+  # Fast-agent role exception (4B quality not remeasured): retain t0/p0.9 and the installed model presence penalty.
 
 [completion]
-role = "Autocomplete (FIM)"
+role = "Autocomplete (unavailable: Qwen2 MLX loader)"
   # SEPARATE MODEL ON PURPOSE. The primary is an instruct model without FIM/insert
   # tokens, so it cannot do inline completion at all, and IDE completion needs
   # latency the primary cannot meet. qwen2.5-coder carries native FIM tokens.
-active = "qwen2.5-coder:1.5b"
-preferred = ["qwen2.5-coder:1.5b"]
+enabled = false  # Qwen2 MLX is not supported by the pinned Ollama loader
+active = "ailocal-qwen2.5-coder-1.5b:mlx-a18a8bf"
+source = { repository = "mlx-community/Qwen2.5-Coder-1.5B-4bit", revision = "a18a8bf7bf0563001cb807abff12a98d4a1ae43c" }
+preferred = ["ailocal-qwen2.5-coder-1.5b:mlx-a18a8bf"]
 reasoning = false
 context_input = 3968
   # max_output 512, raised from 128. A FIM suggestion is a few lines, not a
@@ -135,6 +126,65 @@ top_p = 0.9
 top_k = 20
 repeat_penalty = 1.0
 
+
+# The reasoning-distilled, abliterated conversion replaces the earlier
+# TheWirelessPhoenix checkpoint after native Codex and Claude edit checks.
+# Retain Qwen3.5's non-thinking general preset; this is not an optimum claim.
+# https://huggingface.co/mlx-community/Huihui-Qwen3.5-4B-Claude-4.6-Opus-abliterated-4bit
+# https://huggingface.co/Qwen/Qwen3.5-4B#best-practices
+# [APPROX] Bounded geometry for 16 GB; validation on a 64 GB host is not a
+# measurement of a 16 GB machine. The installer imports the pinned MLX source.
+[cyber]
+role = "Unrestricted assistant (MLX 4B)"
+active = "ailocal-qwen3.5-4b-coder-uncensored:mlx-a0cd614"
+runtime_patch = "gemma4-switch-glu"  # native compatibility bundle also enforces MLX stops
+source = { repository = "mlx-community/Huihui-Qwen3.5-4B-Claude-4.6-Opus-abliterated-4bit", revision = "a0cd61406062a7bee31fc995a806fdb876f318ed" }
+stop = ["<|im_end|>", "<|im_start|>"]  # prevent emitted chat boundaries and invented next turns
+preferred = ["ailocal-qwen3.5-4b-coder-uncensored:mlx-a0cd614"]
+reasoning = false
+# [REAL] Codex 0.163.0's native request was estimated at 17,471 input tokens
+# even for a one-file edit; 12K rejected startup. Leave room for tool results.
+context_input = 24576
+max_output = 4096
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+min_p = 0.0
+presence_penalty = 1.5
+repeat_penalty = 1.0
+keep_alive = "5m"
+purpose = ["benign refusal-sensitive work", "coding and tool-use candidate"]
+strengths = ["reasoning-distilled and abliterated weights", "native MLX 4-bit"]
+weaknesses = ["not measured on 16 GB hardware", "coding evidence is limited to small native-client fixtures"]
+
+# One guide per exact backend, shared by all capability aliases using it.
+[model_guidance."qwen3.5:4b-mlx"]
+prompting = ["Give one bounded change with relevant code, explicit input/output requirements and a few acceptance examples.","Use the client's real syntax/test tools, return the exact failing output for repair, and stop or escalate after repeated failure."]
+limitations = ["Guidance is a starting point, not a measured guarantee of coding correctness."]
+evidence = "[REAL] On the 64 GB host, Ollama 0.40.8-ailocal.18631.3 loaded the official MLX checkpoint, reported runner=mlx and completed a simple native tool/result round trip; its manifest matched the reviewed digest. [APPROX] One implementation-role edit fixture, non-thinking t0.7, 90-second client limits: Codex timed out without editing after an invented MCP-server read; Claude made the correct edit and independent assertions passed, but did not finish before its deadline. [UNVERIFIED] Full-window behavior and physical target-tier memory fit. Earlier GGUF measurements do not transfer."
+summary = "Qwen3.5 4B MLX: keep tasks bounded and verify edits with real tools."
+sources = ["https://ollama.com/library/qwen3.5:4b-mlx","https://huggingface.co/Qwen/Qwen3.5-4B#best-practices"]
+
+[model_guidance."ailocal-qwen2.5-coder-1.5b:mlx-a18a8bf"]
+summary = "Disabled MLX autocomplete candidate: Qwen2 is unsupported by this Ollama MLX loader."
+prompting = ["Do not select or invoke this disabled capability."]
+limitations = ["MLX weights exist, but native load and fill-in-the-middle behavior are unverified. No GGUF fallback is configured."]
+evidence = "[UNVERIFIED] Source metadata inspected; this candidate is disabled and has not been installed or validated."
+sources = ["https://huggingface.co/mlx-community/Qwen2.5-Coder-1.5B-4bit"]
+
+[model_guidance."ailocal-qwen3.5-4b-coder-uncensored:mlx-a0cd614"]
+summary = "Unrestricted Qwen3.5 4B reasoning-distilled MLX conversion; verify edits with real tests."
+prompting = ["Give one bounded change with relevant file paths, explicit requirements and acceptance examples.","Read the real files, make the edit with native client tools, and run the unchanged tests. Report actual failures rather than claiming completion from an intended edit."]
+limitations = ["Small edit fixtures do not establish repository-scale coding reliability.","Full-window memory use and fit on physical 16 GB hardware remain unmeasured."]
+evidence = "[APPROX] On a 64 GB host, the pinned INT4 Safetensors conversion passed proxy tool/result round trips and two native file-edit/test fixtures through both Codex 0.164.0 and Claude 2.1.308 with filtering enabled. Arithmetic repair and strict string-boolean parsing passed all 13 independent assertions per client, test files were unchanged, and all four sessions exited successfully within 180 seconds. Codex received a complete apply_patch example. These are small fixtures, not physical 16 GB or full-context validation."
+sources = ["https://huggingface.co/mlx-community/Huihui-Qwen3.5-4B-Claude-4.6-Opus-abliterated-4bit/tree/a0cd61406062a7bee31fc995a806fdb876f318ed","https://huggingface.co/huihui-ai/Huihui-Qwen3.5-4B-Claude-4.6-Opus-abliterated"]
+
+[model_guidance."ailocal-qwen3.5-4b-uncensored:mlx-916d9f7"]
+prompting = ["For a caller: provide one small task, the exact function/API contract, relevant code and explicit acceptance examples.","Keep the stock client instructions; a broad coding persona preload worsened the measured pilot. Validate syntax and behavior using real tools before accepting code."]
+limitations = ["Can emit invalid Python and curly syntax quotes; instructions requesting ASCII did not reliably fix these failures. The native compatibility bundle enforces configured chat-boundary stops; that does not prove semantic correctness.","After the stop fix, native Codex and Claude both reached the 150-second deadline with unchanged fixture code. Codex repeated invalid patches, incompatible macOS sed commands and invalid Python quotes. Verify actual files and tests rather than trusting completion text.","Quality and memory headroom on physical 16 GB hardware are unmeasured."]
+evidence = "[APPROX] Five function tasks on a 64 GB host: 3/5 baseline, 1/5 with a short coding preload; one attempt each, direct Ollama. With runtime .18631.3, the proxy tool roundtrip and benign translation completed, but native Codex 0.164.0 and Claude each timed out at 150 seconds with unchanged code and failing independent assertions. The current profile grants 24K input; this batch did not reproduce the old input-limit rejection. These are small fixtures, not repository-scale validation."
+summary = "Experimental unrestricted Qwen3.5 4B MLX conversion; benign non-refusal does not establish coding accuracy."
+sources = ["https://huggingface.co/Qwen/Qwen3.5-4B#best-practices","https://huggingface.co/TheWirelessPhoenix/Qwen3.5-4B-abliterated_4bit"]
 
 [compaction]
 window = 79872  # effective window handed to the client's compactor

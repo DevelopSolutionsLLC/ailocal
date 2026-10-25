@@ -107,9 +107,10 @@ def proxy_healthy(timeout: int = CONNECT_TIMEOUT) -> bool:
         return False
 
 
-def _run(cmd: list[str], timeout: int = INSPECT_TIMEOUT) -> subprocess.CompletedProcess:
+def _run(cmd: list[str], timeout: int = INSPECT_TIMEOUT, *,
+         env: dict | None = None) -> subprocess.CompletedProcess:
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
     except FileNotFoundError:
         return subprocess.CompletedProcess(cmd, 127, "", f"{cmd[0]} not found")
     except subprocess.TimeoutExpired:
@@ -343,13 +344,27 @@ def check_ollama() -> CheckResult:
 
 def check_models_present(required: list[str]) -> CheckResult:
     installed = ollama_installed()
-    bases = {t.split(":")[0] for t in installed}
     missing = [m for m in required
-               if m not in installed and m.split(":")[0] not in bases]
+               if m not in installed and f"{m}:latest" not in installed]
     if not missing:
         return CheckResult("models", PASS, f"all {len(required)} required models present")
     return CheckResult("models", FAIL, f"missing models: {', '.join(missing)}",
                        remediation="ailocal install")
+
+
+def check_selected_ollama_runtime() -> CheckResult:
+    """Check the explicit patched selection, including the actual daemon identity."""
+    try:
+        policy.ollama_binary()  # includes owned payload integrity verification
+        expected = policy.ollama_patch_spec()["version"]
+        actual = http_json(f"{OLLAMA}/api/version").get("version")
+        if actual == expected:
+            return CheckResult("ollama-runtime", PASS, f"selected patched Ollama {actual} is running")
+        return CheckResult("ollama-runtime", FAIL, "selected Ollama runtime differs from the running daemon",
+                           remediation="ailocal install")
+    except (SystemExit, OSError, ValueError, Unreachable):
+        return CheckResult("ollama-runtime", FAIL, "selected patched Ollama is unavailable or modified",
+                           remediation="ailocal install")
 
 
 def check_generation(token: str, alias: str = "ailocal-fast") -> CheckResult:
@@ -515,13 +530,24 @@ def check_search_tool_registered() -> CheckResult:
                        remediation="check search_tools placement in config.yaml, then: ailocal start")
 
 
-def check_context_window(token: str, alias: str = "ailocal-completion") -> CheckResult:
+def check_context_window(token: str, alias: str | None = None) -> CheckResult:
     """An oversized prompt must be rejected, not silently truncated.
 
     Without enforcement the request returns 200 with a garbage answer, so this
     is worth the one large bounded request it costs.
     """
-    filler = "the quick brown fox jumps over the lazy dog. " * 6000
+    roles = {"ailocal-" + role: cfg
+             for role, cfg in policy.effective_summary()["roles"].items()
+             if cfg["enabled"] and cfg.get("max_input_tokens")}
+    if alias is None and roles:
+        alias = min(roles, key=lambda name: roles[name]["max_input_tokens"])
+    if alias not in roles:
+        return CheckResult("context-window", FAIL,
+                           "context-window probe has no enabled selected capability")
+    # Each repeated ' x' is one token for the proxy's admission tokenizer.
+    # Derive the request from the selected limit; a disabled completion role
+    # must not turn an admission check into a missing-model request.
+    filler = " x" * (roles[alias]["max_input_tokens"] + 128)
     try:
         doc = http_json(f"{PROXY}/v1/chat/completions", token=token, payload={
             "model": alias, "max_tokens": 16,
@@ -570,8 +596,8 @@ def check_pinned(images: list[str]) -> list[CheckResult]:
 
 
 def _running_digest(repo: str) -> tuple[str, str]:
-    """(container name, running repo digest) for the first container of `repo`."""
-    for cid in _run(["docker", "ps", "-q"]).stdout.split():
+    """(container name, running repo digest) for this installation's `repo`."""
+    for cid in _running_containers():
         image = _run(["docker", "inspect", cid,
                       "--format", "{{.Config.Image}}"]).stdout.strip()
         if not image.startswith(repo):
@@ -614,10 +640,17 @@ def check_no_drift(images: list[str]) -> list[CheckResult]:
     return out
 
 
+def _running_containers() -> list[str]:
+    """Let Compose resolve ownership, including project and environment overrides."""
+    from ailocal import runtime
+    return _run(runtime.compose_argv(["ps", "-q", "--status", "running", "--orphans=false"]),
+                env=runtime.compose_env()).stdout.split()
+
+
 def check_loopback() -> list[CheckResult]:
-    """A package finding is only an exposure if something can reach it."""
+    """Check published ports of this installation's containers only."""
     out = []
-    for cid in _run(["docker", "ps", "-q"]).stdout.split():
+    for cid in _running_containers():
         name = _run(["docker", "inspect", cid,
                      "--format", "{{.Name}}"]).stdout.strip().lstrip("/")
         ports = _run(["docker", "port", cid]).stdout.strip()

@@ -45,8 +45,6 @@ slots = {opus = "architecture", sonnet = "implementation", haiku = "fast", fable
 # Codex CLI
 [codex]
 default = "implementation"
-  # named profiles (codex --profile plan / review)
-profiles = {plan = "architecture", review = "review"}
 
 # External client compatibility names -> capability. These are NOT ailocal roles — they are model
 # IDs that Claude Code and the OpenAI SDK hard-code and cannot be told to stop sending (e.g.

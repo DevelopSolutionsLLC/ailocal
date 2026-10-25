@@ -15,7 +15,7 @@ import shutil
 import pathlib
 import sys
 
-from . import BLOCKED, FAIL, PASS, WARN, CheckResult
+from . import BLOCKED, FAIL, PASS, SKIP, WARN, CheckResult
 
 
 from ailocal import policy as P
@@ -172,6 +172,10 @@ def check_local_artifacts() -> CheckResult:
     the user sees "no such tool" rather than a broken install.
     """
     cj = P.deployed_client_root() / "claude" / ".claude.json"
+    if not cj.is_file():
+        return CheckResult("local-artifacts", SKIP,
+                           "claude-local artifacts not configured (optional)",
+                           remediation="ailocal clients claude")
     try:
         entry = (json.loads(cj.read_text()).get("mcpServers") or {}).get("artifact")
     except Exception:

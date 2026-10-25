@@ -274,6 +274,26 @@ def test_uninstall_surface_is_generated_state_only() -> None:
               "neither owner is nested inside the other")
 
 
+def test_runtime_choice_preserves_authored_settings() -> None:
+    e = env()
+    with Roots(legacy=None):
+        e.ensure()
+        user = e.user_file()
+        original = user.read_text() + "# operator comment\nCUSTOM_SETTING=keep-me\n"
+        user.write_text(original)
+        secrets = e.generated_file().read_bytes()
+        e.set_ollama_patch("gemma4-switch-glu")
+        e.set_ollama_patch("gemma4-switch-glu")
+        check(user.read_text().startswith(original), "runtime selection preserves comments and unrelated overrides")
+        check(user.read_text().count("AILOCAL_OLLAMA_PATCH=") == 1,
+              "repeated runtime selection is idempotent")
+        check(e.value("AILOCAL_OLLAMA_PATCH") == "gemma4-switch-glu", "selected runtime persists")
+        e.set_ollama_patch("")
+        check(e.value("AILOCAL_OLLAMA_PATCH") == "" and e.generated_file().read_bytes() == secrets,
+              "returning to stock runtime preserves generated secrets")
+        check(mode(user) == 0o600, "explicit runtime choice retains private config permissions")
+
+
 def main() -> int:
     for fn in (test_migration_classifies_every_variable,
                test_orphaned_credentials_survive_only_in_the_backup,
@@ -283,7 +303,8 @@ def main() -> int:
                test_migration_fails_closed_without_deleting_the_source,
                test_user_overrides_generated_state,
                test_the_key_projection_is_retired,
-               test_uninstall_surface_is_generated_state_only):
+               test_uninstall_surface_is_generated_state_only,
+               test_runtime_choice_preserves_authored_settings):
         print(f"\n{fn.__name__}")
         try:
             fn()

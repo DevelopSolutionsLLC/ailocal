@@ -1,0 +1,8 @@
+# Public vendor-hosted Streamable HTTP MCP endpoints; no local runtime or keys.
+# https://code.claude.com/docs/en/mcp-quickstart
+# https://developers.openai.com/learn/docs-mcp
+# https://learn.microsoft.com/en-us/training/support/mcp
+[servers]
+claude-code-docs = "https://code.claude.com/docs/mcp"
+openai-docs = "https://developers.openai.com/mcp"
+microsoft-learn = "https://learn.microsoft.com/api/mcp"

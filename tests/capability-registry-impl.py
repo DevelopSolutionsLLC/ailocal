@@ -63,12 +63,30 @@ d = reg.describe()
 check(d["groups"] >= 8, f"groups present ({d['groups']})")
 check(d["model_classes"] >= 5, f"model classes present ({d['model_classes']})")
 check(d["routes"] == 3, f"all three routes described ({d['routes']})")
+if reg.backend_of("ailocal-cyber"):
+    check(reg.model_class("ailocal-cyber")[0] == "local_cyber",
+          "cyber is classified by its measured local backend")
+    check(reg.max_context("ailocal-cyber") == 32768,
+          "cyber has its own 32K context")
 check(d["contexts_from_generated"] >= 5,
       f"context windows come from the GENERATED file, not the registry "
       f"({d['contexts_from_generated']} found)")
 check(d["aliases"] > 0, f"model_group_alias loaded ({d['aliases']})")
 
 print("\nMODEL CLASSIFICATION")
+for backend in ("ailocal-qwen3.5-4b-uncensored:mlx-916d9f7",
+                "ailocal-qwen3.5-4b-coder-uncensored:mlx-a0cd614",
+                "ailocal-qwen3.5-9b-uncensored:mlx-7b09418",
+                "ailocal-qwen3.5-9b-coder-uncensored:mlx-7fed86c"):
+    small = cr.Registry(path=REG_YAML, caps_json=CAPS, config_path=CONF)
+    small.backends["cyber"] = backend
+    check(small.model_class("ailocal-cyber")[0] == "local_cyber",
+          f"{backend} receives its local class through the capability alias")
+    check(not small.is_passthrough("ailocal-cyber"),
+          f"{backend} does not bypass local tool negotiation")
+    denied = small.removable_groups("claude-code", "ailocal-cyber")
+    check("orchestration" in denied and "edit_and_run" not in denied,
+          f"{backend} sheds orchestration while preserving edit/run tools")
 name, _ = reg.model_class("ailocal-architecture")
 check(name == "local_agentic", f"ailocal-architecture -> local_agentic (got {name})")
 # Same weights as architecture on every current profile, so it must get the
@@ -139,7 +157,8 @@ print("\nCONTEXT WINDOWS (generated, not restated)")
 # restated". Restating a generated number tests the literal, not the pipeline.
 # The durable properties are ordering and positivity, which hold for any profile.
 _ctx = {c: reg.max_context(f"ailocal-{c}")
-        for c in ("architecture", "fast", "implementation", "review", "completion")}
+        for c in ("architecture", "fast", "implementation", "review", "completion")
+        if c in reg.contexts}
 check(all(isinstance(v, int) and v > 0 for v in _ctx.values()),
       f"every local capability has a positive generated window ({_ctx})")
 # `fast > implementation` was NOT a durable invariant. It only held while
@@ -151,8 +170,12 @@ check(all(isinstance(v, int) and v > 0 for v in _ctx.values()),
 # the role defined as carrying whole-repository context.
 check(_ctx["architecture"] == max(_ctx.values()),
       f"architecture has the largest generated window ({_ctx})")
-check(_ctx["completion"] == min(_ctx.values()),
-      f"completion is the smallest window ({_ctx['completion']})")
+if "completion" in _ctx:
+    check(_ctx["completion"] == min(_ctx.values()),
+          f"completion is the smallest window ({_ctx['completion']})")
+else:
+    check(reg.backend_of("ailocal-completion") is None,
+          "disabled completion has no serving backend")
 check(reg.max_context("claude-3-5-sonnet-2024-10-22") == 200000,
       "a cloud class falls back to its declared max_context")
 

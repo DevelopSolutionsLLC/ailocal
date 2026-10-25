@@ -11,7 +11,8 @@ The three clients do not share a config format, so nothing here is generalised
 into a templating engine. What they do share — backups, the managed-directory
 contract, the shell sourcing, the key — lives once, at the top.
 
-Never touched: ~/.claude, ~/.codex. Those are the user's cloud sessions.
+Hosted roots receive only public documentation MCP registrations through the
+native CLIs. Their model, authentication and instruction settings remain theirs.
 """
 from __future__ import annotations
 
@@ -22,6 +23,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tomllib
 from datetime import datetime
 from pathlib import Path
 
@@ -55,12 +57,14 @@ CLIENTS: dict[str, tuple[str, str]] = {
 def present(name: str) -> bool:
     """Is this client on the machine? Detection is the client's own artefact.
 
-    VS Code counts either way round: the `code` CLI without a user directory is
-    an installation that has never been launched, which install_vscode reports
-    precisely — treating it as absent would hide that.
+    VS Code is present when its `code` CLI is on PATH or its application bundle
+    is intact. The `code` CLI without a user directory is an installation that
+    has never been launched, which install_vscode reports precisely. A user
+    directory alone is NOT presence: it survives deleting the app, and counting
+    it reported a removed VS Code as installed but unconfigured.
     """
     if name == "vscode":
-        return shutil.which("code") is not None or _vscode_user_dir() is not None
+        return shutil.which("code") is not None or _vscode_app() is not None
     return shutil.which({"claude": "claude", "codex": "codex"}[name]) is not None
 
 
@@ -74,6 +78,141 @@ def report_missing(names) -> None:
         label, how = CLIENTS[n]
         print(f"    {label:14} {how}")
     print("  Install any of them, then re-run: ailocal clients")
+
+
+def provision_documentation(names=("claude", "codex")) -> bool:
+    """Register public docs with native CLIs in hosted and isolated roots.
+
+    No config writer, relay, credentials or inference service. An existing
+    same-name server with a different transport/URL is preserved and reported.
+    """
+    success = True
+    endpoints = policy.documentation_servers()
+    for client in names:
+        if client not in ("claude", "codex") or not present(client):
+            continue
+        for local in (False, True):
+            label = client + ("-local" if local else "")
+            path = policy.client_mcp_path(client, local=local)
+            env = dict(os.environ)
+            if local:
+                env["CODEX_HOME" if client == "codex" else "CLAUDE_CONFIG_DIR"] = str(path.parent)
+            for name, url in endpoints.items():
+                try:
+                    def read_entry():
+                        if not path.exists():
+                            return None
+                        if client == "codex":
+                            data = tomllib.loads(path.read_text(encoding="utf-8"))
+                            return data.get("mcp_servers", {}).get(name)
+                        data = json.loads(path.read_text(encoding="utf-8"))
+                        return data.get("mcpServers", {}).get(name)
+
+                    def matches(entry):
+                        return (isinstance(entry, dict) and entry.get("url") == url
+                                and "command" not in entry
+                                and (client == "codex" or entry.get("type") == "http"))
+
+                    existing = read_entry()
+                    if existing is not None and not matches(existing):
+                        warn(f"{label}: {name} MCP collision; existing registration preserved")
+                        success = False
+                        continue
+                    if existing is not None:
+                        continue
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    if client == "codex":
+                        command = ["codex", "mcp", "add", name, "--url", url]
+                    else:
+                        command = ["claude", "mcp", "add-json", "--scope", "user", name,
+                                   json.dumps({"type": "http", "url": url})]
+                    result = subprocess.run(command, env=env, capture_output=True,
+                                            text=True, timeout=30)
+                    if result.returncode or not matches(read_entry()):
+                        raise ValueError("native registration did not persist")
+                except (OSError, ValueError, TypeError, AttributeError, subprocess.SubprocessError):
+                    # Native stderr and config can contain account details; keep
+                    # diagnostics scoped to the failed server and recovery command.
+                    warn(f"{label}: {name} documentation MCP registration failed; "
+                         f"run ailocal clients {client} after correcting the client config")
+                    success = False
+            info(f"{label}: documentation MCP registrations checked")
+    return success
+
+
+def provision_local_agent(names=("claude", "codex")) -> bool:
+    """Register the local-agent MCP so a hosted or local client can delegate to
+    claude-local / codex-local on a local model (ailocal-cyber by default).
+
+    Mirrors provision_documentation: one bundled stdio server, registered in both
+    the hosted and the isolated root of each client through the native CLIs, with
+    an existing same-name server of a different shape preserved and reported. The
+    component needs `mcp`, so it gets its own interpreter under the state root and
+    runs as a subprocess; nothing here is imported by ailocal. Registration goes
+    through the native CLIs, so it uninstalls the same way any MCP does --
+    `claude mcp remove local-agent` and `codex mcp remove local-agent` (the
+    hosted roots; add CLAUDE_CONFIG_DIR / CODEX_HOME for the -local roots). The
+    provisioned interpreter under state_root/local-agent is the only residual and
+    can be deleted directly; re-running `ailocal clients` reprovisions it.
+    """
+    src = policy.data_root() / "integrations/local-agent"
+    if not (src / "server.py").is_file():
+        warn("bundled local-agent component missing from the package")
+        return False
+    if provision_mcp_runtime(src, "local-agent") is None:
+        return False
+    from .mcp import agent_registration
+    entry = agent_registration()
+    success = True
+    for client in names:
+        if client not in ("claude", "codex") or not present(client):
+            continue
+        for local in (False, True):
+            label = client + ("-local" if local else "")
+            path = policy.client_mcp_path(client, local=local)
+            env = dict(os.environ)
+            if local:
+                env["CODEX_HOME" if client == "codex" else "CLAUDE_CONFIG_DIR"] = str(path.parent)
+            try:
+                def read_entry():
+                    if not path.exists():
+                        return None
+                    if client == "codex":
+                        data = tomllib.loads(path.read_text(encoding="utf-8"))
+                        return data.get("mcp_servers", {}).get("local-agent")
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                    return data.get("mcpServers", {}).get("local-agent")
+
+                def matches(got):
+                    return (isinstance(got, dict)
+                            and Path(got.get("command", "")).name == "ailocal"
+                            and list(got.get("args", [])) == entry["args"])
+
+                existing = read_entry()
+                if existing is not None and not matches(existing):
+                    warn(f"{label}: local-agent MCP collision; existing registration preserved")
+                    success = False
+                    continue
+                if existing is not None:
+                    continue
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if client == "codex":
+                    command = ["codex", "mcp", "add", "local-agent", "--",
+                               entry["command"], *entry["args"]]
+                else:
+                    command = ["claude", "mcp", "add-json", "--scope", "user", "local-agent",
+                               json.dumps(entry)]
+                result = subprocess.run(command, env=env, capture_output=True,
+                                        text=True, timeout=30)
+                if result.returncode or not matches(read_entry()):
+                    raise ValueError("native registration did not persist")
+            except (OSError, ValueError, TypeError, AttributeError, subprocess.SubprocessError):
+                warn(f"{label}: local-agent MCP registration failed; "
+                     f"run ailocal clients {client} after correcting the client config")
+                success = False
+        info(f"{client}: local-agent MCP registration checked (hosted + local)")
+    return success
+
 
 CONNECTOR_EXT = "Gethnet.litellm-connector-copilot"
 
@@ -360,6 +499,16 @@ RECOMMENDED_SETTINGS = {
 }
 
 
+def _vscode_app() -> Path | None:
+    """The VS Code bundle, only if it is a real one: an emptied `.app` directory
+    is what a partial uninstall or an interrupted self-update leaves behind."""
+    for apps in (Path("/Applications"), Path.home() / "Applications"):
+        bundle = apps / "Visual Studio Code.app"
+        if (bundle / "Contents/Info.plist").is_file():
+            return bundle
+    return None
+
+
 def _vscode_user_dir() -> Path | None:
     for candidate in (Path.home() / "Library/Application Support/Code/User",
                       Path.home() / ".config/Code/User"):
@@ -597,7 +746,7 @@ def target_codex() -> None:
     step(f"Installing Codex config ({home})")
     data = policy.data_root()
 
-    # config.toml, model_catalog.json and the plan/review profiles are written
+    # config.toml and the model catalog are written
     # here by generation, not copied here by this function.
 
     # The template carries a .template extension so the /AGENTS.md gitignore
@@ -817,7 +966,7 @@ def target_claude() -> None:
         info("research MCP registered for claude-local; other registrations preserved")
 
     print("  Launch with: claude-local  (source ~/.zshrc first)")
-    print("  Plain 'claude' still talks to Anthropic's cloud — untouched.")
+    print("  Plain 'claude' keeps its hosted inference settings.")
 
     step("LSP baseline (ailocal-owned minimum)")
     lsp_baseline(home, "claude-local")
@@ -995,6 +1144,15 @@ def main(argv: list[str]) -> int:
             return 0
     print(f"Targets: {' '.join(selected)}")
 
+    if "--dry-run" in argv:
+        print("Dry run: would regenerate client configuration, update shell launchers,")
+        print(f"and configure {', '.join(selected)} under {policy.deployed_client_root()}.")
+        if any(name in ("claude", "codex") for name in selected):
+            print("Would also register public documentation MCPs in hosted and local Claude/Codex roots.")
+            print("Would also register the local-agent MCP (delegate to ailocal-cyber) in those roots.")
+        print("No files, extensions, plugins or MCP registrations were changed.")
+        return 0
+
     # Every derived artifact first: deploying from stale generated state is how
     # a client ends up configured for a profile that is no longer active.
     from . import generation
@@ -1006,6 +1164,11 @@ def main(argv: list[str]) -> int:
     # Only bundled integrations are provisioned here, never a global MCP sync.
     for name in selected:
         _TARGETS[name]()
+
+    if not provision_documentation(selected):
+        return 1
+    if not provision_local_agent([n for n in selected if n in ("claude", "codex")]):
+        return 1
 
     report_missing(TARGETS)
 

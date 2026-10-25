@@ -12,10 +12,86 @@ ONE READER, NO FALLBACK: this module fails closed, because a tier guessed on a
 from __future__ import annotations
 
 import os
+import re
+import shutil
 import tomllib
 from pathlib import Path
 
 TIERS = ("16gb", "32gb", "64gb", "128gb")
+
+
+def documentation_servers() -> dict[str, str]:
+    """The shipped public documentation endpoints, read in place."""
+    with (data_root() / "clients/documentation.toml").open("rb") as stream:
+        return tomllib.load(stream)["servers"]
+
+
+def ollama_model_store() -> Path:
+    """The daemon and native Safetensors importer must use the same store."""
+    return Path(os.environ.get("OLLAMA_MODELS", "/Users/Shared/ollama/models"))
+
+
+def ollama_runtime_root() -> Path:
+    """Provisioned binaries survive deletion of disposable generated state."""
+    return (Path(os.environ["AILOCAL_RUNTIMES"]) if os.environ.get("AILOCAL_RUNTIMES")
+            else _xdg("XDG_DATA_HOME", ".local", "share") / "ailocal" / "runtimes")
+
+
+def ollama_patch_spec() -> dict:
+    """The reviewed, immutable source and patch declaration shipped with ailocal."""
+    root = data_root() / "deploy" / "ollama"
+    with (root / "patch.toml").open("rb") as stream:
+        spec = tomllib.load(stream)
+    spec["patch_file"] = root / spec["patch_file"]
+    spec["security_patch_file"] = root / spec["security_patch_file"]
+    spec["router_patch_file"] = root / spec["router_patch_file"]
+    spec["stop_patch_file"] = root / spec["stop_patch_file"]
+    return spec
+
+
+def ollama_patch_selection() -> str:
+    from . import environment
+    return environment.value("AILOCAL_OLLAMA_PATCH")
+
+
+def stock_ollama_binary() -> str:
+    candidates = ("/Applications/Ollama.app/Contents/Resources/ollama",
+                  "/usr/local/bin/ollama", shutil.which("ollama"))
+    binary = next((c for c in candidates if c and Path(c).is_file()), None)
+    if not binary:
+        raise SystemExit("Ollama binary not found; install Ollama first.")
+    return binary
+
+
+def ollama_binary() -> str:
+    """One selected binary for the native CLI and its managed service."""
+    selected = ollama_patch_selection()
+    if not selected:
+        return stock_ollama_binary()
+    spec = ollama_patch_spec()
+    if selected != spec["id"]:
+        raise SystemExit("Unknown AILOCAL_OLLAMA_PATCH; no alternate runtime was selected.")
+    binary = ollama_runtime_root() / spec["version"] / "ollama"
+    from .ollama_patch import verify
+    if not verify(binary):
+        raise SystemExit("Selected patched Ollama is absent or modified. "
+                         "Run ailocal install to rebuild it; no alternate runtime was selected.")
+    return str(binary)
+
+
+def client_mcp_path(client: str, *, local: bool) -> Path:
+    """Native user-scope MCP locations, respecting hosted client overrides."""
+    if client not in ("claude", "codex"):
+        raise ValueError("unsupported documentation client")
+    if local:
+        root = deployed_client_root() / client
+    elif client == "codex":
+        root = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
+    elif os.environ.get("CLAUDE_CONFIG_DIR"):
+        root = Path(os.environ["CLAUDE_CONFIG_DIR"])
+    else:
+        return Path.home() / ".claude.json"
+    return root / ("config.toml" if client == "codex" else ".claude.json")
 
 #: Capability roles. `compaction` is a CLIENT tuning knob, not a capability: it
 #: has no model and must never be published as one.
@@ -28,7 +104,7 @@ TIERS = ("16gb", "32gb", "64gb", "128gb")
 #: capability ailocal advertised, provisioned and kept resident for no reader.
 #: Embedding ownership belongs to whoever indexes; Ollama is the shared
 #: prerequisite underneath both.
-ROLES = ("architecture", "implementation", "review", "fast", "completion")
+ROLES = ("architecture", "implementation", "review", "fast", "completion", "cyber")
 #: Sections that may appear in a profile and are NOT capabilities.
 #:
 #: `embeddings` is here because it USED to be one. Profiles live in the
@@ -40,7 +116,7 @@ ROLES = ("architecture", "implementation", "review", "fast", "completion")
 #: present and no longer has a schema. Recognising it here keeps those profiles
 #: valid, publishes no alias for it, and leaves the user's file untouched: their
 #: config is theirs to edit, and a retired section is inert, not invalid.
-NON_ROLE_SECTIONS = ("compaction", "embeddings")
+NON_ROLE_SECTIONS = ("compaction", "embeddings", "model_guidance")
 
 #: Fields a profile may still declare that no longer mean anything.
 #:
@@ -74,8 +150,8 @@ LEGACY_CONTEXT_FIELD = "context"
 #:   num_predict    -> DERIVED from max_output by geometry(); never configured
 #:   keep_alive     -> None; omitted, Ollama default applies
 #:   preferred/purpose/strengths/weaknesses -> [] (documentation only)
-OPTIONAL_ROLE_FIELDS = ("provider", "max_output", "reasoning", "temperature",
-                        "top_p", "top_k",
+OPTIONAL_ROLE_FIELDS = ("provider", "source", "runtime_patch", "stop", "max_output", "reasoning", "temperature",
+                        "top_p", "top_k", "min_p", "presence_penalty",
                         "repeat_penalty", "keep_alive",
                         "preferred", "purpose", "strengths",
                         "weaknesses")
@@ -234,7 +310,9 @@ def _read_toml(path: Path, missing: str, invalid: str) -> dict:
 
 def load_profile_file(path: Path) -> dict:
     """A profile document, unvalidated. load_profile() adds the schema checks."""
-    return _read_toml(Path(path), PROFILE_FILE_MISSING, PROFILE_INVALID)
+    data = _read_toml(Path(path), PROFILE_FILE_MISSING, PROFILE_INVALID)
+    _validate_guidance(data)
+    return data
 
 
 def load_client_policy(repo_root=None) -> dict:
@@ -339,7 +417,36 @@ def load_profile(tier: str, repo_root=None) -> dict:
         raise ProfileError(PROFILE_SCHEMA_INVALID, "no capability roles found")
     for r in present:
         _validate_role(r, data[r])
+    _validate_guidance(data)
     return data
+
+
+def _validate_guidance(data: dict) -> None:
+    guides = data.get("model_guidance", {})
+    if not isinstance(guides, dict):
+        raise ProfileError(PROFILE_SCHEMA_INVALID, "model_guidance must be a table")
+    for model, guide in guides.items():
+        if not isinstance(guide, dict) or set(guide) != {
+                "summary", "prompting", "limitations", "evidence", "sources"}:
+            raise ProfileError(PROFILE_SCHEMA_INVALID, "invalid model_guidance fields")
+        for field in ("summary", "evidence"):
+            if not isinstance(guide[field], str) or not guide[field].strip():
+                raise ProfileError(PROFILE_SCHEMA_INVALID, f"model_guidance.{field} must be text")
+        for field in ("prompting", "limitations", "sources"):
+            if not isinstance(guide[field], list) or not all(
+                    isinstance(s, str) and s.strip() for s in guide[field]):
+                raise ProfileError(PROFILE_SCHEMA_INVALID, f"model_guidance.{field} must be a text list")
+        if any(not s.startswith("https://") for s in guide["sources"]):
+            raise ProfileError(PROFILE_SCHEMA_INVALID, "model_guidance sources require HTTPS")
+
+
+def guidance_for(data: dict, role: str) -> dict:
+    """Exact backend match; changing a model never inherits another's advice."""
+    return data.get("model_guidance", {}).get(data[role]["active"], {
+        "summary": "No model-specific guidance recorded for this backend.",
+        "prompting": [], "limitations": [], "sources": [],
+        "evidence": "[UNVERIFIED] No prompting evaluation recorded.",
+    })
 
 
 def _known_role_fields() -> frozenset:
@@ -368,6 +475,18 @@ def _validate_role(role: str, cfg) -> None:
     if missing:
         raise ProfileError(PROFILE_SCHEMA_INVALID,
                            f"{role} missing {', '.join(missing)}")
+    source = cfg.get("source")
+    if cfg.get("runtime_patch") is not None and cfg["runtime_patch"] != ollama_patch_spec()["id"]:
+        raise ProfileError(PROFILE_SCHEMA_INVALID, f"{role}.runtime_patch is unsupported")
+    if cfg.get("stop") is not None and (
+            not isinstance(cfg["stop"], list) or not cfg["stop"]
+            or not all(isinstance(token, str) and token for token in cfg["stop"])):
+        raise ProfileError(PROFILE_SCHEMA_INVALID, f"{role}.stop must be a nonempty string list")
+    if source is not None and (
+            not isinstance(source, dict) or set(source) != {"repository", "revision"}
+            or not re.fullmatch(r"[\w.-]+/[\w.-]+", str(source.get("repository", "")))
+            or not re.fullmatch(r"[0-9a-f]{40}", str(source.get("revision", "")))):
+        raise ProfileError(PROFILE_SCHEMA_INVALID, f"{role}.source requires a repository and pinned commit")
     ci = cfg.get("context_input")
     if not isinstance(ci, int) or ci <= 0:
         raise ProfileError(ROLE_CONFIG_INVALID, f"{role}.context_input invalid")
@@ -426,7 +545,7 @@ def resolve_role(tier: str, role: str, repo_root=None, _data=None) -> dict:
     active = str(cfg.get("active", ""))
     out = {"tier": tier, "role": role, "name": cfg.get("role"),
            "model": active, "active": active,
-           "enabled": bool(active)
+           "enabled": bool(active) and bool(cfg.get("enabled", True))
                       and active.lower() not in ("none", "false", "disabled"),
            **geometry(cfg.get("context_input"), cfg.get("max_output"))}
     # `context` is an alias for total_context, read by cross-tier
@@ -434,6 +553,7 @@ def resolve_role(tier: str, role: str, repo_root=None, _data=None) -> dict:
     out["context"] = out["total_context"]
     for f in OPTIONAL_ROLE_FIELDS:
         out[f] = cfg.get(f)
+    out["guidance"] = guidance_for(data, role)
     return out
 
 
@@ -448,6 +568,15 @@ def profile_summary(tier: str, repo_root=None) -> dict:
         "roles": {r: resolve_role(tier, r, repo_root, _data=data)
                   for r in ROLES if r in data},
     }
+
+
+def required_runtime_patch(tier: str, repo_root=None) -> str | None:
+    """Enabled model requirements drive installation, without model-name routing."""
+    required = {cfg["runtime_patch"] for cfg in profile_summary(tier, repo_root)["roles"].values()
+                if cfg["enabled"] and cfg.get("runtime_patch")}
+    if len(required) > 1:
+        raise ProfileError(PROFILE_SCHEMA_INVALID, "profile requires conflicting native runtime patches")
+    return next(iter(required), None)
 
 
 # ── runtime views ───────────────────────────────────────────────────────────
@@ -467,3 +596,14 @@ def effective_role(role: str, repo_root=None) -> dict:
 
 def effective_summary(repo_root=None) -> dict:
     return profile_summary(resolve_active_tier(repo_root), repo_root)
+
+
+def model_guides(tier=None, repo_root=None) -> dict:
+    """One public knowledge view for direct clients and delegating MCP callers."""
+    summary = profile_summary(tier or active_tier(repo_root), repo_root)
+    return {"tier": summary["tier"], "models": {
+        "ailocal-" + role: {
+            "model": cfg["model"], "context_input": cfg["context_input"],
+            "max_output": cfg["max_output"], "reasoning": cfg["reasoning"],
+            **cfg["guidance"],
+        } for role, cfg in summary["roles"].items() if cfg["enabled"]}}
