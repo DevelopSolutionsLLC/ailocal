@@ -2,7 +2,7 @@
 
 Release policy and the meaning of each bump: [RELEASING.md](RELEASING.md).
 
-## v0.14.0 (unreleased, minor) — research routes itself, and Brave is budgeted
+## v0.14.0 (unreleased) — research routes itself, and Brave is budgeted
 
 - Record stock Ollama's startup preference before taking over its service, preserve it across reinstalls, and restore it after ailocal's agents stop during teardown. Failed restoration retains its receipt and runtime; older installs without an original-state record report an explicit recovery command.
 

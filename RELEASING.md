@@ -1,40 +1,14 @@
 # Releasing ailocal
 
-From v0.9.0 onward, `main` is a public contract. Improving it is expected; changing it out from under an installed machine is not. Anything user-facing — CLI commands and flags, configuration layout, the install flow, generated client files, profile behaviour — needs a migration story, a release note, and the right version bump decided BEFORE it merges, not after someone's `ailocal check` turns red.
+Versioning follows Cadence's shared standard (`versioning.md` in Cadence's references: SemVer, Keep a Changelog, the 0.x rule, the release steps). This file holds only what is specific to ailocal.
 
-## What each bump means
+From v0.9.0, `main` is a public contract. ailocal's published interface is its CLI commands and flags, the configuration layout, the install flow, the generated client configuration and profile behaviour. A change to any of them carries its migration note and its bump in the PR that makes it.
 
-**Patch (0.9.x)**
+## ailocal specifics
 
-- Bug fixes
-- Documentation improvements
-- Performance improvements
-- Internal refactoring with no behavioural change
-
-**Minor (0.x+1)**
-
-- New commands
-- New client support
-- New model profiles
-- New capabilities
-
-**Major (1.x)**
-
-- Breaking CLI changes
-- Configuration migrations
-- Behavioural changes requiring user action
-
-## Every release must
-
-- [ ] pass the full gate — `python3 tests/gate.py --full`
-- [ ] pass a clean install on a machine that has never run ailocal (still manual — see below)
-- [ ] pass `ailocal check`
-- [ ] include release notes in `CHANGELOG.md`
-- [ ] update `README.md` if installation changed
-- [ ] update `AGENTS.md` if the developer workflow changed
-- [ ] bump the version in BOTH `pyproject.toml` and `src/ailocal/__init__.py`
-
-Breaking changes are documented in the release notes. A breaking change that ships without one is a defect, whatever the version number says.
+- The version lives in `pyproject.toml` and `src/ailocal/__init__.py`; the gate fails unless they agree and `CHANGELOG.md` has a section for it.
+- Full gate: `python3 tests/gate.py --full`, then `ailocal check`.
+- Update `README.md` when installation changes and `AGENTS.md` when the developer workflow changes.
 
 ### The clean-install check: what it is now, and what should replace it
 
@@ -43,15 +17,6 @@ Breaking changes are documented in the release notes. A breaking change that shi
 Because it is manual, it is the one item that gets skipped. It was skipped for **v0.9.1** and **v0.10.0** — no such machine was available. That is recorded here rather than left unstated, since a checklist item quietly skipped is indistinguishable from one that passed.
 
 **Future replacement — NOT YET BUILT.** The intended fix is an automated clean-state install gate: fresh `HOME`, `XDG_*` and config roots, install from the built wheel, no repository checkout anywhere on the path, no prior generated state, then assert the stack comes up. Nothing of this exists today; when it does, it replaces the manual item above and this section goes with it.
-
-## Compatibility promise
-
-Future releases aim to preserve compatibility for:
-
-- CLI commands
-- configuration layout
-- generated client configuration
-- profile behaviour
 
 ## Cutting the release
 
