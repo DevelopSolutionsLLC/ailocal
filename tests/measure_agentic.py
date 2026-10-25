@@ -3,12 +3,13 @@
 
 `measure_geometry.py` answers "do the profile's numbers still hold for the model
 we already ship". This answers a different question: "should we still ship it".
-Two MLX-served candidates run the same matrix and the script prints what it
+Selected candidates run the same matrix and the script prints what it
 measured. It asserts nothing, keeps no history and has no pass/fail opinion; a
 human reads the table and decides.
 
-    python3 tests/measure_agentic.py --quick    # 8K depth only, plumbing smoke
-    python3 tests/measure_agentic.py            # full matrix
+    python3 tests/measure_agentic.py --quick    # decode-only plumbing smoke
+    python3 tests/measure_agentic.py            # active model, 32K decode/tools pilot
+    python3 tests/measure_agentic.py --prefill  # opt into expensive prefill probes
     python3 tests/measure_agentic.py --models gemma4:26b-mlx
 
 FOUR THINGS ARE MEASURED, because decode tok/s alone picks the wrong model:
@@ -19,8 +20,8 @@ FOUR THINGS ARE MEASURED, because decode tok/s alone picks the wrong model:
                         a runtime depth controller -- no flag, no DRAFT
                         directive. The runner does NOT emit one stats line per
                         request, so a run with no line proves nothing on its
-                        own; only a model that reports none across every repeat
-                        is evidence it is not drafting.
+                        own. Missing statistics across every repeat still do
+                        not establish whether drafting was active.
   prefill cold + warm   what Claude Code actually waits on. The warm repeat
                         exercises the runner's prefix trie; the gap between the
                         two is the real cost of a cache miss.
@@ -67,8 +68,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
 # Reused wholesale rather than reimplemented: same host, same cold-load
 # discipline, same salted filler, same version probe.
 from measure_geometry import (  # noqa: E402
-    GIB, api, engine_of, fill, load_cold, versions,
+    GIB, api, engine_of, fill, load_cold, versions, measurement_budget, release_model,
 )
+from ailocal import policy as P  # noqa: E402
 
 GATEWAY = "http://127.0.0.1:4000"
 
@@ -105,51 +107,73 @@ def server_log():
 #: block cross-checked against the publisher's model card. NOT the profile's
 #: values. `think` follows the model's documented mode for coding work.
 CANDIDATES = {
+    "ailocal-gemma4-26b-uncensored:mlx-46ab84d": {
+        "label": "64/128 GB Cyber — unrestricted Gemma MLX, patched runtime required",
+        "options": {"temperature": 1.0, "top_k": 64, "top_p": 0.95,
+                    "min_p": 0.0, "presence_penalty": 0.0, "repeat_penalty": 1.0},
+        "think": True,
+        "num_ctx": 32768,
+    },
     "gemma4:26b-mlx": {
         "label": "incumbent — architecture/implementation/review today",
         "options": {"temperature": 1.0, "top_k": 64, "top_p": 0.95},
         "think": True,
     },
     # The actively served models whose CLASSIFICATION rests on measurement.
-    # Each carries its own num_ctx: the shared 180224 below is the architecture
-    # role's window, and forcing it onto a llama_cpp model would measure an
-    # eager KV allocation no profile asks for (qwen3.5 runs on llama_cpp, which
-    # allocates the whole declared window per parallel slot up front).
+    # Each carries its own num_ctx: the shared default is the architecture
+    # role's window. The actual runner must be read after loading: recent
+    # Ollama builds may select MLX for supported GGUF architectures too.
     "qwen3.5:9b": {
         "label": "fast-role challenger / 32 GB architecture model",
-        "options": {"temperature": 1.0, "top_k": 20, "top_p": 0.95,
-                    "presence_penalty": 1.5},
+        "options": {"temperature": 0.7, "top_k": 20, "top_p": 0.8,
+                    "min_p": 0.0, "presence_penalty": 1.5, "repeat_penalty": 1.0},
         "think": False,
         "num_ctx": 135168,       # the 64/128 GB fast role's live window
     },
     "qwen3.5:4b": {
         "label": "16 GB architecture/implementation/review/fast model",
-        "options": {"temperature": 1.0, "top_k": 20, "top_p": 0.95,
-                    "presence_penalty": 1.5},
+        "options": {"temperature": 0.7, "top_k": 20, "top_p": 0.8,
+                    "min_p": 0.0, "presence_penalty": 1.5, "repeat_penalty": 1.0},
         "think": False,
         "num_ctx": 135168,
     },
     "qwen3.5:2b": {
-        "label": "incumbent fast model on 64/128 GB",
-        "options": {"temperature": 1.0, "top_k": 20, "top_p": 0.95,
-                    "presence_penalty": 1.5},
+        "label": "smaller fast-role challenger",
+        # The 2B card has a distinct non-thinking text preset.
+        "options": {"temperature": 1.0, "top_k": 20, "top_p": 1.0,
+                    "min_p": 0.0, "presence_penalty": 2.0, "repeat_penalty": 1.0},
         "think": False,
         "num_ctx": 135168,
     },
     "qwen3.8:27b-mlx": {
         "label": "challenger — qwen3_5 arch, 27.8B, adds vision",
         # Thinking mode: temp 1.0 / top_p 0.95 / top_k 20. The instruct-mode
-        # recommendation (0.7 / 0.80 / presence 1.5) applies with think off and
-        # is what --no-think switches to, so neither mode is measured off-spec.
-        "options": {"temperature": 1.0, "top_k": 20, "top_p": 0.95, "min_p": 0.0},
+        # recommendation (0.7 / 0.80 / presence 1.5) applies with think off;
+        # this candidate measures medium thinking, not instruct mode.
+        "options": {"temperature": 1.0, "top_k": 20, "top_p": 0.95,
+                    "min_p": 0.0, "presence_penalty": 0.0, "repeat_penalty": 1.0},
+        "think": "medium",
+    },
+    "orcarouter/Qwen3.8-27B-Uncensored:mlx-4bit": {
+        "label": "unvalidated refusal-modified MLX 4-bit challenger; verify actual runner",
+        "options": {"temperature": 1.0, "top_k": 20, "top_p": 0.95,
+                    "min_p": 0.0, "presence_penalty": 0.0, "repeat_penalty": 1.0},
         "think": True,
-        "options_nothink": {"temperature": 0.7, "top_k": 20, "top_p": 0.80,
-                            "presence_penalty": 1.5},
     },
 }
 
+# Small-tier Cyber candidates use the shipped profile as their sampling source.
+# These are measurements on the host, not evidence about smaller hardware.
+for _tier in ("16gb", "32gb"):
+    _cfg = P.resolve_role(_tier, "cyber", P.data_root())
+    CANDIDATES[_cfg["model"]] = {
+        "label": f"{_tier} unrestricted MLX candidate; target hardware unmeasured",
+        "options": {key: _cfg[key] for key in (
+            "temperature", "top_p", "top_k", "min_p", "presence_penalty", "repeat_penalty", "stop")},
+        "think": _cfg["reasoning"], "num_ctx": _cfg["total_context"],
+    }
+
 DEPTHS = (8192, 32768, 65536)
-NUM_CTX = 180224  # the architecture role's live window, so this is its geometry
 
 #: One deterministic two-step scenario. The model must READ before it can answer,
 #: so a single-call reply is a failure of the loop, not a shortcut.
@@ -228,7 +252,7 @@ def speculation_since(offset):
 
 # ── probes ──────────────────────────────────────────────────────────────────
 
-def decode(model, opts, think, ctx, want=512, repeats=5):
+def decode(model, opts, think, ctx, want=128, repeats=5):
     """Sustained decode rate, REPEATED, with the speculation it used.
 
     The prompt asks for bulk generation on purpose: acceptance on predictable
@@ -258,13 +282,14 @@ def decode(model, opts, think, ctx, want=512, repeats=5):
         # "drafted nothing". Tracked separately so the caller can tell them
         # apart rather than reporting a missing file as a model property.
         log_ok = log_ok or off is not None
-        r = api("/api/generate", {
+        r = api("/api/chat", {
             "model": model,
-            "prompt": "Write a Python function that validates an IPv4 address, "
-                      "with a docstring and three unit tests. Code only.",
+            "messages": [{"role": "user", "content":
+                "Write a Python function that validates an IPv4 address, "
+                "with a docstring and three unit tests. Code only."}],
             "stream": False, "think": think,
             "options": {**opts, "num_ctx": ctx, "num_predict": want},
-            "keep_alive": "120s"})
+            "keep_alive": "120s"}, timeout=120)
         n = r.get("eval_count", 0)
         secs = r.get("eval_duration", 0) / 1e9
         reason = r.get("done_reason", "?")
@@ -339,7 +364,7 @@ def tool_loop(model, opts, think, ctx, rounds):
                     "model": model, "messages": msgs, "tools": TOOLS,
                     "stream": False, "think": think,
                     "options": {**opts, "num_ctx": ctx, "num_predict": 1024},
-                    "keep_alive": "120s"}, timeout=600)
+                    "keep_alive": "120s"}, timeout=120)
             except (urllib.error.URLError, OSError):
                 r["transport"] += 1
                 break
@@ -463,13 +488,21 @@ def gateway_probe():
 # ── report ──────────────────────────────────────────────────────────────────
 
 def run(model, spec, depths, rounds, quick, repeats):
-    print(f"\n{'='*72}\n{model}   engine={engine_of(model)}\n  {spec['label']}")
+    try:
+        return _run(model, spec, depths, rounds, quick, repeats)
+    finally:
+        release_model(model)
+
+
+def _run(model, spec, depths, rounds, quick, repeats):
+    ctx = spec.get("num_ctx") or P.effective_role("architecture")["num_ctx"]
+    print(f"\n{'='*72}\n{model}\n  {spec['label']}")
     opts, think = spec["options"], spec["think"]
-    print(f"  sampling     {opts}  think={think}   [vendor-recommended]")
+    print(f"  sampling     {opts}  think={think}   [candidate settings]")
     print(f"  num_ctx      {ctx}")
 
-    ctx = spec.get("num_ctx", NUM_CTX)
     base = load_cold(model, ctx)
+    print(f"  runner       {engine_of(model)} (reported by Ollama)")
     if base:
         print(f"  weights      {base/GIB:.2f} GiB resident, no KV yet")
 
@@ -490,8 +523,7 @@ def run(model, spec, depths, rounds, quick, repeats):
         print("  speculation  UNAVAILABLE — the running server's log target is "
               "gone (see ~/Library/Logs/ailocal). Not a claim about drafting.")
     else:
-        print("  speculation  NO speculate_stats emitted — this model decoded "
-              "one token at a time (no MTP drafter for this blob)")
+        print("  speculation  no speculate_stats emitted; drafting status UNVERIFIED")
 
     for depth in depths:
         n, cold, warm, res = prefill_pair(model, depth, opts, ctx)
@@ -522,22 +554,42 @@ def run(model, spec, depths, rounds, quick, repeats):
               f"{t['transport']} transport errors, "
               f"{t['thinking']} turns returned reasoning content")
 
-    subprocess.run(["ollama", "stop", model], capture_output=True)
-
-
 def main(argv=None):
     ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n")[0])
-    ap.add_argument("--models", nargs="+", default=list(CANDIDATES),
-                    help="default: every candidate")
+    ap.add_argument("--models", nargs="+",
+                    help="default: the active architecture model only")
     ap.add_argument("--quick", action="store_true",
-                    help="8K depth only and no tool loop; smokes the plumbing")
-    ap.add_argument("--repeats", type=int, default=5,
+                    help="skip the tool loop; with --prefill, probe 8K depth only")
+    prefill = ap.add_mutually_exclusive_group()
+    prefill.add_argument("--prefill", action="store_true", dest="prefill",
+                         help="opt into expensive cold/warm context measurements")
+    prefill.add_argument("--skip-prefill", action="store_false", dest="prefill")
+    ap.set_defaults(prefill=False)
+    ap.add_argument("--repeats", type=int, default=3,
                     help="decode samples per model; a single one is not a rate")
-    ap.add_argument("--rounds", type=int, default=8,
-                    help="tool-loop repetitions per model (default 8)")
+    ap.add_argument("--rounds", type=int, default=3,
+                    help="tool-loop repetitions per model (default 3)")
     ap.add_argument("--gateway", action="store_true",
                     help="also price the real LiteLLM path (incumbent only)")
+    ap.add_argument("--context", type=int, default=32768,
+                    help="override candidate contexts for a bounded pilot (e.g. 32768)")
+    ap.add_argument("--time-budget", type=int, default=900,
+                    help="whole-run wall-clock budget in seconds (default 900)")
     args = ap.parse_args(argv)
+    if args.models is None:
+        args.models = [P.effective_role("architecture")["model"]]
+    unknown = sorted(set(args.models) - set(CANDIDATES))
+    if unknown:
+        ap.error(f"unknown candidates: {', '.join(unknown)}")
+    if args.context is not None and args.context < 16384:
+        ap.error("--context must be at least 16384 (8K prefill plus decode headroom)")
+    if args.repeats < 1 or args.rounds < 1 or args.time_budget < 1:
+        ap.error("--repeats, --rounds and --time-budget must be positive")
+    with measurement_budget(args.time_budget):
+        return measure(args)
+
+
+def measure(args):
     # Minutes per probe with a human watching: block buffering is
     # indistinguishable from hung.
     sys.stdout.reconfigure(line_buffering=True)
@@ -546,21 +598,26 @@ def main(argv=None):
     print(f"agentic candidate comparison   "
           f"{datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC}")
     print(f"ollama {ollama}   mlx {mlx}")
-    print(f"num_ctx {NUM_CTX} default (architecture's window); candidates may\n        override it — each run prints the value it used")
+    print(f"num_ctx {args.context} pilot override; "
+          f"active architecture window {P.effective_role('architecture')['num_ctx']}")
     print("OLLAMA_KV_CACHE_TYPE / OLLAMA_FLASH_ATTENTION do NOT reach the MLX "
           "runner; they are llama-server flags. KV below is unquantized.")
 
-    depths = DEPTHS[:1] if args.quick else DEPTHS
+    depths = () if not args.prefill else DEPTHS[:1] if args.quick else DEPTHS
+    if args.context is not None:
+        depths = tuple(depth for depth in depths if depth <= args.context // 2)
     for model in args.models:
-        spec = CANDIDATES.get(model)
-        if not spec:
-            print(f"\n{model}: not a known candidate, skipped")
-            continue
+        spec = dict(CANDIDATES[model])
+        if args.context is not None:
+            spec["num_ctx"] = args.context
         run(model, spec, depths, args.rounds, args.quick, args.repeats)
 
     if args.gateway:
         print(f"\n{'='*72}\ngateway (ailocal-architecture -> incumbent)")
-        print(f"  {gateway_probe()}")
+        try:
+            print(f"  {gateway_probe()}")
+        finally:
+            release_model(P.effective_role('architecture')['model'])
 
     print("\nNothing here is asserted. Read the four columns together: decode "
           "tok/s is meaningless if the tool loop does not complete, and prefill "
@@ -573,5 +630,5 @@ if __name__ == "__main__":
         sys.exit(main())
     except KeyboardInterrupt:
         sys.exit(130)
-    except (urllib.error.URLError, OSError) as exc:
+    except (urllib.error.URLError, OSError, RuntimeError) as exc:
         sys.exit(f"measurement could not run: {exc}")

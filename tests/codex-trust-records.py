@@ -87,6 +87,27 @@ def main() -> int:
                   "a live file holding a record twice is repaired, not carried")
             check(tomllib.loads(out).get("tui") == {"screen_reader_detection_done": True},
                   "the merged file is valid TOML")
+
+            template = TEMPLATE + '\n[mcp_servers.research]\ncommand = "ailocal"\n'
+            external = ('\n[mcp_servers.grepai] # managed by external registrar\ncommand = "grepai"\n'
+                        'args = ["mcp-serve", "--workspace", "cadence"]\n'
+                        '\n[mcp_servers.grepai.env]\nEXAMPLE = "value"\n'
+                        '\n[mcp_servers."server.with.dots"]\ncommand = "other"\n')
+            g.CODEX_CONFIG.write_text(
+                TEMPLATE + '\n[mcp_servers.research]\ncommand = "stale"\n' + external)
+            out = g._keep_codex_projects(template)
+            servers = tomllib.loads(out)["mcp_servers"]
+            check(servers["grepai"]["args"] == ["mcp-serve", "--workspace", "cadence"],
+                  "an externally registered MCP server survives regeneration")
+            check(servers["grepai"]["env"] == {"EXAMPLE": "value"},
+                  "nested native MCP tables survive regeneration")
+            check(servers["server.with.dots"]["command"] == "other",
+                  "quoted MCP server names retain their TOML identity")
+            check(servers["research"] == {"command": "ailocal"},
+                  "the template remains authoritative for its own MCP server")
+            g.CODEX_CONFIG.write_text(out)
+            check(g._keep_codex_projects(template) == out,
+                  "preserving external MCP registrations is a fixed point")
         finally:
             g.CODEX_CONFIG = original
     return _suite.report()

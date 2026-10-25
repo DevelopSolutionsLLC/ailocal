@@ -16,9 +16,11 @@ Local models. Local data. One configuration.
 
 ## What is ailocal?
 
-ailocal runs the coding tools you already use against models on your own machine. Nothing is sent to Anthropic or OpenAI, and there is nothing to pay per token.
+ailocal runs the coding tools you already use against models on your own machine. Local inference has no per-token charge. Documentation MCP lookups contact the vendors' public documentation services when the agent uses them.
 
 **What it configures for you:** the models, the local API they are served on, and every supported client you have installed. You do not edit a config file by hand.
+
+Every `ailocal install`, including `--yes`, registers the official Claude Code, OpenAI and Microsoft Learn documentation MCP servers for installed Claude Code and Codex CLIs, in both their regular and local client roots. No API keys or extra processes are required. Existing settings and foreign servers are preserved; a conflicting same-name server is reported rather than replaced. Run `ailocal clients claude codex` to add them later. Copilot documentation registration is deferred. These public documentation registrations remain in hosted client settings after ailocal teardown.
 
 **What it does not do:** install software. You install the prerequisites and whichever clients you want; ailocal detects what is present and configures it. Every client is optional.
 
@@ -79,6 +81,10 @@ ailocal install
 ```
 
 `ailocal install` measures your Mac, picks models that fit its memory, downloads them, starts the services, and configures the clients it finds. It will ask you before touching any client configuration.
+
+Installation checks that every selected model can load through Ollama, including models already on disk, then ends with `ailocal check`. It exits nonzero if validation fails, with findings and recovery commands. The load check uses a small context and generates no tokens; it does not establish full-window memory headroom or coding quality. Preview client setup without changing anything with `ailocal clients --dry-run`.
+
+The Cyber profiles declare the reviewed native compatibility bundle they require, so normal `ailocal install --yes` prepares it automatically. It fixes Gemma expert loading and mixed-precision routers on 64/128 GB, and enforces configured MLX stop strings on every tier. Builds require Go and Xcode's compiler tools. The installer reuses intact approved native files or the matching signed app; if the installed app is newer, it downloads the exact pinned native base into temporary build space. No app downgrade is needed. The installer verifies pinned source and patches, builds and tests an isolated native runtime, then selects it only after the daemon reports the expected version. The signed app stays intact. `--ollama-patch gemma4-switch-glu` retains its original identifier as a maintenance override; `--ollama-patch none` returns to stock Ollama once the selected profile no longer requires the bundle. See [the patch's scope and validation](docs/maintenance.md#patched-ollama).
 
 Expect a download of roughly 6–40 GB of models, depending on your Mac. Run it once; it is safe to re-run.
 
@@ -145,6 +151,28 @@ To upgrade: `pipx upgrade ailocal && ailocal start`.
 
 This upgrades the Python package from its configured installation source and regenerates the runtime; it does not automatically upgrade Ollama, models, or pinned service images. `ailocal update --json` reports available image candidates and explicitly incomplete discovery. Review and validation before promoting dependencies are described in [AI development maintenance](docs/maintenance.md).
 
+### Pinning Homebrew packages (macOS)
+
+ailocal holds its dependencies at validated versions, roughly two releases behind the newest. Homebrew has no minimum-release-age setting (Homebrew/brew#21421 and #22659, both closed as not planned), so hold a version with a **pin**: `brew upgrade`, including a scheduled `brew autoupdate --upgrade`, skips pinned packages.
+
+```bash
+brew pin --cask codex claude-code@latest   # hold the clients ailocal is measured against
+brew pin pipx
+brew list --pinned
+```
+
+To upgrade a pinned package, unpin it, upgrade, validate, and pin it again:
+
+```bash
+brew unpin --cask codex && brew upgrade --cask codex
+ailocal check && python3 tests/gate.py     # the gate needs a checkout
+brew pin --cask codex
+```
+
+To install a specific older formula version, use `brew extract` into a local tap; Cadence's README gives the full procedure, including the checksum check.
+
+Docker Desktop, the Ollama app and VS Code update themselves and ignore a cask pin. Turn off automatic updates in each app's own settings (in VS Code: `"update.mode": "manual"`). ailocal pins its service images by digest itself, so Docker Desktop updates never change LiteLLM or SearXNG.
+
 ## Supported tools
 
 | Tool | Status |
@@ -205,7 +233,7 @@ GitHub code search (`!ghc`) is optional: add `GITHUB_SEARCH_TOKEN=` to `~/.confi
 
 When keyless coverage is thin and a Brave key is configured, the server adds at most two Brave requests per call, within `AILOCAL_BRAVE_BUDGET` (default 1,000 per Brave billing period). Each request is reserved in a ledger under the state root before it is sent, so concurrent sessions cannot overspend. Every response carries a `brave.summary` line: requests used, the remaining budget as counted by ailocal on this machine, and the period reset. Account-wide remaining allowance is reported as unknown unless Brave reports a monthly cap or refuses a request for quota or balance, which is reported as account-wide exhaustion until the reset; usage by other consumers of the key is not visible. Brave publishes no usage or balance API, and prepaid keys report no request quota. To bound spending across every consumer of the key, set a usage limit in the Brave dashboard and leave auto-reload off: Brave enforces it on its side and refuses requests once it is reached. When the budget is exhausted or the quota is unknown, research continues keyless and says why. See [ADR 014](docs/adr/014-local-research.md).
 
-The stable stdio launcher is `ailocal mcp research`. Experimental `answer(question, sites?)` additionally reads bounded public pages and synthesizes a cited answer through the local proxy. It is disabled by default because claude-local shares its inference slot; a separately configured caller can explicitly launch `ailocal mcp research --enable-answer`. VS Code has no separate local configuration, so its `research` registration in the user `mcp.json` is also visible to hosted Copilot models; it uses the absolute launcher path, preserves other servers and never replaces a foreign `research` entry. Hosted Claude and Codex registration belongs to Cadence; ailocal changes none of their configuration.
+The stable stdio launcher is `ailocal mcp research`. Experimental `answer(question, sites?)` additionally reads bounded public pages and synthesizes a cited answer through the local proxy. It is disabled by default because claude-local shares its inference slot; a separately configured caller can explicitly launch `ailocal mcp research --enable-answer`. VS Code has no separate local configuration, so its `research` registration in the user `mcp.json` is also visible to hosted Copilot models; it uses the absolute launcher path, preserves other servers and never replaces a foreign `research` entry. Hosted research registration belongs to Cadence; ailocal adds only the public documentation MCPs to hosted Claude and Codex settings.
 
 Returned sources distinguish full-page text from search snippets and report failed page reads. Source text is untrusted evidence, not instructions; check substantive claims against the cited URLs. Cached search results expire after 15 minutes and page text after 30 minutes. The bounded cache lives under ailocal's disposable state root, contains queries and public evidence, and stores no conversations or synthesized answers. `ailocal check` checks provisioning without issuing a search. See [the architecture](docs/architecture.md#local-research) for limits and ownership.
 
@@ -234,7 +262,7 @@ every time rather than depending on the model's sense of geometry.
 opaque origin under `connect-src 'none'`, served separately from the viewer that frames it.
 Every asset is vendored; nothing is fetched from a CDN.
 
-Your hosted `claude` is untouched — it keeps the real `Artifact` tool.
+Your hosted `claude` keeps its real `Artifact` tool.
 
 ## Your Mac's profile
 
@@ -242,16 +270,30 @@ ailocal measures your Mac's memory and chooses a profile automatically. You do n
 
 | Memory | Main model | Context window | Models on disk |
 |---|---|---|---|
-| 16 GB | `qwen3.5:4b` | 96K | ~6 GB |
-| 32 GB | `qwen3.5:9b` | 128K | ~9 GB |
-| 64 GB | `gemma4:26b-mlx` | 192K | ~40 GB |
-| 128 GB | `gemma4:26b-mlx` | 256K | ~40 GB (sized from model limits, not yet measured on hardware) |
+| 16 GB | `qwen3.5:4b-mlx` | 104K | ~8 GB |
+| 32 GB | `qwen3.5:9b-mlx` | 136K | ~16 GB |
+| 64 GB | `gemma4:26b-mlx` | 192K | ~42 GB |
+| 128 GB | `gemma4:26b-mlx` | 256K | ~42 GB (sized from model limits, not yet measured on hardware) |
 
-ailocal never picks a profile your machine cannot hold. To override it: `ailocal profile use 32gb`, then `ailocal start`.
+All enabled shipped backends use MLX, including the fast capability and unrestricted variants. The profiles retain conservative context settings; full-window memory and latency on physical 16/32 GB hardware remain unmeasured. To override the detected tier: `ailocal profile use 32gb`, then `ailocal start`.
+
+Inline autocomplete is disabled in the MLX-only profiles: MLX Qwen2.5-Coder weights exist, but the pinned Ollama MLX loader does not support their Qwen2 architecture. Disabled candidates are not downloaded or advertised; no GGUF fallback is selected.
 
 A long conversation compacts automatically before it reaches that window. Your client does the compacting; ailocal supplies the threshold. The full window stays available for one-off large requests.
 
 To change which model a profile uses, edit the file in `~/.config/ailocal/profiles/` and run `ailocal start`. Your edits are preserved across upgrades.
+
+Profiles also control sampling, including `temperature`, `top_p`, `top_k`, `min_p`, `presence_penalty` and Ollama's `repeat_penalty`. Shipped settings follow model-specific guidance with documented role exceptions; see [model evaluation](docs/maintenance.md#local-model-evaluation).
+
+Every profile exposes **Cyber** as `ailocal-cyber`. The 16/32 GB tiers use pinned reasoning-distilled, abliterated Qwen3.5 4B/9B MLX conversions, with 24K input and respectively 4K/8K output. Both start with thinking off and Qwen's published non-thinking sampling preset. The 64/128 GB tiers use a pinned unrestricted Gemma 4 26B MLX conversion, with 24K input/8K output and thinking enabled; its profile declares the native runtime patch and Google-aligned sampling. They remain community model candidates: short checks do not establish repository-scale reliability or hardware headroom on unmeasured tiers. The installer downloads pinned assets, verifies their hashes and uses Ollama's native importer. In `codex-local`, choose `ailocal-cyber` with `/model`; backend tags are implementation details. [Native coding checks](docs/maintenance.md#native-coding-diagnosis-2026-10-25) distinguish completed edits from prompt-processing deadlines.
+
+Run `codex-local`, then use `/model` to select `ailocal-cyber` or another capability. Each selection automatically uses its own context, compaction limits and reasoning default from the generated catalog. Capabilities configured with thinking off default to `none`; reasoning capabilities default to `medium`. An explicit client effort choice overrides that default. No extra launch preset is required. The API and gateway catalog use the same model IDs.
+
+Each memory profile also owns a guide for every selected backend: how to frame a task, known limitations, sources and the scope of measured results. Codex includes that guide with the selected model; Claude Code receives it on session start and model switches through native hooks (model-switch hooks require Claude Code 2.1.251 or later). Hosted or local callers can read the same current knowledge through the bundled `local-agent` MCP's read-only `model_guide(model?)` tool before delegating. `ailocal profile guide ailocal-cyber --tier 16gb` previews another tier without loading a model. Guidance does not rewrite the task or guarantee correctness, and small-model coding still needs real syntax checks, tests and bounded repair attempts.
+
+`ailocal start` preserves other MCP servers registered in Codex's configuration, including their nested settings. Cadence owns repository-intelligence integrations; ailocal supplies its bundled research server.
+
+`ailocal teardown` stops ailocal's server before restoring stock Ollama's recorded startup preference; open the stock app to start its server afterward. Existing installations with no original-state receipt report a recovery command instead of guessing. Models and operator configuration are retained. See [startup restoration](docs/maintenance.md#restoring-ollama-startup-on-teardown) for the exact scope.
 
 ## Defaults
 
@@ -267,7 +309,7 @@ What a fresh install gives you, without configuring anything.
 | Local artifacts | on, bundled | — |
 | Web search | ailocal's own SearXNG, keyless | `BRAVE_API` adds budgeted Brave to research |
 | Context | the profile's `num_ctx`; 1M-context beta off | profile |
-| Hosted `claude`, `~/.claude` | never touched | — |
+| Hosted Claude/Codex settings | public documentation MCPs only | native client configuration, retained after teardown |
 
 Every `claude-local` variable is **process-scoped** — set it inline for one session. The full
 table, with accepted values and effects, is in [docs/claude-local.md](docs/claude-local.md#configuration).

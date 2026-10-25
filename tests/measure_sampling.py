@@ -6,8 +6,8 @@ output better", because tok/s does not know whether the code runs. This does the
 other half: same model, same prompts, two sampling settings, and a score that
 comes from EXECUTING what the model wrote rather than from reading it.
 
-    python3 tests/measure_sampling.py                    # both settings, 5 reps
-    python3 tests/measure_sampling.py --reps 3
+    python3 tests/measure_sampling.py                    # current candidate, one rep
+    python3 tests/measure_sampling.py --settings all --reps 3  # explicit larger A/B
     python3 tests/measure_sampling.py --model gemma4:26b-mlx
 
 WHY THIS EXISTS. The 64/128 GB profiles moved gemma4 from temp 0.1 / top_k 20 to
@@ -30,11 +30,13 @@ difference has somewhere to show up. If BOTH settings score 100%, the tasks are
 too easy and the result is "no signal", not "no difference" -- the script says so
 rather than letting a ceiling read as a conclusion.
 
-Nothing else may import this: it holds a model resident and runs generated code.
+Importing this module does not run measurements. Executing it holds a model
+resident and runs generated code; run alone with reviewed task inputs.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import pathlib
 import re
@@ -42,13 +44,15 @@ import statistics
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 from datetime import datetime, timezone
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
-from measure_agentic import log_offset, speculation_since  # noqa: E402
-from measure_geometry import api, versions  # noqa: E402
+from measure_agentic import CANDIDATES, log_offset, speculation_since  # noqa: E402
+from measure_geometry import api, loaded_model, versions, measurement_budget, release_model  # noqa: E402
+from ailocal import policy as P  # noqa: E402
 
 NUM_CTX = 32768
 #: Generous on purpose. At 1200 this benchmark scored 4/5 tasks as WRONG when the
@@ -57,7 +61,7 @@ NUM_CTX = 32768
 #: NameError and recorded as a failed task. An output ceiling below what the
 #: roles actually grant (8192-16384) does not measure the model, it measures the
 #: ceiling -- and it fails SILENTLY, as a plausible-looking low score.
-NUM_PREDICT = 8192  # the implementation role's real max_output
+NUM_PREDICT = 8192  # a reduced measurement budget, not the current role ceiling
 
 #: The two settings under comparison. `profile_old` is what the roles shipped
 #: before 2026-08-21; `vendor` is Google's published Gemma 4 setting and what
@@ -86,6 +90,7 @@ assert run_length_encode('abc') == 'abc'
 assert run_length_encode('a') == 'a'
 assert run_length_encode('aab') == 'a2b'
 assert run_length_encode('aaaaaaaaaaab') == 'a11b'
+assert run_length_encode('éé🙂🙂🙂x') == 'é2🙂3x'
 """),
     ("median_of",
      "Write a Python function `median_of(xs: list) -> float` returning the median. "
@@ -96,6 +101,8 @@ assert run_length_encode('aaaaaaaaaaab') == 'a11b'
 assert median_of([3,1,2]) == 2
 assert median_of([4,1,3,2]) == 2.5
 assert median_of([-5,-1]) == -3.0
+assert median_of([0]) == 0
+assert median_of([5,5,5,5]) == 5
 original = [3,1,2]
 median_of(original)
 assert original == [3,1,2], 'mutated the caller list'
@@ -116,6 +123,7 @@ assert chunk_evenly([1,2,3,4], 2) == [[1,2],[3,4]]
 assert chunk_evenly([], 2) == [[],[]]
 assert chunk_evenly([1], 3) == [[1],[],[]]
 assert len(chunk_evenly(list(range(10)), 4)) == 4
+assert chunk_evenly(list(range(10)), 4) == [[0,1,2],[3,4,5],[6,7],[8,9]]
 try:
     chunk_evenly([1], 0); raise SystemExit('no ValueError on n=0')
 except ValueError:
@@ -145,7 +153,7 @@ assert parse_duration('1h30m') == 5400
 assert parse_duration('45s') == 45
 assert parse_duration('2h') == 7200
 assert parse_duration('1h1m1s') == 3661
-for bad in ('', '10', 'abc', '1m1h'):
+for bad in ('', '10', 'abc', '1m1h', '1h1h', '1m1m', '1.5h', '-1h', '1h30mgarbage'):
     try:
         parse_duration(bad); raise SystemExit('accepted malformed %r' % bad)
     except ValueError:
@@ -188,49 +196,100 @@ def score(code, checks):
     return False, (tail[-1][:70] if tail else f"exit {r.returncode}")
 
 
-def generate(model, prompt, opts):
+def generate(model, prompt, opts, think=True, context=NUM_CTX,
+             max_output=NUM_PREDICT, system=None, timeout=120):
     off = log_offset()
-    r = api("/api/generate", {
-        "model": model, "prompt": prompt, "stream": False, "think": True,
-        "options": {**opts, "num_ctx": NUM_CTX, "num_predict": NUM_PREDICT},
-        "keep_alive": "300s"}, timeout=900)
+    messages = [{"role": "user", "content": prompt}]
+    payload = {"model": model, "messages": messages, "stream": False, "think": think,
+               "options": {**opts, "num_ctx": context, "num_predict": max_output},
+               "keep_alive": "300s"}
+    if system is not None:
+        messages.insert(0, {"role": "system", "content": system})
+    r = api("/api/chat", payload, timeout=timeout)
+    message = r.get("message", {})
     n, secs = r.get("eval_count", 0), r.get("eval_duration", 0) / 1e9
     # `thinking` is returned separately from `response`. Carried back so an empty
     # answer can be reported as what it is -- budget exhausted by reasoning --
     # rather than scored as a wrong answer.
-    return (r.get("response", ""), (n / secs if n and secs else None),
-            speculation_since(off), r.get("thinking", "") or "")
+    return (message.get("content", ""), (n / secs if n and secs else None),
+            speculation_since(off), message.get("thinking", "") or "", r.get("done_reason"),
+            r.get("prompt_eval_count"), n)
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n")[0])
-    ap.add_argument("--model", default="gemma4:26b-mlx")
-    ap.add_argument("--reps", type=int, default=5,
-                    help="attempts per task per setting (default 5)")
+    ap.add_argument("--model", help="default: the active implementation model")
+    ap.add_argument("--reps", type=int, default=1,
+                    help="attempts per task per setting (default 1, exploratory)")
     ap.add_argument("--json", help="also write the raw per-attempt record here")
+    ap.add_argument("--settings", choices=("all", "candidate"), default="candidate",
+                    help="candidate uses this model's own declared sampling")
+    ap.add_argument("--prompt-file", help="UTF-8 system prompt for an explicit prompt ablation")
+    ap.add_argument("--no-think", action="store_true",
+                    help="disable native thinking for a controlled mode comparison")
+    ap.add_argument("--context", type=int, default=NUM_CTX)
+    ap.add_argument("--max-output", type=int, default=NUM_PREDICT)
+    ap.add_argument("--time-budget", type=int, default=900, help="whole-run budget in seconds")
     args = ap.parse_args(argv)
+    if args.model is None:
+        args.model = P.effective_role("implementation")["model"]
+    if args.reps < 1 or args.max_output < 1 or args.context <= args.max_output or args.time_budget < 1:
+        ap.error("positive reps/output and context greater than output are required")
+    if args.settings == "candidate":
+        if args.model not in CANDIDATES:
+            ap.error("--settings candidate requires a declared agentic candidate")
+        candidate = CANDIDATES[args.model]
+        settings = {"candidate": candidate["options"]}
+        think = candidate["think"]
+    else:
+        if args.model != "gemma4:26b-mlx":
+            ap.error("the historical sampling A/B is Gemma-specific; use --settings candidate")
+        settings, think = SETTINGS, True
+    if args.no_think:
+        think = False
+    system = pathlib.Path(args.prompt_file).read_text(encoding="utf-8") if args.prompt_file else None
+    try:
+        with measurement_budget(args.time_budget):
+            return measure(args, settings, think, system)
+    finally:
+        release_model(args.model)
+
+
+def measure(args, settings, think, system):
     sys.stdout.reconfigure(line_buffering=True)
 
     ollama, mlx = versions()
-    print(f"sampling A/B — {args.model}   "
+    identity = api("/api/show", {"model": args.model}, timeout=10)
+    digest = next((item["digest"] for item in api("/api/tags", timeout=10).get("models", [])
+                   if item["name"] == args.model), None)
+    if digest is None:
+        raise ValueError("model must already be installed with its exact tag")
+    print(f"coding measurement — {args.model}   "
           f"{datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC}")
     print(f"ollama {ollama}   mlx {mlx}")
-    print(f"{len(TASKS)} tasks x {args.reps} reps x {len(SETTINGS)} settings = "
-          f"{len(TASKS) * args.reps * len(SETTINGS)} scored generations\n")
+    print(f"[APPROX] direct Ollama, small function tasks; context={args.context}, "
+          f"output={args.max_output}, think={think}; "
+          f"live implementation output ceiling={P.effective_role('implementation')['max_output']}")
+    print(f"{len(TASKS)} tasks x {args.reps} reps x {len(settings)} settings = "
+          f"{len(TASKS) * args.reps * len(settings)} scored generations\n")
 
     record, totals = [], {}
-    for label, opts in SETTINGS.items():
+    for label, opts in settings.items():
         print(f"── {label} " + "─" * 40)
         rates, accs, per_task = [], [], {}
         for name, prompt, checks in TASKS:
             passes, reasons = 0, []
             for _ in range(args.reps):
-                text, rate, spec, thought = generate(args.model, prompt, opts)
+                started = time.monotonic()
+                text, rate, spec, thought, finish, prompt_tokens, output_tokens = generate(
+                    args.model, prompt, opts, think, args.context, args.max_output, system,
+                    120)
                 if not text.strip():
                     ok, why = False, (f"EMPTY answer ({len(thought)} chars of "
-                                      f"thinking) — budget exhausted")
+                                      f"thinking), done_reason={finish}")
                 else:
                     ok, why = score(extract(text), checks)
+                elapsed = time.monotonic() - started
                 passes += ok
                 if not ok:
                     reasons.append(why)
@@ -238,8 +297,18 @@ def main(argv=None):
                     rates.append(rate)
                 if spec:
                     accs.append(spec["acceptance"])
-                record.append({"setting": label, "task": name, "ok": ok,
-                               "reason": why, "tok_s": rate})
+                record.append({"model": args.model, "setting": label, "task": name, "ok": ok,
+                               "digest": digest, "details": identity.get("details"), "ollama": ollama,
+                               "runner": (loaded_model(args.model) or {}).get("runner"),
+                               "task_sha256": hashlib.sha256((prompt + '\0' + checks).encode()).hexdigest(),
+                               "reason": why, "tok_s": rate, "seconds": elapsed,
+                               "done_reason": finish, "context": args.context,
+                               "truncated": finish == "length", "empty": not text.strip(),
+                               "max_output": args.max_output, "think": think, "options": opts,
+                               "system": system, "prompt_tokens": prompt_tokens,
+                               "output_tokens": output_tokens, "response": text})
+                if args.json:
+                    pathlib.Path(args.json).write_text(json.dumps(record, indent=2))
             per_task[name] = passes
             bar = "█" * passes + "·" * (args.reps - passes)
             note = f"   {reasons[0]}" if reasons else ""
@@ -253,6 +322,9 @@ def main(argv=None):
               + "\n")
 
     print("=" * 60)
+    if len(totals) == 1:
+        print("Single-setting measurement: compare independent runs; this is not an A/B conclusion.")
+        return 0
     (la, (pa, na)), (lb, (pb, nb)) = totals.items()
     print(f"{la}  {100*pa/na:.0f}%")
     print(f"{lb}  {100*pb/nb:.0f}%")
@@ -273,7 +345,6 @@ def main(argv=None):
     if args.json:
         pathlib.Path(args.json).write_text(json.dumps(record, indent=2))
         print(f"\nraw record -> {args.json}")
-    subprocess.run(["ollama", "stop", args.model], capture_output=True)
     return 0
 
 
@@ -282,5 +353,5 @@ if __name__ == "__main__":
         sys.exit(main())
     except KeyboardInterrupt:
         sys.exit(130)
-    except (urllib.error.URLError, OSError) as exc:
+    except (urllib.error.URLError, OSError, ValueError, RuntimeError) as exc:
         sys.exit(f"measurement could not run: {exc}")

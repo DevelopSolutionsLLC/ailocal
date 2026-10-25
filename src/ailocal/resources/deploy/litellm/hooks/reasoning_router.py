@@ -1,5 +1,13 @@
 """reasoning_router.py — translate `reasoning_effort` into Ollama's native `think`.
 
+Current additional requirement (LiteLLM 1.106.0, also present in 1.106.2):
+the native adapter maps `xhigh` to False for non-gpt-oss models. A captured
+SDK request reproduces it with and without this hook. Forwarding `xhigh`
+explicitly preserves Qwen3.8's supported level; Ollama resolves unsupported
+level names to the model's own default. No model-name routing is needed.
+The older Gemma measurements below concern its boolean thinking control,
+not Qwen's graded levels.
+
 KEPT ON MEASUREMENT, not on history. The issue that originally justified this
 (BerriAI/litellm#15059, reasoning_effort dropped unmapped) was fixed by #15465
 in October 2025 and the mapping IS present in the pinned 1.93.0:
@@ -53,6 +61,7 @@ EFFORT_TO_THINK = {
     "low": "low",
     "medium": "medium",
     "high": "high",
+    "xhigh": "xhigh",
 }
 
 
@@ -68,6 +77,8 @@ class ReasoningRouter(CustomLogger):
             return data
 
         effort = data.get("reasoning_effort")
+        if effort is None and isinstance(data.get("reasoning"), dict):
+            effort = data["reasoning"].get("effort")
         if effort is None:
             return data  # fall through to the role's configured default
 

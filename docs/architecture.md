@@ -52,7 +52,7 @@ $AILOCAL_STATE/                 what LiteLLM mounts, plus the marker (inherits u
 ├── integration-contract.json   published facts for external consumers
 ├── configure.zsh               shell integration
 ├── claude/settings.json
-└── codex/{config,plan.config,review.config}.toml, model_catalog.json
+└── codex/config.toml, model_catalog.json
 ```
 
 Deleting either root and re-running `ailocal start` recovers everything generated. Deleting `profiles/` or `.env.local` does not: those are yours.
@@ -104,7 +104,9 @@ Same directory as the policy root by default, different owner and lifecycle: thi
 - `configure.zsh` (generated), `finalize.zsh`, `scratchpad-hook.sh`, `compact-hook.sh` (copied, 0755)
 - `claude/` — `settings.json`, `.claude.json` (seeded only if absent), and `agents/`, `commands/`, `references/` installed as *managed* directories (each carrying a `.ailocal-managed` manifest): a marker-delimited block appended by another tool is carried across the overwrite, and a symlink is never written through
 - `claude/plugins/` and `claude/backups/` — created inside this root by the `claude` binary that `lsp_baseline()` invokes, not by ailocal. Registering the marketplace clones `anthropics/claude-plugins-official` here, and the CLI rewrites the seeded `.claude.json`, keeping a timestamped backup. Not everything under this root is ailocal-generated.
-- `codex/` — `config.toml`, `plan.config.toml`, `review.config.toml`, `model_catalog.json`, `AGENTS.md`, `prompts/*.md`
+- `codex/` — `config.toml`, `model_catalog.json`, `AGENTS.md`, `prompts/*.md`. The catalog carries context and compaction limits per capability; selecting a model needs no generated launch preset.
+
+Codex's `config.toml` is co-owned: regeneration preserves native trust records, its screen-reader detection flag, and MCP server tables outside the template's server names. The template always owns ailocal's research server; external registrars retain ownership of their own server and nested settings.
 
 **Host state outside both roots**
 
@@ -120,7 +122,7 @@ Same directory as the policy root by default, different owner and lifecycle: thi
 
 `~/.zshrc` is created if absent and backed up (`.zshrc.bak.<timestamp>`, newest 3 kept) before either line is inserted.
 
-**Explicitly not touched:** `~/.claude` and `~/.codex` config — the hosted roots stay separate, and the isolated roots are reached through `CLAUDE_CONFIG_DIR` / `CODEX_HOME` in the wrappers — anything under Git, and any container not named `ailocal-*`. `lsp_baseline()` enables the official LSP plugin for each language server already present (Python, TypeScript, Go, C/C++) in the isolated root **only**. Plugin state is per config root.
+Hosted roots receive only public documentation MCP registrations through the native Claude/Codex CLIs. The shipped endpoint list lives in `resources/clients/documentation.toml`, read by `policy.py`; install and client setup share the same idempotent provisioner. Foreign registrations and other client settings are preserved, and registration failures return a nonzero status. Hosted registrations remain after teardown. Isolated roots are reached through `CLAUDE_CONFIG_DIR` / `CODEX_HOME` in the wrappers. `lsp_baseline()` enables the official LSP plugin for each language server already present (Python, TypeScript, Go, C/C++) in the isolated root **only**. Plugin state is per config root.
 
 **Uninstalling:** `ailocal teardown` (containers + LaunchAgents), delete the two roots, remove the two `~/.zshrc` lines, and optionally `/Users/Shared/ollama/models`. The LSP plugins live in the isolated root and go with it.
 
@@ -236,6 +238,12 @@ Search plans a bounded set of SearXNG requests per preset, filters by engine att
 Public-page fetching checks all resolved addresses and redirects, pins connections to validated public addresses, verifies TLS hostnames, refuses credentials in URLs, and ignores ambient proxy settings. Only HTML/plain text is read, with no browser, subresources or login bypass. Limits are 10 search results, 4 fetched pages, 1 MiB per response, 8,000 extracted characters per page, 24,000 evidence characters, 800 output tokens and 120 seconds per tool call; the launcher lowers input/output budgets to fit the selected role. Character accounting is approximate; the proxy enforces its actual token window. Failures remain visible as source provenance or MCP tool errors. Cancellation closes pending network work.
 
 SQLite caches search responses for 15 minutes and page text for 30 minutes under `$AILOCAL_STATE/local-research/`, with a 64 MiB cap and bounded entry count. Cache keys include endpoint, scope and engine policy; credentials, conversations and synthesized answers are not stored. Cache failures produce visible warnings. Source IDs are checked before an answer is returned; that check does not establish factual support. `tests/research.py` covers contracts with staged backends and real MCP transport. `tests/measure_research.py` performs opt-in live measurement separately from the deterministic gate.
+
+## Mermaid validation
+
+Invalid Mermaid can no longer be published: `publish()` parses every diagram with the real Mermaid grammar (`mermaid_validate.py`, headless Chrome over `vendor/mermaid.min.js`, ~1.7 s per diagram) and returns the parser error to the MODEL instead of serving a bomb icon to the human. The verdict has THREE states and the third is the point -- VALID publishes, INVALID is refused with the parser message, and UNAVAILABLE (no browser, launch failure, timeout, no verdict) is ALSO refused, because reporting an unchecked diagram as a successful publish is the original defect. Only the Mermaid path is gated: `html`, `architecture` and Markdown with no fence never start a validator and cost nothing. Chrome runs in a throwaway `--user-data-dir` and is killed once the verdict is read; it never touches the profile a person is using.
+
+`test_mermaid_validate.py` (CORE) asserts the state machine with the browser replaced through the `runner` seam, plus one bounded real parse; `test_mermaid_grammar.py` (FULL) is the authoritative corpus and launches a browser per fixture.
 
 ## Decisions
 

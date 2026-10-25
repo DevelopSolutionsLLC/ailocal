@@ -1,0 +1,117 @@
+diff --git a/mlxrunner/model/gemma4/gemma4.go b/mlxrunner/model/gemma4/gemma4.go
+--- a/mlxrunner/model/gemma4/gemma4.go
++++ b/mlxrunner/model/gemma4/gemma4.go
+@@ -775,6 +775,43 @@
+ 	}
+ }
+ 
++// applyRouterQuantOverrides preserves the mixed-precision router declarations
++// from MLX config.json; imported tensor blobs may only carry the global INT4.
++func applyRouterQuantOverrides(cfg *TextConfig, data []byte) error {
++	var config struct {
++		Quantization       map[string]json.RawMessage `json:"quantization"`
++		QuantizationConfig map[string]json.RawMessage `json:"quantization_config"`
++	}
++	if err := json.Unmarshal(data, &config); err != nil {
++		return err
++	}
++	entries := config.Quantization
++	if len(entries) == 0 {
++		entries = config.QuantizationConfig
++	}
++	for path, raw := range entries {
++		if !strings.HasSuffix(path, ".router.proj") {
++			continue
++		}
++		var q struct {
++			Bits      int    `json:"bits"`
++			GroupSize int    `json:"group_size"`
++			Mode      string `json:"mode"`
++		}
++		if err := json.Unmarshal(raw, &q); err != nil {
++			return fmt.Errorf("router quantization %s: %w", path, err)
++		}
++		if (q.Bits != 4 && q.Bits != 8) || q.GroupSize <= 0 || (q.Mode != "" && q.Mode != "affine") {
++			return fmt.Errorf("unsupported router quantization for %s", path)
++		}
++		if cfg.TensorQuant == nil {
++			cfg.TensorQuant = make(map[string]*model.TensorQuantInfo)
++		}
++		cfg.TensorQuant[path+".weight"] = &model.TensorQuantInfo{QuantType: fmt.Sprintf("INT%d", q.Bits), GroupSize: q.GroupSize}
++	}
++	return nil
++}
++
+ func newModel(root *model.Root) (model.Model, error) {
+ 	configData, err := root.Manifest.ReadConfig("config.json")
+ 	if err != nil {
+@@ -801,6 +838,9 @@
+ 		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams("")
+ 	}
+ 	cfg.TensorQuant = root.AllTensorQuant()
++	if err := applyRouterQuantOverrides(&cfg, configData); err != nil {
++		return nil, err
++	}
+ 
+ 	tokData, err := root.Manifest.ReadConfig("tokenizer.json")
+ 	if err != nil {
+diff --git a/mlxrunner/model/gemma4/gemma4_moe_test.go b/mlxrunner/model/gemma4/gemma4_moe_test.go
+--- a/mlxrunner/model/gemma4/gemma4_moe_test.go
++++ b/mlxrunner/model/gemma4/gemma4_moe_test.go
+@@ -6,6 +6,8 @@
+ 
+ 	"github.com/ollama/ollama/mlx"
+ 	"github.com/ollama/ollama/mlx/mlxtest"
++	"github.com/ollama/ollama/mlxrunner/model"
++	"github.com/ollama/ollama/mlxrunner/nn"
+ )
+ 
+ // onesLike creates a tensor of the given shape filled with a small constant.
+@@ -46,6 +48,47 @@
+ 		DownWeight:     onesLike(int(cfg.NumExperts), int(cfg.ExpertIntermediateSize), int(cfg.HiddenSize)),
+ 		PerExpertScale: onesLike(int(cfg.NumExperts)),
+ 	}
++}
++
++func TestMoERouterMixedPrecisionConfig(t *testing.T) {
++	mlxtest.Run(t, func(t *mlxtest.T) {
++		cfg := tinyMoEConfig()
++		cfg.HiddenSize, cfg.RouterScale = 128, 0.125
++		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = 64, 4, "affine"
++		path := "language_model.model.layers.0.router.proj"
++		cfg.TensorQuant = map[string]*model.TensorQuantInfo{path + ".weight": {QuantType: "INT4", GroupSize: 64}}
++		data := []byte(`{"quantization":{"bits":4,"group_size":64,"language_model.model.layers.0.router.proj":{"bits":8,"group_size":64}}}`)
++		if err := applyRouterQuantOverrides(cfg, data); err != nil {
++			t.Fatal(err)
++		}
++		w, s, b := mlx.Quantize(variedLike(0.37, int(cfg.NumExperts), int(cfg.HiddenSize)), 64, 8, "affine")
++		tensors := map[string]*mlx.Array{path + ".weight": w, path + ".weight_scale": s, path + ".weight_qbias": b}
++		projection := model.MakeLinearLayer(tensors, path, cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant)
++		q, ok := projection.(*nn.QuantizedLinear)
++		if !ok || q.Bits != 8 || q.GroupSize != 64 {
++			t.Fatal("router did not retain its explicit INT8 configuration")
++		}
++		quantized := &Router{Proj: projection, Scale: onesLike(int(cfg.HiddenSize))}
++		dense := &Router{Proj: linearFromWeight(mlx.Dequantize(w, s, b, 64, 8, "affine", nil)), Scale: quantized.Scale}
++		x := variedLike(0.11, 1, 3, int(cfg.HiddenSize))
++		qs, qi := quantized.Forward(x, cfg)
++		ds, di := dense.Forward(x, cfg)
++		mlx.Eval(qs, qi, ds, di)
++		for i, v := range qs.Floats() {
++			d := v - ds.Floats()[i]
++			if d < -1e-5 || d > 1e-5 {
++				t.Fatalf("router probability mismatch: %g", d)
++			}
++		}
++		// Compare index arrays on-device without relying on their integer dtype.
++		diff := mlx.Sub(qi.AsType(mlx.DTypeFloat32), di.AsType(mlx.DTypeFloat32)).Abs()
++		mlx.Eval(diff)
++		for _, v := range diff.Floats() {
++			if v != 0 {
++				t.Fatal("router selected different experts")
++			}
++		}
++	})
+ }
+ 
+ func TestMoERouterForward(t *testing.T) {

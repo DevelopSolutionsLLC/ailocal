@@ -2,8 +2,9 @@
 import hashlib
 import json
 from ailocal import policy
-from ailocal.mcp import registration
+from ailocal.mcp import launch_environment, registration
 from ailocal.checks import failed, passed, warning
+from ailocal.checks.services import http_json, Unreachable
 
 
 def check_research():
@@ -25,4 +26,12 @@ def check_research():
             return failed('research', 'research MCP runtime missing or outdated', 'ailocal clients claude')
     except (OSError, ValueError, AttributeError):
         return failed('research', 'research MCP configuration cannot be read', 'repair claude-local .claude.json, then: ailocal clients claude')
-    return passed('research', 'research MCP provisioned; search enabled, local answer opt-in (no query issued)')
+    try:
+        endpoint = launch_environment()['LOCAL_RESEARCH_SEARCH_URL']
+        backend = http_json(endpoint + '/config')
+        if not isinstance(backend.get('engines'), list):
+            raise ValueError
+    except (Unreachable, RuntimeError, ValueError, AttributeError, policy.ProfileError):
+        return failed('research', 'research MCP cannot reach the SearXNG JSON API',
+                      'check AILOCAL_SEARXNG_PORT in .env.local, then run ailocal start')
+    return passed('research', 'research MCP provisioned; SearXNG JSON API reachable (no query issued)')

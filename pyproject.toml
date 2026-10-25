@@ -1,11 +1,14 @@
 [build-system]
-requires = ["setuptools>=61"]
+# Bounded, not an open floor: `>=61` admitted setuptools < 78.1.1, which carries
+# CVE-2025-47273 (PackageIndex path traversal → RCE, fixed in 78.1.1). Version
+# safety requires a pinned, proven-safe range; bump the cap deliberately.
+requires = ["setuptools>=78.1.1,<82"]
 build-backend = "_ailocal_build"
 backend-path = ["src"]
 
 [project]
 name = "ailocal"
-version = "0.13.0"
+version = "0.14.0"
 description = "Run Claude Code, Codex CLI and VS Code Copilot Chat against local models on Apple Silicon."
 readme = "README.md"
 license = "Apache-2.0"

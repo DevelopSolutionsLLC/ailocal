@@ -2,7 +2,7 @@
 
 ## Purpose
 
-ailocal runs Claude Code, Codex CLI and VS Code Copilot Chat against local models on Apple Silicon. Ollama serves the models; LiteLLM fronts them on `127.0.0.1:4000` as an OpenAI- and Anthropic-compatible proxy. ailocal owns inference and routing only — not repository intelligence, MCP registration, or agent definitions — and must stay usable on its own.
+ailocal runs Claude Code, Codex CLI and VS Code Copilot Chat against local models on Apple Silicon. Ollama serves the models; LiteLLM fronts them on `127.0.0.1:4000` as an OpenAI- and Anthropic-compatible proxy. ailocal owns inference, routing and its bundled integrations, not repository intelligence or agent definitions, and must stay usable on its own.
 
 ## Source of truth
 
@@ -11,15 +11,19 @@ ailocal runs Claude Code, Codex CLI and VS Code Copilot Chat against local model
 | `pyproject.toml` | packaging, dependencies, the `ailocal` console script |
 | `src/ailocal/` | implementation |
 | `src/ailocal/resources/profiles/<tier>.toml` | capability → model, context and output geometry, sampling |
+| `profiles/<tier>.toml` → `model_guidance` | exact-backend prompting advice, limitations, sources and scoped evaluation evidence; shared by client context and MCP callers |
 | `src/ailocal/resources/profiles/clients.toml` | which capability each client surface uses |
+| `src/ailocal/resources/deploy/ollama/patch.toml` | exact native runtime source, reviewed patches and integrity pins |
 | `src/ailocal/resources/` | shipped assets — `deploy/` and `clients/` are read IN PLACE from the package; only `profiles/` is copied out |
 | `src/ailocal/policy.py` | the only reader of any of the above |
 
 ## Development
 
-Apply Cadence's engineering policy and available `repository-intelligence`, `tool-maintenance`, `security-review`, and `work-tracking` skills when relevant; do not copy their rules into shipped client instructions. Work as an AI systems engineer: trace client → protocol → proxy → provider/tool, distinguish deterministic checks from model-dependent evaluations, and report evidence rather than persona claims.
+Cadence's shared policy (principal-engineer voice, evidence labels, version safety, the weekly audit) and its `repository-intelligence`, `tool-maintenance`, `security-review` and `work-tracking` skills apply; never copy their rules into shipped client instructions. Trace every change client → protocol → proxy → provider/tool, and keep deterministic checks apart from model-dependent evaluations.
 
-For dependency upgrades, install changes, skills, or MCP integration, read [AI development maintenance](docs/maintenance.md) before changing behavior. Seek current upstream releases, advisories, and relevant open/closed regression issues; an old workaround is a hypothesis to revalidate, not a permanent platform limitation. Promote a candidate only after affected paths pass, then commit and push when authorized. Keep ordinary builds pinned and reproducible.
+Before changing dependencies, install behaviour, skills or MCP integration, read [AI development maintenance](docs/maintenance.md); weekly maintenance starts there with `cadence doctor`. An old workaround is a hypothesis to revalidate against current upstream releases and issues, not a permanent limitation.
+
+Version safety here: every image is digest-pinned and the gate check `litellm runtime matches the validated version` fails on drift. [REAL] 2026-10-22: the digest pin held LiteLLM on clean `v1.106.0` when `v1.107.0` shipped a credential-stealer to PyPI and the floating Docker tags (BerriAI/litellm#47826). The per-component security audit and what it must record are in [docs/security.md](docs/security.md#supply-chain).
 
 ```sh
 python3 -m venv .venv && . .venv/bin/activate
@@ -37,38 +41,16 @@ python3 tests/gate.py   # the regression gate
 
 ShellCheck runs at `warning` severity and is skipped when absent (`brew install shellcheck`). `.zsh` is covered by `zsh -n` instead — ShellCheck does not implement zsh.
 
-Two suites are deliberately OUT of the gate because they take minutes, not seconds:
+These suites are deliberately OUT of the gate because they take minutes, not seconds:
 
 ```sh
 python3 tests/installed-runtime.py [--stack]   # proves the wheel needs no checkout
 python3 tests/measure_geometry.py [--quick]    # re-measures the numbers profiles cite
+python3 tests/measure_cache.py [--quick|--tail N]  # is the KV prefix cache being reused?
 ./tests/artifact-routing.sh [runs]             # does a real model CALL the artifact tool?
 ```
 
-Run `artifact-routing` whenever the artifact tool's description, its
-`alwaysLoad`/`searchHint` metadata, or the routing contract in `server.py` changes. It
-MEASURES a stochastic model and reports a rate; what the description actually SAYS is
-asserted deterministically by `test_routing_contract.py`, which is in the gate and needs no
-inference. Keep the two apart when reading a result: [REAL] gemma4:26b-mlx returned fenced
-Mermaid for a phrase the description already names verbatim, then quoted the rule back
-correctly once corrected. That is a model-dependent routing miss, and adding synonyms does
-not fix it. It spends minutes of local inference and asserts an AGGREGATE rate rather than
-per-phrase, because sampling variance at n=3 is larger than the effect.
-
-Invalid Mermaid can no longer be published: `publish()` parses every diagram with the real
-Mermaid grammar (`mermaid_validate.py`, headless Chrome over `vendor/mermaid.min.js`, ~1.7 s
-per diagram) and returns the parser error to the MODEL instead of serving a bomb icon to the
-human. The verdict has THREE states and the third is the point -- VALID publishes, INVALID is
-refused with the parser message, and UNAVAILABLE (no browser, launch failure, timeout, no
-verdict) is ALSO refused, because reporting an unchecked diagram as a successful publish is
-the original defect. Only the Mermaid path is gated: `html`, `architecture` and Markdown with
-no fence never start a validator and cost nothing. Chrome runs in a throwaway
-`--user-data-dir` and is killed once the verdict is read; it never touches the profile a
-person is using.
-
-`test_mermaid_validate.py` (CORE) asserts the state machine with the browser replaced through
-the `runner` seam, plus one bounded real parse; `test_mermaid_grammar.py` (FULL) is the
-authoritative corpus and launches a browser per fixture. Run `installed-runtime` whenever packaging, resources or provisioning change. Run `measure_geometry` after an Ollama or MLX upgrade, after changing a model, or when bringing up an unmeasured tier — it asserts nothing and keeps no history; a human reads the numbers and decides whether the profile still holds. It stops and reloads models, so nothing may run beside it.
+When each out-of-gate suite must run, and how to read it, is in [docs/maintenance.md](docs/maintenance.md#out-of-gate-suites). Mermaid publishing is validated in-process; see [docs/architecture.md](docs/architecture.md#mermaid-validation).
 
 ## Install and runtime ordering
 
@@ -85,7 +67,7 @@ Both halves are required, in that order. `ailocal start` regenerates from the in
 
 ## Generated state
 
-FOUR roots. Each has ONE owner and ONE lifecycle, and `policy.py` is the only place any is resolved. Two default to the same directory; that does not make them the same root.
+FIVE roots. Each has ONE owner and ONE lifecycle, and `policy.py` is the only place any is resolved. Two default to the same directory; that does not make them the same root. The optional patched native runtime is installed software, not disposable generated state.
 
 | Root | Override | Owner | Lifecycle |
 |---|---|---|---|
@@ -93,6 +75,7 @@ FOUR roots. Each has ONE owner and ONE lifecycle, and `policy.py` is the only pl
 | `~/.config/ailocal` | `AILOCAL_CONFIG` | **the operator** — `profiles/`, `.env.local` | preserved; a shipped default is replaced only while it still matches the digest recorded at install |
 | `~/.config/ailocal` | `AILOCAL_CLIENTS` | **ailocal** — generated client config | disposable; rewritten on every `ailocal start` |
 | `~/.local/state/ailocal` | `AILOCAL_STATE` | ailocal | disposable |
+| `~/.local/share/ailocal/runtimes` | `AILOCAL_RUNTIMES` | ailocal | immutable versioned installs; teardown removes intact owned payloads and preserves modified/foreign files |
 
 An override of the policy root must move policy and nothing else. Authored policy and generated client config share a directory and must never share a resolver.
 
@@ -111,7 +94,7 @@ Only `src/`, `tests/`, `docs/` and project metadata. No generated artifact is ev
 - Geometry is derived, never restated: `num_ctx = context_input + max_output`, `num_predict = max_output`, `max_input_tokens = context_input`.
 - Claude Code's process-wide context and output variables are projected from the launch-default role. They cannot describe the smaller background slots; `settings.json` lists those limits rather than implying parity.
 - ailocal holds no conversation state. It never summarises or rewrites a client's history; it generates the compaction *threshold* the client applies. See [docs/architecture.md](docs/architecture.md).
-- ailocal provisions client integrations only inside a root it owns. Never modify hosted `~/.claude`.
+- ailocal provisions inference and bundled runtime integrations only inside a root it owns. Public documentation MCP registration through native Claude/Codex CLIs is the explicit hosted-root exception; never change hosted model, auth, instruction or plugin settings.
 - ailocal installs no language server. It enables the official plugin for a server already on PATH, in its own root only.
 - Codex research MCP dispatch is measured on Codex 0.163.0 through the local proxy. Other MCP servers require their own evidence before registration.
 - Python is standard library only.
