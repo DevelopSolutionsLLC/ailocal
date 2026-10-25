@@ -57,12 +57,14 @@ CLIENTS: dict[str, tuple[str, str]] = {
 def present(name: str) -> bool:
     """Is this client on the machine? Detection is the client's own artefact.
 
-    VS Code counts either way round: the `code` CLI without a user directory is
-    an installation that has never been launched, which install_vscode reports
-    precisely — treating it as absent would hide that.
+    VS Code is present when its `code` CLI is on PATH or its application bundle
+    is intact. The `code` CLI without a user directory is an installation that
+    has never been launched, which install_vscode reports precisely. A user
+    directory alone is NOT presence: it survives deleting the app, and counting
+    it reported a removed VS Code as installed but unconfigured.
     """
     if name == "vscode":
-        return shutil.which("code") is not None or _vscode_user_dir() is not None
+        return shutil.which("code") is not None or _vscode_app() is not None
     return shutil.which({"claude": "claude", "codex": "codex"}[name]) is not None
 
 
@@ -495,6 +497,16 @@ RECOMMENDED_SETTINGS = {
     "github.copilot.chat.codeGeneration.useInstructionFiles": True,
     "chat.instructionsFilesLocations": {"~/.copilot/instructions": True},
 }
+
+
+def _vscode_app() -> Path | None:
+    """The VS Code bundle, only if it is a real one: an emptied `.app` directory
+    is what a partial uninstall or an interrupted self-update leaves behind."""
+    for apps in (Path("/Applications"), Path.home() / "Applications"):
+        bundle = apps / "Visual Studio Code.app"
+        if (bundle / "Contents/Info.plist").is_file():
+            return bundle
+    return None
 
 
 def _vscode_user_dir() -> Path | None:
