@@ -4,7 +4,15 @@ Release policy and the meaning of each bump: [RELEASING.md](RELEASING.md).
 
 ## v0.14.0 (unreleased, minor) — research routes itself, and Brave is budgeted
 
-- Add bounded, non-thinking Cyber candidates to the 16/32 GB profiles using pinned Huihui Qwen3.5 4B/9B MLX snapshots. Verify downloaded assets and import through Ollama's native CLI into the serving daemon's model store. Model installation failures now stop install instead of being silently skipped.
+- Record stock Ollama's startup preference before taking over its service, preserve it across reinstalls, and restore it after ailocal's agents stop during teardown. Failed restoration retains its receipt and runtime; older installs without an original-state record report an explicit recovery command.
+
+- Point the existing `ailocal-cyber` capability at pinned unrestricted Gemma 4 26B MLX on 64/128 GB profiles. The profile's native runtime requirement drives installer preparation automatically; no additional client alias is introduced.
+- Add an opt-in, source-pinned Ollama 0.40.8 Gemma MLX loader backport with a separately pinned security dependency patch. Native regression tests, payload integrity checks and version-confirmed service activation precede selection; rollback and teardown preserve the vendor app and operator configuration.
+- Wait for launchd to finish removing a service before registering its replacement. Remove the legacy load fallback that could return success with no registered job; bound service commands and report readiness failures before restoring the previous configuration.
+- Acquire the exact digest-pinned, signed native base for a first build when the vendor app has updated. Verify its version and approved CLI hash in temporary build space, without downgrading the installed app or mixing native ABIs.
+- Login model warmup resolves the profile's current context and keep-alive instead of inheriting Ollama's automatic context. Register it after short-lived load checks, keep its command in the native agent, and let the native load request handle resident models.
+- Measure cache continuations without chat retemplating or hidden thinking, and salt synthetic prefill prompts once instead of multiplying their token count through repeated identifiers. Quick geometry checks now use short prefixes and skip full output-ceiling generation; they do not claim deep-cache or output-limit validation.
+- Add bounded, non-thinking Cyber candidates to the 16/32 GB profiles using pinned Qwen3.5 4B/9B MLX snapshots. Verify downloaded assets and import through Ollama's native CLI into the serving daemon's model store. Model installation failures now stop install instead of being silently skipped.
 - Coding/decode measurements exercise the chat protocol; short decode pilots use 128 tokens to avoid spending minutes on throughput-only output.
 
 - Fresh installs, including unattended `--yes`, register public Claude Code, OpenAI and Microsoft Learn documentation MCPs through the native Claude and Codex CLIs, in hosted and local roots. Existing settings survive; registration failures and name collisions return a nonzero status. Copilot documentation provisioning remains deferred.
@@ -21,6 +29,15 @@ No migration step: the existing key keeps working, and keyless search is unchang
 
 ### Fixes
 
+- Select official Ollama Qwen3.5 4B/9B MLX tags for the small-tier primary and large-tier fast roles, and use MLX for every listed alternative. Disable the pinned Qwen2.5-Coder MLX completion candidates until the native loader supports Qwen2; no GGUF fallback is configured. Generation now honors disabled roles, and the admission check chooses an enabled capability.
+- Classify the pinned unrestricted Qwen 4B/9B MLX backends in the conservative local gateway class instead of forwarding them as unknown models. Classification alone did not cure the earlier editing failures; coding evidence is recorded per exact backend.
+- Give local Codex models a complete native patch example, and select pinned reasoning-distilled 4B/9B MLX checkpoints for 16/32 GB Cyber after native Codex/Claude edit checks. Keep the existing Ollama/LiteLLM serving path and record the limited scope of those checks; no new runner patch or tool adapter is introduced.
+- Enforce request stop strings in native MLX decoding, including markers split across response chunks, and stop generation before invented later turns. Require the validated compatibility bundle for small-tier Cyber profiles, gate builds on its native regression, and reuse only intact owned native files for the same source base when the vendor app has updated.
+- Let Codex's selected model catalog entry choose its reasoning default from the profile; remove the global medium-effort override that enabled thinking on non-thinking capabilities.
+- Give the 16 GB Cyber profile 24K input headroom: its previous 12K limit rejected native Codex's startup tool prompt. Keep its 4K output ceiling and record bounded client-evaluation limitations in the shared model guides.
+- Avoid stopping a healthy Ollama daemon when legacy model-store metadata is already present in the shared store; allow launchd's startup delay during verified activation.
+- Prevent concurrent install/start/stop/teardown commands from racing over the same services; failed Docker rollouts report an incomplete install without an internal traceback.
+- Verify every selected model through Ollama's native loader during installation, including existing models. A successful import or metadata lookup no longer hides an unsupported weight layout; failed source imports retain verified assets for recovery without selecting a substitute model.
 - Preserve externally registered Codex MCP servers and their nested settings across `ailocal start`; the template remains authoritative for ailocal's own research server.
 - Add the `cyber` capability on 64/128 GB tiers, serving unrestricted Qwen MLX as `ailocal-cyber`; installation includes the backend.
 - Codex model selection now takes context and compaction limits from each generated catalog entry. Remove global limits and redundant plan/review/cyber launch presets. Install/start and teardown retire only ailocal-generated legacy presets, preserving authored profiles and symlinks.

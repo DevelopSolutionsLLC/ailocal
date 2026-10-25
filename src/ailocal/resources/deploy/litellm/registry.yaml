@@ -325,8 +325,15 @@ model_classes:
   # two fixture tool rounds complete, including one transient-error recovery.
   # [APPROX] This is a bounded fixture pilot, not a repository coding eval.
   # Delegation and parallel tool use have not been established for this build.
+  # [REAL] 2026-10-23: unrestricted Gemma on the patched Ollama build completed
+  # a proxy tool roundtrip and a small coding response. Native Codex editing
+  # pilots failed patch formatting; repository editing remains unverified.
+  # These limited results do not establish delegation or parallel tool use.
+  # [REAL] 2026-10-24: the pinned unrestricted Qwen 4B/9B MLX backends
+  # completed simple proxy tool/result rounds. Native editing is unreliable;
+  # retain this class's conservative tool surface rather than unknown passthrough.
   local_cyber:
-    match_models: ["orcarouter/Qwen3.8-27B-Uncensored:mlx-4bit"]
+    match_models: ["orcarouter/Qwen3.8-27B-Uncensored:mlx-4bit", "ailocal-gemma4-26b-uncensored:mlx-46ab84d", "ailocal-qwen3.5-4b-uncensored:mlx-916d9f7", "ailocal-qwen3.5-4b-coder-uncensored:mlx-a0cd614", "ailocal-qwen3.5-9b-uncensored:mlx-7b09418", "ailocal-qwen3.5-9b-coder-uncensored:mlx-7fed86c"]
     supports_tools: true
     supports_mcp: true
     supports_parallel_tools: false

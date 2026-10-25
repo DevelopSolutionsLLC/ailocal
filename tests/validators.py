@@ -80,6 +80,22 @@ def deterministic_checks() -> None:
 
 
 def classification_checks() -> None:
+    with patch.object(S.policy, "effective_summary", return_value={"roles": {
+            "completion": {"enabled": False, "max_input_tokens": 100},
+            "implementation": {"enabled": True, "max_input_tokens": 2000},
+            "cyber": {"enabled": True, "max_input_tokens": 500}}}), \
+            patch.object(S, "http_json", return_value={
+                "error": "ContextWindowExceededError"}) as request:
+        verdict = S.check_context_window("fixture-key")
+        payload = request.call_args.kwargs["payload"]
+        check(verdict.status == PASS and payload["model"] == "ailocal-cyber",
+              "admission probe selects an enabled capability when completion is disabled")
+        check(len(payload["messages"][0]["content"].split()) > 500,
+              "admission probe exceeds the selected capability's own input limit")
+        request.reset_mock()
+        check(S.check_context_window("fixture-key", "ailocal-completion").status == FAIL
+              and not request.called,
+              "an explicitly disabled probe target fails without model inference")
     """Status semantics the public commands depend on."""
     check(exit_code([CheckResult("a", PASS, "x")]) == 0, "all-pass exits 0")
     check(exit_code([CheckResult("a", FAIL, "x")]) == 1, "any FAIL exits 1")

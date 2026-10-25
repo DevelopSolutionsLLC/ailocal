@@ -107,6 +107,13 @@ def server_log():
 #: block cross-checked against the publisher's model card. NOT the profile's
 #: values. `think` follows the model's documented mode for coding work.
 CANDIDATES = {
+    "ailocal-gemma4-26b-uncensored:mlx-46ab84d": {
+        "label": "64/128 GB Cyber — unrestricted Gemma MLX, patched runtime required",
+        "options": {"temperature": 1.0, "top_k": 64, "top_p": 0.95,
+                    "min_p": 0.0, "presence_penalty": 0.0, "repeat_penalty": 1.0},
+        "think": True,
+        "num_ctx": 32768,
+    },
     "gemma4:26b-mlx": {
         "label": "incumbent — architecture/implementation/review today",
         "options": {"temperature": 1.0, "top_k": 64, "top_p": 0.95},
@@ -162,7 +169,7 @@ for _tier in ("16gb", "32gb"):
     CANDIDATES[_cfg["model"]] = {
         "label": f"{_tier} unrestricted MLX candidate; target hardware unmeasured",
         "options": {key: _cfg[key] for key in (
-            "temperature", "top_p", "top_k", "min_p", "presence_penalty", "repeat_penalty")},
+            "temperature", "top_p", "top_k", "min_p", "presence_penalty", "repeat_penalty", "stop")},
         "think": _cfg["reasoning"], "num_ctx": _cfg["total_context"],
     }
 

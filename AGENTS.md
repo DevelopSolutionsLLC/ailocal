@@ -11,7 +11,9 @@ ailocal runs Claude Code, Codex CLI and VS Code Copilot Chat against local model
 | `pyproject.toml` | packaging, dependencies, the `ailocal` console script |
 | `src/ailocal/` | implementation |
 | `src/ailocal/resources/profiles/<tier>.toml` | capability → model, context and output geometry, sampling |
+| `profiles/<tier>.toml` → `model_guidance` | exact-backend prompting advice, limitations, sources and scoped evaluation evidence; shared by client context and MCP callers |
 | `src/ailocal/resources/profiles/clients.toml` | which capability each client surface uses |
+| `src/ailocal/resources/deploy/ollama/patch.toml` | exact native runtime source, reviewed patches and integrity pins |
 | `src/ailocal/resources/` | shipped assets — `deploy/` and `clients/` are read IN PLACE from the package; only `profiles/` is copied out |
 | `src/ailocal/policy.py` | the only reader of any of the above |
 
@@ -20,6 +22,12 @@ ailocal runs Claude Code, Codex CLI and VS Code Copilot Chat against local model
 Apply Cadence's engineering policy and available `repository-intelligence`, `tool-maintenance`, `security-review`, and `work-tracking` skills when relevant; do not copy their rules into shipped client instructions. Work as an AI systems engineer: trace client → protocol → proxy → provider/tool, distinguish deterministic checks from model-dependent evaluations, and report evidence rather than persona claims.
 
 For dependency upgrades, install changes, skills, or MCP integration, read [AI development maintenance](docs/maintenance.md) before changing behavior. Seek current upstream releases, advisories, and relevant open/closed regression issues; an old workaround is a hypothesis to revalidate, not a permanent platform limitation. Promote a candidate only after affected paths pass, then commit and push when authorized. Keep ordinary builds pinned and reproducible.
+
+For weekly application and patch maintenance, follow the [weekly maintenance procedure](docs/maintenance.md#weekly-maintenance), starting with `cadence doctor`. These instructions guide an invoked maintenance run; they do not schedule one or authorize unvalidated upgrades.
+
+Run the latest release *proven safe*, deliberately held about two back (≈N-2): new enough for current fixes, old enough that a poisoned or regressed build has surfaced and been pulled. Validate every candidate before adoption — not yanked, not regressed, not on a security advisory — then pin every image and package by immutable digest and never follow a floating tag (`latest`, `main-latest`, `main-stable`). This file states the policy; it cannot enforce it. The gate already enforces the machine-checkable half — the running image must match the validated pinned digest (`ailocal check`, and the `litellm runtime matches the validated version` gate check) — but confirming a pin is still the latest *safe* version needs a live advisory lookup, which belongs in a maintenance audit command, not prose or the offline gate. [REAL] 2026-10-22: this lag kept the stack on the clean LiteLLM `v1.106.0` digest (`sha256:2e4c0371…`) when `v1.107.0` shipped a credential-stealer and RAT to PyPI and the floating `ghcr.io/berriai/litellm` Docker tags the same day (BerriAI/litellm#47826; compromised digest `sha256:1bbcb144…`). A digest pin makes a moved tag inert; a floating tag would have pulled the malware.
+
+Security auditing is required for every tool ailocal installs, provisions, bundles, or relies on, including SearXNG, LiteLLM, Ollama, Claude Code, Codex, VS Code/Copilot, Docker, Cadence, grepai, language servers, MCP servers, plugins, interpreters, and vendored browser libraries. Before adoption, upgrades, or a release, inventory the actual versions and image digests; check upstream security advisories and affected/fixed ranges; scan available dependency inventories and container images with a current advisory database; review provenance, permissions, network exposure, and affected first-party integration code. Include transitive dependencies and enabled extensions, not just top-level packages. Record the audit date, commands, database freshness, source links, findings, and coverage gaps in the issue or PR. Resolve applicable findings or document their disposition before promotion; unavailable scans and unassessed proprietary or remote services remain explicitly unverified. Passing tests, signatures, or a scan with no matches must never be described as proof of a vulnerability-free codebase. Follow [AI development maintenance](docs/maintenance.md) for validation and preserve operator configuration.
 
 ```sh
 python3 -m venv .venv && . .venv/bin/activate
@@ -88,7 +96,7 @@ Both halves are required, in that order. `ailocal start` regenerates from the in
 
 ## Generated state
 
-FOUR roots. Each has ONE owner and ONE lifecycle, and `policy.py` is the only place any is resolved. Two default to the same directory; that does not make them the same root.
+FIVE roots. Each has ONE owner and ONE lifecycle, and `policy.py` is the only place any is resolved. Two default to the same directory; that does not make them the same root. The optional patched native runtime is installed software, not disposable generated state.
 
 | Root | Override | Owner | Lifecycle |
 |---|---|---|---|
@@ -96,6 +104,7 @@ FOUR roots. Each has ONE owner and ONE lifecycle, and `policy.py` is the only pl
 | `~/.config/ailocal` | `AILOCAL_CONFIG` | **the operator** — `profiles/`, `.env.local` | preserved; a shipped default is replaced only while it still matches the digest recorded at install |
 | `~/.config/ailocal` | `AILOCAL_CLIENTS` | **ailocal** — generated client config | disposable; rewritten on every `ailocal start` |
 | `~/.local/state/ailocal` | `AILOCAL_STATE` | ailocal | disposable |
+| `~/.local/share/ailocal/runtimes` | `AILOCAL_RUNTIMES` | ailocal | immutable versioned installs; teardown removes intact owned payloads and preserves modified/foreign files |
 
 An override of the policy root must move policy and nothing else. Authored policy and generated client config share a directory and must never share a resolver.
 

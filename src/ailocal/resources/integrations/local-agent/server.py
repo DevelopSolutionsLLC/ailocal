@@ -178,11 +178,40 @@ def build_mcp():
     from mcp.types import ToolAnnotations
 
     app = MCPServer(name='local-agent', instructions=(
+        'Before delegating to a local model, call model_guide for its ailocal alias. '
+        'It returns the active memory tier, limits, prompting advice and measured weaknesses '
+        'from the same profiles direct local clients use. Give the child a bounded task, '
+        'relevant code, exact acceptance criteria and the actual failure from a test when repairing. '
+        'Do not treat guidance or a small perfect score as a guarantee of correctness. '
         'This server delegates a task to a local ailocal agent and returns its '
         'text. Prefer it when a prompt should be answered by a local model such '
         'as ailocal-cyber rather than by you. Keep tools=false unless the task '
         'requires the local agent to edit files or run commands, in which case '
         'pass tools=true with the working directory as cwd.'))
+
+    @app.tool(name='model_guide', description=(
+        'Read local model prompting guidance, limits and evaluation caveats before choosing '
+        'or delegating to a model. Omit model to list all aliases in the active memory profile. '
+        'No inference, model loading, network calls or edits.'),
+        annotations=ToolAnnotations(read_only_hint=True, destructive_hint=False,
+                                    open_world_hint=False),
+        meta={'anthropic/alwaysLoad': True})
+    async def model_guide(model: str | None = None) -> dict[str, Any]:
+        try:
+            # Read the public policy view on every call: a long-lived MCP must
+            # not retain the previous hardware profile or operator's old advice.
+            result = subprocess.run(['ailocal', 'profile', 'guide', '--json'],
+                                    capture_output=True, text=True, timeout=5)
+            if result.returncode:
+                raise ValueError
+            guides = json.loads(result.stdout)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            raise ToolError('MODEL_GUIDANCE_UNAVAILABLE: check ailocal profile policy') from None
+        if model is not None:
+            if model not in guides['models']:
+                raise ToolError('MODEL_GUIDANCE_UNKNOWN_MODEL: use an active ailocal alias')
+            guides['models'] = {model: guides['models'][model]}
+        return guides
 
     @app.tool(name='delegate', description=DELEGATE_DESCRIPTION,
               annotations=ToolAnnotations(destructive_hint=False, open_world_hint=True))

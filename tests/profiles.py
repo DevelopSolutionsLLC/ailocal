@@ -370,7 +370,7 @@ def resolver_checks() -> None:
     cfg = (P.state_root() / "litellm" / "config.yaml").read_text()
     check("ollama/nomic-embed-text" not in cfg,
           "no embedding route is generated: ailocal no longer serves embeddings")
-    role_count = len(P.profile_summary(P.active_tier())["roles"])
+    role_count = sum(cfg["enabled"] for cfg in P.profile_summary(P.active_tier())["roles"].values())
     check(cfg.count("model: ollama_chat/") == role_count,
           "every capability uses ollama_chat")
     check("cyber" not in P.load_client_policy(RESOURCES).get("compat", {}),
@@ -476,7 +476,7 @@ def resolver_checks() -> None:
     _sm = load_sync()
     _models = _sm.load_models_yaml(RESOURCES / "profiles" /
                                    f"{P.active_tier()}.toml")
-    _pref = _models["completion"]["preferred"]
+    _pref = _models["fast"]["preferred"]
     check(isinstance(_pref, list),
           f"lists stay typed through generation (preferred is {type(_pref).__name__})")
     check(not any(hasattr(_sm, n) for n in ("flow_dict", "truthy", "_int_or_none")),
@@ -521,27 +521,18 @@ def hardware_checks() -> None:
     # ── the agreed tier design ──────────────────────────────────────────────────
     print("\nTIER DESIGN")
     SHARED = ("architecture", "implementation", "review", "fast")
-    for tier, primary, total in (("16gb", "qwen3.5:4b", 106496),
-                                 ("32gb", "qwen3.5:9b", 139264)):
+    for tier, primary, total in (("16gb", "qwen3.5:4b-mlx", 106496),
+                                 ("32gb", "qwen3.5:9b-mlx", 139264)):
         caps, _ = PARSED[tier]
         check(all(caps[c].get("active") == primary for c in SHARED),
               f"{tier} shares {primary} across {', '.join(SHARED)}",
               {c: caps[c].get("active") for c in SHARED}.__repr__())
-        # THE SHARED-RUNNER INVARIANT, and the reason it is an invariant rather
-        # than a coincidence: qwen3.5 runs on llama_cpp, where num_ctx is a fixed
-        # runner window chosen at FIRST LOAD and an over-long prompt is truncated
-        # from the FRONT with HTTP 200 and no error (registry.yaml,
-        # runtime_engines.llama_cpp). Four roles on one backend that declare
-        # different totals do not get different windows -- they get whichever
-        # role loaded the runner, and the others are silently clipped.
-        #
-        # So this asserts EQUALITY ACROSS ROLES first, and the tier's value
-        # second. Raising one role's context_input on its own is the exact defect
-        # this catches; context_input and max_output must move together.
+        # Retain the agreed tier windows during the MLX migration. Their equality
+        # is policy now, not a claim that MLX inherits llama.cpp's fixed window.
         totals = {c: int(caps[c]["context_input"]) + int(caps[c].get("max_output") or 0)
                   for c in SHARED}
         check(len(set(totals.values())) == 1,
-              f"{tier} roles sharing one llama_cpp runner declare ONE num_ctx",
+              f"{tier} shared roles retain the agreed total context",
               repr(totals))
         check(all(v == total for v in totals.values()),
               f"{tier} primary total_context is {total}", repr(totals))
@@ -549,8 +540,8 @@ def hardware_checks() -> None:
         # intent, not the backend parameter name.
         check(caps["architecture"].get("max_output") == 16384,
               f"{tier} primary output ceiling is 16384")
-        check(caps["completion"].get("active") == "qwen2.5-coder:1.5b",
-              f"{tier} completion uses qwen2.5-coder:1.5b (native FIM)")
+        check(not P.resolve_role(tier, "completion", RESOURCES)["enabled"],
+              f"{tier} unsupported Qwen2 MLX completion is disabled")
 
     # 64gb is the measured reference. 128gb runs the SAME MODELS -- that is what
     # makes the 64 GB measurements transferable -- but is no longer a byte copy:
@@ -565,19 +556,43 @@ def hardware_checks() -> None:
         check("cyber" in caps, f"{tier}: cyber is available")
         if large:
             cyber = P.resolve_role(tier, "cyber", RESOURCES)
-            check(cyber["model"] == "orcarouter/Qwen3.8-27B-Uncensored:mlx-4bit"
+            check(cyber["model"] == "ailocal-gemma4-26b-uncensored:mlx-46ab84d"
                   and cyber["total_context"] == 32768
                   and cyber["context_input"] == 24576
                   and cyber["max_output"] == 8192,
                   f"{tier}: cyber selects exact MLX model and bounded geometry")
+            check(cyber["source"]["revision"] == "46ab84dbe20198a2ee5e66c3e69c039b8c60ad59"
+                  and cyber["top_k"] == 64
+                  and P.required_runtime_patch(tier, RESOURCES) == "gemma4-switch-glu",
+                  f"{tier}: pinned Gemma source and native runtime requirement reach installation")
             check(cyber["model"] in P.required_models(tier, RESOURCES),
                   f"{tier}: installer model set includes cyber")
+            with tempfile.TemporaryDirectory() as box:
+                root = Path(box)
+                (root / "profiles").mkdir()
+                text = (RESOURCES / "profiles" / f"{tier}.toml").read_text()
+                (root / "profiles" / f"{tier}.toml").write_text(
+                    text.replace("[cyber]\n", "[cyber]\nenabled = false\n", 1))
+                check(not P.resolve_role(tier, "cyber", root)["enabled"]
+                      and P.required_runtime_patch(tier, root) == "gemma4-switch-glu",
+                      f"{tier}: disabling Cyber retains the fast model's MLX stop requirement")
+                (root / "profiles" / f"{tier}.toml").write_text(
+                    text.replace("[cyber]\n", "[cyber]\nenabled = false\n", 1)
+                        .replace("[fast]\n", "[fast]\nenabled = false\n", 1))
+                check(P.required_runtime_patch(tier, root) is None,
+                      f"{tier}: disabled patch consumers do not require the runtime")
         else:
             cyber = P.resolve_role(tier, "cyber", RESOURCES)
             source = cyber["source"]
+            from ailocal import generation
+            check('stop: ["<|im_end|>", "<|im_start|>"]' in generation.gen_role_block("cyber", cyber),
+                  f"{tier}: explicit chat boundaries reach the provider configuration")
             check(bool(source) and len(source["revision"]) == 40,
                   f"{tier}: small MLX source is commit-pinned")
-            check(cyber["total_context"] == (16384 if tier == "16gb" else 32768)
+            check(cyber["runtime_patch"] == P.ollama_patch_spec()["id"] and
+                  P.required_runtime_patch(tier, RESOURCES) == cyber["runtime_patch"],
+                  f"{tier}: MLX chat boundaries require the validated native runtime")
+            check(cyber["total_context"] == (28672 if tier == "16gb" else 32768)
                   and cyber["max_output"] == (4096 if tier == "16gb" else 8192)
                   and cyber["reasoning"] is False,
                   f"{tier}: cyber has bounded geometry and explicit thinking mode")
@@ -661,8 +676,8 @@ def hardware_checks() -> None:
     # ceiling that stops a future raise from inventing capacity: every chat model
     # in every tier reports 262144 native context (`ollama show`), and
     # nomic-embed-text reports 2048.
-    NATIVE = {"gemma4:26b-mlx": 262144, "qwen3.5:9b": 262144, "qwen3.5:4b": 262144,
-              "qwen3.5:2b": 262144, "qwen2.5-coder:3b": 32768,
+    NATIVE = {"gemma4:26b-mlx": 262144, "qwen3.5:9b-mlx": 262144, "qwen3.5:4b-mlx": 262144,
+              "qwen3.5:2b-mlx": 262144, "qwen2.5-coder:3b": 32768,
               "qwen2.5-coder:1.5b": 32768, "nomic-embed-text": 2048}
     for tier in PROFILES:
         caps, _ = PARSED[tier]
@@ -685,13 +700,22 @@ def hardware_checks() -> None:
 
     # ── deduplication ───────────────────────────────────────────────────────────
     print("\nMODEL SET")
+    for tier in PROFILES:
+        caps, _ = PARSED[tier]
+        for role in P.ROLES:
+            cfg = caps[role]
+            tags = [cfg["active"], *cfg.get("preferred", [])]
+            check(all(tag.endswith("-mlx") or ":mlx-" in tag for tag in tags),
+                  f"{tier}.{role}: every configured selection is MLX")
+        check(not P.resolve_role(tier, "completion", RESOURCES)["enabled"],
+              f"{tier}: unsupported autocomplete is not advertised")
     def unique_models(tier):
         caps, _ = PARSED[tier]
         out = {}
         for cap, f in caps.items():
             if cap not in P.ROLES:
                 continue
-            if (f.get("enabled") or "true").lower() == "false":
+            if not P.resolve_role(tier, cap, RESOURCES)["enabled"]:
                 continue
             if f.get("active"):
                 out.setdefault(f["active"], []).append(cap)
@@ -702,9 +726,9 @@ def hardware_checks() -> None:
         check(len(u) <= len(P.ROLES),
               f"{tier} unique models ({len(u)}) do not exceed capabilities ({len(P.ROLES)})")
 
-    check(len(unique_models("16gb")) == 3, "16gb resolves to 3 unique models including cyber",
+    check(len(unique_models("16gb")) == 2, "16gb resolves to 2 enabled MLX models including cyber",
           str(sorted(unique_models("16gb"))))
-    check(len(unique_models("32gb")) == 3, "32gb resolves to 3 unique models including cyber",
+    check(len(unique_models("32gb")) == 2, "32gb resolves to 2 enabled MLX models including cyber",
           str(sorted(unique_models("32gb"))))
     check(sorted(unique_models("64gb")) == sorted(unique_models("128gb")),
           "64gb and 128gb pull the identical model set, so their storage cost is equal")
@@ -844,12 +868,19 @@ def hardware_checks() -> None:
         check(not any((box / "clients/codex").glob("*.config.toml")),
               f"{each}: selecting a model needs no generated launch presets")
         catalog = json.loads((box / "clients/codex/model_catalog.json").read_text())
+        local_codex = tomllib.loads((box / "clients/codex/config.toml").read_text())
+        check("model_reasoning_effort" not in local_codex,
+              f"{each}: no global reasoning effort overrides the selected capability")
         for entry in catalog["models"]:
             capability = entry["slug"].removeprefix("ailocal-")
             geometry = P.resolve_role(each, capability, RESOURCES)
             check(entry["context_window"] == geometry["total_context"] and
                   0 < entry["auto_compact_token_limit"] <= geometry["context_input"],
                   f"{each}.{capability}: catalog limits follow model selection")
+            effort = "medium" if geometry.get("reasoning") else "none"
+            check(entry.get("default_reasoning_level") == effort and
+                  effort in {level["effort"] for level in entry["supported_reasoning_levels"]},
+                  f"{each}.{capability}: selected capability owns its supported reasoning default")
         shutil.rmtree(box, ignore_errors=True)
 
     # A launch_default with no declared output ceiling must FAIL, not fall back
@@ -891,7 +922,7 @@ def hardware_checks() -> None:
     check("64K / resident" not in readme,
           "no stale 64K architecture claim remains")
 
-    for tier, primary in (("16gb", "qwen3.5:4b"), ("32gb", "qwen3.5:9b")):
+    for tier, primary in (("16gb", "qwen3.5:4b-mlx"), ("32gb", "qwen3.5:9b-mlx")):
         check(primary in readme, f"README names {tier}'s primary model ({primary})")
     # The inline-completion model is deliberately NOT in the README: it is a
     # detail of a capability the user never selects, and the README documents

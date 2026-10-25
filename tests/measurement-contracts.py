@@ -8,6 +8,7 @@ import json
 import signal
 import tempfile
 import time
+from types import SimpleNamespace
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -20,6 +21,52 @@ import measure_sampling as sampling
 
 
 class MeasurementContracts(unittest.TestCase):
+    def test_quick_geometry_bounds_prefill_and_skips_full_output_generation(self):
+        summary = {"roles": {"implementation": {"active": "fixture-model", "enabled": True,
+                    "num_ctx": 196608, "context_input": 163840, "max_output": 32768}}}
+        for quick in (True, False):
+            with (self.subTest(quick=quick),
+                  patch.object(geometry.P, "profile_summary", return_value=summary),
+                  patch.object(geometry, "versions", return_value=("fixture", "fixture")),
+                  patch.object(geometry.sys, "stdout"),
+                  patch.object(geometry, "load_cold", return_value=geometry.GIB),
+                  patch.object(geometry, "engine_of", return_value="mlx"),
+                  patch.object(geometry, "fill", return_value=(4096, 1, 2 * geometry.GIB)) as fill,
+                  patch.object(geometry, "ceiling", return_value=(32768, "length")) as ceiling):
+                geometry.measure(SimpleNamespace(tier="fixture", quick=quick), [])
+            self.assertEqual(fill.call_args_list[0].args, ("fixture-model", 4096 if quick else 40000, 196608))
+            if quick:
+                self.assertEqual(fill.call_count, 1)
+                ceiling.assert_not_called()
+            else:
+                ceiling.assert_called_once_with("fixture-model", 196608, 32768)
+
+    def test_prefill_salt_does_not_multiply_the_requested_workload(self):
+        with (patch.object(geometry, "api", return_value={}) as api,
+              patch.object(geometry, "resident"), patch.object(geometry.subprocess, "run"),
+              patch.object(geometry.time, "sleep"), patch.object(geometry.time, "time_ns", return_value=123456789)):
+            geometry.fill("fixture", 180, 4096)
+        prompt = api.call_args.args[1]["prompt"]
+        self.assertEqual(prompt.count("123456789"), 1)
+        self.assertIn(geometry.CHUNK * 10, prompt)
+        with (patch.object(cache, "generate", side_effect=[{}, {}]) as generate,
+              patch.object(cache.subprocess, "run"), patch.object(cache.time, "sleep"),
+              patch.object(cache.time, "time_ns", return_value=123456789),
+              contextlib.redirect_stdout(io.StringIO())):
+            cache.probe("fixture", 4096, 180)
+        prompt = generate.call_args_list[0].args[1]
+        self.assertEqual(prompt.count("123456789"), 1)
+        self.assertIn(cache.CHUNK * 10, prompt)
+
+    def test_cache_continuation_is_not_retemplated_or_hidden_as_thinking(self):
+        with patch.object(cache, "api", return_value={}) as api:
+            cache.generate("fixture", "original prefix and generated continuation", 4096)
+        path, payload = api.call_args.args
+        self.assertEqual(path, "/api/generate")
+        self.assertTrue(payload["raw"])
+        self.assertFalse(payload["think"])
+        self.assertEqual(payload["prompt"], "original prefix and generated continuation")
+
     def test_sampling_forwards_explicit_budget_and_prompt(self):
         response = {"message": {"content": "fixture", "thinking": ""}, "done_reason": "stop",
                     "eval_count": 2, "eval_duration": 1000000000, "prompt_eval_count": 4}

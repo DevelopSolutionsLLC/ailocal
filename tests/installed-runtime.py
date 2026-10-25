@@ -18,6 +18,7 @@ Opt-in: it installs a package and starts containers.
 from __future__ import annotations
 
 import os
+import json
 import shutil
 import subprocess
 import sys
@@ -140,6 +141,16 @@ def main() -> None:
     check(r.returncode == 0 and 'pinned MLX sources ok' in r.stdout,
           'small MLX profiles and importer ship in the wheel without a checkout', r.stderr[-300:])
     r = run([str(venv / 'bin/python3'), '-c',
+             'import hashlib; from ailocal import policy,ollama_patch; '
+             's=policy.ollama_patch_spec(); '
+             'assert all(len(s[k])==64 for k in ("native_archive_sha256","native_cli_sha256")); '
+             'assert "/v"+s["base_version"]+"/" in s["native_archive_url"]; '
+             'assert all(hashlib.sha256(s[k].read_bytes()).hexdigest()==s[k.replace("_file","_sha256")] '
+             'for k in ("patch_file","security_patch_file","router_patch_file","stop_patch_file")); '
+             'print("native patch assets ok")'], env)
+    check(r.returncode == 0 and 'native patch assets ok' in r.stdout,
+          'native loader/security patches and their pins ship without the checkout', r.stderr[-300:])
+    r = run([str(venv / 'bin/python3'), '-c',
              'from ailocal import policy; s=policy.documentation_servers(); '
              'assert set(s)=={"claude-code-docs","openai-docs","microsoft-learn"}; '
              'assert all(url.startswith("https://") for url in s.values()); '
@@ -174,6 +185,9 @@ def main() -> None:
     check("local model runtime" in r.stdout, "help renders from the installed parser")
     r = ran("profile", "profile", "active-tier", allow_nonzero=False)
     check(r.stdout.strip() == "64gb", "the active tier reads back from managed state")
+    r = ran("guide", "profile", "guide", "ailocal-cyber", "--tier", "16gb", "--json", allow_nonzero=False)
+    check(json.loads(r.stdout)['models']['ailocal-cyber']['evidence'].startswith('[APPROX]'),
+          'profile model knowledge ships and resolves without the checkout')
     ran("check", "check")
 
     if want_stack:

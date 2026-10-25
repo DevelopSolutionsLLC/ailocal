@@ -82,7 +82,9 @@ ailocal install
 
 `ailocal install` measures your Mac, picks models that fit its memory, downloads them, starts the services, and configures the clients it finds. It will ask you before touching any client configuration.
 
-Installation ends with `ailocal check` and exits nonzero if validation fails, with findings and recovery commands. Preview client setup without changing anything with `ailocal clients --dry-run`.
+Installation checks that every selected model can load through Ollama, including models already on disk, then ends with `ailocal check`. It exits nonzero if validation fails, with findings and recovery commands. The load check uses a small context and generates no tokens; it does not establish full-window memory headroom or coding quality. Preview client setup without changing anything with `ailocal clients --dry-run`.
+
+The Cyber profiles declare the reviewed native compatibility bundle they require, so normal `ailocal install --yes` prepares it automatically. It fixes Gemma expert loading and mixed-precision routers on 64/128 GB, and enforces configured MLX stop strings on every tier. Builds require Go and Xcode's compiler tools. The installer reuses intact approved native files or the matching signed app; if the installed app is newer, it downloads the exact pinned native base into temporary build space. No app downgrade is needed. The installer verifies pinned source and patches, builds and tests an isolated native runtime, then selects it only after the daemon reports the expected version. The signed app stays intact. `--ollama-patch gemma4-switch-glu` retains its original identifier as a maintenance override; `--ollama-patch none` returns to stock Ollama once the selected profile no longer requires the bundle. See [the patch's scope and validation](docs/maintenance.md#patched-ollama).
 
 Expect a download of roughly 6–40 GB of models, depending on your Mac. Run it once; it is safe to re-run.
 
@@ -246,12 +248,14 @@ ailocal measures your Mac's memory and chooses a profile automatically. You do n
 
 | Memory | Main model | Context window | Models on disk |
 |---|---|---|---|
-| 16 GB | `qwen3.5:4b` | 96K | ~6 GB |
-| 32 GB | `qwen3.5:9b` | 128K | ~9 GB |
-| 64 GB | `gemma4:26b-mlx` | 192K | ~40 GB |
-| 128 GB | `gemma4:26b-mlx` | 256K | ~40 GB (sized from model limits, not yet measured on hardware) |
+| 16 GB | `qwen3.5:4b-mlx` | 104K | ~8 GB |
+| 32 GB | `qwen3.5:9b-mlx` | 136K | ~16 GB |
+| 64 GB | `gemma4:26b-mlx` | 192K | ~42 GB |
+| 128 GB | `gemma4:26b-mlx` | 256K | ~42 GB (sized from model limits, not yet measured on hardware) |
 
-ailocal never picks a profile your machine cannot hold. To override it: `ailocal profile use 32gb`, then `ailocal start`.
+All enabled shipped backends use MLX, including the fast capability and unrestricted variants. The profiles retain conservative context settings; full-window memory and latency on physical 16/32 GB hardware remain unmeasured. To override the detected tier: `ailocal profile use 32gb`, then `ailocal start`.
+
+Inline autocomplete is disabled in the MLX-only profiles: MLX Qwen2.5-Coder weights exist, but the pinned Ollama MLX loader does not support their Qwen2 architecture. Disabled candidates are not downloaded or advertised; no GGUF fallback is selected.
 
 A long conversation compacts automatically before it reaches that window. Your client does the compacting; ailocal supplies the threshold. The full window stays available for one-off large requests.
 
@@ -259,11 +263,15 @@ To change which model a profile uses, edit the file in `~/.config/ailocal/profil
 
 Profiles also control sampling, including `temperature`, `top_p`, `top_k`, `min_p`, `presence_penalty` and Ollama's `repeat_penalty`. Shipped settings follow model-specific guidance with documented role exceptions; see [model evaluation](docs/maintenance.md#local-model-evaluation).
 
-Every profile exposes **Cyber** as `ailocal-cyber`. The 16 GB tier uses a pinned Huihui Qwen3.5 4B MLX conversion with 12K input/4K output; the 32 GB tier uses a pinned Huihui Qwen3.5 9B MLX conversion with 24K input/8K output. Both start with thinking off and Qwen's published non-thinking sampling preset. They remain community model candidates: coding/tool quality and memory headroom on actual 16/32 GB machines require measurement. The installer downloads the pinned assets, verifies their hashes and uses Ollama's native importer; no separate serving backend is installed. The 64/128 GB tiers retain `orcarouter/Qwen3.8-27B-Uncensored:mlx-4bit`, with 24K input/8K output and thinking enabled. The default coding capabilities are unchanged.
+Every profile exposes **Cyber** as `ailocal-cyber`. The 16/32 GB tiers use pinned reasoning-distilled, abliterated Qwen3.5 4B/9B MLX conversions, with 24K input and respectively 4K/8K output. Both start with thinking off and Qwen's published non-thinking sampling preset. The 64/128 GB tiers use a pinned unrestricted Gemma 4 26B MLX conversion, with 24K input/8K output and thinking enabled; its profile declares the native runtime patch and Google-aligned sampling. They remain community model candidates: short checks do not establish repository-scale reliability or hardware headroom on unmeasured tiers. The installer downloads pinned assets, verifies their hashes and uses Ollama's native importer. In `codex-local`, choose `ailocal-cyber` with `/model`; backend tags are implementation details. [Native coding checks](docs/maintenance.md#native-coding-diagnosis-2026-10-25) distinguish completed edits from prompt-processing deadlines.
 
-Run `codex-local`, then use `/model` to select `ailocal-cyber` or another capability. Each selection automatically uses its own context and compaction limits from the generated catalog. No extra launch preset is required. The API and gateway catalog use the same model IDs.
+Run `codex-local`, then use `/model` to select `ailocal-cyber` or another capability. Each selection automatically uses its own context, compaction limits and reasoning default from the generated catalog. Capabilities configured with thinking off default to `none`; reasoning capabilities default to `medium`. An explicit client effort choice overrides that default. No extra launch preset is required. The API and gateway catalog use the same model IDs.
+
+Each memory profile also owns a guide for every selected backend: how to frame a task, known limitations, sources and the scope of measured results. Codex includes that guide with the selected model; Claude Code receives it on session start and model switches through native hooks (model-switch hooks require Claude Code 2.1.251 or later). Hosted or local callers can read the same current knowledge through the bundled `local-agent` MCP's read-only `model_guide(model?)` tool before delegating. `ailocal profile guide ailocal-cyber --tier 16gb` previews another tier without loading a model. Guidance does not rewrite the task or guarantee correctness, and small-model coding still needs real syntax checks, tests and bounded repair attempts.
 
 `ailocal start` preserves other MCP servers registered in Codex's configuration, including their nested settings. Cadence owns repository-intelligence integrations; ailocal supplies its bundled research server.
+
+`ailocal teardown` stops ailocal's server before restoring stock Ollama's recorded startup preference; open the stock app to start its server afterward. Existing installations with no original-state receipt report a recovery command instead of guessing. Models and operator configuration are retained. See [startup restoration](docs/maintenance.md#restoring-ollama-startup-on-teardown) for the exact scope.
 
 ## Defaults
 

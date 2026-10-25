@@ -396,9 +396,7 @@ def _preflight() -> None:
         raise _fail("Docker daemon is not running. Start Docker Desktop and retry.")
     ok("Docker daemon running")
 
-    if not shutil.which("ollama"):
-        warn("Ollama CLI not found. Install it from https://ollama.ai")
-        return
+    policy.ollama_binary()  # fail explicitly if the selected owned runtime is absent/modified
     tags = _get(f"{OLLAMA}/api/tags")
     if tags is None:
         warn("Ollama is not running.")
@@ -495,6 +493,7 @@ def cmd_teardown(argv: list[str]) -> int:
     print("    • All ailocal containers and volumes")
     print("    • The ailocal Docker network")
     print("    • The ailocal login agents")
+    print("  Stock Ollama's recorded startup preference will be restored after our server stops.")
     if remove_images:
         print("    • All pulled Docker images")
     print(f"\n  Your configuration in {policy.config_root()} is NOT touched.")
@@ -512,7 +511,12 @@ def cmd_teardown(argv: list[str]) -> int:
         return result.returncode
 
     from . import install
-    install.remove_login_agents()
+    try:
+        install.remove_login_agents()
+    except (OSError, RuntimeError):
+        bad("Teardown incomplete: launch-agent removal or stock Ollama startup restoration failed. "
+            "Runtime payloads and any restore receipt were preserved; resolve the launchd/receipt error and retry.")
+        return 1
     install.retire_generated_clients()
 
     if remove_images:
