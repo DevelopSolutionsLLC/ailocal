@@ -151,6 +151,28 @@ To upgrade: `pipx upgrade ailocal && ailocal start`.
 
 This upgrades the Python package from its configured installation source and regenerates the runtime; it does not automatically upgrade Ollama, models, or pinned service images. `ailocal update --json` reports available image candidates and explicitly incomplete discovery. Review and validation before promoting dependencies are described in [AI development maintenance](docs/maintenance.md).
 
+### Pinning Homebrew packages (macOS)
+
+ailocal holds its dependencies at validated versions, roughly two releases behind the newest. Homebrew has no minimum-release-age setting (Homebrew/brew#21421 and #22659, both closed as not planned), so hold a version with a **pin**: `brew upgrade`, including a scheduled `brew autoupdate --upgrade`, skips pinned packages.
+
+```bash
+brew pin --cask codex claude-code@latest   # hold the clients ailocal is measured against
+brew pin pipx
+brew list --pinned
+```
+
+To upgrade a pinned package, unpin it, upgrade, validate, and pin it again:
+
+```bash
+brew unpin --cask codex && brew upgrade --cask codex
+ailocal check && python3 tests/gate.py     # the gate needs a checkout
+brew pin --cask codex
+```
+
+To install a specific older formula version, use `brew extract` into a local tap; Cadence's README gives the full procedure, including the checksum check.
+
+Docker Desktop, the Ollama app and VS Code update themselves and ignore a cask pin. Turn off automatic updates in each app's own settings (in VS Code: `"update.mode": "manual"`). ailocal pins its service images by digest itself, so Docker Desktop updates never change LiteLLM or SearXNG.
+
 ## Supported tools
 
 | Tool | Status |
