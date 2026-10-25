@@ -1,16 +1,31 @@
 # Reviewed Go-only backport; never apply to another upstream base.
 id = "gemma4-switch-glu"
 base_version = "0.40.8"
-version = "0.40.8-ailocal.18631.1"
+version = "0.40.8-ailocal.18631.3"
 source_commit = "f580b5484a58c8370c35d669555bf887783a3f68"
 source_url = "https://codeload.github.com/ollama/ollama/tar.gz/f580b5484a58c8370c35d669555bf887783a3f68"
 source_sha256 = "3b78aa7e3c95682f41ada1dcbd106567796c9151dfc7758e1ae34a85fc58271a"
+# First builds can acquire the exact signed native base without downgrading
+# an updated vendor app. GitHub release asset digest, independently checked
+# against the approved app's CLI and all 56 native payload files.
+native_archive_url = "https://github.com/ollama/ollama/releases/download/v0.40.8/Ollama-darwin.zip"
+native_archive_sha256 = "fe930d0a8567fde70dc4a88b329b693efc15c8845795f5f6c2f7c4d3881b104d"
+native_cli_sha256 = "e5c7c0ffa50d23d0f0e59cbf325f689b0010ee5563be89b73b05f08844e19e6b"
 patch_commit = "6282f784940f9dfca1967dadf006070cfc1c5611"
 patch_file = "18631.patch"
 patch_sha256 = "aa49870955af7c7278592d1fcb83c48ae65b685f9d050c60daa7f257cc4e6a39"
 upstream_pr = "https://github.com/ollama/ollama/pull/18631"
 security_patch_file = "security.patch"
 security_patch_sha256 = "f0dd8ddb4a7d1ce826f5ddecab84e10da819a6883c59e11249e41b44d8ff7493"
+router_patch_file = "router.patch"
+router_patch_sha256 = "9a2ea86d3c3901c4a0bd2c464d1e5ac0eeeef2e8a69999d0f5f1bd1e872fe881"
+stop_patch_file = "stop.patch"
+stop_patch_sha256 = "792e86da2683541499331512ce21b7cca37ac0675747f033534a2b87b330a0d2"
+# MLX's native decode loop ignored Options.Stop; enforce request-local stops
+# before streaming or generating further turns, including split-token markers.
+# Pinned 00cyre checkpoint declares INT8 routers inside its global INT4 config.
+# Preserve those explicit overrides rather than trusting imported global metadata.
+# https://huggingface.co/00cyre/Gemma-4-26B-A4B-it-Uncensored-MLX-4bit/blob/46ab84dbe20198a2ee5e66c3e69c039b8c60ad59/config.json
 
 # 2026-10-23: exact minimum compatible graph for reachable Go advisories.
 # https://pkg.go.dev/vuln/GO-2026-6617 (net); https://pkg.go.dev/vuln/GO-2026-6222 (image)

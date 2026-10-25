@@ -24,9 +24,11 @@ Two modes:
                                               # requests from the Ollama log, no
                                               # inference — run it after a session
 
-The active probe talks straight to Ollama (:11434), the same backend the client
-reaches through LiteLLM; prefix reuse is a property of that backend, so a direct
-probe measures the same cache the agent path uses.
+The active probe sends raw, non-thinking requests straight to Ollama (:11434).
+This measures backend prefix reuse without rewrapping the warm continuation in
+a new chat template or dropping generated thinking. It does not prove that a
+native client's actual prompts keep the same prefix; use the passive mode after
+a real session for that evidence.
 
 Reading the right signal is the whole trick. Ollama's HTTP `prompt_eval_count`
 does NOT exclude the cached prefix -- it reports the FULL prompt length whether
@@ -98,6 +100,7 @@ def generate(model, prompt, num_ctx, num_predict=8):
     probed sequence EXTENDS the cached one instead of diverging from it)."""
     return api("/api/generate", {
         "model": model, "prompt": prompt, "stream": False,
+        "raw": True, "think": False,
         "options": {"num_ctx": num_ctx, "num_predict": num_predict},
         "keep_alive": "120s"})
 
@@ -135,7 +138,9 @@ def probe(model, num_ctx, depth, log=None):
     OF the generated output -- diverging right after the shared prompt -- reads a
     false 0% even though the real agent path reuses the whole prefix. The only
     tokens a working cache must re-evaluate here are that trailing marker."""
-    prompt = (CHUNK * max(1, depth // 18)).replace("record", f"rec_{int(time.time())}")
+    # Salt once: replacing every identifier with a timestamp multiplied the
+    # token count and made even the quick probe substantially larger than asked.
+    prompt = f"# cache probe {time.time_ns()}\n" + CHUNK * max(1, depth // 18)
 
     subprocess.run(["ollama", "stop", model], capture_output=True)
     time.sleep(4)
@@ -262,6 +267,7 @@ def main(argv=None):
     ollama, _ = versions()
     log = resolve_log(args.log)
     print(f"prompt-cache probe -- tier {tier}, model {model}, num_ctx {num_ctx}")
+    print("  scope: raw backend continuation; not a native-client conversation")
     if not log.is_file():
         print(f"  note: no Ollama log at {log}; without it the exact reuse% is "
               "available only on Ollama >= 0.33.3 -- otherwise the verdict falls "

@@ -28,8 +28,11 @@ trap cleanup EXIT
 docker exec "$CONTAINER" mkdir -p "$STAGE" >/dev/null
 # harness.py travels with the implementation: the image has no checkout, so the
 # suite would otherwise need its own copy of the shared mechanics.
-docker cp "$ROOT/tests/harness.py" "$CONTAINER:$STAGE/harness.py" >/dev/null
-docker cp "$ROOT/$IMPL" "$CONTAINER:$STAGE/impl.py" >/dev/null
+# Stream the inputs into files owned by the image's normal user. docker cp
+# preserves restrictive host modes with a different owner, making a host 0600
+# implementation unreadable. No root capability or permission repair is needed.
+docker exec -i "$CONTAINER" sh -c 'umask 077; cat > "$1"' sh "$STAGE/harness.py" < "$ROOT/tests/harness.py"
+docker exec -i "$CONTAINER" sh -c 'umask 077; cat > "$1"' sh "$STAGE/impl.py" < "$ROOT/$IMPL"
 
 # Paths the suites resolve inside the image, not in the checkout.
 env_args=(

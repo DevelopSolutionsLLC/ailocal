@@ -10,11 +10,13 @@ import plistlib
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import tarfile
 import tempfile
 import time
 import urllib.request
+import zipfile
 from pathlib import Path
 
 from . import policy
@@ -37,11 +39,14 @@ def verify(path: Path) -> bool:
         if path.parent.is_symlink() or any(p.is_symlink() for p in path.parent.rglob("*")):
             return False
         receipt = json.loads((path.parent / "receipt.json").read_text())
+        origin = (receipt.get("native_origin") or {}) if isinstance(receipt, dict) else {}
         return (isinstance(receipt, dict) and receipt.get("owner") == "ailocal"
+                and isinstance(origin, dict)
+                and origin.get("vendor_binary_sha256", receipt.get("stock_sha256")) == spec["native_cli_sha256"]
                 and path.name == "ollama" and path.is_file()
                 and os.access(path, os.X_OK)
                 and all(receipt.get(k) == spec[k] for k in
-                        ("version", "source_sha256", "patch_sha256", "security_patch_sha256"))
+                        ("version", "source_sha256", "patch_sha256", "security_patch_sha256", "router_patch_sha256", "stop_patch_sha256"))
                 and receipt.get("files") == _inventory(path.parent))
     except (OSError, ValueError, KeyError, TypeError):
         return False
@@ -137,6 +142,67 @@ def _copy_payload(stock: Path, destination: Path) -> dict[str, str]:
     return _inventory(destination)
 
 
+def _release_native_payload(spec: dict, work: Path, deadline: float) -> Path:
+    """Acquire the exact signed base in build scratch space, never in Applications."""
+    print(f"  Fetching the pinned Ollama {spec['base_version']} native base; "
+          "the installed vendor app is preserved", flush=True)
+    archive = work / "native-base.zip"
+    _download(spec["native_archive_url"], archive, spec["native_archive_sha256"], deadline)
+    destination = work / "native-base"
+    with zipfile.ZipFile(archive) as bundle:
+        for member in bundle.infolist():
+            target = (destination / member.filename).resolve()
+            if not target.is_relative_to(destination.resolve()):
+                raise RuntimeError("Unsafe path in pinned Ollama native archive")
+            if stat.S_ISLNK(member.external_attr >> 16):
+                link = (target.parent / bundle.read(member).decode("utf-8")).resolve()
+                if not link.is_relative_to(destination.resolve()):
+                    raise RuntimeError("Unsafe symlink in pinned Ollama native archive")
+    # ditto preserves the app's signed symlink/resource layout; ZipFile's
+    # extraction would turn symlinks into ordinary files and break signatures.
+    _run(["ditto", "-x", "-k", str(archive), str(destination)], deadline)
+    app = destination / "Ollama.app"
+    _run(["codesign", "--verify", "--deep", "--strict", str(app)], deadline)
+    with (app / "Contents/Info.plist").open("rb") as stream:
+        if plistlib.load(stream).get("CFBundleShortVersionString") != spec["base_version"]:
+            raise RuntimeError("Downloaded Ollama native base has the wrong version")
+    stock = app / "Contents/Resources/ollama"
+    if _sha(stock) != spec["native_cli_sha256"]:
+        raise RuntimeError("Downloaded Ollama native CLI checksum mismatch")
+    return stock
+
+
+def _cached_native_payload(root: Path, spec: dict) -> tuple[Path, dict] | None:
+    """Reuse intact owned native files for the exact source base, never a newer app's ABI."""
+    if root.is_symlink() or not root.is_dir():
+        return None
+    for child in sorted(root.iterdir(), reverse=True):
+        try:
+            if (not child.is_dir() or child.is_symlink()
+                    or any(p.is_symlink() for p in child.rglob("*"))):
+                continue
+            receipt = json.loads((child / "receipt.json").read_text())
+            origin = (receipt.get("native_origin") or {}) if isinstance(receipt, dict) else {}
+            if (not isinstance(receipt, dict) or receipt.get("owner") != "ailocal"
+                    or not isinstance(origin, dict)
+                    or origin.get("vendor_binary_sha256", receipt.get("stock_sha256")) != spec["native_cli_sha256"]
+                    or child.name != receipt.get("version")
+                    or not str(receipt.get("version", "")).startswith(spec["base_version"] + "-ailocal.")
+                    or receipt.get("source_sha256") != spec["source_sha256"]
+                    or not isinstance(receipt.get("native_files"), dict)
+                    or "llama-server" not in receipt["native_files"]
+                    or receipt.get("files") != _inventory(child)
+                    or not all(receipt["files"].get(k) == v for k, v in receipt["native_files"].items())):
+                continue
+            binary = child / "ollama"
+            if not binary.is_file() or not os.access(binary, os.X_OK):
+                continue
+            return binary, receipt
+        except (OSError, ValueError, TypeError, KeyError):
+            continue
+    return None
+
+
 def prepare() -> Path:
     """Build/test atomically; never switch a service or change the vendor app."""
     spec = policy.ollama_patch_spec()
@@ -149,36 +215,66 @@ def prepare() -> Path:
         raise RuntimeError(f"Existing owned Ollama runtime failed integrity checks: {target}")
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise RuntimeError("The reviewed Ollama patch supports macOS arm64 only")
-    missing = [name for name in ("go", "git", "codesign") if not shutil.which(name)]
+    missing = [name for name in ("go", "git", "codesign", "ditto") if not shutil.which(name)]
     if missing:
         raise RuntimeError("Ollama patch build prerequisites missing: " + ", ".join(missing))
     deadline = time.monotonic() + 1200
-    stock = Path(policy.stock_ollama_binary()).resolve()
-    stock_hash = _sha(stock)
-    output = _run([str(stock), "--version"], deadline,
-                  env=dict(os.environ, OLLAMA_HOST="127.0.0.1:0"))
-    versions = re.findall(r"(?:ollama version is|client version is)\s+(\S+)", output)
-    if not versions or any(v != spec["base_version"] for v in versions):
-        raise RuntimeError(f"Ollama patch requires exactly {spec['base_version']} stock CLI")
-    app = next((p for p in stock.parents if p.suffix == ".app"), None)
-    if app is None:
-        raise RuntimeError("The reviewed native payload requires the signed Ollama.app installation")
-    _run(["codesign", "--verify", "--deep", "--strict", str(app)], deadline)
-    with (app / "Contents/Info.plist").open("rb") as stream:
-        if plistlib.load(stream).get("CFBundleShortVersionString") != spec["base_version"]:
-            raise RuntimeError("Ollama app/native payload version does not match the patch base")
+    cached = _cached_native_payload(root, spec)
+    if cached:
+        stock, parent_receipt = cached
+        native_origin = {"kind": "validated-owned-runtime", "path": str(stock.parent),
+                         "version": parent_receipt["version"],
+                         "source_sha256": parent_receipt["source_sha256"],
+                         "vendor_binary_sha256": (parent_receipt.get("native_origin") or {}).get(
+                             "vendor_binary_sha256", parent_receipt.get("stock_sha256"))}
+    else:
+        stock = Path(policy.stock_ollama_binary()).resolve()
+        output = _run([str(stock), "--version"], deadline,
+                      env=dict(os.environ, OLLAMA_HOST="127.0.0.1:0"))
+        versions = re.findall(r"(?:ollama version is|client version is)\s+(\S+)", output)
+        if not versions:
+            raise RuntimeError("Cannot establish the installed Ollama CLI version")
+        app = next((p for p in stock.parents if p.suffix == ".app"), None)
+        if app is not None and all(v == spec["base_version"] for v in versions):
+            _run(["codesign", "--verify", "--deep", "--strict", str(app)], deadline)
+            with (app / "Contents/Info.plist").open("rb") as stream:
+                if plistlib.load(stream).get("CFBundleShortVersionString") != spec["base_version"]:
+                    raise RuntimeError("Ollama app/native payload version does not match the patch base")
+            native_origin = {"kind": "signed-vendor-app", "path": str(app), "version": spec["base_version"]}
+        else:
+            stock = None
+            native_origin = {"kind": "signed-release-archive", "version": spec["base_version"],
+                             "url": spec["native_archive_url"],
+                             "archive_sha256": spec["native_archive_sha256"]}
+    stock_hash = _sha(stock) if stock is not None else ""
+    if not cached and stock is not None:
+        if stock_hash != spec["native_cli_sha256"]:
+            raise RuntimeError("Installed Ollama native CLI checksum mismatch")
+        native_origin["vendor_binary_sha256"] = stock_hash
     patch = Path(spec["patch_file"])
     if _sha(patch) != spec["patch_sha256"]:
         raise RuntimeError("Bundled Ollama patch checksum mismatch")
     security_patch = Path(spec["security_patch_file"])
     if _sha(security_patch) != spec["security_patch_sha256"]:
         raise RuntimeError("Bundled Ollama security patch checksum mismatch")
+    router_patch = Path(spec["router_patch_file"])
+    if _sha(router_patch) != spec["router_patch_sha256"]:
+        raise RuntimeError("Bundled Ollama router patch checksum mismatch")
+    stop_patch = Path(spec["stop_patch_file"])
+    if _sha(stop_patch) != spec["stop_patch_sha256"]:
+        raise RuntimeError("Bundled Ollama stop patch checksum mismatch")
     root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".build-", dir=root) as temporary:
         work = Path(temporary)
+        if stock is None:
+            stock = _release_native_payload(spec, work, deadline)
+            stock_hash = _sha(stock)
+            native_origin["vendor_binary_sha256"] = stock_hash
         payload = work / "payload"
         payload.mkdir()
         native = _copy_payload(stock, payload)
+        if cached and native != parent_receipt["native_files"]:
+            raise RuntimeError("Cached native payload does not match its validated receipt")
         if stock_hash != _sha(stock) or native != {
                 name: _sha(stock.parent / name) for name in native}:
             raise RuntimeError("Stock Ollama changed while copying its native payload")
@@ -191,6 +287,10 @@ def prepare() -> Path:
         _run(["git", "apply", str(patch)], deadline, cwd=source)
         _run(["git", "apply", "--check", str(security_patch)], deadline, cwd=source)
         _run(["git", "apply", str(security_patch)], deadline, cwd=source)
+        _run(["git", "apply", "--check", str(router_patch)], deadline, cwd=source)
+        _run(["git", "apply", str(router_patch)], deadline, cwd=source)
+        _run(["git", "apply", "--check", str(stop_patch)], deadline, cwd=source)
+        _run(["git", "apply", str(stop_patch)], deadline, cwd=source)
         env = dict(os.environ, CGO_ENABLED="1", GOOS="darwin", GOARCH="arm64",
                    GOTOOLCHAIN="local", GOFLAGS="-mod=readonly", GOWORK="off")
         toolchain = _run(["go", "version"], deadline, cwd=source, env=env).strip()
@@ -202,14 +302,25 @@ def prepare() -> Path:
         _run(["go", "test", "-c", "-o", str(test), "./mlxrunner/model/gemma4"],
              deadline, cwd=source, env=env)
         result = _run([str(test), "-test.v", "-test.timeout=120s"], deadline, cwd=payload, env=env)
-        if "--- SKIP:" in result or "--- PASS: TestLoadStackedExpertsSwitchGLU" not in result:
+        if ("--- SKIP:" in result or "--- PASS: TestLoadStackedExpertsSwitchGLU" not in result
+                or "--- PASS: TestMoERouterMixedPrecisionConfig" not in result):
             raise RuntimeError("Gemma MoE tests did not execute the SwitchGLU regression successfully")
         test.unlink()
+        stop_test = payload / "stop.test"
+        _run(["go", "test", "-c", "-o", str(stop_test), "./mlxrunner"],
+             deadline, cwd=source, env=env)
+        stop_result = _run([str(stop_test), "-test.v", "-test.run=^TestStopBuffer$", "-test.timeout=60s"],
+                           deadline, cwd=payload, env=env)
+        if "--- SKIP:" in stop_result or "--- PASS: TestStopBuffer" not in stop_result:
+            raise RuntimeError("MLX stop regression did not execute successfully")
+        result += "\n" + stop_result
+        stop_test.unlink()
         if native != {name: _sha(payload / name) for name in native}:
             raise RuntimeError("Native Ollama payload changed during preparation")
         receipt = {k: spec[k] for k in
-                   ("version", "source_sha256", "patch_sha256", "security_patch_sha256")}
+                   ("version", "source_sha256", "patch_sha256", "security_patch_sha256", "router_patch_sha256", "stop_patch_sha256")}
         receipt.update(owner="ailocal", stock_binary=str(stock), stock_sha256=stock_hash,
+                       native_origin=native_origin,
                        native_files=native, files=_inventory(payload),
                        built_at=datetime.now(timezone.utc).isoformat(),
                        toolchain=toolchain, regression_output=result)
