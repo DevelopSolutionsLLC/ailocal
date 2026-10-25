@@ -870,15 +870,21 @@ def _same(dest, text):
     key order carries no meaning, so compare the parsed documents and let
     the co-owner order the file however it likes. Anything that is not JSON,
     or does not parse, falls back to the textual compare unchanged.
+
+    TOML tables carry no order either. [REAL] `codex mcp add` inserts its
+    `[mcp_servers.<name>]` table mid-file, while regeneration appends a
+    preserved external table at the end, so a fresh `ailocal install --yes`
+    reported codex/config.toml as drifted though both parse to one document.
     """
     live = _stable(dest.read_text())
     staged = _stable(text)
     if live == staged:
         return True
-    if dest.suffix != ".json":
+    parse = {".json": json.loads, ".toml": tomllib.loads}.get(dest.suffix)
+    if parse is None:
         return False
     try:
-        return json.loads(live) == json.loads(staged)
+        return parse(live) == parse(staged)
     except ValueError:
         return False
 

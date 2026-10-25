@@ -53,6 +53,9 @@ No migration step: the existing key keeps working, and keyless search is unchang
 - `ailocal <command> --help` prints usage for every command; `clients --help` used to configure every client and `start --help` to start the stack.
 - `ailocal-code` opens the VS Code profile ailocal configures. `code --profile ailocal` created an empty profile with no connector, provider or research server.
 - Saved logs keep step order; redirected stdout is line-buffered.
+- `ailocal install --yes` passes its own check on a fresh machine. It now provisions the claude-local and codex-local roots, including their artifact and research runtimes, for detected clients. It still leaves `~/.zshrc`, VS Code and the hosted-root local-agent MCP to `ailocal clients`.
+- `ailocal check` no longer reports `codex/config.toml` as drifted after a native `codex mcp add`. TOML is now compared as a parsed document, the same way co-owned JSON already is.
+- VS Code counts as installed only when its app bundle or `code` CLI is present. A settings directory left behind after removing VS Code no longer counts.
 
 ## v0.13.0 — local artifacts, and a smaller `claude-local`
 

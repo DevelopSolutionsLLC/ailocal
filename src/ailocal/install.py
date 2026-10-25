@@ -1282,7 +1282,8 @@ def cmd_install(argv: list[str]) -> int:
 
     # Deploying into a user's client roots is never implied by --yes: it edits
     # ~/.zshrc and merges VS Code's settings.json, which is not something an
-    # unattended run should decide for someone.
+    # unattended run should decide for someone. The claude-local/codex-local
+    # roots are ailocal's own, so --yes provisions those (see below).
     step("Documentation MCP (Claude/Codex)")
     from . import clients
     # Public docs registration is part of every rollout, including --yes.
@@ -1302,8 +1303,16 @@ def cmd_install(argv: list[str]) -> int:
     if not detected:
         ok("Nothing to configure. Install a client, then: ailocal clients")
     elif assume_yes:
-        ok(f"Detected {', '.join(detected)} — not configured under --yes "
-           "(it edits ~/.zshrc and VS Code settings). Run: ailocal clients")
+        # Documentation registration above creates the isolated roots, and
+        # `ailocal check` then requires their artifact and research runtimes.
+        # [REAL] 2026-10-25: a fresh `install --yes` failed its own check on
+        # both. Those roots and runtimes live under ailocal's own roots, so
+        # provisioning them decides nothing for the operator.
+        for name in (n for n in detected if n in ("claude", "codex")):
+            clients._TARGETS[name]()
+        ok(f"Detected {', '.join(detected)} — ailocal-owned roots provisioned; "
+           "~/.zshrc, VS Code and the local-agent MCP are not configured under "
+           "--yes. Run: ailocal clients")
     else:
         print("\n  ⚠ Configuring backs up, then rewrites/merges existing client configs.")
         targets = _ask(f"Configure which? [Enter for the detected "
