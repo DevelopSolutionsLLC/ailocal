@@ -293,9 +293,27 @@ def resolver_checks() -> None:
           f"profile owns compaction ({comp.get('window')} x {comp.get('pct')}%)")
     claude = json.loads((P.deployed_client_root() / "claude/settings.json").read_text())
     env = claude.get("env", {})
-    check(env.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW") == str(comp["window"])
-          and env.get("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE") == str(comp["pct"]),
-          "Claude compaction is generated from the profile block verbatim")
+    # Claude Code accepts the window only inside its documented range, so the
+    # generator projects the trigger (window x pct) rather than the two
+    # literals: [REAL] 2026-10-26 the verbatim 16 GB window (79872) was clamped
+    # to the 100k floor with a startup warning and compaction fired at 85,000
+    # instead of the profile's 67,891. The product is what the profile owns.
+    launch = P.load_client_policy().get("claude", {}).get("launch_default", "architecture")
+    _proj = load_sync().claude_compaction(int(comp["window"]), int(comp["pct"]),
+                                          P.effective_role(launch)["total_context"])
+    check(env.get("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE") == str(_proj["pct"])
+          and env.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW") == (
+              str(_proj["window"]) if _proj["window"] is not None else None),
+          "Claude compaction is projected from the profile block",
+          f"env={env}")
+    _win = env.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+    check(_win is None or 100_000 <= int(_win) <= 1_000_000,
+          "Claude compaction window is inside the client's accepted range or absent",
+          f"{_win!r}")
+    _target = int(comp["window"]) * int(comp["pct"]) // 100
+    check(_target - _proj["base"] // 100 <= _proj["trigger"] <= _target,
+          f"projected trigger {_proj['trigger']} keeps the profile's {_target} "
+          "within one percent of the window, never later")
 
     # The OUTPUT ceiling has one owner too. Claude Code's own default is 32000
     # [REAL, captured off the wire against 2.1.224]; the launch-default role
@@ -325,9 +343,10 @@ def resolver_checks() -> None:
           f"{env.get('CLAUDE_CODE_MAX_CONTEXT_TOKENS')!r}")
     # Compaction must trigger below ADMISSION, not below the total window —
     # compacting against total_context schedules a turn LiteLLM would reject.
-    check(int(env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"]) <=
-          P.effective_role(launch)["max_input_tokens"],
-          "compaction window never exceeds LiteLLM's admitted input")
+    # The TRIGGER is window x pct: the window alone may sit above admission
+    # once it is lifted to the client's 100k floor (16 GB: 100000 > 90112).
+    check(_proj["trigger"] <= P.effective_role(launch)["max_input_tokens"],
+          f"compaction trigger ({_proj['trigger']}) never exceeds LiteLLM's admitted input")
 
     codex = (P.deployed_client_root() / "codex/config.toml").read_text()
     native = tomllib.loads(codex)
@@ -832,14 +851,17 @@ def hardware_checks() -> None:
         # a function-local name, so any later use outside this branch would
         # raise NameError instead of reading the module.
         env = json.loads(settings.read_text()).get("env", {})
-        check(env.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW") == str(cc["window"]),
-              f"claude settings.json window matches the active profile ({tier})",
-              f"{env.get('CLAUDE_CODE_AUTO_COMPACT_WINDOW')!r} != {cc['window']!r}")
-        check(env.get("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE") == str(cc["pct"]),
-              f"claude settings.json pct matches the active profile ({tier})",
-              f"{env.get('CLAUDE_AUTOCOMPACT_PCT_OVERRIDE')!r} != {cc['pct']!r}")
-        # Same tier-agreement requirement for the output ceiling.
         lp = P.load_client_policy().get("claude", {}).get("launch_default", "architecture")
+        _lp_total = P.resolve_role(tier, lp, RESOURCES)["total_context"]
+        _want = load_sync().claude_compaction(int(cc["window"]), int(cc["pct"]), _lp_total)
+        check(env.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW") == (
+                  str(_want["window"]) if _want["window"] is not None else None),
+              f"claude settings.json window is the active profile's, projected ({tier})",
+              f"{env.get('CLAUDE_CODE_AUTO_COMPACT_WINDOW')!r} != {_want['window']!r}")
+        check(env.get("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE") == str(_want["pct"]),
+              f"claude settings.json pct is the active profile's, projected ({tier})",
+              f"{env.get('CLAUDE_AUTOCOMPACT_PCT_OVERRIDE')!r} != {_want['pct']!r}")
+        # Same tier-agreement requirement for the output ceiling.
         want = (PARSED[tier][0].get(lp) or {}).get("max_output")
         if want:
             check(env.get("CLAUDE_CODE_MAX_OUTPUT_TOKENS") == str(want),
@@ -872,6 +894,55 @@ def hardware_checks() -> None:
               r.stderr.strip()[-300:] or f"wrote under {box / 'home'}")
         check(not any((box / "clients/codex").glob("*.config.toml")),
               f"{each}: selecting a model needs no generated launch presets")
+        # Every enabled capability gets a first-class /model row under its
+        # canonical name: the slotted ones through ANTHROPIC_DEFAULT_*_MODEL,
+        # the rest through modelPicker. [REAL] 2026-10-26: without the rows,
+        # cyber was reachable only as a gateway-discovered entry and Claude
+        # Code switched to it under an undocumented `claude-router-<hex>` id.
+        if local.exists():
+            _settings = json.loads(local.read_text())
+            _slots = P.load_client_policy(RESOURCES).get("claude", {}).get("slots", {})
+            _enabled = [c for c in P.ROLES if P.resolve_role(each, c, RESOURCES)["enabled"]]
+            _unslotted = ["ailocal-" + c for c in _enabled if c not in _slots.values()]
+            _rows = [r["model"] for r in _settings.get("modelPicker", {}).get("options", [])]
+            check(_rows == _unslotted,
+                  f"{each}: every capability without a built-in slot has a picker row",
+                  f"rows={_rows} unslotted={_unslotted}")
+            _win = _settings.get("env", {}).get("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+            check(_win is None or 100_000 <= int(_win) <= 1_000_000,
+                  f"{each}: compaction window inside Claude Code's accepted range or absent",
+                  f"{_win!r}")
+            # Every enabled capability is a PEER on every generated surface:
+            # claude-local (slots + picker rows, and the settings note), codex-local
+            # (catalog and config), the proxy's model_list (what VS Code and the
+            # local-agent MCP discover) and the integration contract (what Cadence
+            # composes into both instruction files). A capability missing from any
+            # one of these is reachable somewhere and unknown elsewhere.
+            _all = ["ailocal-" + c for c in _enabled]
+            _reach = sorted(set(_rows) | {"ailocal-" + c for c in _slots.values() if c in _enabled})
+            check(_reach == sorted(_all),
+                  f"{each}: claude-local reaches every capability by slot or picker row",
+                  f"{_reach} != {sorted(_all)}")
+            _note = next((l for l in _settings.get("//", []) if l.startswith("Models: ")), "")
+            check(all(a in _note for a in _all),
+                  f"{each}: claude-local settings note lists every capability", _note)
+            _catalog = json.loads((box / "clients/codex/model_catalog.json").read_text())
+            check([m["slug"] for m in _catalog["models"]] == _all,
+                  f"{each}: codex-local catalog lists every capability",
+                  str([m["slug"] for m in _catalog["models"]]))
+            _codex_cfg = (box / "clients/codex/config.toml").read_text()
+            _valid = next((l for l in _codex_cfg.splitlines() if l.startswith("# Valid models:")), "")
+            check(all(a in _valid for a in _all),
+                  f"{each}: codex-local config names every capability", _valid)
+            _ml = (box / "state/litellm/config.yaml").read_text()
+            _served = re.findall(r"^\s*- model_name: (ailocal-\S+)$", _ml, re.M)
+            check(_served == _all,
+                  f"{each}: proxy model_list serves every capability (VS Code, local-agent discover it)",
+                  str(_served))
+            _contract = json.loads((box / "clients/integration-contract.json").read_text())
+            check(_contract["runtime"]["canonical_capabilities"] == _all,
+                  f"{each}: integration contract names every capability for Cadence's instructions",
+                  str(_contract["runtime"]["canonical_capabilities"]))
         catalog = json.loads((box / "clients/codex/model_catalog.json").read_text())
         local_codex = tomllib.loads((box / "clients/codex/config.toml").read_text())
         check("model_reasoning_effort" not in local_codex,
