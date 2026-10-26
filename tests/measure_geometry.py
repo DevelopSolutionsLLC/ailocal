@@ -208,10 +208,6 @@ def measure(args, models):
     print(f"ollama {ollama}   mlx {mlx}")
     if args.quick:
         print("quick scope: short-prefix residency; deep cache growth and output ceilings are unmeasured")
-    comp = summary.get("compaction") or {}
-    if comp.get("window") and comp.get("pct"):
-        trig = int(comp["window"]) * int(comp["pct"]) // 100
-        print(f"compaction  window {comp['window']} x {comp['pct']}% = {trig} tokens")
 
     seen, ceilings = {}, {}
     for role, cfg in summary["roles"].items():
@@ -272,13 +268,15 @@ def measure(args, models):
                               f"charged per token in use, not per window)")
 
         if not args.quick:
-            depth = min(int(comp.get("window", 0)) * int(comp.get("pct", 0)) // 100
-                        or cfg["context_input"], cfg["context_input"])
-            n, secs, _ = fill(model, depth, num_ctx)
+            # The deepest prompt the role admits: the worst cold resume a
+            # client can hit before its own compaction runs.
+            n, secs, after = fill(model, cfg["context_input"], num_ctx)
             if n and secs:
                 print(f"  cold prefill {n} tokens in {secs:.1f}s "
                       f"({n/secs:.0f} tok/s) — the cost of resuming a session "
-                      f"at the compaction point")
+                      f"at full admission")
+            if after:
+                print(f"  resident     {after/GIB:.2f} GiB with {n} tokens in the window")
 
         if args.quick:
             print("  output       not measured in quick mode")
