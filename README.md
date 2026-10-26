@@ -149,7 +149,7 @@ Copilot Chat ships inside VS Code and needs no Copilot subscription. `ailocal cl
 
 To upgrade: `pipx upgrade ailocal && ailocal start`.
 
-This upgrades the Python package from its configured installation source and regenerates the runtime; it does not automatically upgrade Ollama, models, or pinned service images. `ailocal update --json` reports available image candidates and explicitly incomplete discovery. Review and validation before promoting dependencies are described in [AI development maintenance](docs/maintenance.md).
+This upgrades the Python package from its configured installation source and regenerates the runtime; it does not automatically upgrade Ollama, models, or pinned service images. `ailocal update --json` reports available image candidates and explicitly incomplete discovery. `ailocal audit` checks whether the pinned versions are still safe: it queries live advisory sources and exits non-zero when a pin is affected or yanked. Review and validation before promoting dependencies are described in [AI development maintenance](docs/maintenance.md).
 
 ### Pinning Homebrew packages (macOS)
 

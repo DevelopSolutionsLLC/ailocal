@@ -16,6 +16,7 @@ Release policy and the meaning of each bump: [RELEASING.md](RELEASING.md).
 - Coding/decode measurements exercise the chat protocol; short decode pilots use 128 tokens to avoid spending minutes on throughput-only output.
 
 - Fresh installs, including unattended `--yes`, register public Claude Code, OpenAI and Microsoft Learn documentation MCPs through the native Claude and Codex CLIs, in hosted and local roots. Existing settings survive; registration failures and name collisions return a nonzero status. Copilot documentation provisioning remains deferred.
+- Add `ailocal audit`, an online advisory audit of every pin ailocal declares: both service images (through their publishers' GitHub advisories, plus the LiteLLM PyPI release), the reviewed Ollama patch base and its security dependencies, and the vendored browser libraries (#18). Each pin reports clean, affected, yanked or unverified, with the sources it queried and the time; a failed lookup is unverified, never clean, and a registry 404 is reported as yanked. Exits 1 on affected or yanked, 2 when only unverified. It needs a network, so it is kept out of the regression gate; the gate runs its offline test instead.
 
 ### Research without naming the tool
 
