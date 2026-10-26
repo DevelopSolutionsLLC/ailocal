@@ -203,6 +203,8 @@ def _gate_suites(repo: pathlib.Path, full: bool) -> list:
              [py, "tests/docs.py"]),
             ("update reporting (contract, local/upstream split)",
              [py, "tests/update.py"]),
+            ("advisory audit (pin discovery, outcomes; offline fetcher)",
+             [py, "tests/audit.py"]),
             ("bundled artifact capability (spec, persistence, MCP server)",
              [py, "tests/artifacts.py"] + (["--full"] if full else [])),
         ]),
