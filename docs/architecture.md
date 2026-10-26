@@ -104,7 +104,7 @@ Same directory as the policy root by default, different owner and lifecycle: thi
 - `configure.zsh` (generated), `finalize.zsh`, `scratchpad-hook.sh`, `compact-hook.sh` (copied, 0755)
 - `claude/` — `settings.json`, `.claude.json` (seeded only if absent), and `agents/`, `commands/`, `references/` installed as *managed* directories (each carrying a `.ailocal-managed` manifest): a marker-delimited block appended by another tool is carried across the overwrite, and a symlink is never written through
 - `claude/plugins/` and `claude/backups/` — created inside this root by the `claude` binary that `lsp_baseline()` invokes, not by ailocal. Registering the marketplace clones `anthropics/claude-plugins-official` here, and the CLI rewrites the seeded `.claude.json`, keeping a timestamped backup. Not everything under this root is ailocal-generated.
-- `codex/` — `config.toml`, `model_catalog.json`, `AGENTS.md`, `prompts/*.md`. The catalog carries context and compaction limits per capability; selecting a model needs no generated launch preset.
+- `codex/` — `config.toml`, `model_catalog.json`, `AGENTS.md`, `prompts/*.md`. The catalog carries each capability's admitted window; selecting a model needs no generated launch preset.
 
 Codex's `config.toml` is co-owned: regeneration preserves native trust records, its screen-reader detection flag, and MCP server tables outside the template's server names. The template always owns ailocal's research server; external registrars retain ownership of their own server and nested settings.
 
@@ -178,17 +178,35 @@ External consumers read the deployed `integration-contract.json` from the client
 
 ---
 
+## Geometry
+
+The one rule every profile follows: **admission is bounded by memory, up to the backend's native window; compaction is the client's latency budget, never a geometry input.** Each profile states its numbers against this rule once, in its header, with the evidence for them.
+
+- The native window caps everything. Every shipped chat backend reports 262144 tokens (`max_position_embeddings`, `ollama show`), so no role totals more.
+- Memory decides how much of that window a tier admits. KV grows per token in use: [REAL] 45.4 KB/token for Gemma 4 26B-A4B on the MLX runner, and 32 KiB/token for every Qwen3.5 4B/9B variant, calculated from `config.json` (8 full-attention layers × 2 × 4 KV heads × 256 dims × 2 bytes). 16 GB admits 131072 in total (~4 GiB of KV beside ~3.7 GiB of weights); 32, 64 and 128 GB admit the native window.
+- Roles that share a backend share its window and differ only in output reserve: `context_input = total − max_output`.
+- Cyber follows the same rule as the primary on its tier. It is a second resident model, so two filled windows at once fit only on 128 GB; on smaller tiers Ollama evicts the idle model and Cyber's shorter `keep_alive` releases it.
+- Cold prefill grows with depth ([REAL] 64 GB: 231,390 tokens took 561 s). That cost is bounded by where each client compacts, not by admitting less: a smaller window removes history from every session to make a rare cold resume cheaper.
+
 ## Context and compaction: who owns what
 
-**ailocal owns the numbers, not the conversation.** It holds no conversation state, never summarises, and never rewrites a client's history. It owns geometry — `policy.geometry()` derives `total_context` (Ollama `num_ctx`), `num_predict`, and `max_input_tokens = context_input` from each profile — and the compaction *threshold* handed to clients.
+**ailocal owns the numbers, not the conversation.** It holds no conversation state, never summarises, and never rewrites a client's history. It owns geometry — `policy.geometry()` derives `total_context` (Ollama `num_ctx`), `num_predict`, and `max_input_tokens = context_input` from each profile — and declares to each client the window LiteLLM admits.
 
-**The clients compact.** Claude Code receives `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`, `CLAUDE_CODE_MAX_CONTEXT_TOKENS` and `CLAUDE_CODE_MAX_OUTPUT_TOKENS` in its generated settings; Codex receives `model_auto_compact_token_limit` as `min(window × pct, context_input × pct)`, because a fraction of the total window can exceed what the backend admits and take an HTTP 400 before compaction fires. Both derive from one `[compaction]` block in `profiles/<tier>.toml`.
+**The clients compact, at their own default points.** ailocal sets no trigger; each client computes one from the window it is given, and that point lies below admission:
 
-Each client gets the trigger in the form it accepts. Claude Code accepts an auto-compact window only from 100,000 to 1,000,000 tokens, capped at the model window, and clamps anything else with a startup warning ([model configuration](https://code.claude.com/docs/en/model-config#claude_code_auto_compact_window-values)). [REAL] 2026-10-26, Claude Code 2.1.310 on the 16 GB profile: the verbatim window `79872` was lifted to the 100k floor, so compaction fired at 100,000 × 85% rather than the profile's 67,891. `generation.claude_compaction()` therefore clamps the window into that range and re-derives the percentage against it, preserving `window × pct` to within one percent of the window and never later; when the model window itself lies below the floor, the variable is omitted and Claude Code compacts at the assumed window, which `CLAUDE_CODE_MAX_CONTEXT_TOKENS` declares. The profile stays the only source of the two numbers; the generated `settings.json` comment records both the profile's figures and the projection.
+| Client | ailocal declares | Client default | Source |
+|---|---|---|---|
+| Claude Code | `CLAUDE_CODE_MAX_CONTEXT_TOKENS = context_input` of the launch default, `CLAUDE_CODE_MAX_OUTPUT_TOKENS = max_output` | compacts at window − min(max output, 20000) − 13000 | [REAL] Claude Code 2.1.310 binary |
+| Codex | `context_window = max_context_window = context_input` per catalog entry | compacts at 90% of `context_window` when `auto_compact_token_limit` is unset | [REAL] Codex 0.163.0 source |
+| VS Code Copilot Chat | LiteLLM's `max_input_tokens`, read by the LiteLLM provider | summarises at a fraction of `maxInputTokens` with no setting | [REAL] Copilot Chat 0.71.0 bundle |
+
+`CLAUDE_CODE_MAX_CONTEXT_TOKENS` declares admission rather than the total window because Claude Code reserves at most 20000 tokens for output: declaring the total on a 262144-token tier with 32768 of output would leave its trigger 232 tokens under admission. Declaring `context_input` keeps at least 13000 + min(max_output, 20000) tokens of margin on every tier. The `PreCompact`/`PostCompact` hooks only record that compaction happened, in `$AILOCAL_STATE/compaction.jsonl`.
+
+A `[compaction]` section in an installed profile is retired and ignored, like `[embeddings]`; regeneration removes `CLAUDE_CODE_AUTO_COMPACT_WINDOW` and `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` from an existing `settings.json`.
 
 Claude Code's variables are process-wide while its model slots route to different capabilities. They describe the launch-default role; `settings.json` lists the background slots whose smaller limits they cannot express.
 
-**Every capability has a picker row under its own name.** Claude Code's `/model` lists the slotted capabilities through `ANTHROPIC_DEFAULT_*_MODEL`; a capability without a slot (`cyber` on every shipped profile) gets a generated [`modelPicker`](https://code.claude.com/docs/en/settings-reference#modelpicker) row in the same `settings.json`, after the slotted lineup. Without one, [REAL] 2026-10-26, the capability was reachable only as a gateway-discovered entry around row 20, and Claude Code then switched to it under an undocumented `claude-router-<hex of the id>` spelling that `ailocal profile guide --hook` could not resolve; the hook now consults the documented `requested_model` as well and decodes that spelling as a last resort.
+**One picker, one description.** Claude Code's `/model` is the generated [`modelPicker`](https://code.claude.com/docs/en/settings-reference#modelpicker) with `replaceBuiltInOptions: true`: every enabled capability once, in `policy.ROLES` order, and nothing else besides Default and the current session's model. Gateway discovery is not enabled, because that picker hides it. Before this the picker kept the built-in lineup on top and, with gateway discovery on, listed `ailocal-cyber` twice further down (operator report, 2026-10-26, Claude Code 2.1.310). The `ANTHROPIC_DEFAULT_*_MODEL` slots still route background work and subagents. `policy.capability_description()` renders `<role> — <model name>, <N>K ctx` for the picker, the Codex catalog and the LiteLLM config, from the role text and the model guide's `name`. VS Code's LiteLLM provider shows the model id and its token limits and has no free-text description field.
 
 **The engines enforce context, and they do not agree.** The MLX runner applies context per request; llama.cpp fixes it at load and truncates an over-long prompt from the front with HTTP 200 and no error. LiteLLM's `max_input_tokens` is the only layer that fails loudly. Engine behaviour is recorded in `resources/deploy/litellm/registry.yaml`.
 
