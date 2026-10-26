@@ -40,7 +40,7 @@ with mock.patch("ailocal.checks.services._running_digest") as running, \
 check("upstream report declares its mode", doc["mode"] == update.UPSTREAM)
 check("no component carries an `installed` field",
       all("installed" not in c for c in doc["components"]))
-check("schema is versioned", doc["schema_version"] == 1)
+check("schema is versioned", doc["schema_version"] == 2)
 check("project is identified", doc["project"] == "ailocal")
 
 print("\n=== C: states and degradation ===")
@@ -71,6 +71,46 @@ check("searxng declares its proven version tag",
       sx["declared"].startswith("2026."), sx["declared"])
 check("no image is left declared by digest alone",
       not any("digest only" in n for c in live["components"] for n in c["notes"]))
+
+print("\n=== D2: the Ollama base, its N-position and its recorded hold ===")
+pos = update.position
+tags = ["v0.40.11", "v0.40.10", "v0.40.9-rc1", "v0.40.9", "v0.40.8", "v0.40.7"]
+check("newer stable releases are counted; a pre-release is not a release", pos("0.40.8", tags) == (3, "0.40.9"))
+check("the newest release is N-0", pos("0.40.11", tags)[0] == 0)
+check("a version upstream never released has no position", pos("0.40.12", tags)[0] is None)
+check("the candidate is the third-newest stable release", pos("0.40.7", tags)[1] == "0.40.9")
+check("fewer than three releases -> no candidate", pos("1.0.0", ["v1.0.0", "v0.9.0"]) == (0, ""))
+C = update.Component
+check("N-0/N-1 are too new", "too new" in update.position_notes(C(name="x", position=1, candidate="a"))[0])
+check("N-2 is at the hold", update.position_notes(C(name="x", position=2))[0].startswith("N-2: at"))
+check("N-3 without a hold is flagged with the candidate",
+      "no recorded hold" in update.position_notes(C(name="x", position=3, candidate="a"))[0])
+check("N-3 with a recorded hold states the hold", "held: why" in update.position_notes(C(name="x", position=3, hold="why"))[0])
+check("no position -> nothing said", update.position_notes(C(name="x")) == [])
+RELEASES = [{"tag_name": t, "prerelease": "rc" in t, "draft": False} for t in tags]
+with mock.patch("ailocal.checks.services.http_json", lambda url, **kw: RELEASES):
+    o = update._ollama(update.UPSTREAM)
+check("ollama is declared from patch.toml and placed against upstream's releases",
+      o.declared == "0.40.8" and o.position == 3 and o.candidate == "0.40.9" and o.state == update.AVAILABLE
+      and o.available == "0.40.11" and o.installed is None, o)
+check("the hold is read from patch.toml and stated, never acted on",
+      o.hold and any("held: the reviewed backport patches" in n for n in o.notes)
+      and not any("upgrade" in n.lower() and "run" not in n.lower() for n in o.notes), o.notes)
+with mock.patch("ailocal.checks.services.http_json",
+                lambda url, **kw: {"version": "0.40.8-ailocal.18631.3"} if "api/version" in url else RELEASES):
+    o = update._ollama(update.LOCAL)
+check("local mode reads the running daemon's version", o.installed == "0.40.8-ailocal.18631.3", o)
+
+
+def unreachable(url, **kw):
+    raise sv.Unreachable("offline")
+
+
+from ailocal.checks import services as sv  # noqa: E402
+with mock.patch("ailocal.checks.services.http_json", unreachable):
+    o = update._ollama(update.LOCAL)
+check("offline -> degraded with the running daemon marked not running, never current",
+      o.state == update.DEGRADED and o.installed == "not running" and o.position is None, o)
 
 print("\n=== E: self-update is never performed here ===")
 me = next(c for c in live["components"] if c["name"] == "ailocal")
