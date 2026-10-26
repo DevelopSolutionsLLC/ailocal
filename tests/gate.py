@@ -113,6 +113,31 @@ def _refuse_on_stale_install(repo: pathlib.Path) -> None:
              "\n   about the package `ailocal start` actually executes.)")
 
 
+def _refuse_on_unprovisioned_local_agent() -> None:
+    """The local-agent integration check needs the interpreter `ailocal
+    clients` provisions, and nothing earlier in the gate creates it.
+
+    [REAL] 2026-10-26: after `ailocal install --yes --reset-config` on a fresh
+    state root, `model guidance` failed on the absent interpreter and passed
+    on rerun. `installers are idempotent` had run `ailocal clients claude
+    codex` in between, which is the step `install --yes` leaves to the
+    operator by design (install.py: --yes never registers the local-agent
+    MCP). The same order-dependence as generated drift: a later suite heals
+    what an earlier one reported. Refused here, before any suite runs, for the
+    same reason.
+    """
+    from ailocal import policy as P
+
+    py = P.state_root() / "local-agent" / ".venv" / "bin" / "python"
+    if py.is_file():
+        return
+    sys.exit(f"\n  local-agent runtime missing: {py}"
+             "\n      ailocal clients claude codex"
+             "\n  Refusing to run: PRECONDITION NOT MET."
+             "\n  (`installers are idempotent` would provision it later, and"
+             "\n   `model guidance` would pass only on rerun.)")
+
+
 def _gate_preconditions(repo: pathlib.Path) -> None:
     """Refuse rather than run a reduced set and report success."""
     container = S.CONTAINER
@@ -125,6 +150,7 @@ def _gate_preconditions(repo: pathlib.Path) -> None:
                  "before trusting any result.")
     _refuse_on_stale_install(repo)
     _refuse_on_generated_drift()
+    _refuse_on_unprovisioned_local_agent()
     # Container health means the proxy PROCESS is up, not that the router serves
     # /v1/models. 401 counts as ready: it proves the route answers.
     for _ in range(60):
