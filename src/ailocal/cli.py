@@ -40,6 +40,7 @@ COMMANDS: dict[str, tuple[str, tuple]] = {
     "status":         ("ailocal.runtime", ("status",)),
     "check":          ("ailocal.checks.run", ("check",)),
     "update":         ("ailocal.update", ()),
+    "audit":          ("ailocal.audit", ()),
 
     "start":          ("ailocal.runtime", ("start",)),
     "stop":           ("ailocal.runtime", ("stop",)),
@@ -55,6 +56,7 @@ COMMANDS: dict[str, tuple[str, tuple]] = {
 USAGE: dict[str, str] = {
     "status":   "usage: ailocal status [--dashboard|--table|--models]",
     "update":   "usage: ailocal update [--upstream-only] [--json]",
+    "audit":    "usage: ailocal audit [--json]",
     "start":    "usage: ailocal start [--no-wait]",
     "stop":     "usage: ailocal stop [--volumes]",
     "teardown": "usage: ailocal teardown [--images]",
@@ -67,7 +69,7 @@ USAGE: dict[str, str] = {
 #: that dispatches what it does not advertise is a surface nobody can trust.
 GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("bootstrap the stack",        ("install",)),
-    ("inspect",                    ("status", "check", "update")),
+    ("inspect",                    ("status", "check", "update", "audit")),
     ("lifecycle",                  ("start", "stop")),
     ("point a client at it",       ("clients",)),
     ("bundled research tools",     ("mcp",)),
