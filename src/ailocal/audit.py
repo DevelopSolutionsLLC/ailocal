@@ -23,6 +23,18 @@ unverified rather than guessed.
 Pins are read from their source-of-truth files and nowhere else: compose
 `image:` lines (through checks/services.py), the reviewed Ollama patch manifest,
 and the vendored browser libraries' VERSIONS.txt.
+
+WHAT IS RUNNING IS AUDITED TOO. A declaration says what should serve; the
+daemon's `/api/version` and each container's repo digest say what does. The
+running Ollama base is audited beside the declared one when they differ, and a
+service whose running digest is not the declared one says so here as well as
+in `ailocal check` -- a declaration patched after a compromise protects nothing
+while the old image keeps serving.
+
+EVERY RUN IS RECORDED at `state_root()/audit/local.json`. The record is what
+the integration contract publishes to Cadence (`audit.record`), which merges
+these findings into the machine-wide weekly audit; a record older than a week
+is unverified there, never current.
 """
 from __future__ import annotations
 
@@ -34,7 +46,7 @@ import tomllib
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2   # 2: `modified` on advisories, `running` notes, `record`, `mode`
 
 CLEAN = "clean"
 AFFECTED = "affected"
@@ -61,7 +73,7 @@ OLLAMA_REPO = "ollama/ollama"
 #: Stated in every report so a clean result is never read as wider than it is.
 COVERAGE_GAPS = [
     "container image layers are not scanned; use trivy on the running image ID (docs/maintenance.md)",
-    "the installed Ollama app is not inspected; the reviewed patch base version is audited",
+    "the running Ollama daemon is identified by /api/version only; payload integrity is `ailocal check`'s",
     "Go modules of the patched Ollama build beyond [security_dependencies] are not resolved",
     "model weights, AI clients and MCP packages: no advisory source is queried",
     "Go module retractions are not checked",
@@ -81,6 +93,7 @@ class Pin:
     spec: str = ""
     github: str = ""     # publisher repository whose advisories apply
     pypi: str = ""       # PyPI distribution the image ships, if any
+    notes: list[str] = field(default_factory=list)   # what is running, drift
 
 
 @dataclass
@@ -186,23 +199,66 @@ def _tag_version(tag: str) -> str:
 
 # --- pin discovery -----------------------------------------------------------
 
-def pins() -> list[Pin]:
+def running() -> dict:
+    """What serves right now: the daemon's version string (None when it does
+    not answer) and, per declared image repository, the container name and
+    repo digest actually running ("" when none is)."""
+    from .checks import services
+    from .update import _split
+    out: dict = {"ollama": None, "images": {}}
+    try:
+        out["ollama"] = services.http_json(f"{services.OLLAMA}/api/version").get("version")
+    except services.Unreachable:
+        pass
+    for ref in services.declared_images():
+        repo = _split(ref)[0]
+        try:
+            out["images"][repo] = services._running_digest(repo)
+        except Exception:   # no docker: nothing is running
+            out["images"][repo] = ("", "")
+    return out
+
+
+def pins(probe=running) -> list[Pin]:
     from . import policy
     from .checks import services
     from .update import _split
+    live = probe()
     out: list[Pin] = []
     for ref in services.declared_images():
-        repo, tag, _ = _split(ref)
+        repo, tag, digest = _split(ref)
         github, pypi = IMAGE_SOURCES.get(repo, ("", None))
-        out.append(Pin(repo, "image", _tag_version(tag), "deploy/*/compose.yaml",
-                       spec=ref, github=github, pypi=pypi or ""))
+        p = Pin(repo, "image", _tag_version(tag), "deploy/*/compose.yaml",
+                spec=ref, github=github, pypi=pypi or "")
+        name, got = live["images"].get(repo, ("", ""))
+        if not name:
+            p.notes.append("not running")
+        elif got == digest:
+            p.notes.append(f"running: {name} serves the declared digest")
+        else:
+            p.notes.append(f"running: {name} serves {got[:19] or 'an image with no repo digest'}, "
+                           f"NOT the declared {digest[:19]}; `ailocal check` reports the drift and "
+                           "a digest alone names no version to audit")
+        out.append(p)
 
     manifest = policy.data_root() / "deploy" / "ollama" / "patch.toml"
     spec = tomllib.loads(manifest.read_text(encoding="utf-8"))
     where = "deploy/ollama/patch.toml"
-    out.append(Pin(OLLAMA_MODULE, "go", spec["base_version"], where,
+    declared = Pin(OLLAMA_MODULE, "go", spec["base_version"], where,
                    spec=f"{OLLAMA_MODULE}@v{spec['base_version']} (patch base)",
-                   github=OLLAMA_REPO))
+                   github=OLLAMA_REPO)
+    out.append(declared)
+    ver = live["ollama"]
+    base = _tag_version(ver or "")
+    if ver is None:
+        out.append(Pin(OLLAMA_MODULE, "go", "", "running: /api/version", spec="Ollama (running)",
+                       github=OLLAMA_REPO, notes=["Ollama did not answer /api/version"]))
+    elif base == spec["base_version"]:
+        declared.notes.append(f"running: /api/version {ver}")
+    else:
+        declared.notes.append(f"running daemon is {ver}, not this base; audited separately below")
+        out.append(Pin(OLLAMA_MODULE, "go", base, "running: /api/version",
+                       spec=f"{OLLAMA_MODULE}@v{base} (running {ver})", github=OLLAMA_REPO))
     for mod, ver in spec.get("security_dependencies", {}).items():
         out.append(Pin(mod, "go", ver.lstrip("v"), f"{where} [security_dependencies]",
                        spec=f"{mod}@{ver}"))
@@ -252,6 +308,7 @@ def _osv(r: Result, ecosystem: str, name: str, version: str, fetch) -> None:
                      "summary": v.get("summary", ""), "fixed": fixed,
                      "severity": str((v.get("database_specific") or {})
                                      .get("severity", "")).lower(),
+                     "modified": v.get("modified", ""),
                      # OSV files malicious packages under MAL- (the OpenSSF feed).
                      "malicious": v["id"].startswith("MAL-")})
         token = d.get("next_page_token")
@@ -277,6 +334,7 @@ def _github(r: Result, repo: str, version: str, fetch) -> None:
                 _add(r, {"id": a.get("ghsa_id", ""), "aliases": [a["cve_id"]] if a.get("cve_id") else [],
                          "summary": a.get("summary", ""), "fixed": [patched] if patched else [],
                          "severity": str(a.get("severity") or "").lower(),
+                         "modified": a.get("updated_at", ""),
                          "malicious": a.get("type") == "malware"})
                 break
     r.sources.append(f"github.com/{repo} security advisories")
@@ -301,7 +359,8 @@ def _registry(r: Result, url: str, label: str, fetch, deprecated_key: str = "") 
 
 def check(p: Pin, fetch=None) -> Result:
     fetch = fetch or http
-    r = Result(p.name, p.kind, p.spec, p.version, p.declared_in, queried_at=_now())
+    r = Result(p.name, p.kind, p.spec, p.version, p.declared_in, queried_at=_now(),
+               notes=list(p.notes))
     if not p.version:
         r.result = UNVERIFIED
         r.notes.append("the declaration names no orderable version")
@@ -342,9 +401,24 @@ def report(fetch=None, pin_list: list[Pin] | None = None) -> dict:
              else AFFECTED if any(r.result == AFFECTED for r in results)
              else UNVERIFIED if any(r.result == UNVERIFIED for r in results)
              else CLEAN)
-    return {"schema_version": SCHEMA_VERSION, "project": "ailocal", "status": worst,
+    return {"schema_version": SCHEMA_VERSION, "project": "ailocal", "kind": "advisory-audit",
+            "mode": "local", "status": worst,
             "queried_at": _now(), "coverage_gaps": COVERAGE_GAPS,
             "results": [asdict(r) for r in results]}
+
+
+def record_path():
+    from . import policy
+    return policy.state_root() / "audit" / "local.json"
+
+
+def write_record(doc: dict):
+    """One record, overwritten on every run: the consumer wants the latest
+    answer and its time, not a history. Returns the path written."""
+    path = record_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(doc, indent=2) + "\n")
+    return path
 
 
 def exit_code(doc: dict) -> int:
@@ -391,10 +465,16 @@ def main(argv: list[str]) -> int:
         print("usage: ailocal audit [--json]")
         return 0
     doc = report()
+    try:
+        doc["record"] = str(write_record(doc))
+    except OSError as e:   # the audit's answer outranks its bookkeeping
+        print(f"audit record not written ({e}); Cadence will report it missing", file=sys.stderr)
     if "--json" in argv:
         print(json.dumps(doc, indent=2))
     else:
         _print(doc)
+        if doc.get("record"):
+            print(f"\n  Recorded at {doc['record']}; `cadence audit --local` merges it for a week.")
     return exit_code(doc)
 
 

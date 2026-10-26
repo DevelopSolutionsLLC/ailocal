@@ -9,6 +9,7 @@ The property under test is the one the audit exists for: a failed lookup is
 UNVERIFIED and never CLEAN, and a registry 404 is an answer (YANKED), not a
 failure.
 """
+import json
 import sys
 import tomllib
 from pathlib import Path
@@ -57,8 +58,22 @@ LITELLM = audit.Pin("ghcr.io/berriai/litellm", "image", "1.106.2", "compose",
 NET = audit.Pin("golang.org/x/net", "go", "0.60.0", "patch.toml")
 MERMAID = audit.Pin("mermaid", "npm", "11.17.2", "VERSIONS.txt")
 
+import os as _os  # noqa: E402
+import tempfile as _tempfile  # noqa: E402
+
+DECLARED_LITELLM = next(l.split("image:")[1].strip() for l in
+                        (ROOT / "src/ailocal/resources/deploy/litellm/compose.yaml").read_text().splitlines()
+                        if "image:" in l)
+
+
+def live(ollama="0.40.8-ailocal.18631.3", litellm=("ailocal-litellm", DECLARED_LITELLM.split("@", 1)[1])):
+    """A stub for what is running: never the machine, in the gate."""
+    return lambda: {"ollama": ollama, "images": {"ghcr.io/berriai/litellm": litellm,
+                                                  "searxng/searxng": ("", "")}}
+
+
 print("=== A: every pin comes from its source-of-truth file ===")
-found = {p.name: p for p in audit.pins()}
+found = {p.name: p for p in audit.pins(probe=live())}
 compose = (ROOT / "src/ailocal/resources/deploy/litellm/compose.yaml").read_text()
 check("the LiteLLM image is enumerated with its tag's version",
       found["ghcr.io/berriai/litellm"].version in compose)
@@ -73,6 +88,27 @@ check("every Ollama security dependency is enumerated",
 vendored = (ROOT / "src/ailocal/resources/integrations/local-artifacts/vendor/VERSIONS.txt")
 check("every vendored browser library is enumerated",
       all(line.split()[0] in found for line in vendored.read_text().splitlines() if line.strip()))
+
+print("\n=== A2: what is running is audited beside what is declared ===")
+check("a daemon on the declared base annotates the declared pin, no second pin",
+      [p for p in audit.pins(probe=live()) if p.name == audit.OLLAMA_MODULE][0].notes == ["running: /api/version 0.40.8-ailocal.18631.3"]
+      and sum(1 for p in audit.pins(probe=live()) if p.name == audit.OLLAMA_MODULE) == 1)
+drift = [p for p in audit.pins(probe=live(ollama="0.41.0")) if p.name == audit.OLLAMA_MODULE]
+check("a daemon on another base -> the running base is a second pin, audited at its own version",
+      len(drift) == 2 and drift[1].version == "0.41.0" and drift[1].declared_in == "running: /api/version"
+      and any("not this base" in n for n in drift[0].notes), drift)
+down = [p for p in audit.pins(probe=live(ollama=None)) if p.name == audit.OLLAMA_MODULE]
+check("a daemon that does not answer -> an unverified running pin, never a silent skip",
+      len(down) == 2 and down[1].version == "" and audit.check(down[1], fetcher()).result == audit.UNVERIFIED, down)
+imgs = {p.name: p for p in audit.pins(probe=live()) if p.kind == "image"}
+check("a container serving the declared digest says so; one not running says so",
+      imgs["ghcr.io/berriai/litellm"].notes == ["running: ailocal-litellm serves the declared digest"]
+      and imgs["searxng/searxng"].notes == ["not running"], imgs)
+imgs = {p.name: p for p in audit.pins(probe=live(litellm=("ailocal-litellm", "sha256:" + "0" * 64))) if p.kind == "image"}
+check("a container serving another digest is reported as drift, not audited by version",
+      any("NOT the declared" in n for n in imgs["ghcr.io/berriai/litellm"].notes), imgs)
+r = audit.check(imgs["ghcr.io/berriai/litellm"], fetcher())
+check("the running notes travel into the result", any("NOT the declared" in n for n in r.notes), r.notes)
 
 print("\n=== B: outcomes ===")
 r = run(LITELLM, fetcher())
@@ -121,6 +157,13 @@ check("an unparseable range is UNVERIFIED, not a miss", r.result == audit.UNVERI
 r = run(LITELLM, fetcher(github={"BerriAI/litellm": [ghsa("<1.0")] * 100}))
 check("a listing truncated at 100 is UNVERIFIED", r.result == audit.UNVERIFIED)
 
+mod = {"id": "GO-2026-1", "summary": "s", "affected": [], "modified": "2026-10-01T00:00:00Z"}
+r = run(NET, fetcher(osv={"golang.org/x/net": [mod]}))
+check("an advisory carries its modified time, so a consumer can tell a revision apart",
+      r.advisories[0]["modified"] == "2026-10-01T00:00:00Z", r.advisories)
+r = run(LITELLM, fetcher(github={"BerriAI/litellm": [{**ghsa(">= 1.0.0"), "updated_at": "2026-09-09T00:00:00Z"}]}))
+check("a publisher advisory's updated_at is its modified time", r.advisories[0]["modified"] == "2026-09-09T00:00:00Z")
+
 dup = {"id": "GHSA-test", "aliases": ["CVE-2026-1"], "summary": "s", "affected": []}
 r = run(LITELLM, fetcher(osv={"litellm": [dup]},
                          github={"BerriAI/litellm": [ghsa(">= 1.0.0")]}))
@@ -136,6 +179,20 @@ doc = audit.report(fetch=fetcher(status={"pypi.org": 404}, down=("osv.dev",)),
                    pin_list=[LITELLM, NET])
 check("a yank outranks unverified and exits 1",
       doc["status"] == audit.YANKED and audit.exit_code(doc) == 1)
+
+print("\n=== E: every run is recorded where the contract says ===")
+_os.environ["AILOCAL_STATE"] = _tempfile.mkdtemp(prefix="ailocal-audit-test-")
+doc = audit.report(fetch=fetcher(), pin_list=[LITELLM, NET])
+path = audit.write_record(doc)
+check("the record is state_root()/audit/local.json", path == Path(_os.environ["AILOCAL_STATE"]) / "audit" / "local.json")
+back = json.loads(path.read_text())
+check("the record is the report: schema 2, kind, mode, time and results",
+      back["schema_version"] == 2 and back["kind"] == "advisory-audit" and back["mode"] == "local"
+      and back["queried_at"].endswith("Z") and len(back["results"]) == 2, sorted(back))
+from ailocal import generation  # noqa: E402
+check("the contract publishes the record path, home-relative, and the refresh command",
+      generation._home_relative(Path.home() / ".local/state/ailocal/audit/local.json") == "~/.local/state/ailocal/audit/local.json"
+      and generation._home_relative(Path("/opt/x/local.json")) == "/opt/x/local.json")
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)
