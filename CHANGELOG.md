@@ -30,6 +30,7 @@ No migration step: the existing key keeps working, and keyless search is unchang
 
 ### Fixes
 
+- The gate refuses to run when the local-agent runtime is absent, naming `ailocal clients claude codex`; its own idempotency suite provisioned it mid-run, so the model-guidance suite failed on a fresh state root and passed on rerun. The registry suite no longer restates one tier's cyber window: it asserts the generated window's provenance and that it sits below the launch default's, which holds on every shipped profile.
 - Select official Ollama Qwen3.5 4B/9B MLX tags for the small-tier primary and large-tier fast roles, and use MLX for every listed alternative. Disable the pinned Qwen2.5-Coder MLX completion candidates until the native loader supports Qwen2; no GGUF fallback is configured. Generation now honors disabled roles, and the admission check chooses an enabled capability.
 - Classify the pinned unrestricted Qwen 4B/9B MLX backends in the conservative local gateway class instead of forwarding them as unknown models. Classification alone did not cure the earlier editing failures; coding evidence is recorded per exact backend.
 - Give local Codex models a complete native patch example, and select pinned reasoning-distilled 4B/9B MLX checkpoints for 16/32 GB Cyber after native Codex/Claude edit checks. Keep the existing Ollama/LiteLLM serving path and record the limited scope of those checks; no new runner patch or tool adapter is introduced.
