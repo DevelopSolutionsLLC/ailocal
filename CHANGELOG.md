@@ -4,6 +4,8 @@ Release policy and the meaning of each bump: [RELEASING.md](RELEASING.md).
 
 ## v0.14.0 (unreleased) — research routes itself, and Brave is budgeted
 
+- Give every capability without a built-in Claude Code slot a generated `modelPicker` row under its canonical `ailocal-<capability>` name, after the slotted lineup. `ailocal-cyber` was reachable in `claude-local` only as a gateway-discovered entry, and selecting it ran the model-guide hook with Claude Code's undocumented `claude-router-<hex>` spelling, which failed with `MODEL_GUIDANCE_UNKNOWN_MODEL`; the hook now resolves the documented `requested_model` and decodes that spelling as a last resort. Project the profile's compaction trigger into the window range Claude Code accepts (100k–1M, capped at the model window) by re-deriving the percentage, so the 16 GB profile compacts at its own 67K threshold instead of being clamped to 100k × 85% with a startup warning.
+
 - Record stock Ollama's startup preference before taking over its service, preserve it across reinstalls, and restore it after ailocal's agents stop during teardown. Failed restoration retains its receipt and runtime; older installs without an original-state record report an explicit recovery command.
 
 - Point the existing `ailocal-cyber` capability at pinned unrestricted Gemma 4 26B MLX on 64/128 GB profiles. The profile's native runtime requirement drives installer preparation automatically; no additional client alias is introduced.
