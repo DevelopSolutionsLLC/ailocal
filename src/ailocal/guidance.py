@@ -105,7 +105,7 @@ def main(argv=None) -> int:
         if unspecified:
             print("Active model was not supplied by the client. These are the active profile's "
                   "guides; apply only the entry matching the selected alias. "
-                  "local-agent.model_guide also provides the current limits and sources.")
+                  "The agent MCP's model_guide tool also provides the current limits and sources.")
             # No guessed default after resume, and no duplicate advice for weights
             # shared by several roles. Each alias still names its own limits.
             grouped = {}
