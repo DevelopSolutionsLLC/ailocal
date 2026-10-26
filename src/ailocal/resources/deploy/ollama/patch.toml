@@ -1,6 +1,9 @@
 # Reviewed Go-only backport; never apply to another upstream base.
 id = "gemma4-switch-glu"
 base_version = "0.40.8"
+# Why the base is held older than the ≈N-2 policy would pick: read by
+# `ailocal update`, which reports the base's N-position against upstream.
+hold = "the reviewed backport patches (18631, security, router, stop) target this exact base; a newer base needs them re-applied and the native regression re-run before it can be selected"
 version = "0.40.8-ailocal.18631.3"
 source_commit = "f580b5484a58c8370c35d669555bf887783a3f68"
 source_url = "https://codeload.github.com/ollama/ollama/tar.gz/f580b5484a58c8370c35d669555bf887783a3f68"

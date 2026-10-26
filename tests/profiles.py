@@ -490,6 +490,11 @@ def resolver_checks() -> None:
           "capabilities.json exists under the runtime root")
     check((P.deployed_client_root() / "integration-contract.json").exists(),
           "integration-contract.json exists in the config root Cadence reads")
+    _contract = json.loads((P.deployed_client_root() / "integration-contract.json").read_text())
+    check(_contract.get("schema_version") == 2
+          and _contract.get("audit", {}).get("record", "").endswith("audit/local.json")
+          and _contract.get("audit", {}).get("command") == "ailocal audit",
+          "the contract is schema 2 and publishes the audit record and its refresh command")
     check(not (REPO / "capabilities.generated.json").exists(),
           "no generated artefact remains in the checkout")
     caps = json.loads((_root / "litellm" / "capabilities.json").read_text())
