@@ -99,7 +99,10 @@ class GuidanceTests(unittest.TestCase):
 
     def test_real_sdk_exposes_readonly_guide_and_rejects_unknown_alias(self):
         py = policy.state_root() / 'local-agent/.venv/bin/python'
-        self.assertTrue(py.is_file(), 'provision local-agent before the integration check')
+        # `ailocal install --yes` leaves this runtime to `ailocal clients`; the
+        # gate refuses before any suite runs when it is absent (gate.py).
+        self.assertTrue(py.is_file(), f'local-agent runtime missing at {py}; '
+                        'run: ailocal clients claude codex')
         tmp = self.enterContext(tempfile.TemporaryDirectory())
         (Path(tmp) / 'active-profile').write_text('16gb\n')
         env = dict(os.environ, AILOCAL_CONFIG=str(RES), AILOCAL_STATE=tmp,

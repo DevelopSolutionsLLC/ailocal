@@ -66,8 +66,17 @@ check(d["routes"] == 3, f"all three routes described ({d['routes']})")
 if reg.backend_of("ailocal-cyber"):
     check(reg.model_class("ailocal-cyber")[0] == "local_cyber",
           "cyber is classified by its measured local backend")
-    check(reg.max_context("ailocal-cyber") == 32768,
-          "cyber has its own 32K context")
+    # INVARIANTS, not literals (see CONTEXT WINDOWS below). This asserted 32768,
+    # the 32 GB+ geometry; the shipped 16 GB cyber is 24576 + 4096, so the
+    # result depended on the operator's tier. [REAL] 2026-10-26: 41/42 after
+    # --reset-config. Durable: cyber has a window of its own, below the
+    # launch default's.
+    _cyber_ctx = reg.max_context("ailocal-cyber")
+    check("cyber" in reg.contexts and isinstance(_cyber_ctx, int) and _cyber_ctx > 0,
+          f"cyber's context comes from the generated file ({_cyber_ctx})")
+    check(_cyber_ctx < reg.max_context("ailocal-architecture"),
+          f"cyber has its own bounded window, below the launch default's "
+          f"({_cyber_ctx} < {reg.max_context('ailocal-architecture')})")
 check(d["contexts_from_generated"] >= 5,
       f"context windows come from the GENERATED file, not the registry "
       f"({d['contexts_from_generated']} found)")
