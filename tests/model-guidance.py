@@ -54,6 +54,56 @@ class GuidanceTests(unittest.TestCase):
         self.assertIn(policy.resolve_role('16gb', 'cyber', RES)['model'], out.getvalue())
         self.assertNotIn('Lead architect', out.getvalue())
 
+    def _hook(self, event: dict, tier: str = '16gb'):
+        with patch.dict(os.environ, {'AILOCAL_CONFIG': str(RES)}), \
+                patch.object(sys, 'stdin', io.StringIO(json.dumps(event))), \
+                contextlib.redirect_stdout(io.StringIO()) as out, \
+                contextlib.redirect_stderr(io.StringIO()) as err:
+            rc = guidance.main(['--tier', tier, '--hook'])
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_hook_resolves_the_observed_gateway_router_id_on_every_tier(self):
+        # [REAL] 2026-10-26, Claude Code 2.1.310: the PostModelSwitch hook ran
+        # as `PostModelSwitch:claude-router-61696c6f63616c2d6379626572` after
+        # selecting ailocal-cyber from the gateway-discovered rows, and the
+        # hook exited 2 with MODEL_GUIDANCE_UNKNOWN_MODEL. The hex is the id.
+        # Every tier owns a different cyber backend and guide, so each must
+        # resolve the same payload to its own entry.
+        router = 'claude-router-' + 'ailocal-cyber'.encode().hex()
+        self.assertEqual(router, 'claude-router-61696c6f63616c2d6379626572')
+        for tier in policy.TIERS:
+            with self.subTest(tier=tier):
+                cyber = policy.resolve_role(tier, 'cyber', RES)
+                self.assertTrue(cyber['enabled'], f'{tier}: cyber is not enabled')
+                guide = policy.guidance_for(policy.load_profile(tier, RES), 'cyber')
+                self.assertNotIn('No model-specific guidance', guide['summary'],
+                                 f'{tier}: cyber backend {cyber["model"]} has no guide')
+                rc, out, err = self._hook({'hook_event_name': 'PostModelSwitch',
+                                           'to_model': router, 'requested_model': router,
+                                           'source': 'picker'}, tier)
+                self.assertEqual((rc, err), (0, ''))
+                self.assertIn(f'Local model guide: ailocal-cyber ({cyber["model"]})', out)
+                self.assertIn(f'Profile limits: {cyber["context_input"]} input tokens, '
+                              f'{cyber["max_output"]} maximum output tokens', out)
+                self.assertNotIn('Lead architect', out)
+
+    def test_hook_falls_back_to_the_documented_requested_model(self):
+        # hooks#premodelswitch-input: `requested_model` is the alias or id the
+        # request named. It is consulted when `to_model` resolves to nothing.
+        rc, out, _ = self._hook({'hook_event_name': 'PostModelSwitch',
+                                 'to_model': 'claude-router-zz', 'requested_model': 'opus'})
+        self.assertEqual(rc, 0)
+        self.assertIn('ailocal-architecture', out)
+        self.assertEqual(guidance.hook_model_candidates(
+            {'to_model': 'claude-router-zz', 'requested_model': 'opus'}),
+            ['claude-router-zz', 'opus'])
+
+    def test_hook_still_refuses_an_unknown_model(self):
+        rc, _, err = self._hook({'hook_event_name': 'PostModelSwitch',
+                                 'to_model': 'claude-router-' + 'not-served'.encode().hex()})
+        self.assertEqual(rc, 2)
+        self.assertIn('MODEL_GUIDANCE_UNKNOWN_MODEL', err)
+
     def test_missing_model_is_explicit_not_wrong_default(self):
         with patch.dict(os.environ, {'AILOCAL_CONFIG': str(RES)}), \
                 patch.object(sys, 'stdin', io.StringIO('{}')), \

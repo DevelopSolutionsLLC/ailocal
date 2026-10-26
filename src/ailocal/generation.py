@@ -531,6 +531,70 @@ def regen_configure_zsh(clients):
     return True
 
 
+#: The auto-compact window Claude Code accepts, in tokens. Documented at
+#: code.claude.com/docs/en/model-config#claude_code_auto_compact_window-values:
+#: a value outside this range is clamped with a startup warning, and the
+#: session then compacts at the smaller of 100,000 and the model's window,
+#: not at the profile's threshold. [REAL] 2026-10-26, Claude Code 2.1.310 on
+#: the 16 GB profile: `CLAUDE_CODE_AUTO_COMPACT_WINDOW="79872" reads as 79,872
+#: tokens, so Claude Code treats it as the 100k minimum`, so the 67,891-token
+#: trigger the profile owns became 100,000 x 85% = 85,000.
+CLAUDE_COMPACT_FLOOR = 100_000
+CLAUDE_COMPACT_CEIL = 1_000_000
+
+
+def claude_compaction(window: int, pct: int, total_context: int) -> dict:
+    """Project the profile's compaction trigger into Claude Code's contract.
+
+    The trigger is `window x pct`; the profile owns both numbers. Claude Code
+    applies `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` to its auto-compact window, and
+    accepts that window only inside [FLOOR, CEIL] capped at the model window.
+    So the window is clamped into what the client accepts and the percentage
+    is re-derived against it, which keeps the trigger (rounded down to a whole
+    percent) instead of the literal numbers: a profile window the client
+    would clamp otherwise fires compaction at 100,000 x pct, later than
+    intended. `window` is None when the model window itself lies below the
+    floor; then the variable is omitted and the documented default applies,
+    which is to compact at the assumed window (`CLAUDE_CODE_MAX_CONTEXT_TOKENS`).
+    """
+    target = window * pct // 100
+    base = min(max(window, CLAUDE_COMPACT_FLOOR), CLAUDE_COMPACT_CEIL, total_context)
+    eff_pct = max(1, min(100, target * 100 // base))
+    return {"target": target, "base": base, "pct": eff_pct,
+            "trigger": base * eff_pct // 100,
+            "window": base if base >= CLAUDE_COMPACT_FLOOR else None}
+
+
+def claude_picker_rows(models, clients):
+    """`modelPicker` rows for every capability no built-in slot reaches.
+
+    Claude Code's /model picker lists the slotted capabilities as its own
+    rows (Opus/Sonnet/Haiku/Fable, through ANTHROPIC_DEFAULT_*_MODEL in
+    configure.zsh). A capability outside `slots` is reachable only through
+    gateway discovery, which [REAL] 2026-10-26, Claude Code 2.1.310, listed
+    `ailocal-cyber` around row 20 as a "From gateway" entry and then switched
+    to it under the undocumented `claude-router-<hex>` id (see guidance.py).
+    `modelPicker` (settings-reference#modelpicker, v2.1.242+) adds labelled
+    rows after the built-in lineup with the model id taken verbatim, so the
+    capability keeps its canonical name on every path. Derived from
+    clients.toml and the profile; nothing here names a capability.
+    """
+    slotted = set((clients.get("claude") or {}).get("slots", {}).values())
+    rows = []
+    for name, info in models.items():
+        if name in slotted:
+            continue
+        geometry = _geom(info)
+        rows.append({
+            "model": mn(name),
+            "label": mn(name),
+            "description": (f"{info.get('role', name)}: {geometry['context_input']} input / "
+                            f"{geometry['max_output']} output tokens"
+                            f"{', thinking' if info.get('reasoning') else ''}"),
+        })
+    return rows
+
+
 def regen_claude_settings(models, clients):
     """settings.json is CO-OWNED: Claude Code writes to it too.
 
@@ -538,8 +602,11 @@ def regen_claude_settings(models, clients):
     generator that rewrites it from the template alone silently disables the
     Python LSP baseline on every `ailocal start`. The shipped template supplies
     the defaults, anything already on disk wins over the template, and only the
-    keys ailocal actually owns — `model`, `//`, and the two compaction env
-    vars — are then overwritten.
+    keys ailocal actually owns — `model`, `//`, `modelPicker`, and the
+    compaction and geometry env vars — are then overwritten. `model` is reset
+    to the launch default on purpose: Claude Code saves the last selection
+    there, and [REAL] 2026-10-26 that selection was the undocumented
+    `claude-router-<hex>` spelling of a gateway model.
     """
     if not CLAUDE_SETTINGS_TPL.exists():
         return False
@@ -594,12 +661,25 @@ def regen_claude_settings(models, clients):
     # llama_cpp backend that produced them.
     # The model maximum is unchanged and still available for one-shot work.
     win, pct = COMPACTION.get("window"), COMPACTION.get("pct")
+    out_geom = _geom(models[default])
     if win and pct:
-        data.setdefault("env", {})["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = str(win)
-        data["env"]["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(pct)
+        compact = claude_compaction(int(win), int(pct), out_geom["total_context"])
+        env = data.setdefault("env", {})
+        if compact["window"] is None:
+            # Below the client's floor even after clamping: the documented
+            # behaviour without the variable is to compact at the assumed
+            # window, which CLAUDE_CODE_MAX_CONTEXT_TOKENS declares below.
+            # A value left over from an earlier generation would warn.
+            env.pop("CLAUDE_CODE_AUTO_COMPACT_WINDOW", None)
+        else:
+            env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = str(compact["window"])
+        env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(compact["pct"])
         data["//"].append(
-            f"Auto-compaction: window {win} x {pct}% = {int(win)*int(pct)//100} tokens "
-            f"(profile-owned). NOT the model limit - architecture keeps its full context.")
+            f"Auto-compaction: profile window {win} x {pct}% = {compact['target']} tokens; "
+            f"projected as window {compact['base']} x {compact['pct']}% = "
+            f"{compact['trigger']} tokens, because Claude Code accepts a window of "
+            f"{CLAUDE_COMPACT_FLOOR}-{CLAUDE_COMPACT_CEIL} capped at the model window. "
+            "NOT the model limit - architecture keeps its full context.")
     # Output ceiling, from the SAME max_output the geometry already hands
     # LiteLLM as num_predict. Without it the two ends disagreed:
     # [REAL] Claude Code 2.1.224 sends max_tokens 32000 by default (captured
@@ -619,7 +699,6 @@ def regen_claude_settings(models, clients):
     #
     # Derived, never configured — a second number here would drift from the
     # profile the way the retired figures above did.
-    out_geom = _geom(models[default])
     if not out_geom["max_output"]:
         raise SystemExit(
             f"invalid geometry: claude launch_default '{default}' declares no "
@@ -660,6 +739,18 @@ def regen_claude_settings(models, clients):
             "Slots Claude Code cannot declare separately (process-wide vars "
             f"describe {mn(default)} only): "
             + ", ".join(f"{n} admits {v}" for n, v in smaller))
+    # Picker rows for the capabilities no slot reaches. Owned: rewritten on
+    # every generation and removed when every capability has a slot, so a
+    # retired capability never lingers as a row the gateway no longer serves.
+    rows = claude_picker_rows(models, clients)
+    if rows:
+        data["modelPicker"] = {"options": rows}
+        data["//"].append(
+            "Picker rows (modelPicker, after the slotted lineup): "
+            + ", ".join(r["model"] for r in rows)
+            + ". Discovery still lists every gateway model further down.")
+    else:
+        data.pop("modelPicker", None)
     # Retire keys ailocal used to write. `env` merges live-over-template so that
     # Claude Code's own additions survive regeneration — which also means simply
     # deleting a key from the template never reaches an existing install: it
