@@ -78,8 +78,8 @@ check(d["contexts_from_generated"] >= 5,
 check(d["aliases"] > 0, f"model_group_alias loaded ({d['aliases']})")
 
 print("\nMODEL CLASSIFICATION")
-for backend in ("ailocal-qwen3.5-4b-coder-uncensored:mlx-a0cd614",
-                "ailocal-qwen3.5-9b-coder-uncensored:mlx-7fed86c"):
+for backend in ("qwen3.5-4b-uncensored-mlx",
+                "qwen3.5-9b-uncensored-mlx"):
     small = cr.Registry(path=REG_YAML, caps_json=CAPS, config_path=CONF)
     small.backends["cyber"] = backend
     check(small.model_class("ailocal-cyber")[0] == "local_cyber",

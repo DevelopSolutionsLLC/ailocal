@@ -145,11 +145,11 @@ repeat_penalty = 1.0
 # https://huggingface.co/Qwen/Qwen3.5-4B#best-practices
 [cyber]
 role = "Unrestricted coding (separate model)"
-active = "ailocal-qwen3.5-4b-coder-uncensored:mlx-a0cd614"
+active = "qwen3.5-4b-uncensored-mlx"
 runtime_patch = "gemma4-switch-glu"  # native compatibility bundle also enforces MLX stops
 source = { repository = "mlx-community/Huihui-Qwen3.5-4B-Claude-4.6-Opus-abliterated-4bit", revision = "a0cd61406062a7bee31fc995a806fdb876f318ed" }
 stop = ["<|im_end|>", "<|im_start|>"]
-preferred = ["ailocal-qwen3.5-4b-coder-uncensored:mlx-a0cd614"]
+preferred = ["qwen3.5-4b-uncensored-mlx"]
 reasoning = false
 context_input = 122880
 max_output = 8192
@@ -202,7 +202,7 @@ limitations = ["MLX weights exist, but native load and fill-in-the-middle behavi
 evidence = "[UNVERIFIED] Source metadata inspected; this candidate is disabled and has not been installed or validated."
 sources = ["https://huggingface.co/mlx-community/Qwen2.5-Coder-1.5B-4bit"]
 
-[model_guidance."ailocal-qwen3.5-4b-coder-uncensored:mlx-a0cd614"]
+[model_guidance."qwen3.5-4b-uncensored-mlx"]
 name = "Qwen3.5 4B Opus-distilled abliterated"
 summary = "Unrestricted Qwen3.5 4B reasoning-distilled MLX conversion; verify edits with real tests."
 prompting = ["Give one bounded change with relevant file paths, explicit requirements and acceptance examples.","Read the real files, make the edit with native client tools, and run the unchanged tests. Report actual failures rather than claiming completion from an intended edit."]

@@ -738,13 +738,15 @@ def pull_models() -> int:
                     raise SystemExit("conflicting source declarations for one model")
                 sources[cfg["model"]] = cfg["source"]
 
+    from .model_sources import current
     have = _installed_models()
     def size_of(tag):
         for name, gb in have.items():
             # Only an omitted :latest is equivalent. A shared model-name
             # prefix does not establish the requested runner/quantization.
             if name == tag or name == f"{tag}:latest" or f"{name}:latest" == tag:
-                return gb, True
+                # An imported tag is present only as the pinned revision.
+                return gb, tag not in sources or current(tag, sources[tag])
         return 0.0, False
 
     step("Model set for this profile")
