@@ -335,7 +335,7 @@ model_classes:
   local_cyber:
     # Exactly the cyber backends the shipped profiles select; a retired backend
     # is removed here with its profile entry.
-    match_models: ["gemma4-26b-uncensored-mlx", "qwen3.5-4b-uncensored-mlx", "qwen3.5-9b-uncensored-mlx"]
+    match_models: ["gemma4:26b-uncensored-mlx", "qwen3.5:4b-uncensored-mlx", "qwen3.5:9b-uncensored-mlx"]
     supports_tools: true
     supports_mcp: true
     supports_parallel_tools: false

@@ -270,14 +270,14 @@ ailocal measures your Mac's memory and chooses a profile automatically. You do n
 
 | Memory | Main model | Context window | Models on disk |
 |---|---|---|---|
-| 16 GB | `qwen3.5:4b-mlx` | 128K | ~8 GB |
-| 32 GB | `qwen3.5:9b-mlx` | 256K | ~16 GB (calculated, not yet measured on hardware) |
-| 64 GB | `gemma4:26b-mlx` | 256K | ~42 GB |
-| 128 GB | `gemma4:26b-mlx` | 256K | ~42 GB (sized from model limits, not yet measured on hardware) |
+| 16 GB | `qwen3.5:4b-mlx` | 128K | ~9 GB |
+| 32 GB | `qwen3.5:9b-mlx` | 256K | ~17 GB (calculated, not yet measured on hardware) |
+| 64 GB | `gemma4:26b-mlx` | 256K | ~44 GB |
+| 128 GB | `gemma4:26b-mlx` | 256K | ~44 GB (sized from model limits, not yet measured on hardware) |
 
-All enabled shipped backends use MLX, including the fast capability and unrestricted variants. Each tier admits as much context as its memory holds, up to the model's native 256K window; the rule and its evidence are in [architecture](docs/architecture.md#geometry). Every chat capability on a tier, Cyber included, shares that tier's window. To override the detected tier: `ailocal profile use 32gb`, then `ailocal start`.
+Every chat backend uses MLX, including the fast capability and unrestricted variants. Each tier admits as much context as its memory holds, up to the model's native 256K window; the rule and its evidence are in [architecture](docs/architecture.md#geometry). Every chat capability on a tier, Cyber included, shares that tier's window. To override the detected tier: `ailocal profile use 32gb`, then `ailocal start`.
 
-Inline autocomplete is `ailocal-completion`, Qwen2.5-Coder 1.5B on MLX on every tier. Install imports the first-party checkpoint at a pinned revision, quantizes it to mxfp8 and adds its fill-in-the-middle template. Serving it requires the patched Ollama runtime, which adds the Qwen2 MLX loader. Through the proxy, send one prompt already formatted as `<|fim_prefix|>…<|fim_suffix|>…<|fim_middle|>`: LiteLLM drops a separate `suffix` field. Ollama's own `/api/generate` accepts `prompt` and `suffix` directly.
+Inline autocomplete (`ailocal-completion`) is the one non-MLX role: it serves the official GGUF base tags `qwen2.5-coder:1.5b-base` (16/32 GB, ~1 GB) and `qwen2.5-coder:3b-base` (64/128 GB, ~2 GB; Qwen Research License, non-commercial). Ollama's MLX runner has no Qwen2 loader, and only the base tags complete a fill-in-the-middle prompt sent through the proxy. Send the prompt pre-formatted as `<|fim_prefix|>…<|fim_suffix|>…<|fim_middle|>`; LiteLLM drops a separate `suffix`. Evidence is in [maintenance](docs/maintenance.md#inline-completion).
 
 A long conversation compacts automatically before it reaches that window. Your client does the compacting at its own default point; ailocal only tells it the window the backend admits.
 

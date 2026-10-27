@@ -204,18 +204,20 @@ presence_penalty = 1.5
   # Deliberate low-temperature role setting; not a guarantee of determinism.
 # ── completion — inline autocomplete (FIM) ───────────────────────────────────
 [completion]
-role = "Autocomplete"
-active = "qwen2.5-coder-1.5b-mlx"
-  # First-party bf16 weights quantized at import: mlx-community conversions omit
-  # quantization.mode and fail to load (ollama/ollama#19135). Qwen2 needs the
-  # runtime bundle's loader. The 3B is under the non-commercial Qwen Research
-  # License; the 1.5B is Apache-2.0.
-source = { repository = "Qwen/Qwen2.5-Coder-1.5B", revision = "df3ce67c0e24480f20468b6ef2894622d69eb73b", quantize = "mxfp8", template = "{{- if .Suffix }}<|fim_prefix|>{{ .Prompt }}<|fim_suffix|>{{ .Suffix }}<|fim_middle|>{{- else }}{{ .Prompt }}{{- end }}" }
-runtime_patch = "gemma4-switch-glu"
-  # Native FIM tokens are ordinary vocabulary to the MLX runner, which would
-  # otherwise emit <|fim_pad|> to max_output. Imported with the template too.
-stop = ["<|endoftext|>", "<|fim_pad|>", "<|file_sep|>", "<|repo_name|>", "<|fim_prefix|>", "<|fim_suffix|>", "<|fim_middle|>", "<|im_end|>"]
-preferred = ["qwen2.5-coder-1.5b-mlx"]
+role = "Autocomplete (FIM)"
+  # SEPARATE MODEL ON PURPOSE. The primary is an instruct model without FIM/insert
+  # tokens, so it cannot do inline completion at all, and IDE completion needs
+  # latency the primary cannot meet. qwen2.5-coder carries native FIM tokens.
+active = "qwen2.5-coder:3b-base"
+  # The official BASE tag, not the instruct one. Proxy clients reach Ollama
+  # through LiteLLM, which drops `suffix` (BerriAI/litellm#6900) and sends the
+  # client's FIM-formatted prompt as a chat message. The base template passes
+  # it through; the instruct template wraps it in a user turn and infill fails.
+  # GGUF, not MLX: Ollama's MLX runner has no Qwen2 loader, and the GGUF decodes
+  # faster with the same fidelity (docs/maintenance.md#inline-completion).
+  # Qwen Research License (non-commercial), unlike the Apache-2.0 1.5B.
+stop = ["<|endoftext|>", "<|fim_pad|>", "<|file_sep|>", "<|repo_name|>", "<|fim_prefix|>", "<|fim_suffix|>", "<|fim_middle|>"]
+preferred = ["qwen2.5-coder:3b-base", "qwen2.5-coder:1.5b-base"]
 reasoning = false
 context_input = 3968
   # max_output 512, raised from 128. A FIM suggestion is a few lines, not a
@@ -223,9 +225,11 @@ context_input = 3968
   # still far too small to be used as a chat role, which is the point.
 max_output = 512
 temperature = 0.1
+  # Rotating, not pinned: self-unloads after 2h idle rather than staying resident
+  # beside the primary indefinitely. ~2 GB footprint keeps this cheap to reload.
 keep_alive = "2h"
-purpose = ["inline completion", "FIM", "quick syntax fixes"]
-strengths = ["native FIM tokens", "fast", "~1.8 GB footprint"]
+purpose = ["inline completion", "FIM", "quick syntax fixes", "small transforms"]
+strengths = ["native FIM tokens", "very fast", "~2 GB footprint"]
 weaknesses = ["no reasoning", "short context", "not for chat"]
 top_p = 0.9
 top_k = 20
@@ -242,7 +246,7 @@ repeat_penalty = 1.0
 # https://huggingface.co/google/gemma-4-26B-A4B-it
 [cyber]
 role = "Unrestricted coding"
-active = "gemma4-26b-uncensored-mlx"
+active = "gemma4:26b-uncensored-mlx"
 source = { repository = "00cyre/Gemma-4-26B-A4B-it-Uncensored-MLX-4bit", revision = "46ab84dbe20198a2ee5e66c3e69c039b8c60ad59" }
 runtime_patch = "gemma4-switch-glu"
 reasoning = true
@@ -278,15 +282,15 @@ evidence = "[REAL] On the 64 GB host, Ollama 0.40.8-ailocal.18631.3 loaded the o
 summary = "Qwen3.5 9B MLX: keep tasks bounded and verify edits with real tools."
 sources = ["https://ollama.com/library/qwen3.5:9b-mlx","https://huggingface.co/Qwen/Qwen3.5-9B#best-practices"]
 
-[model_guidance."qwen2.5-coder-1.5b-mlx"]
-name = "Qwen2.5-Coder 1.5B (MLX mxfp8)"
-summary = "Fill-in-the-middle autocomplete: a base model with native FIM tokens, not a chat or agent model."
-prompting = ["Through ailocal-completion, send one prompt already formatted as <|fim_prefix|>PREFIX<|fim_suffix|>SUFFIX<|fim_middle|>; the proxy drops a separate suffix field. Ollama /api/generate accepts prompt and suffix directly.", "Keep requests short and local to the cursor; it has no instruction tuning."]
-limitations = ["No chat template, tool calling or reasoning.", "A client-supplied stop list replaces the imported one; it must still include <|endoftext|> and <|fim_pad|>.", "Quality is a 1.5B model's: plausible local completions, not repository understanding."]
-evidence = "[REAL] 2026-10-26, 64 GB host, Ollama 0.40.8-ailocal.18631.4 with the Qwen2 MLX loader patch: the mxfp8 import loaded as architecture qwen2, and an executable 10-case FIM battery passed 10/10 directly through /api/generate with suffix (0.38 s warm median) and 10/10 through ailocal-completion with a client-formatted FIM prompt (0.33 s). [REAL] LiteLLM v1.106.2 drops suffix on /v1/completions; a request with suffix ran to num_predict. [APPROX] 80-case single-line infill prototype on the same host: bf16 10/80 exact, mxfp8 10/80 (58/80 agree with bf16), nvfp4 7/80, GGUF Q4_K_M 6/80; GGUF was about 1.6x faster warm. [UNVERIFIED] Memory fit on 16 GB hardware."
-sources = ["https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B", "https://github.com/QwenLM/Qwen2.5-Coder#3-file-level-code-completion-fill-in-the-middle", "https://github.com/ollama/ollama/issues/19135", "https://github.com/BerriAI/litellm/issues/6900"]
+[model_guidance."qwen2.5-coder:3b-base"]
+name = "Qwen2.5-Coder 3B base"
+summary = "Fill-in-the-middle autocomplete only; send a FIM-formatted prompt, never a chat request."
+prompting = ["Format the request as <|fim_prefix|>prefix<|fim_suffix|>suffix<|fim_middle|>; the proxy drops a separate suffix field.","Send as much surrounding prefix and suffix as the 3,968-token input allows; context, not instructions, is what improves a completion.","Stop at the end of the line or block the editor needs; temperature 0.1 keeps suggestions stable."]
+limitations = ["A base model: it follows no instructions and has no system prompt, so pre-prompting does not improve it.","Qwen Research License: non-commercial use only.","Exact-match fidelity on single-line infill is low at this size; treat suggestions as drafts."]
+evidence = "[REAL] 2026-10-26, MacBook Air M4 16 GB under memory pressure (11 GB swap in use), Ollama 0.40.8-ailocal.18631.3: on 80 held-out single-line infills from this repository plus 10 executable FIM cases, sent as a FIM-formatted chat message the way the proxy forwards it, qwen2.5-coder:3b-base scored 9/80 exact, 0.571 similarity, 10/10 executable, 3.3 s p50, 32 tok/s; the 1.5B base scored 10/80, 0.549 and 10/10 at about twice the speed. The instruct tag scored 0/80 and 0/10 on this path because its chat template wraps the prompt. [UNVERIFIED] Latency on 64/128 GB hardware; this host is not the target tier."
+sources = ["https://ollama.com/library/qwen2.5-coder:3b-base","https://huggingface.co/Qwen/Qwen2.5-Coder-3B","https://github.com/BerriAI/litellm/issues/6900"]
 
-[model_guidance."gemma4-26b-uncensored-mlx"]
+[model_guidance."gemma4:26b-uncensored-mlx"]
 name = "Gemma 4 26B-A4B uncensored"
 prompting = ["Give one bounded coding change with relevant source, explicit acceptance criteria and real test output.","Use the client's tools for inspection and verification; return exact errors for a bounded repair attempt.","Use non-thinking mode for simple requests when appropriate; reserve thinking for work that benefits from it."]
 limitations = ["Upstream describes this conversion as refusal-validated and capability-unverified, and observed a garbled token; verify every API and claim against the real code.","Text-only conversion; do not send images or audio.","Keep earlier turns' thinking out of history except on tool-call turns, as Google's Gemma 4 card advises.","Native Codex edit pilots produced invalid patch formatting; verify actual file changes and tests rather than trusting client exit status.","Short direct-provider checks do not establish repository-scale reliability or full-window performance.","A benign non-refusal is not evidence of universal non-refusal or coding correctness."]

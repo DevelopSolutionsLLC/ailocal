@@ -104,30 +104,6 @@ def main() -> None:
                   and create.call_args_list[0].kwargs["env"]["OLLAMA_MODELS"]
                   == str(M.policy.ollama_model_store()),
                   "Ollama native create owns import, without force or a replacement backend")
-        stops = ["<|endoftext|>", "<|fim_pad|>"]
-        check(M.recipe(source, stops) == source,
-              "a chat checkpoint imports no role stops, so existing receipts stay current")
-        fim = M.recipe({**source, "quantize": "mxfp8", "template": "{{ .Suffix }}"}, stops)
-        written = {}
-        def create_fim(args, **kwargs):
-            if args[1] == "create":
-                written["modelfile"] = Path(args[args.index("-f") + 1]).read_text()
-            return SimpleNamespace(returncode=0)
-        with patch.object(M.subprocess, "run", side_effect=create_fim) as create, \
-                patch.object(M, "verify_load", return_value=True), \
-                patch.object(M, "_digest", return_value="sha256:fim"):
-            check(M.install("fixture:fim", fim), "a quantized FIM recipe imports")
-            check(create.call_args_list[0].args[0][-2:] == ["-q", "mxfp8"]
-                  and 'TEMPLATE """{{ .Suffix }}"""' in written["modelfile"]
-                  and 'PARAMETER stop "<|fim_pad|>"' in written["modelfile"],
-                  "the import applies the recipe's quantization, template and stops")
-            check(M.current("fixture:fim", fim), "the full recipe is receipted")
-            for label, changed in (("quantization", {**fim, "quantize": "nvfp4"}),
-                                   ("template", {**fim, "template": "x"}),
-                                   ("stop list", {**fim, "stop": ["<|endoftext|>"]}),
-                                   ("recipe-less source", source)):
-                check(not M.current("fixture:fim", changed),
-                      f"a changed {label} makes the imported tag stale")
         files["model.safetensors"] = b'corrupt-weights'
         try:
             M.fetch(source)

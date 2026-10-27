@@ -37,17 +37,15 @@ def ollama_runtime_root() -> Path:
             else _xdg("XDG_DATA_HOME", ".local", "share") / "ailocal" / "runtimes")
 
 
-# Applied in this order; each `<name>_file` has a `<name>_sha256` pin.
-OLLAMA_PATCHES = ("patch", "security_patch", "router_patch", "stop_patch", "qwen2_patch")
-
-
 def ollama_patch_spec() -> dict:
     """The reviewed, immutable source and patch declaration shipped with ailocal."""
     root = data_root() / "deploy" / "ollama"
     with (root / "patch.toml").open("rb") as stream:
         spec = tomllib.load(stream)
-    for name in OLLAMA_PATCHES:
-        spec[f"{name}_file"] = root / spec[f"{name}_file"]
+    spec["patch_file"] = root / spec["patch_file"]
+    spec["security_patch_file"] = root / spec["security_patch_file"]
+    spec["router_patch_file"] = root / spec["router_patch_file"]
+    spec["stop_patch_file"] = root / spec["stop_patch_file"]
     return spec
 
 
@@ -154,8 +152,6 @@ LEGACY_CONTEXT_FIELD = "context"
 #:   num_predict    -> DERIVED from max_output by geometry(); never configured
 #:   keep_alive     -> None; omitted, Ollama default applies
 #:   preferred/purpose/strengths/weaknesses -> [] (documentation only)
-# `ollama create -q` targets for Safetensors imports (cmd/create_safetensors.go, 0.40.8).
-IMPORT_QUANTIZATIONS = ("nvfp4", "mxfp8", "mxfp4", "int4", "int8")
 OPTIONAL_ROLE_FIELDS = ("provider", "source", "runtime_patch", "stop", "max_output", "reasoning", "temperature",
                         "top_p", "top_k", "min_p", "presence_penalty",
                         "repeat_penalty", "keep_alive",
@@ -503,19 +499,10 @@ def _validate_role(role: str, cfg) -> None:
             or not all(isinstance(token, str) and token for token in cfg["stop"])):
         raise ProfileError(PROFILE_SCHEMA_INVALID, f"{role}.stop must be a nonempty string list")
     if source is not None and (
-            not isinstance(source, dict) or not {"repository", "revision"} <= set(source)
-            or not set(source) <= {"repository", "revision", "quantize", "template"}
+            not isinstance(source, dict) or set(source) != {"repository", "revision"}
             or not re.fullmatch(r"[\w.-]+/[\w.-]+", str(source.get("repository", "")))
             or not re.fullmatch(r"[0-9a-f]{40}", str(source.get("revision", "")))):
         raise ProfileError(PROFILE_SCHEMA_INVALID, f"{role}.source requires a repository and pinned commit")
-    if source is not None and source.get("quantize", "nvfp4") not in IMPORT_QUANTIZATIONS:
-        raise ProfileError(PROFILE_SCHEMA_INVALID,
-                           f"{role}.source.quantize must be one of {', '.join(IMPORT_QUANTIZATIONS)}")
-    if source is not None and "template" in source and (
-            not isinstance(source["template"], str) or not source["template"]
-            or '"""' in source["template"] or not cfg.get("stop")):
-        # A raw template has no chat-format terminator; its stops are imported with it.
-        raise ProfileError(PROFILE_SCHEMA_INVALID, f"{role}.source.template requires a nonempty template and stop")
     ci = cfg.get("context_input")
     if not isinstance(ci, int) or ci <= 0:
         raise ProfileError(ROLE_CONFIG_INVALID, f"{role}.context_input invalid")

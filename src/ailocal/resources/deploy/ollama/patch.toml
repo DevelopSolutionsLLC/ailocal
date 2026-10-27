@@ -3,8 +3,8 @@ id = "gemma4-switch-glu"
 base_version = "0.40.8"
 # Why the base is held older than the ≈N-2 policy would pick: read by
 # `ailocal update`, which reports the base's N-position against upstream.
-hold = "the reviewed backport patches (18631, security, router, stop, qwen2) target this exact base; a newer base needs them re-applied and the native regression re-run before it can be selected"
-version = "0.40.8-ailocal.18631.4"
+hold = "the reviewed backport patches (18631, security, router, stop) target this exact base; a newer base needs them re-applied and the native regression re-run before it can be selected"
+version = "0.40.8-ailocal.18631.3"
 source_commit = "f580b5484a58c8370c35d669555bf887783a3f68"
 source_url = "https://codeload.github.com/ollama/ollama/tar.gz/f580b5484a58c8370c35d669555bf887783a3f68"
 source_sha256 = "3b78aa7e3c95682f41ada1dcbd106567796c9151dfc7758e1ae34a85fc58271a"
@@ -24,11 +24,6 @@ router_patch_file = "router.patch"
 router_patch_sha256 = "9a2ea86d3c3901c4a0bd2c464d1e5ac0eeeef2e8a69999d0f5f1bd1e872fe881"
 stop_patch_file = "stop.patch"
 stop_patch_sha256 = "792e86da2683541499331512ce21b7cca37ac0675747f033534a2b87b330a0d2"
-# The MLX runner registers no Qwen2ForCausalLM, so every Qwen2.5-Coder import
-# fails to load (absent from 0.40.8, main and v0.40.12-rc0 when checked
-# 2026-10-26; no upstream PR). Qwen3 minus Q/K RMSNorm, plus Q/K/V biases.
-qwen2_patch_file = "qwen2.patch"
-qwen2_patch_sha256 = "693b47028a789e7eb0c7ca80c6f0125d8025ada2c30b7dfc1a4eb1843653557a"
 # MLX's native decode loop ignored Options.Stop; enforce request-local stops
 # before streaming or generating further turns, including split-token markers.
 # Pinned 00cyre checkpoint declares INT8 routers inside its global INT4 config.

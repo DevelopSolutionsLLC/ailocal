@@ -107,7 +107,7 @@ def server_log():
 #: block cross-checked against the publisher's model card. NOT the profile's
 #: values. `think` follows the model's documented mode for coding work.
 CANDIDATES = {
-    "gemma4-26b-uncensored-mlx": {
+    "gemma4:26b-uncensored-mlx": {
         "label": "64/128 GB Cyber — unrestricted Gemma MLX, patched runtime required",
         "options": {"temperature": 1.0, "top_k": 64, "top_p": 0.95,
                     "min_p": 0.0, "presence_penalty": 0.0, "repeat_penalty": 1.0},
