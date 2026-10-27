@@ -140,20 +140,32 @@ def provision_documentation(names=("claude", "codex")) -> bool:
     return success
 
 
-def provision_local_agent(names=("claude", "codex")) -> bool:
-    """Register the local-agent MCP so a hosted or local client can delegate to
-    claude-local / codex-local on a local model (ailocal-cyber by default).
+#: The registration name in the roots ailocal owns. NOT `local-agent`: that name
+#: is the hosted alias Cadence declares and owns, and Cadence drops a declared
+#: name from every client it is not scoped to, so sharing it would make the two
+#: products remove each other's entry. The same split as `research` (local) and
+#: `local-research` (hosted).
+AGENT_MCP = "agent"
+#: The name ailocal registered before it stopped writing hosted roots.
+LEGACY_AGENT_MCP = "local-agent"
 
-    Mirrors provision_documentation: one bundled stdio server, registered in both
-    the hosted and the isolated root of each client through the native CLIs, with
-    an existing same-name server of a different shape preserved and reported. The
-    component needs `mcp`, so it gets its own interpreter under the state root and
-    runs as a subprocess; nothing here is imported by ailocal. Registration goes
-    through the native CLIs, so it uninstalls the same way any MCP does --
-    `claude mcp remove local-agent` and `codex mcp remove local-agent` (the
-    hosted roots; add CLAUDE_CONFIG_DIR / CODEX_HOME for the -local roots). The
-    provisioned interpreter under state_root/local-agent is the only residual and
-    can be deleted directly; re-running `ailocal clients` reprovisions it.
+
+def provision_local_agent(names=("claude", "codex")) -> bool:
+    """Register the agent MCP in claude-local and codex-local, and nowhere else.
+
+    The hosted roots are not ailocal's: hosted registration of this server is
+    Cadence's `local-agent` declaration, which carries an owner marker its
+    uninstall can prove. ailocal registered `local-agent` in both hosted and
+    local roots with no marker, so deleting ailocal's roots left two hosted
+    entries pointing at a removed command.
+
+    Registration goes through the native CLIs with the local root selected
+    (CLAUDE_CONFIG_DIR / CODEX_HOME); a same-name server of a different shape is
+    preserved and reported. A `local-agent` entry in a LOCAL root that has
+    ailocal's exact shape is ailocal's former registration and is removed the
+    same way. Uninstalling is deleting the local roots; the interpreter under
+    state_root/local-agent is the only residual and `ailocal clients`
+    reprovisions it.
     """
     src = policy.data_root() / "integrations/local-agent"
     if not (src / "server.py").is_file():
@@ -163,54 +175,62 @@ def provision_local_agent(names=("claude", "codex")) -> bool:
         return False
     from .mcp import agent_registration
     entry = agent_registration()
+
+    def matches(got):
+        return (isinstance(got, dict)
+                and Path(got.get("command", "")).name == "ailocal"
+                and list(got.get("args", [])) == entry["args"])
+
     success = True
     for client in names:
         if client not in ("claude", "codex") or not present(client):
             continue
-        for local in (False, True):
-            label = client + ("-local" if local else "")
-            path = policy.client_mcp_path(client, local=local)
-            env = dict(os.environ)
-            if local:
-                env["CODEX_HOME" if client == "codex" else "CLAUDE_CONFIG_DIR"] = str(path.parent)
-            try:
-                def read_entry():
-                    if not path.exists():
-                        return None
-                    if client == "codex":
-                        data = tomllib.loads(path.read_text(encoding="utf-8"))
-                        return data.get("mcp_servers", {}).get("local-agent")
-                    data = json.loads(path.read_text(encoding="utf-8"))
-                    return data.get("mcpServers", {}).get("local-agent")
+        label = client + "-local"
+        path = policy.client_mcp_path(client, local=True)
+        env = dict(os.environ)
+        env["CODEX_HOME" if client == "codex" else "CLAUDE_CONFIG_DIR"] = str(path.parent)
 
-                def matches(got):
-                    return (isinstance(got, dict)
-                            and Path(got.get("command", "")).name == "ailocal"
-                            and list(got.get("args", [])) == entry["args"])
+        def read_entry(name):
+            if not path.exists():
+                return None
+            if client == "codex":
+                data = tomllib.loads(path.read_text(encoding="utf-8"))
+                return data.get("mcp_servers", {}).get(name)
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return data.get("mcpServers", {}).get(name)
 
-                existing = read_entry()
-                if existing is not None and not matches(existing):
-                    warn(f"{label}: local-agent MCP collision; existing registration preserved")
-                    success = False
-                    continue
-                if existing is not None:
-                    continue
+        try:
+            if matches(read_entry(LEGACY_AGENT_MCP)):
+                command = (["codex", "mcp", "remove", LEGACY_AGENT_MCP] if client == "codex"
+                           else ["claude", "mcp", "remove", "--scope", "user", LEGACY_AGENT_MCP])
+                result = subprocess.run(command, env=env, capture_output=True,
+                                        text=True, timeout=30)
+                if result.returncode or read_entry(LEGACY_AGENT_MCP) is not None:
+                    raise ValueError("native removal did not persist")
+                info(f"{label}: retired the former {LEGACY_AGENT_MCP} registration")
+            existing = read_entry(AGENT_MCP)
+            if existing is not None and not matches(existing):
+                warn(f"{label}: {AGENT_MCP} MCP collision; existing registration preserved")
+                success = False
+                continue
+            if existing is None:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 if client == "codex":
-                    command = ["codex", "mcp", "add", "local-agent", "--",
+                    command = ["codex", "mcp", "add", AGENT_MCP, "--",
                                entry["command"], *entry["args"]]
                 else:
-                    command = ["claude", "mcp", "add-json", "--scope", "user", "local-agent",
+                    command = ["claude", "mcp", "add-json", "--scope", "user", AGENT_MCP,
                                json.dumps(entry)]
                 result = subprocess.run(command, env=env, capture_output=True,
                                         text=True, timeout=30)
-                if result.returncode or not matches(read_entry()):
+                if result.returncode or not matches(read_entry(AGENT_MCP)):
                     raise ValueError("native registration did not persist")
-            except (OSError, ValueError, TypeError, AttributeError, subprocess.SubprocessError):
-                warn(f"{label}: local-agent MCP registration failed; "
-                     f"run ailocal clients {client} after correcting the client config")
-                success = False
-        info(f"{client}: local-agent MCP registration checked (hosted + local)")
+        except (OSError, ValueError, TypeError, AttributeError, subprocess.SubprocessError):
+            warn(f"{label}: {AGENT_MCP} MCP registration failed; "
+                 f"run ailocal clients {client} after correcting the client config")
+            success = False
+            continue
+        info(f"{label}: {AGENT_MCP} MCP registration checked (hosted root not touched)")
     return success
 
 
@@ -739,6 +759,41 @@ def target_vscode() -> None:
 
 # ── Codex CLI ───────────────────────────────────────────────────────────────
 
+#: SHA-256 of every AGENTS.md ailocal has written into the codex root: the
+#: codex template plus the shared build checklist (claude-only blocks removed),
+#: one digest per distinct rendering from e890d0e, which introduced the
+#: rendering, to 50b677f, the last change before ailocal stopped writing it.
+#: Recomputed from git history, so a file matching one of these is provably
+#: ailocal's own output and nobody's edit.
+RETIRED_CODEX_INSTRUCTIONS = frozenset({
+    "cd9d7186d5404430e2d5b3870861a28d30f32a2864dd252b84ae73ad864f1c8d",  # e890d0e
+    "b68953f1b74959c61453cd038c9391cb37d3785e643b7f3f7365a7ebff3f1c54",  # 553ecf2
+    "f480053c0f0fcf776ee613dff50f7c551ad944549a9ecc6a74a3c5fd88845d05",  # 5688e98
+    "4007254f61233a2921bc94c1a3dd8535cca6a3d2d3a2e50a7e3ae7120616a711",  # 789e4b3
+    "586319be0e9fcfa81400b44087fc7afc92a2d9596233acc733d1686a6a14e467",  # 468c296
+    "91927507b339859f0b10285d55a15b36f41d2022faee4ca08e95dad347abbec8",  # 0c21438
+    "eb401ce7c1e495670842f5f9c872e7109e8206015f207630c8c01bfe17abf867",  # ece767f
+    "1fe8a20fc52dea7489d2b8e2c5eae8527ef4d5d57253fd5829eefaac828f86e2",  # b81ddd9
+    "b4d7551adb6db2359bf3b20aa5f7f81f40493d73348b168826d1ee6a6a922b28",  # 50b677f
+})
+
+
+def retire_codex_instructions(path: Path) -> bool:
+    """Remove the codex root's AGENTS.md only when ailocal provably wrote it.
+
+    Byte identity with a known rendering is the only proof available: the file
+    never carried an owner header. Anything else -- Cadence's composition, an
+    operator's edit, a symlink -- is someone else's and stays."""
+    if path.is_symlink() or not path.is_file():
+        return False
+    if hashlib.sha256(path.read_bytes()).hexdigest() not in RETIRED_CODEX_INSTRUCTIONS:
+        skip(f"{path} is not an ailocal rendering — left in place")
+        return False
+    path.unlink()
+    info(f"retired {path}: ailocal no longer writes codex instruction policy")
+    return True
+
+
 def target_codex() -> None:
     """CODEX_HOME for the codex-local wrapper. ~/.codex is NEVER touched."""
     home = policy.deployed_client_root() / "codex"
@@ -749,12 +804,10 @@ def target_codex() -> None:
     # config.toml and the model catalog are written
     # here by generation, not copied here by this function.
 
-    # The template carries a .template extension so the /AGENTS.md gitignore
-    # rule cannot swallow the tracked source.
-    _concat_shared(data / "clients/codex/AGENTS.md.template",
-                   data / "clients/claude/references/build-checklist.md",
-                   home / "AGENTS.md", claude_only=False)
-    info(f"{home / 'AGENTS.md'} written (protocol + build checklist)")
+    # No instruction-policy file, matching target_claude: composing client
+    # instruction policy is outside ailocal's ownership, and Cadence composes
+    # this exact path, so both writing it made each install overwrite the other.
+    retire_codex_instructions(home / "AGENTS.md")
     retire_managed_dir(home / "prompts")
     research = provision_mcp_runtime(data / 'integrations/local-research', 'local-research')
     install_managed_dir(data / 'integrations/local-research/skill', home / 'skills/local-research')
@@ -944,8 +997,8 @@ def target_claude() -> None:
     # roles that describe no local-inference fact. Measured: native Claude
     # matched or beat that workflow on the same tasks, and a local runtime has
     # no business teaching a client how to plan, implement or review. What
-    # ailocal uniquely knows reaches the model through the injected persona and
-    # the capability catalog, not through a role roster.
+    # ailocal uniquely knows reaches the model through the model-guide hooks
+    # and the capability catalog, not through a role roster.
     retire_managed_dir(home / "agents")
     retire_managed_dir(home / "commands")
     install_managed_dir(policy.data_root() / "clients/claude/references",
@@ -1149,7 +1202,7 @@ def main(argv: list[str]) -> int:
         print(f"and configure {', '.join(selected)} under {policy.deployed_client_root()}.")
         if any(name in ("claude", "codex") for name in selected):
             print("Would also register public documentation MCPs in hosted and local Claude/Codex roots.")
-            print("Would also register the local-agent MCP (delegate to ailocal-cyber) in those roots.")
+            print("Would also register the agent MCP (delegate to ailocal-cyber) in the claude-local and codex-local roots only.")
         print("No files, extensions, plugins or MCP registrations were changed.")
         return 0
 
