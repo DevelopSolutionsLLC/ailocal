@@ -33,14 +33,12 @@ claude-local() {
     echo "claude-local: no key in ${state}/env — run ailocal install" >&2
     return 1
   fi
-  # CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: on launch, Claude Code GETs
-  # $ANTHROPIC_BASE_URL/v1/models and adds every LiteLLM model (ailocal-architecture,
-  # ailocal-implementation, ailocal-review, ailocal-completion) to
-  # the /model picker ("From gateway"), alongside the built-in tier entries. The
-  # ANTHROPIC_DEFAULT_*_MODEL vars remap those built-in slots onto real
-  # capabilities so the default model AND Claude Code's silent background/summary
-  # calls (the "Haiku" slot) resolve to something LiteLLM actually serves.
-  # (Requires Claude Code v2.1.129+ for gateway discovery.)
+  # The /model picker is the generated settings.json `modelPicker`, which lists
+  # every ailocal-<capability> and replaces the built-in lineup; gateway
+  # discovery is not enabled because that picker hides it. The
+  # ANTHROPIC_DEFAULT_*_MODEL vars remap the built-in slots onto real
+  # capabilities so Claude Code's background/summary calls (the "Haiku" slot)
+  # and subagents that name a slot resolve to something LiteLLM serves.
   #
   # The slot block below is GENERATED from profiles/clients.toml `claude.slots` by
   # sync-models.py — do not hand-edit it. Hand-maintained slots drift: pointing
@@ -61,8 +59,8 @@ claude-local() {
   # [REAL] deferred GitHub discovery 5/5 through ToolSearch; grepai, Cadence
   # skills, Cadence agents and multi-turn reminders all unaffected (16/16 tasks
   # completed, no capability lost).
-  # CLAUDE_CODE_DISABLE_1M_CONTEXT: local backends cap at num_ctx (64K here), not
-  # 1M — so let Claude Code request the 1M-context beta and it just overflows.
+  # CLAUDE_CODE_DISABLE_1M_CONTEXT: local backends cap at the profile's num_ctx,
+  # not 1M — so let Claude Code request the 1M-context beta and it just overflows.
   # Disabling it keeps sessions inside the window the models actually serve.
   # Slot vars live in an array (not the env-assignment chain) so the generated
   # region can carry its own marker comments — a `#` line inside a `\`
@@ -175,7 +173,6 @@ claude-local() {
   env "${slots[@]}" \
     CLAUDE_CONFIG_DIR="$cfg/claude" \
     ANTHROPIC_BASE_URL="$base" ANTHROPIC_API_KEY="$key" \
-    CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1 \
     CLAUDE_CODE_DISABLE_1M_CONTEXT=1 \
     ENABLE_TOOL_SEARCH=${AILOCAL_TOOL_SEARCH:-true} \
     "${_workflow_env[@]}" \

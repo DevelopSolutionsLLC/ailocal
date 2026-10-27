@@ -8,7 +8,7 @@ behaviours:
              duplicate field rejection, active-tier selection, and the
              authoritative geometry contract (num_ctx, num_predict, admission).
   hardware   tier design — capability coverage, model sharing and disk cost,
-             memory-to-tier selection, compaction thresholds, and the README
+             memory-to-tier selection, client windows, and the README
              claims that must track the profiles.
 
 Geometry is asserted once, by the resolver. The hardware section checks tier
@@ -283,37 +283,18 @@ def resolver_checks() -> None:
 
 
 
-    print("\nCOMPACTION AND PROVIDER HAVE ONE OWNER")
-    # Both clients derive from the SAME profile block. Codex additionally clamps
-    # to its default model's window — a documented client correction, not a
-    # second source: using architecture's window wrote a limit Codex's default
-    # model could never reach.
-    comp = P.effective_summary()["compaction"]
-    check(comp.get("window") and comp.get("pct"),
-          f"profile owns compaction ({comp.get('window')} x {comp.get('pct')}%)")
+    print("\nCLIENT WINDOWS AND PROVIDER HAVE ONE OWNER")
+    # Each client compacts on its own against the window ailocal declares to
+    # it; ailocal configures no trigger. A profile-owned [compaction] block was
+    # a second number that could disagree with the window it was derived from.
+    check("compaction" not in P.effective_summary(),
+          "the profile summary publishes no compaction trigger")
     claude = json.loads((P.deployed_client_root() / "claude/settings.json").read_text())
     env = claude.get("env", {})
-    # Claude Code accepts the window only inside its documented range, so the
-    # generator projects the trigger (window x pct) rather than the two
-    # literals: [REAL] 2026-10-26 the verbatim 16 GB window (79872) was clamped
-    # to the 100k floor with a startup warning and compaction fired at 85,000
-    # instead of the profile's 67,891. The product is what the profile owns.
-    launch = P.load_client_policy().get("claude", {}).get("launch_default", "architecture")
-    _proj = load_sync().claude_compaction(int(comp["window"]), int(comp["pct"]),
-                                          P.effective_role(launch)["total_context"])
-    check(env.get("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE") == str(_proj["pct"])
-          and env.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW") == (
-              str(_proj["window"]) if _proj["window"] is not None else None),
-          "Claude compaction is projected from the profile block",
+    check(not {"CLAUDE_CODE_AUTO_COMPACT_WINDOW", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"} & set(env),
+          "claude-local settings carry no compaction override",
           f"env={env}")
-    _win = env.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
-    check(_win is None or 100_000 <= int(_win) <= 1_000_000,
-          "Claude compaction window is inside the client's accepted range or absent",
-          f"{_win!r}")
-    _target = int(comp["window"]) * int(comp["pct"]) // 100
-    check(_target - _proj["base"] // 100 <= _proj["trigger"] <= _target,
-          f"projected trigger {_proj['trigger']} keeps the profile's {_target} "
-          "within one percent of the window, never later")
+    launch = P.load_client_policy().get("claude", {}).get("launch_default", "architecture")
 
     # The OUTPUT ceiling has one owner too. Claude Code's own default is 32000
     # [REAL, captured off the wire against 2.1.224]; the launch-default role
@@ -334,19 +315,17 @@ def resolver_checks() -> None:
     check(int(env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"]) <= P.effective_role(launch)["num_predict"],
           "Claude never requests more output than LiteLLM's num_predict serves")
 
-    # The window Claude Code assumes is TOTAL context, the unit compaction is
-    # measured in. Unset, it assumes 200000 for an unrecognised gateway id.
-    check(env.get("CLAUDE_CODE_MAX_CONTEXT_TOKENS") ==
-          str(P.effective_role(launch)["total_context"]),
-          f"Claude assumed window == {launch}.total_context "
-          f"({P.effective_role(launch)['total_context']})",
+    # The window Claude Code assumes is ADMISSION. Unset, it assumes 200000 for
+    # an unrecognised gateway id. [REAL] Claude Code 2.1.310 (binary) compacts at
+    # window - min(max output, 20000) - 13000, so declaring context_input keeps
+    # its own trigger under what LiteLLM admits on every tier.
+    _role = P.effective_role(launch)
+    check(env.get("CLAUDE_CODE_MAX_CONTEXT_TOKENS") == str(_role["context_input"]),
+          f"Claude assumed window == {launch}.context_input ({_role['context_input']})",
           f"{env.get('CLAUDE_CODE_MAX_CONTEXT_TOKENS')!r}")
-    # Compaction must trigger below ADMISSION, not below the total window —
-    # compacting against total_context schedules a turn LiteLLM would reject.
-    # The TRIGGER is window x pct: the window alone may sit above admission
-    # once it is lifted to the client's 100k floor (16 GB: 100000 > 90112).
-    check(_proj["trigger"] <= P.effective_role(launch)["max_input_tokens"],
-          f"compaction trigger ({_proj['trigger']}) never exceeds LiteLLM's admitted input")
+    _trigger = _role["context_input"] - min(_role["max_output"], 20_000) - 13_000
+    check(0 < _trigger < _role["max_input_tokens"],
+          f"Claude's own compaction point ({_trigger}) is below LiteLLM's admitted input")
 
     codex = (P.deployed_client_root() / "codex/config.toml").read_text()
     native = tomllib.loads(codex)
@@ -357,10 +336,11 @@ def resolver_checks() -> None:
     for model in catalog["models"]:
         cap = model["slug"].removeprefix("ailocal-")
         role = P.effective_role(cap)
-        limit = model["auto_compact_token_limit"]
-        check(model["context_window"] == role["total_context"] and
-              0 < limit <= role["context_input"],
-              f"{cap}: catalog carries model-specific context and safe compaction")
+        # [REAL] Codex 0.163.0 source: unset auto_compact_token_limit resolves to
+        # 90% of context_window, so the window alone keeps compaction under admission.
+        check(model["context_window"] == model["max_context_window"] == role["context_input"]
+              and not {"auto_compact_token_limit", "effective_context_window_percent"} & set(model),
+              f"{cap}: catalog window is admission and Codex compacts on its own")
     # The regression this guards: the codex block read a key the geometry
     # migration deleted, so it silently never regenerated and kept stale values.
 
@@ -545,14 +525,16 @@ def hardware_checks() -> None:
     # ── the agreed tier design ──────────────────────────────────────────────────
     print("\nTIER DESIGN")
     SHARED = ("architecture", "implementation", "review", "fast")
-    for tier, primary, total in (("16gb", "qwen3.5:4b-mlx", 106496),
-                                 ("32gb", "qwen3.5:9b-mlx", 139264)):
+    # Totals follow docs/architecture.md#geometry: memory-bounded up to the
+    # native window. 16 GB cannot hold the native 262144 (~8 GiB of KV on the
+    # 4B); 32 GB can [calculated, UNVERIFIED on 32 GB hardware].
+    for tier, primary, total in (("16gb", "qwen3.5:4b-mlx", 131072),
+                                 ("32gb", "qwen3.5:9b-mlx", 262144)):
         caps, _ = PARSED[tier]
         check(all(caps[c].get("active") == primary for c in SHARED),
               f"{tier} shares {primary} across {', '.join(SHARED)}",
               {c: caps[c].get("active") for c in SHARED}.__repr__())
-        # Retain the agreed tier windows during the MLX migration. Their equality
-        # is policy now, not a claim that MLX inherits llama.cpp's fixed window.
+        # One resident backend, one window: the roles differ in output reserve only.
         totals = {c: int(caps[c]["context_input"]) + int(caps[c].get("max_output") or 0)
                   for c in SHARED}
         check(len(set(totals.values())) == 1,
@@ -580,11 +562,11 @@ def hardware_checks() -> None:
         check("cyber" in caps, f"{tier}: cyber is available")
         if large:
             cyber = P.resolve_role(tier, "cyber", RESOURCES)
+            arch = P.resolve_role(tier, "architecture", RESOURCES)
             check(cyber["model"] == "ailocal-gemma4-26b-uncensored:mlx-46ab84d"
-                  and cyber["total_context"] == 32768
-                  and cyber["context_input"] == 24576
-                  and cyber["max_output"] == 8192,
-                  f"{tier}: cyber selects exact MLX model and bounded geometry")
+                  and (cyber["context_input"], cyber["max_output"], cyber["reasoning"])
+                  == (arch["context_input"], arch["max_output"], arch["reasoning"]),
+                  f"{tier}: cyber selects exact MLX model and architecture's geometry")
             check(cyber["source"]["revision"] == "46ab84dbe20198a2ee5e66c3e69c039b8c60ad59"
                   and cyber["top_k"] == 64
                   and P.required_runtime_patch(tier, RESOURCES) == "gemma4-switch-glu",
@@ -616,10 +598,10 @@ def hardware_checks() -> None:
             check(cyber["runtime_patch"] == P.ollama_patch_spec()["id"] and
                   P.required_runtime_patch(tier, RESOURCES) == cyber["runtime_patch"],
                   f"{tier}: MLX chat boundaries require the validated native runtime")
-            check(cyber["total_context"] == (28672 if tier == "16gb" else 32768)
-                  and cyber["max_output"] == (4096 if tier == "16gb" else 8192)
-                  and cyber["reasoning"] is False,
-                  f"{tier}: cyber has bounded geometry and explicit thinking mode")
+            impl = P.resolve_role(tier, "implementation", RESOURCES)
+            check((cyber["context_input"], cyber["max_output"], cyber["reasoning"])
+                  == (impl["context_input"], impl["max_output"], False),
+                  f"{tier}: cyber has implementation's geometry and explicit thinking mode")
             check(cyber["model"] in P.required_models(tier, RESOURCES),
                   f"{tier}: installer includes the imported model")
     for cap in CAPABILITIES:
@@ -629,8 +611,8 @@ def hardware_checks() -> None:
                   f"64={c64[cap].get(field)!r} 128={c128[cap].get(field)!r}")
 
     check(int(c64["architecture"]["context_input"]) + int(c64["architecture"]["max_output"])
-          == 196608,
-          "64gb architecture total_context is 196608")
+          == 262144,
+          "64gb architecture total_context is the native 262144")
 
     # THE OUTPUT-CEILING POLICY, by ROLE and by ENGINE CLASS. It stopped being
     # one table on 2026-08-21, because the two runners do not charge for a
@@ -648,8 +630,8 @@ def hardware_checks() -> None:
     # 196608 loaded at 16.15 GiB resident -- identical to a small window -- so a
     # ceiling costs nothing until a response actually reaches it. The big roles
     # therefore take the largest step that still fits the model's 262144 native
-    # window, which is 32768 on 64gb and 16384 on 128gb (whose 245760 input
-    # leaves less room). This is why the tiers legitimately differ.
+    # window, which is 32768 on both 64gb and 128gb. This is why the tiers
+    # legitimately differ.
     #
     # Every tier keeps fast 8192 and completion 512: both are role boundaries,
     # not capability limits. fast must answer in a word or two; completion is a
@@ -687,14 +669,10 @@ def hardware_checks() -> None:
           "embeddings is not a capability role: no consumer ever called it, and "
           "the only embedding client on the machine talks to Ollama directly")
 
-    # COMPACTION IS 85% EVERYWHERE. The window differs per tier because prefill
-    # cost does; the percentage does not, because nothing measured justifies a
-    # different one. An exception needs evidence recorded in the profile.
+    # Compaction is each client's own; a shipped profile declares no trigger.
     for tier in PROFILES:
         caps, _ = PARSED[tier]
-        check(int(caps["compaction"]["pct"]) == 85,
-              f"{tier} compacts at the standard 85%",
-              f"got {caps['compaction'].get('pct')}")
+        check("compaction" not in caps, f"{tier} ships no [compaction] block")
 
     # No role may declare more than its model can actually hold. This is the
     # ceiling that stops a future raise from inventing capacity: every chat model
@@ -767,101 +745,13 @@ def hardware_checks() -> None:
         got = I.tier_for_memory(gb)
         check(got == expected, f"{gb} GB selects {expected or 'nothing (unsupported)'}",
               f"got {got}")
-    # ── interactive compaction ──────────────────────────────────────────────────
-    # Deterministic only: the arithmetic and the generated files. The LATENCY that
-    # motivates these numbers costs 13 minutes of GPU time to reproduce, so it is
-    # measured once and recorded in docs/troubleshooting.md, not re-run in the gate.
-    print("\nCOMPACTION")
-    # THE DANGER POINT IS A PROPERTY OF THE RUNNER, NOT A CONSTANT. A single
-    # 55000 applied to all four tiers came from the llama_cpp/GGUF backend and
-    # outlived it: the 64/128 GB tiers moved to the MLX runner, which prefills
-    # gemma4 at 598 tok/s cold at 137,233 tokens -- 88K costs 147s there, not the
-    # ~13 min the old figure assumed. Holding every tier to one number kept the
-    # MLX tiers compacting at less than half the context they can comfortably
-    # carry.
-    #
-    # Each budget below is the tokens reachable within roughly 200s of COLD
-    # prefill on that tier's own primary, from measurements recorded in the
-    # profile's [compaction] block. Cold, not warm: a warm runner reports its
-    # prefix cache, and a resumed session is exactly the case that has none.
-    DANGER = {
-        "16gb":  75000,    # qwen3.5:4b   548 tok/s @ 70K, and the slowest GPU
-        "32gb":  100000,   # qwen3.5:9b   421 tok/s @ 70K
-        # 64gb and 128gb run the SAME model at the same clock, so they get the
-        # same threshold; the old 120000 was the only thing separating them and
-        # "more RAM buys no speed" was already the stated reason it should not.
-        #
-        # This is a LATENCY-TOLERANCE change, not a measurement correction. A
-        # re-measure (34K->34.0s, 67K->83.2s, 134K->236.3s, 167K->340.4s,
-        # 231K->560.9s cold, unique-prefix prompts) CONFIRMED the 598 tok/s @
-        # 137K figure this row was built on rather than overturning it. Moving
-        # 64gb to 145000 accepts ~263 s of cold prefill at the trigger where
-        # ~200 s was the previous line, in exchange for 25% more session
-        # history. The llama_cpp-era figures elsewhere in the tree (27.8K->85 s,
-        # 57.8K->341 s, 87.8K->789 s) are the ones that no longer apply.
-        "64gb":  145000,   # gemma4-mlx   598 tok/s @ 137K, re-measured 567 @ 134K
-        "128gb": 145000,   # same model, same clock; more RAM buys no speed
-    }
-    for tier in PROFILES:
-        caps, _ = PARSED[tier]
-        c = caps.get("compaction", {})
-        check(bool(c.get("window") and c.get("pct")),
-              f"{tier} declares a compaction window and pct", repr(c))
-        if not (c.get("window") and c.get("pct")):
-            continue
-        win, pct = int(c["window"]), int(c["pct"])
-        trig = win * pct // 100
-        arch = int(caps["architecture"]["context_input"]) + int(caps["architecture"].get("max_output") or 0)
-        check(trig < arch,
-              f"{tier} compaction trigger ({trig}) is below the architecture max ({arch})")
-        check(trig < DANGER[tier],
-              f"{tier} compacts ({trig}) BEFORE its runner's measured "
-              f"cold-prefill danger zone ({DANGER[tier]})")
-        # The point of compaction is to keep sessions out of that zone. A window set
-        # ABOVE the model maximum would never fire before the model itself refused.
-        check(win <= arch, f"{tier} compaction window ({win}) does not exceed the model max ({arch})")
-
-        # THE ADMISSION INVARIANT. The checks above compare against
-        # context_input + max_output, which is what let a real defect through:
-        # codex's trigger was 18,432 on a role admitting 16,384, so a long session
-        # took an HTTP 400 ContextWindowExceeded 2,048 tokens BEFORE it could
-        # compact. Output space is not input space -- a compaction point above
-        # context_input can never be reached.
-        #
-        # Mirrors the derivation in sync-models.py exactly; if that changes, this
-        # must fail rather than drift.
-        codex_role = "implementation"          # the capability codex-local defaults to
-        if codex_role in caps:
-            cx_in = int(caps[codex_role]["context_input"])
-            codex_trig = min(win * pct // 100, int(cx_in * pct / 100))
-            check(codex_trig <= cx_in,
-                  f"{tier} codex compaction trigger ({codex_trig}) is within the "
-                  f"admissible input for {codex_role} ({cx_in})",
-                  f"trigger {codex_trig} EXCEEDS context_input {cx_in} -- the backend "
-                  f"would 400 before compaction fires")
-
-    # The generated client config must match the ACTIVE profile, or the client
-    # compacts on a threshold this repository never chose.
+    # The generated client config must match the ACTIVE profile.
     active = P.active_profile_path()
     tier = active.read_text().strip() if active.exists() else "64gb"
-    cc = PARSED[tier][0].get("compaction", {})
     settings = P.deployed_client_root() / "claude/settings.json"
-    if settings.exists() and cc:
-        # `json` is imported at module scope; a local `import json` here made it
-        # a function-local name, so any later use outside this branch would
-        # raise NameError instead of reading the module.
+    if settings.exists():
         env = json.loads(settings.read_text()).get("env", {})
         lp = P.load_client_policy().get("claude", {}).get("launch_default", "architecture")
-        _lp_total = P.resolve_role(tier, lp, RESOURCES)["total_context"]
-        _want = load_sync().claude_compaction(int(cc["window"]), int(cc["pct"]), _lp_total)
-        check(env.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW") == (
-                  str(_want["window"]) if _want["window"] is not None else None),
-              f"claude settings.json window is the active profile's, projected ({tier})",
-              f"{env.get('CLAUDE_CODE_AUTO_COMPACT_WINDOW')!r} != {_want['window']!r}")
-        check(env.get("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE") == str(_want["pct"]),
-              f"claude settings.json pct is the active profile's, projected ({tier})",
-              f"{env.get('CLAUDE_AUTOCOMPACT_PCT_OVERRIDE')!r} != {_want['pct']!r}")
-        # Same tier-agreement requirement for the output ceiling.
         want = (PARSED[tier][0].get(lp) or {}).get("max_output")
         if want:
             check(env.get("CLAUDE_CODE_MAX_OUTPUT_TOKENS") == str(want),
@@ -869,13 +759,13 @@ def hardware_checks() -> None:
                   f"{env.get('CLAUDE_CODE_MAX_OUTPUT_TOKENS')!r} != {want!r}")
 
     # HOSTED CLAUDE IS NOT OURS. Every key above is projected into
-    # CLAUDE_CONFIG_DIR only. ailocal writing an output ceiling or a compaction
-    # threshold into ~/.claude would silently re-tune the user's hosted sessions
+    # CLAUDE_CONFIG_DIR only. ailocal writing an output ceiling or an assumed
+    # window into ~/.claude would silently re-tune the user's hosted sessions
     # against a local model's geometry.
     #
     # Asserted on the GENERATOR, in a throwaway HOME, not on the real
     # ~/.claude: the same key names are legitimate hosted settings the user may
-    # choose for themselves (CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=50 there is not
+    # choose for themselves (CLAUDE_CODE_MAX_OUTPUT_TOKENS there is not
     # ailocal's), so their presence proves nothing about who wrote them.
     for each in P.TIERS:
         box = Path(tempfile.mkdtemp(prefix="hosted-"))
@@ -888,30 +778,30 @@ def hardware_checks() -> None:
                            env=env, capture_output=True, text=True)
         local = box / "clients/claude/settings.json"
         projected = (r.returncode == 0 and local.exists()
-                     and "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" in json.loads(local.read_text()).get("env", {}))
+                     and "CLAUDE_CODE_MAX_CONTEXT_TOKENS" in json.loads(local.read_text()).get("env", {}))
         check(projected and not (box / "home/.claude").exists(),
-              f"{each}: generation projects compaction into claude-local only, never ~/.claude",
+              f"{each}: generation projects geometry into claude-local only, never ~/.claude",
               r.stderr.strip()[-300:] or f"wrote under {box / 'home'}")
         check(not any((box / "clients/codex").glob("*.config.toml")),
               f"{each}: selecting a model needs no generated launch presets")
-        # Every enabled capability gets a first-class /model row under its
-        # canonical name: the slotted ones through ANTHROPIC_DEFAULT_*_MODEL,
-        # the rest through modelPicker. [REAL] 2026-10-26: without the rows,
-        # cyber was reachable only as a gateway-discovered entry and Claude
-        # Code switched to it under an undocumented `claude-router-<hex>` id.
+        # Every enabled capability is a picker row under its canonical name, in
+        # policy.ROLES order, and the picker replaces the built-in lineup.
+        # [REAL] 2026-10-26, Claude Code 2.1.310: with discovery and rows only for
+        # unslotted capabilities, the top of /model showed built-in names and
+        # `ailocal-cyber` appeared twice around row 20.
         if local.exists():
             _settings = json.loads(local.read_text())
             _slots = P.load_client_policy(RESOURCES).get("claude", {}).get("slots", {})
             _enabled = [c for c in P.ROLES if P.resolve_role(each, c, RESOURCES)["enabled"]]
-            _unslotted = ["ailocal-" + c for c in _enabled if c not in _slots.values()]
-            _rows = [r["model"] for r in _settings.get("modelPicker", {}).get("options", [])]
-            check(_rows == _unslotted,
-                  f"{each}: every capability without a built-in slot has a picker row",
-                  f"rows={_rows} unslotted={_unslotted}")
-            _win = _settings.get("env", {}).get("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
-            check(_win is None or 100_000 <= int(_win) <= 1_000_000,
-                  f"{each}: compaction window inside Claude Code's accepted range or absent",
-                  f"{_win!r}")
+            _picker = _settings.get("modelPicker", {})
+            _rows = [r["model"] for r in _picker.get("options", [])]
+            check(_rows == ["ailocal-" + c for c in _enabled]
+                  and _picker.get("replaceBuiltInOptions") is True,
+                  f"{each}: the picker lists every capability once, in ROLES order, and nothing else",
+                  f"rows={_rows} replace={_picker.get('replaceBuiltInOptions')!r}")
+            check(not {"CLAUDE_CODE_AUTO_COMPACT_WINDOW", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"}
+                  & set(_settings.get("env", {})),
+                  f"{each}: claude-local carries no compaction override")
             # Every enabled capability is a PEER on every generated surface:
             # claude-local (slots + picker rows, and the settings note), codex-local
             # (catalog and config), the proxy's model_list (what VS Code and the
@@ -939,6 +829,25 @@ def hardware_checks() -> None:
             check(_served == _all,
                   f"{each}: proxy model_list serves every capability (VS Code, local-agent discover it)",
                   str(_served))
+            # ONE DESCRIPTION CONVENTION. Codex's catalog, Claude Code's picker and
+            # the proxy's model_list comment render every capability through
+            # policy.capability_description, with the same label, so no surface
+            # can show a capability differently from its peers.
+            _profile = P.load_profile(each, RESOURCES)
+            _by_slug = {m["slug"]: m for m in _catalog["models"]}
+            _rows_by = {r["model"]: r for r in _picker.get("options", [])}
+            for c in _enabled:
+                _want = P.capability_description(_profile[c], P.guidance_for(_profile, c))
+                _slug = "ailocal-" + c
+                check(_rows_by[_slug]["label"] == _by_slug[_slug]["display_name"] == _slug
+                      and _rows_by[_slug]["description"] == _by_slug[_slug]["description"] == _want
+                      and f"  # {_slug} — {_want} (" in _ml,
+                      f"{each}.{c}: one label and description on Claude, Codex and the proxy",
+                      f"{_want!r} vs picker {_rows_by[_slug]['description']!r} / "
+                      f"catalog {_by_slug[_slug]['description']!r}")
+                check(re.fullmatch(r"[^—]+ — [^,:]+, \d+K ctx", _want) is not None
+                      and "ailocal-" not in _want.split(" — ")[1],
+                      f"{each}.{c}: description reads '<role> — <model name>, <N>K ctx'", _want)
             _contract = json.loads((box / "clients/integration-contract.json").read_text())
             check(_contract["runtime"]["canonical_capabilities"] == _all,
                   f"{each}: integration contract names every capability for Cadence's instructions",
@@ -950,8 +859,8 @@ def hardware_checks() -> None:
         for entry in catalog["models"]:
             capability = entry["slug"].removeprefix("ailocal-")
             geometry = P.resolve_role(each, capability, RESOURCES)
-            check(entry["context_window"] == geometry["total_context"] and
-                  0 < entry["auto_compact_token_limit"] <= geometry["context_input"],
+            check(entry["context_window"] == entry["max_context_window"] == geometry["context_input"]
+                  and "auto_compact_token_limit" not in entry,
                   f"{each}.{capability}: catalog limits follow model selection")
             effort = "medium" if geometry.get("reasoning") else "none"
             check(entry.get("default_reasoning_level") == effort and

@@ -333,7 +333,9 @@ model_classes:
   # completed simple proxy tool/result rounds. Native editing is unreliable;
   # retain this class's conservative tool surface rather than unknown passthrough.
   local_cyber:
-    match_models: ["orcarouter/Qwen3.8-27B-Uncensored:mlx-4bit", "ailocal-gemma4-26b-uncensored:mlx-46ab84d", "ailocal-qwen3.5-4b-uncensored:mlx-916d9f7", "ailocal-qwen3.5-4b-coder-uncensored:mlx-a0cd614", "ailocal-qwen3.5-9b-uncensored:mlx-7b09418", "ailocal-qwen3.5-9b-coder-uncensored:mlx-7fed86c"]
+    # Exactly the cyber backends the shipped profiles select; a retired backend
+    # is removed here with its profile entry.
+    match_models: ["ailocal-gemma4-26b-uncensored:mlx-46ab84d", "ailocal-qwen3.5-4b-coder-uncensored:mlx-a0cd614", "ailocal-qwen3.5-9b-coder-uncensored:mlx-7fed86c"]
     supports_tools: true
     supports_mcp: true
     supports_parallel_tools: false
