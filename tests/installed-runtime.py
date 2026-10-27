@@ -146,7 +146,7 @@ def main() -> None:
              'assert all(len(s[k])==64 for k in ("native_archive_sha256","native_cli_sha256")); '
              'assert "/v"+s["base_version"]+"/" in s["native_archive_url"]; '
              'assert all(hashlib.sha256(s[k].read_bytes()).hexdigest()==s[k.replace("_file","_sha256")] '
-             'for k in ("patch_file","security_patch_file","router_patch_file","stop_patch_file")); '
+             'for k in (n+"_file" for n in policy.OLLAMA_PATCHES)); '
              'print("native patch assets ok")'], env)
     check(r.returncode == 0 and 'native patch assets ok' in r.stdout,
           'native loader/security patches and their pins ship without the checkout', r.stderr[-300:])

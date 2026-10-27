@@ -149,6 +149,16 @@ def resolver_checks() -> None:
         ('context = 4096',         P.PROFILE_SCHEMA_INVALID),   # retired
         ('"repeat-penalty" = 1.0', P.PROFILE_SCHEMA_INVALID),
         ('preferred = [a, b',      P.PROFILE_INVALID),          # unclosed list
+        # An import recipe must name a level `ollama create -q` accepts, and a
+        # raw template needs the stops its chat-format terminator would supply.
+        (f'source = {{ repository = "a/b", revision = "{"0" * 40}", quantize = "q4_K_M" }}',
+         P.PROFILE_SCHEMA_INVALID),
+        (f'source = {{ repository = "a/b", revision = "{"0" * 40}", template = "{{{{ .Prompt }}}}" }}',
+         P.PROFILE_SCHEMA_INVALID),
+        (f'source = {{ repository = "a/b", revision = "{"0" * 40}", template = \'x"""y\' }}\nstop = ["s"]',
+         P.PROFILE_SCHEMA_INVALID),
+        (f'source = {{ repository = "a/b", revision = "{"0" * 40}", weights = "x" }}',
+         P.PROFILE_SCHEMA_INVALID),
     ]
     for frag, expect in BAD:
         root = sandbox(marker="64gb", profile_text=GOOD + f"{frag}\n")
@@ -546,8 +556,14 @@ def hardware_checks() -> None:
         # intent, not the backend parameter name.
         check(caps["architecture"].get("max_output") == 16384,
               f"{tier} primary output ceiling is 16384")
-        check(not P.resolve_role(tier, "completion", RESOURCES)["enabled"],
-              f"{tier} unsupported Qwen2 MLX completion is disabled")
+        completion = P.resolve_role(tier, "completion", RESOURCES)
+        source = completion["source"]
+        check(completion["enabled"] and completion["model"] == "qwen2.5-coder-1.5b-mlx"
+              and source["repository"] == "Qwen/Qwen2.5-Coder-1.5B"
+              and source["quantize"] == "mxfp8" and ".Suffix" in source["template"]
+              and {"<|endoftext|>", "<|fim_pad|>"} <= set(completion["stop"])
+              and completion["runtime_patch"] == P.ollama_patch_spec()["id"],
+              f"{tier} completion imports Apache-2.0 Qwen2.5-Coder 1.5B as MLX with FIM stops")
 
     # 64gb is the measured reference. 128gb runs the SAME MODELS -- that is what
     # makes the 64 GB measurements transferable -- but is no longer a byte copy:
@@ -584,7 +600,8 @@ def hardware_checks() -> None:
                       f"{tier}: disabling Cyber retains the fast model's MLX stop requirement")
                 (root / "profiles" / f"{tier}.toml").write_text(
                     text.replace("[cyber]\n", "[cyber]\nenabled = false\n", 1)
-                        .replace("[fast]\n", "[fast]\nenabled = false\n", 1))
+                        .replace("[fast]\n", "[fast]\nenabled = false\n", 1)
+                        .replace("[completion]\n", "[completion]\nenabled = false\n", 1))
                 check(P.required_runtime_patch(tier, root) is None,
                       f"{tier}: disabled patch consumers do not require the runtime")
         else:
@@ -707,10 +724,8 @@ def hardware_checks() -> None:
         for role in P.ROLES:
             cfg = caps[role]
             tags = [cfg["active"], *cfg.get("preferred", [])]
-            check(all(tag.endswith("-mlx") or ":mlx-" in tag for tag in tags),
-                  f"{tier}.{role}: every configured selection is MLX")
-        check(not P.resolve_role(tier, "completion", RESOURCES)["enabled"],
-              f"{tier}: unsupported autocomplete is not advertised")
+            check(all(tag.endswith("-mlx") for tag in tags),
+                  f"{tier}.{role}: every configured selection is named as MLX")
     def unique_models(tier):
         caps, _ = PARSED[tier]
         out = {}
@@ -728,9 +743,9 @@ def hardware_checks() -> None:
         check(len(u) <= len(P.ROLES),
               f"{tier} unique models ({len(u)}) do not exceed capabilities ({len(P.ROLES)})")
 
-    check(len(unique_models("16gb")) == 2, "16gb resolves to 2 enabled MLX models including cyber",
+    check(len(unique_models("16gb")) == 3, "16gb resolves to 3 enabled MLX models including cyber",
           str(sorted(unique_models("16gb"))))
-    check(len(unique_models("32gb")) == 2, "32gb resolves to 2 enabled MLX models including cyber",
+    check(len(unique_models("32gb")) == 3, "32gb resolves to 3 enabled MLX models including cyber",
           str(sorted(unique_models("32gb"))))
     check(sorted(unique_models("64gb")) == sorted(unique_models("128gb")),
           "64gb and 128gb pull the identical model set, so their storage cost is equal")

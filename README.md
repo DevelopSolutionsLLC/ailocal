@@ -277,7 +277,7 @@ ailocal measures your Mac's memory and chooses a profile automatically. You do n
 
 All enabled shipped backends use MLX, including the fast capability and unrestricted variants. Each tier admits as much context as its memory holds, up to the model's native 256K window; the rule and its evidence are in [architecture](docs/architecture.md#geometry). Every chat capability on a tier, Cyber included, shares that tier's window. To override the detected tier: `ailocal profile use 32gb`, then `ailocal start`.
 
-Inline autocomplete is disabled in the MLX-only profiles: MLX Qwen2.5-Coder weights exist, but the pinned Ollama MLX loader does not support their Qwen2 architecture. Disabled candidates are not downloaded or advertised; no GGUF fallback is selected.
+Inline autocomplete is `ailocal-completion`, Qwen2.5-Coder 1.5B on MLX on every tier. Install imports the first-party checkpoint at a pinned revision, quantizes it to mxfp8 and adds its fill-in-the-middle template. Serving it requires the patched Ollama runtime, which adds the Qwen2 MLX loader. Through the proxy, send one prompt already formatted as `<|fim_prefix|>…<|fim_suffix|>…<|fim_middle|>`: LiteLLM drops a separate `suffix` field. Ollama's own `/api/generate` accepts `prompt` and `suffix` directly.
 
 A long conversation compacts automatically before it reaches that window. Your client does the compacting at its own default point; ailocal only tells it the window the backend admits.
 

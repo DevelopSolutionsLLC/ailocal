@@ -203,13 +203,19 @@ presence_penalty = 1.5
   # Retained fast-role sampling; no MLX quality improvement is implied.
   # Deliberate low-temperature role setting; not a guarantee of determinism.
 # ── completion — inline autocomplete (FIM) ───────────────────────────────────
-# Disabled until Ollama supports the pinned Qwen2 MLX candidate. No GGUF fallback.
 [completion]
-role = "Autocomplete (unavailable: Qwen2 MLX loader)"
-enabled = false  # Qwen2 MLX is not supported by the pinned Ollama loader
-active = "ailocal-qwen2.5-coder-3b:mlx-529a507"
-source = { repository = "mlx-community/Qwen2.5-Coder-3B-4bit", revision = "529a507eac8bcf5117c34fd5a4e31922ccab9e47" }
-preferred = ["ailocal-qwen2.5-coder-3b:mlx-529a507"]
+role = "Autocomplete"
+active = "qwen2.5-coder-1.5b-mlx"
+  # First-party bf16 weights quantized at import: mlx-community conversions omit
+  # quantization.mode and fail to load (ollama/ollama#19135). Qwen2 needs the
+  # runtime bundle's loader. The 3B is under the non-commercial Qwen Research
+  # License; the 1.5B is Apache-2.0.
+source = { repository = "Qwen/Qwen2.5-Coder-1.5B", revision = "df3ce67c0e24480f20468b6ef2894622d69eb73b", quantize = "mxfp8", template = "{{- if .Suffix }}<|fim_prefix|>{{ .Prompt }}<|fim_suffix|>{{ .Suffix }}<|fim_middle|>{{- else }}{{ .Prompt }}{{- end }}" }
+runtime_patch = "gemma4-switch-glu"
+  # Native FIM tokens are ordinary vocabulary to the MLX runner, which would
+  # otherwise emit <|fim_pad|> to max_output. Imported with the template too.
+stop = ["<|endoftext|>", "<|fim_pad|>", "<|file_sep|>", "<|repo_name|>", "<|fim_prefix|>", "<|fim_suffix|>", "<|fim_middle|>", "<|im_end|>"]
+preferred = ["qwen2.5-coder-1.5b-mlx"]
 reasoning = false
 context_input = 3968
   # max_output 512, raised from 128. A FIM suggestion is a few lines, not a
@@ -218,9 +224,9 @@ context_input = 3968
 max_output = 512
 temperature = 0.1
 keep_alive = "2h"
-purpose = ["inline completion", "FIM", "quick syntax fixes", "small transforms"]
-strengths = ["very fast", "tiny footprint", "native FIM tokens"]
-weaknesses = ["no deep reasoning", "short context"]
+purpose = ["inline completion", "FIM", "quick syntax fixes"]
+strengths = ["native FIM tokens", "fast", "~1.8 GB footprint"]
+weaknesses = ["no reasoning", "short context", "not for chat"]
 top_p = 0.9
 top_k = 20
 repeat_penalty = 1.0
@@ -272,13 +278,13 @@ evidence = "[REAL] On the 64 GB host, Ollama 0.40.8-ailocal.18631.3 loaded the o
 summary = "Qwen3.5 9B MLX: keep tasks bounded and verify edits with real tools."
 sources = ["https://ollama.com/library/qwen3.5:9b-mlx","https://huggingface.co/Qwen/Qwen3.5-9B#best-practices"]
 
-[model_guidance."ailocal-qwen2.5-coder-3b:mlx-529a507"]
-name = "Qwen2.5-Coder 3B"
-summary = "Disabled MLX autocomplete candidate: Qwen2 is unsupported by this Ollama MLX loader."
-prompting = ["Do not select or invoke this disabled capability."]
-limitations = ["MLX weights exist, but native load and fill-in-the-middle behavior are unverified. No GGUF fallback is configured."]
-evidence = "[UNVERIFIED] Source metadata inspected; this candidate is disabled and has not been installed or validated."
-sources = ["https://huggingface.co/mlx-community/Qwen2.5-Coder-3B-4bit"]
+[model_guidance."qwen2.5-coder-1.5b-mlx"]
+name = "Qwen2.5-Coder 1.5B (MLX mxfp8)"
+summary = "Fill-in-the-middle autocomplete: a base model with native FIM tokens, not a chat or agent model."
+prompting = ["Through ailocal-completion, send one prompt already formatted as <|fim_prefix|>PREFIX<|fim_suffix|>SUFFIX<|fim_middle|>; the proxy drops a separate suffix field. Ollama /api/generate accepts prompt and suffix directly.", "Keep requests short and local to the cursor; it has no instruction tuning."]
+limitations = ["No chat template, tool calling or reasoning.", "A client-supplied stop list replaces the imported one; it must still include <|endoftext|> and <|fim_pad|>.", "Quality is a 1.5B model's: plausible local completions, not repository understanding."]
+evidence = "[REAL] 2026-10-26, 64 GB host, Ollama 0.40.8-ailocal.18631.4 with the Qwen2 MLX loader patch: the mxfp8 import loaded as architecture qwen2, and an executable 10-case FIM battery passed 10/10 directly through /api/generate with suffix (0.38 s warm median) and 10/10 through ailocal-completion with a client-formatted FIM prompt (0.33 s). [REAL] LiteLLM v1.106.2 drops suffix on /v1/completions; a request with suffix ran to num_predict. [APPROX] 80-case single-line infill prototype on the same host: bf16 10/80 exact, mxfp8 10/80 (58/80 agree with bf16), nvfp4 7/80, GGUF Q4_K_M 6/80; GGUF was about 1.6x faster warm. [UNVERIFIED] Memory fit on 16 GB hardware."
+sources = ["https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B", "https://github.com/QwenLM/Qwen2.5-Coder#3-file-level-code-completion-fill-in-the-middle", "https://github.com/ollama/ollama/issues/19135", "https://github.com/BerriAI/litellm/issues/6900"]
 
 [model_guidance."gemma4-26b-uncensored-mlx"]
 name = "Gemma 4 26B-A4B uncensored"
