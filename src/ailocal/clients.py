@@ -322,25 +322,28 @@ def retire_managed_dir(dst: Path) -> None:
     manifest names what we wrote, and nothing else is touched, so a user's own
     file in the same directory survives and keeps the directory alive.
     """
+    if not dst.is_dir() or dst.is_symlink():
+        return                            # nothing shipped here, or not ours to walk
     manifest = dst / MANIFEST_NAME
     names = (manifest.read_text().split() if manifest.is_file()
              else list(RETIRED_UNMANAGED.get(dst.name, ())))
-    if not names:
-        return
+    removed = manifest.is_file()
     for name in names:
         target = dst / name
-        if target.is_symlink():
-            continue                      # someone else's link, not ours
+        if target.is_symlink() or not target.exists():
+            continue                      # someone else's link, or already gone
         if target.is_dir():
             shutil.rmtree(target, ignore_errors=True)
         else:
             target.unlink(missing_ok=True)
+        removed = True
     manifest.unlink(missing_ok=True)
     try:
-        dst.rmdir()                       # only when we emptied it
+        dst.rmdir()                       # only when empty: ours, emptied, or left empty
         info(f"retired {dst}")
     except OSError:
-        info(f"retired ailocal content in {dst} (other files kept)")
+        if removed:
+            info(f"retired ailocal content in {dst} (other files kept)")
 
 
 def install_managed_dir(src: Path, dst: Path) -> None:
