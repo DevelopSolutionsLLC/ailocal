@@ -118,7 +118,7 @@ class GuidanceTests(unittest.TestCase):
     def test_generators_share_guidance_and_preserve_external_hooks(self):
         models = generation.load_models_yaml(RES / 'profiles/16gb.toml')
         self.assertNotIn('model_guidance', models)
-        self.assertNotIn('completion', models)
+        self.assertIn('completion', models)
         with tempfile.TemporaryDirectory() as disabled_root:
             path = Path(disabled_root) / '16gb.toml'
             path.write_text((RES / 'profiles/16gb.toml').read_text().replace(

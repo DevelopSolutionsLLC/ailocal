@@ -130,22 +130,46 @@ def _digest(model: str) -> str | None:
     return None
 
 
-def current(model: str, source: dict) -> bool:
-    """Whether the installed `model` is this source's import.
+_RECIPE = ("repository", "revision", "quantize", "template", "stop")
 
-    Imported tags do not name their revision, so a changed pin would otherwise
-    leave the old weights serving under the same tag. The receipt binds the tag
-    to the pinned revision and to the manifest Ollama created; a missing
-    receipt, a different pin or a replaced manifest means re-import.
+
+def recipe(source: dict, stop: list[str] | None = None) -> dict:
+    """Everything that determines the imported model, and nothing else.
+
+    A raw template has no chat-format terminator, so the role's stops are
+    imported with it; a chat checkpoint keeps its own and imports none.
+    """
+    result = dict(source)
+    if source.get("template") and stop:
+        result["stop"] = list(stop)
+    return result
+
+
+def current(model: str, source: dict) -> bool:
+    """Whether the installed `model` is this recipe's import.
+
+    Imported tags do not name their revision or recipe, so a changed pin,
+    quantization, template or stop would otherwise leave the old import
+    serving under the same tag. The receipt binds the tag to the recipe and to
+    the manifest Ollama created; a missing receipt, a different recipe or a
+    replaced manifest means re-import.
     """
     try:
         entry = json.loads(_receipts().read_text()).get(model) or {}
     except (OSError, ValueError, AttributeError):
         return False
-    return (entry.get("repository") == source["repository"]
-            and entry.get("revision") == source["revision"]
+    return ({k: entry[k] for k in _RECIPE if k in entry} == source
             and entry.get("digest") is not None
             and entry.get("digest") == _digest(model))
+
+
+def _modelfile(root: Path, source: dict) -> str:
+    lines = [f'FROM "{root}"']
+    if source.get("template"):
+        # The schema rejects a template that would close this block early.
+        lines.append(f'TEMPLATE """{source["template"]}"""')
+    lines += [f"PARAMETER stop {json.dumps(token)}" for token in source.get("stop", ())]
+    return "\n".join(lines) + "\n"
 
 
 def _record(model: str, source: dict) -> None:
@@ -154,8 +178,8 @@ def _record(model: str, source: dict) -> None:
         receipts = json.loads(path.read_text())
     except (OSError, ValueError):
         receipts = {}
-    receipts[model] = {"repository": source["repository"],
-                       "revision": source["revision"], "digest": _digest(model)}
+    receipts[model] = {**{k: source[k] for k in _RECIPE if k in source},
+                       "digest": _digest(model)}
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + ".partial")
     temporary.write_text(json.dumps(receipts, indent=2, sort_keys=True) + "\n")
@@ -163,14 +187,17 @@ def _record(model: str, source: dict) -> None:
 
 
 def install(model: str, source: dict) -> bool:
+    """Import `source`, a `recipe()`, under `model`."""
     try:
         root = fetch(source)
         modelfile = root / "Modelfile"
-        modelfile.write_text(f'FROM "{root}"\n', encoding="utf-8")
+        modelfile.write_text(_modelfile(root, source), encoding="utf-8")
         binary = policy.ollama_binary()
-        if subprocess.run([binary, "create", model, "-f", str(modelfile)],
+        quantize = ["-q", source["quantize"]] if source.get("quantize") else []
+        # Quantizing an unquantized checkpoint is the slow path of an import.
+        if subprocess.run([binary, "create", model, "-f", str(modelfile), *quantize],
                           env=dict(os.environ, OLLAMA_MODELS=str(policy.ollama_model_store())),
-                          timeout=180).returncode:
+                          timeout=900 if quantize else 180).returncode:
             return False
         if subprocess.run([binary, "show", model], capture_output=True,
                           timeout=15).returncode:
