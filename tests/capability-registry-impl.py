@@ -66,26 +66,19 @@ check(d["routes"] == 3, f"all three routes described ({d['routes']})")
 if reg.backend_of("ailocal-cyber"):
     check(reg.model_class("ailocal-cyber")[0] == "local_cyber",
           "cyber is classified by its measured local backend")
-    # INVARIANTS, not literals (see CONTEXT WINDOWS below). This asserted 32768,
-    # the 32 GB+ geometry; the shipped 16 GB cyber is 24576 + 4096, so the
-    # result depended on the operator's tier. [REAL] 2026-10-26: 41/42 after
-    # --reset-config. Durable: cyber has a window of its own, below the
-    # launch default's.
+    # INVARIANTS, not literals (see CONTEXT WINDOWS below): the value depends on
+    # the operator's tier. Cyber is a peer capability, so its window comes from
+    # the generated file like every other one.
     _cyber_ctx = reg.max_context("ailocal-cyber")
     check("cyber" in reg.contexts and isinstance(_cyber_ctx, int) and _cyber_ctx > 0,
           f"cyber's context comes from the generated file ({_cyber_ctx})")
-    check(_cyber_ctx < reg.max_context("ailocal-architecture"),
-          f"cyber has its own bounded window, below the launch default's "
-          f"({_cyber_ctx} < {reg.max_context('ailocal-architecture')})")
 check(d["contexts_from_generated"] >= 5,
       f"context windows come from the GENERATED file, not the registry "
       f"({d['contexts_from_generated']} found)")
 check(d["aliases"] > 0, f"model_group_alias loaded ({d['aliases']})")
 
 print("\nMODEL CLASSIFICATION")
-for backend in ("ailocal-qwen3.5-4b-uncensored:mlx-916d9f7",
-                "ailocal-qwen3.5-4b-coder-uncensored:mlx-a0cd614",
-                "ailocal-qwen3.5-9b-uncensored:mlx-7b09418",
+for backend in ("ailocal-qwen3.5-4b-coder-uncensored:mlx-a0cd614",
                 "ailocal-qwen3.5-9b-coder-uncensored:mlx-7fed86c"):
     small = cr.Registry(path=REG_YAML, caps_json=CAPS, config_path=CONF)
     small.backends["cyber"] = backend

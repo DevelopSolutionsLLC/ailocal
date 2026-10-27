@@ -93,8 +93,7 @@ def client_mcp_path(client: str, *, local: bool) -> Path:
         return Path.home() / ".claude.json"
     return root / ("config.toml" if client == "codex" else ".claude.json")
 
-#: Capability roles. `compaction` is a CLIENT tuning knob, not a capability: it
-#: has no model and must never be published as one.
+#: Capability roles, in the one order every client surface lists them.
 #:
 #: `embeddings` was one of these and is not any more. ailocal provisioned
 #: nomic-embed-text, published an `ailocal-embeddings` alias and warmed the
@@ -104,7 +103,7 @@ def client_mcp_path(client: str, *, local: bool) -> Path:
 #: capability ailocal advertised, provisioned and kept resident for no reader.
 #: Embedding ownership belongs to whoever indexes; Ollama is the shared
 #: prerequisite underneath both.
-ROLES = ("architecture", "implementation", "review", "fast", "completion", "cyber")
+ROLES = ("architecture", "implementation", "review", "fast", "cyber", "completion")
 #: Sections that may appear in a profile and are NOT capabilities.
 #:
 #: `embeddings` is here because it USED to be one. Profiles live in the
@@ -116,6 +115,9 @@ ROLES = ("architecture", "implementation", "review", "fast", "completion", "cybe
 #: present and no longer has a schema. Recognising it here keeps those profiles
 #: valid, publishes no alias for it, and leaves the user's file untouched: their
 #: config is theirs to edit, and a retired section is inert, not invalid.
+#:
+#: `compaction` is retired the same way: each client compacts against the
+#: window ailocal declares to it, so a profile-owned trigger is no longer read.
 NON_ROLE_SECTIONS = ("compaction", "embeddings", "model_guidance")
 
 #: Fields a profile may still declare that no longer mean anything.
@@ -426,9 +428,11 @@ def _validate_guidance(data: dict) -> None:
     if not isinstance(guides, dict):
         raise ProfileError(PROFILE_SCHEMA_INVALID, "model_guidance must be a table")
     for model, guide in guides.items():
-        if not isinstance(guide, dict) or set(guide) != {
-                "summary", "prompting", "limitations", "evidence", "sources"}:
+        required = {"summary", "prompting", "limitations", "evidence", "sources"}
+        if not isinstance(guide, dict) or not required <= set(guide) <= required | {"name"}:
             raise ProfileError(PROFILE_SCHEMA_INVALID, "invalid model_guidance fields")
+        if "name" in guide and (not isinstance(guide["name"], str) or not guide["name"].strip()):
+            raise ProfileError(PROFILE_SCHEMA_INVALID, "model_guidance.name must be text")
         for field in ("summary", "evidence"):
             if not isinstance(guide[field], str) or not guide[field].strip():
                 raise ProfileError(PROFILE_SCHEMA_INVALID, f"model_guidance.{field} must be text")
@@ -438,6 +442,18 @@ def _validate_guidance(data: dict) -> None:
                 raise ProfileError(PROFILE_SCHEMA_INVALID, f"model_guidance.{field} must be a text list")
         if any(not s.startswith("https://") for s in guide["sources"]):
             raise ProfileError(PROFILE_SCHEMA_INVALID, "model_guidance sources require HTTPS")
+
+
+def capability_description(section: dict, guide: dict) -> str:
+    """The one description every client surface shows for a capability.
+
+    `<role> — <model name>, <N>K ctx`: the profile's role text, the guide's
+    readable model name (the backend tag only when a profile predates `name`),
+    and the derived total window. Codex's catalog, Claude Code's picker and the
+    LiteLLM config all call this, so the surfaces cannot drift apart again."""
+    model = guide.get("name") or str(section.get("active", ""))
+    total = geometry(section.get("context_input"), section.get("max_output"))["total_context"]
+    return f"{section.get('role')} — {model}, {total // 1024}K ctx"
 
 
 def guidance_for(data: dict, role: str) -> dict:
@@ -564,7 +580,6 @@ def profile_summary(tier: str, repo_root=None) -> dict:
         "tier": tier,
         "status": data.get("status") or "unknown",
         "disk_gb": data.get("disk_gb"),
-        "compaction": data.get("compaction", {}),
         "roles": {r: resolve_role(tier, r, repo_root, _data=data)
                   for r in ROLES if r in data},
     }

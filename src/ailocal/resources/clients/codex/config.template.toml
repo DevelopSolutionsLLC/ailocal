@@ -4,7 +4,7 @@
 # Deployed to: ~/.config/ailocal/codex/config.toml  (CODEX_HOME)
 #
 # Model limits come from each entry in the generated model catalog. Selecting
-# another model also selects its context and compaction limits automatically.
+# another model also selects its context window; Codex compacts against it.
 #
 # [REAL] Codex 0.163.0 completed research.search through the local proxy on
 # 2026-10-18. Other servers remain outside this component's measured scope.
