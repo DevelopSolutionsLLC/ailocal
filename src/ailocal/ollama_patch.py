@@ -22,10 +22,6 @@ from pathlib import Path
 from . import policy
 
 
-_RECEIPT_PINS = ("version", "source_sha256",
-                 *(f"{name}_sha256" for name in policy.OLLAMA_PATCHES))
-
-
 def _sha(path: Path) -> str:
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
@@ -49,7 +45,8 @@ def verify(path: Path) -> bool:
                 and origin.get("vendor_binary_sha256", receipt.get("stock_sha256")) == spec["native_cli_sha256"]
                 and path.name == "ollama" and path.is_file()
                 and os.access(path, os.X_OK)
-                and all(receipt.get(k) == spec[k] for k in _RECEIPT_PINS)
+                and all(receipt.get(k) == spec[k] for k in
+                        ("version", "source_sha256", "patch_sha256", "security_patch_sha256", "router_patch_sha256", "stop_patch_sha256"))
                 and receipt.get("files") == _inventory(path.parent))
     except (OSError, ValueError, KeyError, TypeError):
         return False
@@ -254,11 +251,18 @@ def prepare() -> Path:
         if stock_hash != spec["native_cli_sha256"]:
             raise RuntimeError("Installed Ollama native CLI checksum mismatch")
         native_origin["vendor_binary_sha256"] = stock_hash
-    patches = [Path(spec[f"{name}_file"]) for name in policy.OLLAMA_PATCHES]
-    for name, patch in zip(policy.OLLAMA_PATCHES, patches):
-        if _sha(patch) != spec[f"{name}_sha256"]:
-            label = name.removesuffix("patch").replace("_", " ")
-            raise RuntimeError(f"Bundled Ollama {label}patch checksum mismatch")
+    patch = Path(spec["patch_file"])
+    if _sha(patch) != spec["patch_sha256"]:
+        raise RuntimeError("Bundled Ollama patch checksum mismatch")
+    security_patch = Path(spec["security_patch_file"])
+    if _sha(security_patch) != spec["security_patch_sha256"]:
+        raise RuntimeError("Bundled Ollama security patch checksum mismatch")
+    router_patch = Path(spec["router_patch_file"])
+    if _sha(router_patch) != spec["router_patch_sha256"]:
+        raise RuntimeError("Bundled Ollama router patch checksum mismatch")
+    stop_patch = Path(spec["stop_patch_file"])
+    if _sha(stop_patch) != spec["stop_patch_sha256"]:
+        raise RuntimeError("Bundled Ollama stop patch checksum mismatch")
     root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".build-", dir=root) as temporary:
         work = Path(temporary)
@@ -279,9 +283,14 @@ def prepare() -> Path:
         source_root = work / "source"
         source_root.mkdir()
         source = _extract(archive, source_root)
-        for patch in patches:
-            _run(["git", "apply", "--check", str(patch)], deadline, cwd=source)
-            _run(["git", "apply", str(patch)], deadline, cwd=source)
+        _run(["git", "apply", "--check", str(patch)], deadline, cwd=source)
+        _run(["git", "apply", str(patch)], deadline, cwd=source)
+        _run(["git", "apply", "--check", str(security_patch)], deadline, cwd=source)
+        _run(["git", "apply", str(security_patch)], deadline, cwd=source)
+        _run(["git", "apply", "--check", str(router_patch)], deadline, cwd=source)
+        _run(["git", "apply", str(router_patch)], deadline, cwd=source)
+        _run(["git", "apply", "--check", str(stop_patch)], deadline, cwd=source)
+        _run(["git", "apply", str(stop_patch)], deadline, cwd=source)
         env = dict(os.environ, CGO_ENABLED="1", GOOS="darwin", GOARCH="arm64",
                    GOTOOLCHAIN="local", GOFLAGS="-mod=readonly", GOWORK="off")
         toolchain = _run(["go", "version"], deadline, cwd=source, env=env).strip()
@@ -306,19 +315,10 @@ def prepare() -> Path:
             raise RuntimeError("MLX stop regression did not execute successfully")
         result += "\n" + stop_result
         stop_test.unlink()
-        qwen2_test = payload / "qwen2.test"
-        _run(["go", "test", "-c", "-o", str(qwen2_test), "./mlxrunner/model/qwen2"],
-             deadline, cwd=source, env=env)
-        qwen2_result = _run([str(qwen2_test), "-test.v", "-test.timeout=60s"],
-                            deadline, cwd=payload, env=env)
-        if ("--- SKIP:" in qwen2_result or "--- PASS: TestRegistersQwen2" not in qwen2_result
-                or "--- PASS: TestLoadWeightsKeepsProjectionBiases" not in qwen2_result):
-            raise RuntimeError("Qwen2 MLX loader regression did not execute successfully")
-        result += "\n" + qwen2_result
-        qwen2_test.unlink()
         if native != {name: _sha(payload / name) for name in native}:
             raise RuntimeError("Native Ollama payload changed during preparation")
-        receipt = {k: spec[k] for k in _RECEIPT_PINS}
+        receipt = {k: spec[k] for k in
+                   ("version", "source_sha256", "patch_sha256", "security_patch_sha256", "router_patch_sha256", "stop_patch_sha256")}
         receipt.update(owner="ailocal", stock_binary=str(stock), stock_sha256=stock_hash,
                        native_origin=native_origin,
                        native_files=native, files=_inventory(payload),

@@ -43,9 +43,7 @@ class PatchInstall(unittest.TestCase):
                          router_patch_file=self.patchfile,
                          router_patch_sha256=candidate._sha(self.patchfile),
                          stop_patch_file=self.patchfile,
-                         stop_patch_sha256=candidate._sha(self.patchfile),
-                         qwen2_patch_file=self.patchfile,
-                         qwen2_patch_sha256=candidate._sha(self.patchfile))
+                         stop_patch_sha256=candidate._sha(self.patchfile))
         tools = patch.object(candidate.shutil, "which", side_effect=lambda name: "/usr/bin/" + name)
         tools.start()
         self.addCleanup(tools.stop)
@@ -74,9 +72,6 @@ class PatchInstall(unittest.TestCase):
             return "--- PASS: TestLoadStackedExpertsSwitchGLU (0.01s)\n--- PASS: TestMoERouterMixedPrecisionConfig (0.01s)\nPASS\n"
         if args[0].endswith("stop.test"):
             return "--- PASS: TestStopBuffer (0.01s)\nPASS\n"
-        if args[0].endswith("qwen2.test"):
-            return ("--- PASS: TestRegistersQwen2 (0.00s)\n"
-                    "--- PASS: TestLoadWeightsKeepsProjectionBiases (0.01s)\nPASS\n")
         return ""
 
     def build(self, runner=None):
@@ -128,27 +123,6 @@ class PatchInstall(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "MLX stop regression"):
                     self.build(skipped)
                 self.assertEqual(list((self.root / "runtimes").iterdir()), [])
-
-    def test_qwen2_regression_must_execute_before_promotion(self):
-        for output in ("--- PASS: TestRegistersQwen2 (0.00s)\nPASS\n",
-                       "--- PASS: TestRegistersQwen2 (0.00s)\n"
-                       "--- SKIP: TestLoadWeightsKeepsProjectionBiases\nPASS\n"):
-            with self.subTest(output=output):
-                def skipped(args, deadline, **kwargs):
-                    if args[0].endswith("qwen2.test"):
-                        return output
-                    return self.run_step(args, deadline, **kwargs)
-                with self.assertRaisesRegex(RuntimeError, "Qwen2 MLX loader regression"):
-                    self.build(skipped)
-                self.assertEqual(list((self.root / "runtimes").iterdir()), [])
-
-    def test_qwen2_patch_pin_is_checked_before_download(self):
-        self.spec["qwen2_patch_sha256"] = "wrong"
-        with (patch.object(candidate, "_run", side_effect=self.run_step),
-              patch.object(candidate, "_download") as download,
-              self.assertRaisesRegex(RuntimeError, "qwen2 patch checksum")):
-            candidate.prepare()
-        download.assert_not_called()
 
     def test_updated_vendor_app_reuses_only_the_intact_matching_native_base(self):
         binary = self.build()

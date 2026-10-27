@@ -727,7 +727,6 @@ def pull_models() -> int:
         raise SystemExit("  Ollama daemon is not responding.\n"
                          f"    launchctl kickstart -k gui/{os.getuid()}/com.ailocal.ollama")
 
-    from .model_sources import recipe
     roles = policy.effective_summary()["roles"]
     wanted: dict[str, list[str]] = {}
     sources = {}
@@ -735,10 +734,9 @@ def pull_models() -> int:
         if cfg.get("enabled", True):
             wanted.setdefault(cfg["model"], []).append(cap)
             if cfg.get("source"):
-                declared = recipe(cfg["source"], cfg.get("stop"))
-                if cfg["model"] in sources and sources[cfg["model"]] != declared:
+                if cfg["model"] in sources and sources[cfg["model"]] != cfg["source"]:
                     raise SystemExit("conflicting source declarations for one model")
-                sources[cfg["model"]] = declared
+                sources[cfg["model"]] = cfg["source"]
 
     from .model_sources import current
     have = _installed_models()
