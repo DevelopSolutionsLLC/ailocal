@@ -84,10 +84,22 @@ def main() -> None:
                 patch.object(M, "verify_load", return_value=False):
             check(not M.install("fixture:mlx", source) and root.exists(),
                   "visible but unloadable model fails installation and preserves verified assets")
+        check(not M.current("fixture:mlx", source), "an import without a receipt is not current")
         with patch.object(M.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as create, \
-                patch.object(M, "verify_load", return_value=True):
+                patch.object(M, "verify_load", return_value=True), \
+                patch.object(M, "_digest", return_value="sha256:one"):
             check(M.install("fixture:mlx", source) and not root.exists(),
                   "successful native import removes the duplicate source weight copy")
+            check(M.current("fixture:mlx", source),
+                  "a successful import records its pinned revision and manifest")
+            check(not M.current("fixture:mlx", {**source, "revision": "c" * 40}),
+                  "a changed pinned revision makes the installed tag stale")
+        with patch.object(M, "_digest", return_value="sha256:other"):
+            check(not M.current("fixture:mlx", source),
+                  "a tag whose manifest was replaced is stale")
+        with patch.object(M, "_digest", return_value=None):
+            check(not M.current("fixture:mlx", source),
+                  "an absent tag is never current")
             check(create.call_args_list[0].args[0][:3] == ["ollama", "create", "fixture:mlx"]
                   and create.call_args_list[0].kwargs["env"]["OLLAMA_MODELS"]
                   == str(M.policy.ollama_model_store()),
@@ -174,6 +186,7 @@ def main() -> None:
             patch.object(I, "_installed_models", return_value={"fixture:mlx": 2.0}), \
             patch.object(I.policy, "effective_summary", return_value={"roles": {
                 "cyber": {"model": "fixture:mlx", "source": source}}}), \
+            patch.object(M, "current", return_value=True), \
             patch.object(M, "verify_load", return_value=False), \
             patch.object(M, "install") as reimport, \
             patch.object(I, "_run") as download, \
@@ -181,6 +194,19 @@ def main() -> None:
         result = I.pull_models()
     check(result == 1 and not reimport.called and not download.called,
           "reinstall rejects unloadable existing models without repeating an unchanged download/import")
+
+    with patch.object(I, "_has", return_value=True), \
+            patch.object(I, "_out", return_value="Ollama model list"), \
+            patch.object(I, "_installed_models", return_value={"fixture-mlx:latest": 2.0}), \
+            patch.object(I.policy, "effective_summary", return_value={"roles": {
+                "cyber": {"model": "fixture-mlx", "source": source}}}), \
+            patch.object(M, "current", return_value=False), \
+            patch.object(M, "verify_load", return_value=True) as load, \
+            patch.object(M, "install", return_value=True) as reimport, \
+            contextlib.redirect_stdout(io.StringIO()):
+        result = I.pull_models()
+    check(result == 0 and reimport.call_args.args == ("fixture-mlx", source) and not load.called,
+          "an imported tag that is not the pinned revision is re-imported, not trusted by name")
 
     _suite.section("INSTALL VALIDATION CONTROLS THE EXIT STATUS")
     from ailocal import clients, generation, runtime

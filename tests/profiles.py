@@ -563,7 +563,7 @@ def hardware_checks() -> None:
         if large:
             cyber = P.resolve_role(tier, "cyber", RESOURCES)
             arch = P.resolve_role(tier, "architecture", RESOURCES)
-            check(cyber["model"] == "ailocal-gemma4-26b-uncensored:mlx-46ab84d"
+            check(cyber["model"] == "gemma4-26b-uncensored-mlx"
                   and (cyber["context_input"], cyber["max_output"], cyber["reasoning"])
                   == (arch["context_input"], arch["max_output"], arch["reasoning"]),
                   f"{tier}: cyber selects exact MLX model and architecture's geometry")

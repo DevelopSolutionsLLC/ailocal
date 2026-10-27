@@ -238,7 +238,7 @@ repeat_penalty = 1.0
 # https://huggingface.co/google/gemma-4-26B-A4B-it
 [cyber]
 role = "Unrestricted coding"
-active = "ailocal-gemma4-26b-uncensored:mlx-46ab84d"
+active = "gemma4-26b-uncensored-mlx"
 source = { repository = "00cyre/Gemma-4-26B-A4B-it-Uncensored-MLX-4bit", revision = "46ab84dbe20198a2ee5e66c3e69c039b8c60ad59" }
 runtime_patch = "gemma4-switch-glu"
 reasoning = true
@@ -282,7 +282,7 @@ limitations = ["MLX weights exist, but native load and fill-in-the-middle behavi
 evidence = "[UNVERIFIED] Source metadata inspected; this candidate is disabled and has not been installed or validated."
 sources = ["https://huggingface.co/mlx-community/Qwen2.5-Coder-3B-4bit"]
 
-[model_guidance."ailocal-gemma4-26b-uncensored:mlx-46ab84d"]
+[model_guidance."gemma4-26b-uncensored-mlx"]
 name = "Gemma 4 26B-A4B uncensored"
 prompting = ["Give one bounded coding change with relevant source, explicit acceptance criteria and real test output.","Use the client's tools for inspection and verification; return exact errors for a bounded repair attempt.","Use non-thinking mode for simple requests when appropriate; reserve thinking for work that benefits from it."]
 limitations = ["Upstream describes this conversion as refusal-validated and capability-unverified, and observed a garbled token; verify every API and claim against the real code.","Text-only conversion; do not send images or audio.","Keep earlier turns' thinking out of history except on tool-call turns, as Google's Gemma 4 card advises.","Native Codex edit pilots produced invalid patch formatting; verify actual file changes and tests rather than trusting client exit status.","Short direct-provider checks do not establish repository-scale reliability or full-window performance.","A benign non-refusal is not evidence of universal non-refusal or coding correctness."]

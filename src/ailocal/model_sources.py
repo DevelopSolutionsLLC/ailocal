@@ -112,6 +112,56 @@ def fetch(source: dict, *, timeout: int = 900) -> Path:
     return root
 
 
+def _receipts() -> Path:
+    return policy.state_root() / "model-sources" / "imports.json"
+
+
+def _digest(model: str) -> str | None:
+    """The serving daemon's manifest digest for `model`, or None."""
+    try:
+        with urllib.request.urlopen(f"{policy.ollama_url().rstrip('/')}/api/tags",
+                                    timeout=15) as response:
+            listed = json.load(response).get("models") or []
+    except (OSError, ValueError):
+        return None
+    for entry in listed:
+        if entry.get("name") in (model, f"{model}:latest"):
+            return entry.get("digest")
+    return None
+
+
+def current(model: str, source: dict) -> bool:
+    """Whether the installed `model` is this source's import.
+
+    Imported tags do not name their revision, so a changed pin would otherwise
+    leave the old weights serving under the same tag. The receipt binds the tag
+    to the pinned revision and to the manifest Ollama created; a missing
+    receipt, a different pin or a replaced manifest means re-import.
+    """
+    try:
+        entry = json.loads(_receipts().read_text()).get(model) or {}
+    except (OSError, ValueError, AttributeError):
+        return False
+    return (entry.get("repository") == source["repository"]
+            and entry.get("revision") == source["revision"]
+            and entry.get("digest") is not None
+            and entry.get("digest") == _digest(model))
+
+
+def _record(model: str, source: dict) -> None:
+    path = _receipts()
+    try:
+        receipts = json.loads(path.read_text())
+    except (OSError, ValueError):
+        receipts = {}
+    receipts[model] = {"repository": source["repository"],
+                       "revision": source["revision"], "digest": _digest(model)}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".partial")
+    temporary.write_text(json.dumps(receipts, indent=2, sort_keys=True) + "\n")
+    temporary.replace(path)
+
+
 def install(model: str, source: dict) -> bool:
     try:
         root = fetch(source)
@@ -128,6 +178,7 @@ def install(model: str, source: dict) -> bool:
             return False
         if not verify_load(model):
             return False
+        _record(model, source)
         # Ollama owns the imported blobs; retaining a second weight copy would
         # double the smaller tiers' disk requirement without serving inference.
         shutil.rmtree(root)
