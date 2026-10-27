@@ -1311,7 +1311,7 @@ def cmd_install(argv: list[str]) -> int:
         for name in (n for n in detected if n in ("claude", "codex")):
             clients._TARGETS[name]()
         ok(f"Detected {', '.join(detected)} — ailocal-owned roots provisioned; "
-           "~/.zshrc, VS Code and the local-agent MCP are not configured under "
+           "~/.zshrc, VS Code and the agent MCP are not configured under "
            "--yes. Run: ailocal clients")
     else:
         print("\n  ⚠ Configuring backs up, then rewrites/merges existing client configs.")
