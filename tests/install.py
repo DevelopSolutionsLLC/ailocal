@@ -247,8 +247,10 @@ def main() -> None:
         I.cmd_install(["--yes"])
     check(targets["claude"].called and targets["codex"].called,
           "--yes provisions the claude-local and codex-local roots its own check requires")
-    check(not targets["vscode"].called and not shell.called and not agent.called,
-          "--yes never merges VS Code settings, edits ~/.zshrc or registers the agent MCP")
+    check(not targets["vscode"].called and not shell.called,
+          "--yes never merges VS Code settings or edits ~/.zshrc")
+    check(agent.call_args is not None and sorted(agent.call_args.args[0]) == ["claude", "codex"],
+          "--yes registers the agent MCP in the claude-local and codex-local roots only")
 
     _suite.section("CONCURRENT LIFECYCLE COMMANDS FAIL FAST")
     from ailocal import cli

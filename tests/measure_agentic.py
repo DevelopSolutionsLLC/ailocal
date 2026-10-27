@@ -154,12 +154,6 @@ CANDIDATES = {
                     "min_p": 0.0, "presence_penalty": 0.0, "repeat_penalty": 1.0},
         "think": "medium",
     },
-    "orcarouter/Qwen3.8-27B-Uncensored:mlx-4bit": {
-        "label": "unvalidated refusal-modified MLX 4-bit challenger; verify actual runner",
-        "options": {"temperature": 1.0, "top_k": 20, "top_p": 0.95,
-                    "min_p": 0.0, "presence_penalty": 0.0, "repeat_penalty": 1.0},
-        "think": True,
-    },
 }
 
 # Small-tier Cyber candidates use the shipped profile as their sampling source.

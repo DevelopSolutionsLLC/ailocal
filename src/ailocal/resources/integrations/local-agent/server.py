@@ -70,8 +70,8 @@ def _child_env(agent: str) -> dict[str, str]:
             env['CLAUDE_CONFIG_DIR'] = home
         env['ANTHROPIC_BASE_URL'] = base
         env['ANTHROPIC_API_KEY'] = key
-        # The gateway must discover ailocal-* models for --model to resolve them.
-        env['CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY'] = '1'
+        # No gateway discovery: it only fills the /model picker. Behind a custom
+        # ANTHROPIC_BASE_URL, --model passes any non-empty ID through unchanged.
     else:
         home = os.environ.get('LOCAL_AGENT_CODEX_HOME')
         if home:
