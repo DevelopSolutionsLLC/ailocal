@@ -4,7 +4,7 @@
 
 AGENTS.md owns the repository map, the ownership rules and the engineering invariants; `ailocal help` owns the command list. This document answers only what none of those can: how a request moves through the running system.
 
-ailocal runs AI coding clients against local models on Apple Silicon. Ollama serves the models on the host GPU; LiteLLM fronts them on `127.0.0.1:4000` as an OpenAI- and Anthropic-compatible proxy that exposes **capabilities** (`architecture`, `implementation`, `review`, `fast`, `completion`) rather than model tags. A hardware profile decides which model answers each capability, and every client configuration is generated from that one decision.
+ailocal runs AI coding clients against local models on Apple Silicon. Ollama serves the models on the host GPU; LiteLLM fronts them on `127.0.0.1:4000` as an OpenAI- and Anthropic-compatible proxy that exposes **capabilities** (`architecture`, `implementation`, `review`, `fast`, `cyber`, `completion`) rather than model tags. A hardware profile decides which model answers each capability, and every client configuration is generated from that one decision.
 
 ---
 
@@ -93,6 +93,9 @@ The complete on-disk footprint of `ailocal install` and the optional `ailocal cl
 | `litellm-config.sha` | `runtime` | Restart fingerprint. *(start path)* |
 | `searxng/settings.yml` | `runtime` | Rendered from the shipped template; may carry the GitHub search token, parent dir 0700. *(start path)* |
 | `agents/preload.sh` | `install` | Program for the preload LaunchAgent. Resolves the model tag at run time so it can never warm a stale one. *(launchd path)* |
+| `model-sources/imports.json` | `install` | Receipts binding each imported `name:tag` to its pinned source and the manifest Ollama created; a changed pin or replaced manifest means re-import. |
+| `local-agent/` | agent MCP | The owned empty working directory for `text` and `research` delegations, and private session bindings (identity and permissions only, no transcripts), 0700. |
+| `local-research/` | research MCP | Bounded SQLite caches of search responses and page text, and the Brave request ledger. |
 
 The config root inherits the umask; the state root is `0700`, set when the generated environment is written, because it holds the master key. Secrets are protected per file as well (`env`, `.env.local` at 0600) and by the deployed-client root's own 0700, not by the state root.
 
@@ -117,12 +120,13 @@ Codex's `config.toml` is co-owned: regeneration preserves native trust records, 
 | `/Users/Shared/ollama/models` | `install` | Shared model store, group-writable + setgid. Existing `~/.ollama/models` is *moved* here (rename, one file at a time) before `OLLAMA_MODELS` is repointed. *(launchd path)* |
 | `~/.zshrc` | `clients` | Exactly two marker-commented lines (`# ailocal-configure` first, `# ailocal-finalize` last), inserted idempotently after a timestamped backup. |
 | `~/.copilot/instructions/ailocal.instructions.md` | `clients vscode` | The one Copilot instruction file: local-stack facts, terminal protocol, and the shared build checklist appended. |
-| VS Code `User/mcp.json` | `clients vscode` | Registers `research` through VS Code's native `--add-mcp`, with the absolute launcher path because a Dock-launched VS Code has a minimal `PATH`. Other servers are preserved and a foreign `research` entry is left untouched. |
+| VS Code `User/mcp.json` | `clients vscode` | Registers `research` and `agent` through VS Code's native `--add-mcp`, with the absolute launcher path because a Dock-launched VS Code has a minimal `PATH`. Other servers are preserved and a foreign same-name entry is left untouched. |
+| `~/.copilot/mcp-config.json` | `clients vscode` | The same two servers in Copilot's portable global scope; foreign entries, options and stored key references are preserved. |
 | VS Code `User/chatLanguageModels.json`, `User/settings.json` | `clients vscode`, `start` | `clients vscode` writes the native `customendpoint` group named `ailocal` (explicit aliases, limits, thinking and sampling from the active profile; FIM excluded), replacing a retired `litellm-connector` group only when it targets this proxy, and prunes deprecated/harmful settings. `start` refreshes an already configured group and the marked model-guidance block of the Copilot instruction file; it never creates a provider, and an unparseable editor file is reported and preserved rather than blocking the stack. The API **key** is not written: it lives in VS Code SecretStorage, which no supported interface lets ailocal touch — that one step stays manual. |
 
 `~/.zshrc` is created if absent and backed up (`.zshrc.bak.<timestamp>`, newest 3 kept) before either line is inserted.
 
-Hosted roots receive only public documentation MCP registrations through the native Claude/Codex CLIs. The bundled delegation server is registered as `agent` in the isolated roots only; hosted delegation is Cadence's `local-agent` declaration, which carries an owner marker its uninstall can prove. The names differ because Cadence drops a declared name from every client it is not scoped to — the same split as `research` and `local-research`. The shipped endpoint list lives in `resources/clients/documentation.toml`, read by `policy.py`; install and client setup share the same idempotent provisioner. Foreign registrations and other client settings are preserved, and registration failures return a nonzero status. Hosted registrations remain after teardown. Isolated roots are reached through `CLAUDE_CONFIG_DIR` / `CODEX_HOME` in the wrappers. `lsp_baseline()` enables the official LSP plugin for each language server already present (Python, TypeScript, Go, C/C++) in the isolated root **only**. Plugin state is per config root.
+Hosted roots receive only public documentation MCP registrations through the native Claude/Codex CLIs. The bundled delegation server is registered as `agent` in the isolated Claude/Codex roots and in VS Code's and Copilot's user MCP configuration; hosted delegation is Cadence's `local-agent` declaration, which carries an owner marker its uninstall can prove. The names differ because Cadence drops a declared name from every client it is not scoped to — the same split as `research` and `local-research`. The shipped endpoint list lives in `resources/clients/documentation.toml`, read by `policy.py`; install and client setup share the same idempotent provisioner. Foreign registrations and other client settings are preserved, and registration failures return a nonzero status. Hosted registrations remain after teardown. Isolated roots are reached through `CLAUDE_CONFIG_DIR` / `CODEX_HOME` in the wrappers. `lsp_baseline()` enables the official LSP plugin for each language server already present (Python, TypeScript, Go, C/C++) in the isolated root **only**. Plugin state is per config root.
 
 **Uninstalling:** `ailocal teardown` (containers + LaunchAgents), delete the two roots, remove the two `~/.zshrc` lines, and optionally `/Users/Shared/ollama/models`. The LSP plugins live in the isolated root and go with it.
 
@@ -198,7 +202,7 @@ The one rule every profile follows: **admission is bounded by memory, up to the 
 |---|---|---|---|
 | Claude Code | `CLAUDE_CODE_MAX_CONTEXT_TOKENS = context_input` of the launch default, `CLAUDE_CODE_MAX_OUTPUT_TOKENS = max_output` | compacts at window − min(max output, 20000) − 13000 | [REAL] Claude Code 2.1.310 binary |
 | Codex | `context_window = max_context_window = context_input` per catalog entry | compacts at 90% of `context_window` when `auto_compact_token_limit` is unset | [REAL] Codex 0.163.0 source |
-| VS Code Copilot Chat | LiteLLM's `max_input_tokens`, read by the LiteLLM provider | summarises at a fraction of `maxInputTokens` with no setting | [REAL] Copilot Chat 0.71.0 bundle |
+| VS Code Copilot Chat | `maxInputTokens = context_input`, `maxOutputTokens = max_output` per model in the `customendpoint` group `ailocal` | summarises at a fraction of `maxInputTokens` with no setting | [REAL] Copilot Chat 0.71.0 bundle |
 
 `CLAUDE_CODE_MAX_CONTEXT_TOKENS` declares admission rather than the total window because Claude Code reserves at most 20000 tokens for output: declaring the total on a 262144-token tier with 32768 of output would leave its trigger 232 tokens under admission. Declaring `context_input` keeps at least 13000 + min(max_output, 20000) tokens of margin on every tier. The `PreCompact`/`PostCompact` hooks only record that compaction happened, in `$AILOCAL_STATE/compaction.jsonl`.
 
@@ -206,7 +210,7 @@ A `[compaction]` section in an installed profile is retired and ignored, like `[
 
 Claude Code's variables are process-wide while its model slots route to different capabilities. They describe the launch-default role; `settings.json` lists the background slots whose smaller limits they cannot express.
 
-**One picker, one description.** Claude Code's `/model` is the generated [`modelPicker`](https://code.claude.com/docs/en/settings-reference#modelpicker) with `replaceBuiltInOptions: true`: every enabled capability once, in `policy.ROLES` order, and nothing else besides Default and the current session's model. Gateway discovery is not enabled, because that picker hides it. Before this the picker kept the built-in lineup on top and, with gateway discovery on, listed `ailocal-cyber` twice further down (operator report, 2026-10-26, Claude Code 2.1.310). The `ANTHROPIC_DEFAULT_*_MODEL` slots still route background work and subagents. `policy.capability_description()` renders `<role> — <model name>, <N>K ctx` for the picker, the Codex catalog and the LiteLLM config, from the role text and the model guide's `name`. VS Code's LiteLLM provider shows the model id and its token limits and has no free-text description field.
+**One picker, one description.** Claude Code's `/model` is the generated [`modelPicker`](https://code.claude.com/docs/en/settings-reference#modelpicker) with `replaceBuiltInOptions: true`: every enabled capability once, in `policy.ROLES` order, and nothing else besides Default and the current session's model. Gateway discovery is not enabled, because that picker hides it. Before this the picker kept the built-in lineup on top and, with gateway discovery on, listed `ailocal-cyber` twice further down (operator report, 2026-10-26, Claude Code 2.1.310). The `ANTHROPIC_DEFAULT_*_MODEL` slots still route background work and subagents. `policy.capability_description()` renders `<role> — <model name>, <N>K ctx` for the picker, the Codex catalog and the LiteLLM config, from the role text and the model guide's `name`. VS Code's Custom Endpoint group carries the same description as each model's `name`.
 
 **The engines enforce context, and they do not agree.** The MLX runner applies context per request; llama.cpp fixes it at load and truncates an over-long prompt from the front with HTTP 200 and no error. LiteLLM's `max_input_tokens` is the only layer that fails loudly. Engine behaviour is recorded in `resources/deploy/litellm/registry.yaml`.
 
@@ -248,6 +252,22 @@ A delegated subagent gets what it declares minus `Grep`/`Glob`; the matrix and m
 
 **Cadence is optional and separately owned.** ailocal neither installs nor depends on it, and
 `claude-local` is complete without it.
+
+---
+
+## Delegation
+
+The bundled `agent` MCP (`ailocal mcp agent`) lets a hosted Claude or Codex session run one bounded task on a local worker, `claude-local` or `codex-local`. Hosted roots learn of it only through Cadence's `local-agent` declaration; ailocal registers it in its own roots and in VS Code's. The contract:
+
+- **Modes.** `delegate(mode=…)` is `text` (default: no built-in tools, no MCP servers), `research` (Claude only: `Read`, `Grep` and `Glob` inside `cwd`, plus the research server's `search`), `edit` (sandboxed and confined to `cwd`) or `full` (no sandbox, no permission prompts, the parent environment). Each worker's ceiling is `delegate_max_mode` under `[claude]` and `[codex]` in `clients.toml`, default `edit`, read on every call. A call above it fails with `MODE_NOT_PERMITTED`; nothing falls back to another mode. Codex refuses `research`, because its read-only sandbox still runs code.
+- **Working directory.** `text`, and `research` without a `cwd`, run in `$AILOCAL_STATE/local-agent/empty`, so a child never reads the hosted session's repository by default. `edit` and `full` require an existing absolute `cwd`. Below `full`, delegated Claude runs with `--setting-sources user`: the target project's settings, hooks, `.mcp.json` and `CLAUDE.md` do not load.
+- **Confinement.** Hosted-session variables, cloud-provider keys and `SSH_AUTH_SOCK` are dropped from the child, the proxy key never reaches it, and both workers are denied the key-bearing env files below `full`. A child cannot delegate again, and the local launchers mark their caller so `delegate` from `claude-local` or `codex-local` is refused before a child starts.
+- **Model and limits.** `model` must be an enabled chat alias; the child receives that alias's context and output limits, not the launch default's.
+- **Resume.** A returned `session_id` is bound to its worker, mode, model, directory and execution policy. An ID-only resume inherits them; conflicting options, changed policy, unknown or pre-binding sessions and concurrent resumes are refused. ailocal stores only identity and permission bindings; the native client keeps the transcript.
+- **Images.** `image_paths` attaches up to four PNG or JPEG files inside `cwd` (5 MiB, 8192 pixels per side, 16 million pixels each) through each client's native image input, on fresh and resumed calls, when the backend's guide declares images. Parent attachments are never forwarded implicitly.
+- **Outcomes.** Every result carries a `capabilities` block built from the same per-mode table that builds the argv, so it cannot drift from what ran. Failed, cancelled, timed-out and empty runs are errors; `DELEGATE_EMPTY` carries a bound `resume` ID for an explicit follow-up. ailocal never retries and never treats a changed file as success. Timeout, cancellation, a host disconnect and SIGINT or SIGTERM kill the child's process group. A hosted Codex parent needs `tool_timeout_sec` of at least 3660 on its `local-agent` entry.
+
+[ADR 015](adr/015-delegation-inputs-and-resume.md) records the resume and image contract; [ADR 017](adr/017-instruction-budget.md) the instruction-file budget delegated roots observe.
 
 ---
 
