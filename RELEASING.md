@@ -10,13 +10,9 @@ From v0.9.0, `main` is a public contract. ailocal's published interface is its C
 - Full gate: `python3 tests/gate.py --full`, then `ailocal check`.
 - Update `README.md` when installation changes and `AGENTS.md` when the developer workflow changes.
 
-### The clean-install check: what it is now, and what should replace it
+### The clean-install check
 
-**Current requirement — MANUAL.** A human installs onto a machine that has never run ailocal and confirms it comes up. Nothing in this repository automates it. `tests/installed-runtime.py` is the closest thing and is *not* a substitute: it proves the wheel carries its own assets and needs no checkout, but it runs beside an existing installation, so it cannot exercise first-run behaviour.
-
-Because it is manual, it is the one item that gets skipped. It was skipped for **v0.9.1** and **v0.10.0** — no such machine was available. That is recorded here rather than left unstated, since a checklist item quietly skipped is indistinguishable from one that passed.
-
-**Future replacement — NOT YET BUILT.** The intended fix is an automated clean-state install gate: fresh `HOME`, `XDG_*` and config roots, install from the built wheel, no repository checkout anywhere on the path, no prior generated state, then assert the stack comes up. Nothing of this exists today; when it does, it replaces the manual item above and this section goes with it.
+**Manual, and the step most often skipped.** A human installs the built artifact on a Mac that has never run ailocal and confirms `ailocal check` passes. `tests/installed-runtime.py` is not a substitute: it proves the wheel needs no checkout but runs beside an existing installation. It was skipped for v0.9.1, v0.10.0 and v0.15.0 because no such machine was available; a skipped step is recorded in the release notes, never reported as passed. The replacement, an automated clean-state install gate with fresh `HOME`, `XDG_*` and config roots, is not built; when it is, it replaces this item.
 
 ## Cutting the release
 

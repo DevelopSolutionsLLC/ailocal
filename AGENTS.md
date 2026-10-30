@@ -23,7 +23,7 @@ Cadence's shared policy (principal-engineer voice, evidence labels, version safe
 
 Before changing dependencies, install behaviour, skills or MCP integration, read [AI development maintenance](docs/maintenance.md); weekly maintenance starts there with `cadence doctor`. An old workaround is a hypothesis to revalidate against current upstream releases and issues, not a permanent limitation.
 
-Version safety here: every image is digest-pinned and the gate check `litellm runtime matches the validated version` fails on drift. [REAL] 2026-10-22: the digest pin held LiteLLM on clean `v1.106.0` when `v1.107.0` shipped a credential-stealer to PyPI and the floating Docker tags (BerriAI/litellm#47826). The per-component security audit and what it must record are in [docs/security.md](docs/security.md#supply-chain).
+Every image and model source is pinned by digest or hash, and the gate fails on drift. The audit each component needs, and the incident that justifies the lag, are in [docs/security.md](docs/security.md#supply-chain).
 
 ```sh
 python3 -m venv .venv && . .venv/bin/activate
