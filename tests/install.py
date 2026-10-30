@@ -138,6 +138,10 @@ def main() -> None:
                   == {"model": "fixture:mtp", "from": native["model"],
                                    "renderer": "qwen3.5", "parser": "qwen3.5", "stream": False},
               "native pull/create supplies built-in rendering without converted files or quantization")
+        check([body for url, body in calls if url.endswith('/api/delete')] == [{"model": native["model"]}]
+              and calls.index(next(c for c in calls if c[0].endswith('/api/delete')))
+              > calls.index(next(c for c in calls if c[0].endswith('/api/create'))),
+              "the repository pull's own manifest is dropped only after the alias verifies")
         check(M.current("fixture:mtp", native)
               and not M.current("fixture:mtp", {**native, "parser": "other"}),
               "receipt binds the native renderer/parser recipe and weight pin")
@@ -182,6 +186,9 @@ def main() -> None:
             created = next(body for url, body in calls if url.endswith('/api/create'))
             check(created.get("draft_files") == {"draft.gguf": "sha256:" + "f" * 64},
                   "native draft_files attaches the exact pulled head without conversion")
+            check([body for url, body in calls if url.endswith('/api/delete')]
+                  == [{"model": paired["model"]}, {"model": paired["draft_model"]}],
+                  "both repository pulls are dropped once the paired alias verifies")
             check(M.current("fixture:paired", paired)
                   and not M.current("fixture:paired", {**paired, "draft_sha256": "a" * 64})
                   and not M.current("fixture:paired", native),
@@ -193,8 +200,12 @@ def main() -> None:
                 return response
 
             with patch.object(M.urllib.request, "urlopen", side_effect=contained_head):
+                calls.clear()
                 check(M.install("fixture:contained-head", {**paired, "model": "gemma4:26b-a4b-it-qat"}),
                       "native original target and a pinned DRAFT inside a source manifest are supported")
+                check([body for url, body in calls if url.endswith('/api/delete')]
+                      == [{"model": paired["draft_model"]}],
+                      "an official library source tag is kept; only the repository head pull is dropped")
             calls.clear()
             check(not M.install("fixture:bad-head", {**paired, "draft_sha256": "a" * 64})
                   and not any(url.endswith('/api/create') for url, _ in calls),
