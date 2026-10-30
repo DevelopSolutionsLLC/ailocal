@@ -60,9 +60,10 @@ def _configured(argv, present: set[str]) -> tuple[int, list[str]]:
 
 def _vscode(user_dir, which_code: bool, writes_fail: bool = False) -> int:
     """Run install_vscode against a stubbed VS Code; return its outcome code."""
-    saved = (C._vscode_user_dir, C.shutil.which, C._code, C._extensions,
-             C._install_extension, C._provider_group, C._prune_deprecated,
-             C._ensure_recommended, C.provision_vscode_research)
+    saved = (C._vscode_user_dir, C.shutil.which, C._code,
+             C._provider_group, C._prune_deprecated,
+             C._ensure_recommended, C.provision_vscode_research, C.provision_vscode_agent,
+             C.native_vscode_available, C.provision_copilot_mcp)
 
     def boom(*a, **k):
         raise OSError(13, "Permission denied")
@@ -71,17 +72,19 @@ def _vscode(user_dir, which_code: bool, writes_fail: bool = False) -> int:
         C._vscode_user_dir = lambda: user_dir
         C.shutil.which = lambda name: "/usr/local/bin/code" if which_code else None
         C._code = lambda *a: "1.99.0\nabc\nx64" if which_code else None
-        C._extensions = lambda: []
-        C._install_extension = lambda ext, installed: None
         C._provider_group = boom if writes_fail else (lambda p, dry: None)
         C._prune_deprecated = lambda p, dry: None
         C._ensure_recommended = lambda p: None
         C.provision_vscode_research = lambda p: True
+        C.provision_vscode_agent = lambda p: True
+        C.provision_copilot_mcp = lambda: True
+        C.native_vscode_available = lambda: True
         return C.install_vscode([])
     finally:
-        (C._vscode_user_dir, C.shutil.which, C._code, C._extensions,
-         C._install_extension, C._provider_group, C._prune_deprecated,
-         C._ensure_recommended, C.provision_vscode_research) = saved
+        (C._vscode_user_dir, C.shutil.which, C._code,
+         C._provider_group, C._prune_deprecated,
+         C._ensure_recommended, C.provision_vscode_research, C.provision_vscode_agent,
+         C.native_vscode_available, C.provision_copilot_mcp) = saved
 
 
 def _native_mcp(calls: list):
@@ -232,6 +235,40 @@ def _agent_lifecycle() -> None:
 
 
 def main() -> None:
+    _suite.section("COPILOT PORTABLE SCOPE (THROWAWAY ROOT)")
+    with tempfile.TemporaryDirectory() as box:
+        path = Path(box) / 'mcp-config.json'
+        original = {'version': 1, 'mcpServers': {'foreign': {'command': 'keep'},
+                    'agent': {'command': '/old/ailocal', 'args': ['mcp', 'agent'], 'timeout': 123}}}
+        path.write_text(json.dumps(original))
+        path.chmod(0o600)
+        with patch.object(C.policy, 'client_mcp_path', return_value=path), \
+                patch.object(C.shutil, 'which', return_value='/new/ailocal'):
+            check(C.provision_copilot_mcp(), 'portable registrations installed')
+            data = json.loads(path.read_text())
+            check(path.stat().st_mode & 0o777 == 0o600,
+                  'updating portable entries preserves private file permissions')
+            check(data['mcpServers']['foreign'] == original['mcpServers']['foreign']
+                  and data['version'] == 1 and data['mcpServers']['agent']['timeout'] == 123,
+                  'foreign servers and operator options survive')
+            check(data['mcpServers']['research']['args'] == ['mcp', 'research']
+                  and data['mcpServers']['agent']['command'] == '/new/ailocal',
+                  'both entries use an absolute launcher and portable schema')
+            before = path.read_bytes()
+            check(C.provision_copilot_mcp() and path.read_bytes() == before,
+                  'portable registration is idempotent')
+            data['mcpServers']['research'] = {'command': 'foreign'}
+            path.write_text(json.dumps(data))
+            before = path.read_bytes()
+            check(not C.provision_copilot_mcp() and path.read_bytes() == before,
+                  'same-name collision preserves the entire file')
+            path.write_text('{invalid')
+            check(not C.provision_copilot_mcp() and path.read_text() == '{invalid',
+                  'invalid portable JSON is preserved')
+        with patch.dict(os.environ, {'COPILOT_HOME': box}):
+            check(C.policy.client_mcp_path('copilot', local=False) == path,
+                  'portable scope honors COPILOT_HOME')
+
     _suite.section("DOCUMENTATION MCP NATIVE REGISTRATION (SIMULATED CLIENT WRITES)")
     with tempfile.TemporaryDirectory() as box:
         root = Path(box)
@@ -395,6 +432,60 @@ def main() -> None:
           "on absence they are skipped — there is nothing to read them")
     check(not _ran_instructions(C.VSCODE_FAILED),
           "on a real failure they are skipped, and the failure is reported")
+
+    _suite.section("NATIVE VSCODE MODEL POLICY AND MCP-FREE GUIDANCE")
+    for tier in C.policy.TIERS:
+        models = generation.load_models_yaml(C.policy.profile_path(tier, Path(__file__).resolve().parent.parent / 'src/ailocal/resources'))
+        foreign = {'vendor': 'customendpoint', 'name': 'Other endpoint', 'models': []}
+        old = {'vendor': 'litellm-connector', 'name': 'LiteLLM', 'baseUrl': C.BASE_URL,
+               'apiKey': '${input:stored-reference}'}
+        result = C.vscode_provider_document([foreign, old], models)
+        group = result[-1]
+        check(result[0] == foreign and group['apiKey'] == old['apiKey'],
+              tier + ': native migration preserves foreign provider and secret reference')
+        check([x['id'] for x in group['models']] == ['ailocal-' + r for r in models if r != 'completion'],
+              tier + ': native chat picker has every enabled chat alias, excludes FIM')
+        check(all(x['maxInputTokens'] == models[x['id'][8:]]['context_input']
+                  and x['maxOutputTokens'] == models[x['id'][8:]]['max_output']
+                  for x in group['models']), tier + ': native limits retain actual input/output reserves')
+        check(all(x['vision'] for x in group['models']),
+              tier + ': selected, image-qualified chat backends expose vision')
+        changed = {**models['architecture'], 'active': 'unqualified-model', 'guidance': {}}
+        check(not C.vscode_provider_document([], {'architecture': changed})[-1]['models'][0]['vision'],
+              tier + ': an unqualified replacement does not inherit vision')
+        check(C.vscode_provider_document(result, models) == result,
+              tier + ': native provider regeneration is idempotent')
+        guidance = C.copilot_model_guidance(models)
+        check(all('ailocal-' + r in guidance and cfg['guidance']['prompting'][0] in guidance
+                  for r, cfg in models.items() if r != 'completion'),
+              tier + ': Copilot native instructions carry current model advice without MCP')
+    stranger = {'vendor': 'litellm-connector', 'name': 'LiteLLM', 'baseUrl': 'http://10.0.0.5:4000'}
+    check(C.vscode_provider_document([stranger], models)[0] == stranger,
+          'a connector group aimed at another proxy is foreign and preserved')
+    with tempfile.TemporaryDirectory() as box:
+        user, saved = Path(box), C._vscode_user_dir
+        target = user / 'chatLanguageModels.json'
+        C._vscode_user_dir = lambda: user
+        try:
+            for text, want, label in (
+                    ('[', None, 'unparseable'),
+                    (json.dumps([7, {'vendor': C.VSCODE_VENDOR, 'name': C.VSCODE_PROVIDER_NAME}]), None,
+                     'non-object entry beside the owned group'),
+                    (json.dumps([stranger]), False, 'foreign-only')):
+                target.write_text(text)
+                generation._STAGE.clear()
+                got = generation.regen_vscode(models)
+                check(got is want and target.read_text() == text and target not in generation._STAGE,
+                      f'start preserves a {label} VS Code model file and does not abort')
+        finally:
+            C._vscode_user_dir = saved
+            generation._STAGE.clear()
+            generation._STAGED_TEXT.clear()
+    try:
+        C.vscode_provider_document({'bad': True}, models)
+        check(False, 'invalid provider file fails closed')
+    except ValueError:
+        check(True, 'invalid provider file fails closed')
 
     sys.exit(_suite.report())
 

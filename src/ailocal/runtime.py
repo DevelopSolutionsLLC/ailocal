@@ -277,15 +277,10 @@ def _state(cap: dict, loaded: dict, now: datetime) -> tuple[str, str]:
     return "loaded", GREEN
 
 
-def _vscode_connector() -> bool:
-    """The connector is an extension, so VS Code itself is the only registry."""
-    try:
-        r = subprocess.run(["code", "--list-extensions"], capture_output=True,
-                           text=True, timeout=20)
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return any(line.strip().lower() == "gethnet.litellm-connector-copilot"
-               for line in r.stdout.splitlines())
+def _vscode_provider() -> bool:
+    """ailocal's native Custom Endpoint group is configured in VS Code."""
+    from .install import _vscode_provider_group  # install imports runtime
+    return _vscode_provider_group() is not None
 
 
 def _capabilities() -> list:
@@ -586,10 +581,10 @@ def _dashboard() -> None:
         "docs/troubleshooting.md)"
         if (client_root / "codex" / "config.toml").is_file()
         else "Codex CLI     not installed")
-    if _vscode_connector():
-        ok("VS Code       connector installed  (chat turn unverified — needs GUI)")
+    if _vscode_provider():
+        ok("VS Code       native provider configured  (chat turn unverified — needs GUI)")
     else:
-        dim("VS Code       connector not installed")
+        dim("VS Code       native provider not configured")
 
     hdr("Models")
     _verbose()
