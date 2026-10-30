@@ -2,7 +2,7 @@
 
 Release policy and the meaning of each bump: [RELEASING.md](RELEASING.md).
 
-## v0.15.0 (unreleased) — local models and bound delegation
+## v0.15.0 (2026-10-30) — local models and bound delegation
 
 ### Breaking
 
