@@ -1,133 +1,108 @@
-# profile: 32gb
-# Declarative capability registry for 32 GB unified memory (Apple Silicon).
-# Architecture, implementation, review and fast share the official Qwen3.5 9B MLX
-# backend. Cyber is a separate unrestricted Qwen3.5 9B conversion with the same
-# attention geometry, loaded beside the primary only while it is in use.
-#
-# Geometry follows the one rule in docs/architecture.md#geometry: admission is
-# bounded by memory up to the backend's native window, and compaction is the
-# client's latency budget, never a geometry input.
-#
-# Qwen3.5 9B is natively 262144 tokens (config.json max_position_embeddings) and
-# has the 4B's attention geometry: 8 of 32 layers are full attention (4 KV heads x
-# 256 dims), so KV grows at 32 KiB per token [calculated from config.json; the
-# same rate is measured on the 16 GB tier's 4B]. A filled native window is ~8 GiB
-# of KV on ~6 GiB of 4-bit weights, which fits 32 GB, so every chat role here
-# totals the native 262144. [UNVERIFIED] Not measured on 32 GB hardware: run
-# tests/measure_geometry.py --tier 32gb there before claiming the fit. Two filled
-# windows at once (primary and cyber) would not fit; Ollama evicts the idle model
-# and cyber's short keep_alive releases it.
-# Ollama's official -mlx tags use its native pull path; no snapshot adapter is needed.
+# 32gb — native GGUF MTP backends; measured on the 64 GB M3 Max.
+# Architecture retains its pre-reset authored window; Cyber matches its total.
+# Physical 32/128 GB fit and full-window quality are unverified.
+# GGUF uses eager context allocation and q8_0 KV; historical MLX geometry evidence does not transfer.
+# Exact sources, native trials and limitations: docs/model-audit.md.
 status = "configuration-verified"  # schema, selection and size are tested; not measured on 32 GB hardware
-disk_gb = 16
+disk_gb = 21
 
-# Sampling audited 2026-10-22 against Qwen guidance:
-# https://huggingface.co/Qwen/Qwen3.5-9B#best-practices
-# Vendor-aligned defaults are not a measured quality improvement on this tier.
 [architecture]
 role = "Lead architect (shared primary)"
-active = "qwen3.5:9b-mlx"
+active = "qwen3.5:9b-calibrated-mtp-q4_K_M"
+preferred = ["qwen3.5:9b-calibrated-mtp-q4_K_M"]
 runtime_patch = "gemma4-switch-glu"
+draft_num_predict = 3
+source = {"model" = "hf.co/unsloth/Qwen3.5-9B-MTP-GGUF:Qwen3.5-9B-Q4_K_M.gguf", "sha256" = "e8dd94817e95d6c0939102049d068418269978377b13616c4726235e232841fe", "renderer" = "qwen3.5", "parser" = "qwen3.5"}
 stop = ["<|im_end|>", "<|im_start|>"]
-preferred = ["qwen3.5:9b-mlx"]
 reasoning = true
-context_input = 245760
+context_input = 122880
 max_output = 16384
 temperature = 0.6
 keep_alive = "6h"
 purpose = ["architecture", "refactoring", "multi-step debugging", "design"]
-strengths = ["shared resident primary - no load/evict churn", "native tool calling"]
+strengths = ["native MTP", "imatrix calibration", "native Ollama GGUF", "native tool calling"]
 weaknesses = ["smaller than the 64 GB tier's specialised models", "one backend serves four roles"]
 top_p = 0.95
 top_k = 20
 repeat_penalty = 1.0
 min_p = 0.0
 presence_penalty = 0.0
-  # Qwen precise-coding thinking preset; see the source card linked above.
 
 [implementation]
 role = "Daily coding (shared primary)"
-active = "qwen3.5:9b-mlx"
+active = "qwen3.5:9b-calibrated-mtp-q4_K_M"
+preferred = ["qwen3.5:9b-calibrated-mtp-q4_K_M"]
 runtime_patch = "gemma4-switch-glu"
+draft_num_predict = 3
+source = {"model" = "hf.co/unsloth/Qwen3.5-9B-MTP-GGUF:Qwen3.5-9B-Q4_K_M.gguf", "sha256" = "e8dd94817e95d6c0939102049d068418269978377b13616c4726235e232841fe", "renderer" = "qwen3.5", "parser" = "qwen3.5"}
 stop = ["<|im_end|>", "<|im_start|>"]
-preferred = ["qwen3.5:9b-mlx"]
 reasoning = false
-context_input = 253952
+context_input = 131072
 max_output = 8192
 temperature = 0.7
 keep_alive = "6h"
 purpose = ["everyday coding", "features", "tests"]
-strengths = ["same resident backend as architecture - no reload between roles"]
+strengths = ["native MTP", "imatrix calibration", "native Ollama GGUF", "native tool calling"]
 weaknesses = ["shares its budget with every other chat capability"]
 top_p = 0.8
 top_k = 20
 repeat_penalty = 1.0
 min_p = 0.0
 presence_penalty = 1.5
-  # Qwen non-thinking general preset; keep reasoning off for this role.
 
 [review]
 role = "Code review (shared primary)"
-active = "qwen3.5:9b-mlx"
+active = "qwen3.5:9b-calibrated-mtp-q4_K_M"
+preferred = ["qwen3.5:9b-calibrated-mtp-q4_K_M"]
 runtime_patch = "gemma4-switch-glu"
+draft_num_predict = 3
+source = {"model" = "hf.co/unsloth/Qwen3.5-9B-MTP-GGUF:Qwen3.5-9B-Q4_K_M.gguf", "sha256" = "e8dd94817e95d6c0939102049d068418269978377b13616c4726235e232841fe", "renderer" = "qwen3.5", "parser" = "qwen3.5"}
 stop = ["<|im_end|>", "<|im_start|>"]
-preferred = ["qwen3.5:9b-mlx"]
 reasoning = true
-context_input = 245760
+context_input = 122880
 max_output = 16384
 temperature = 0.6
 keep_alive = "6h"
 purpose = ["code review", "bug detection", "security review"]
-strengths = ["reasoning enabled for review depth", "no separate model to load"]
+strengths = ["native MTP", "imatrix calibration", "native Ollama GGUF", "native tool calling"]
 weaknesses = ["not a dedicated review model as on the 64 GB tier"]
 top_p = 0.95
 top_k = 20
 repeat_penalty = 1.0
 min_p = 0.0
 presence_penalty = 0.0
-  # Qwen precise-coding thinking preset; see the source card linked above.
 
 [fast]
 role = "Fast agent (shared primary)"
-active = "qwen3.5:9b-mlx"
+active = "qwen3.5:9b-calibrated-mtp-q4_K_M"
+preferred = ["qwen3.5:9b-calibrated-mtp-q4_K_M"]
 runtime_patch = "gemma4-switch-glu"
+draft_num_predict = 3
+source = {"model" = "hf.co/unsloth/Qwen3.5-9B-MTP-GGUF:Qwen3.5-9B-Q4_K_M.gguf", "sha256" = "e8dd94817e95d6c0939102049d068418269978377b13616c4726235e232841fe", "renderer" = "qwen3.5", "parser" = "qwen3.5"}
 stop = ["<|im_end|>", "<|im_start|>"]
-  # reasoning OFF for the same reason the 64 GB tier disables it on `fast`: a
-  # classification tier that thinks past its budget returns empty content.
 reasoning = false
-preferred = ["qwen3.5:9b-mlx"]
-context_input = 253952
+context_input = 131072
 max_output = 8192
 temperature = 0.0
 keep_alive = "6h"
 purpose = ["task classification", "summarisation", "quick edits", "tool-driven lookups"]
-strengths = ["no extra model resident - shares the primary"]
+strengths = ["native MTP", "imatrix calibration", "native Ollama GGUF", "native tool calling"]
 weaknesses = ["larger than a dedicated 2b would be", "so marginally slower per token"]
 top_p = 0.9
 top_k = 20
 repeat_penalty = 1.0
 min_p = 0.0
 presence_penalty = 1.5
-  # Measured fast-agent exception: retain t0/p0.9 and the installed model presence penalty.
 
 [completion]
-role = "Autocomplete (unavailable: Qwen2 MLX loader)"
-  # SEPARATE MODEL ON PURPOSE. The primary is an instruct model without FIM/insert
-  # tokens, so it cannot do inline completion at all, and IDE completion needs
-  # latency the primary cannot meet. qwen2.5-coder carries native FIM tokens.
-enabled = false  # Qwen2 MLX is not supported by the pinned Ollama loader
-active = "ailocal-qwen2.5-coder-1.5b:mlx-a18a8bf"
-source = { repository = "mlx-community/Qwen2.5-Coder-1.5B-4bit", revision = "a18a8bf7bf0563001cb807abff12a98d4a1ae43c" }
-preferred = ["ailocal-qwen2.5-coder-1.5b:mlx-a18a8bf"]
+role = "Autocomplete (FIM)"
+active = "qwen2.5-coder:1.5b-base"
+stop = ["<|endoftext|>", "<|fim_pad|>", "<|file_sep|>", "<|repo_name|>", "<|fim_prefix|>", "<|fim_suffix|>", "<|fim_middle|>"]
+preferred = ["qwen2.5-coder:1.5b-base"]
 reasoning = false
 context_input = 3968
-  # max_output 512, raised from 128. A FIM suggestion is a few lines, not a
-  # paragraph, but 128 truncated multi-line completions mid-block. 512 is
-  # still far too small to be used as a chat role, which is the point.
 max_output = 512
 temperature = 0.1
-  # Rotating, not pinned: self-unloads after 2h idle rather than staying resident
-  # beside the primary indefinitely. ~1 GB footprint keeps this cheap to reload.
 keep_alive = "2h"
 purpose = ["inline completion", "FIM", "quick syntax fixes"]
 strengths = ["native FIM tokens", "very fast", "~1 GB footprint"]
@@ -136,23 +111,16 @@ top_p = 0.9
 top_k = 20
 repeat_penalty = 1.0
 
-
-# ── cyber — unrestricted coding on a separate model ─────────────────────────
-# A separate model on purpose: abliterated weights are the capability, so it
-# cannot share the primary's resident copy the way the four roles above do.
-# Same Qwen3.5 9B attention geometry, so it follows implementation's shape
-# (non-reasoning, 8192 output). Sampling is Qwen3.5's instruct (non-thinking)
-# general preset; the distilled and abliterated cards publish none of their own.
-# https://huggingface.co/Qwen/Qwen3.5-9B#best-practices
 [cyber]
 role = "Unrestricted coding (separate model)"
-active = "ailocal-qwen3.5-9b-coder-uncensored:mlx-7fed86c"
-runtime_patch = "gemma4-switch-glu"  # native compatibility bundle also enforces MLX stops
-source = { repository = "andrevp/Qwen3.5-9B-Distilled-OPUS-Heretic-MLX-VLM-4bit", revision = "7fed86c81466cceaf316c4b82c1401e874f195d9" }
+active = "qwen3.5:9b-unrestricted-mtp-q4_K_M"
+preferred = ["qwen3.5:9b-unrestricted-mtp-q4_K_M"]
+runtime_patch = "gemma4-switch-glu"
+draft_num_predict = 3
+source = {"model" = "hf.co/localslm/Qwen3.5-9B-MTP-Uncensored:model_q4_k_m.gguf", "sha256" = "2d1019622dd398ba68d17cd78651ec24ed39e4e7e3a5ad563d1060f66a5ab06f", "renderer" = "qwen3.5", "parser" = "qwen3.5"}
 stop = ["<|im_end|>", "<|im_start|>"]
-preferred = ["ailocal-qwen3.5-9b-coder-uncensored:mlx-7fed86c"]
 reasoning = false
-context_input = 253952
+context_input = 131072
 max_output = 8192
 temperature = 0.7
 top_p = 0.8
@@ -160,34 +128,34 @@ top_k = 20
 min_p = 0.0
 presence_penalty = 1.5
 repeat_penalty = 1.0
-  # 5m, not the primary's 6h: a second resident model and its KV are memory the
-  # primary cannot use, so it is released soon after it goes idle.
 keep_alive = "5m"
 purpose = ["refusal-sensitive coding", "security research", "tool-driven edits"]
-strengths = ["abliterated, Opus-reasoning-distilled weights", "native tool calling", "same window as implementation"]
+strengths = ["native MTP", "native Ollama GGUF", "native tool calling"]
 weaknesses = ["a second model beside the primary - a cold load on first use", "coding evidence is limited to small native-client fixtures"]
 
-# One guide per exact backend, shared by all capability aliases using it.
-[model_guidance."qwen3.5:9b-mlx"]
-name = "Qwen3.5 9B"
-prompting = ["Give one bounded change with relevant code, explicit input/output requirements and a few acceptance examples.","Use the client's real syntax/test tools, return the exact failing output for repair, and stop or escalate after repeated failure."]
-limitations = ["Guidance is a starting point, not a measured guarantee of coding correctness.","Cold prompt processing can consume a short client deadline before any edit occurs. Full-window behavior and physical 32 GB memory fit remain unmeasured."]
-evidence = "[REAL] On the 64 GB host, Ollama 0.40.8-ailocal.18631.3 loaded the official checkpoint and reported runner=mlx; its manifest matched the reviewed digest. [APPROX] With 300-second client limits, one implementation-role file-edit/test fixture passed in Codex 0.164.0 and Claude 2.1.308, including independent assertions and unchanged tests. Earlier 90-second runs stopped during cold prompt processing and were incomplete, not correctness scores. Earlier GGUF measurements do not transfer."
-summary = "Qwen3.5 9B MLX: keep tasks bounded and verify edits with real tools."
-sources = ["https://ollama.com/library/qwen3.5:9b-mlx","https://huggingface.co/Qwen/Qwen3.5-9B#best-practices"]
 
-[model_guidance."ailocal-qwen2.5-coder-1.5b:mlx-a18a8bf"]
-name = "Qwen2.5-Coder 1.5B"
-summary = "Disabled MLX autocomplete candidate: Qwen2 is unsupported by this Ollama MLX loader."
-prompting = ["Do not select or invoke this disabled capability."]
-limitations = ["MLX weights exist, but native load and fill-in-the-middle behavior are unverified. No GGUF fallback is configured."]
-evidence = "[UNVERIFIED] Source metadata inspected; this candidate is disabled and has not been installed or validated."
-sources = ["https://huggingface.co/mlx-community/Qwen2.5-Coder-1.5B-4bit"]
+[model_guidance."qwen3.5:9b-calibrated-mtp-q4_K_M"]
+input_modalities = ["text", "image"]
+name = "Qwen3.5 9B calibrated MTP (GGUF)"
+summary = "Unsloth imatrix-calibrated Q4_K_M with an embedded native MTP layer and image input; verify generated code with real tests."
+prompting = ["Give one bounded coding change, exact input/output requirements and acceptance examples; include only relevant files.", "Use native tools to inspect, edit and run unchanged tests. Return exact failures for at most two repair attempts, then report the unresolved issue.", "Request the needed output format explicitly. Use ailocal-fast for simple work and keep the selected role's thinking mode for difficult reasoning.", "Treat output-limit truncation as incomplete; do not repeat full repository context or claim tests passed without running them."]
+limitations = ["Small fixtures do not establish repository-scale accuracy or full-window retrieval quality.", "Calibration and MTP optimize inference; they do not add training-data knowledge or establish universal accuracy parity.", "Physical 32/128 GB full-window fit is unverified on the 64 GB measurement host."]
+evidence = "[REAL] 2026-10-28: the native HF pull matched target SHA-256 e8dd94817e95d6c0939102049d068418269978377b13616c4726235e232841fe. Ollama reports 77 calibration chunks, 248 imatrix entries, one nextn layer and vision capability. [APPROX] On the 64 GB M3 Max, ten coding tasks at three seeds passed 22/30 attempts and 3/3 tool rounds at both draft depth 2 and the selected depth 3; the former standard passed 21/30 and Cyber 22/30. A separate matched 256-token decode comparison reached 77.92 tokens/s versus former standard 69.24 and Cyber 77.23. The depth sweep selected depth 3 at 85.49 tokens/s versus Cyber 85.85; these are bounded synthetic workloads. Selected-depth, installed-client and geometry follow-through are recorded in docs/model-audit.md."
+sources = ["https://huggingface.co/unsloth/Qwen3.5-9B-MTP-GGUF/tree/9716a636ee4bddc3fed678220b7a33dd2a4160ae", "https://huggingface.co/Qwen/Qwen3.5-9B#best-practices"]
 
-[model_guidance."ailocal-qwen3.5-9b-coder-uncensored:mlx-7fed86c"]
-name = "Qwen3.5 9B Opus-distilled abliterated"
-summary = "Unrestricted Qwen3.5 9B reasoning-distilled MLX conversion; verify edits with real tests."
-prompting = ["Give one bounded change with relevant file paths, explicit requirements and acceptance examples.","Read the real files, make the edit with native client tools, and run the unchanged tests. Use exact test failures to repair missed requirements before claiming completion."]
-limitations = ["Upstream marks this conversion as reduced quality relative to 8-bit or fp16 and the Opus distillation as a research test version with hallucination risk; verify every API and claim against the real code.","The distillation documents no thinking toggle and was trained on <think> traces; this profile serves it non-thinking, so ask for the change directly and treat stray reasoning text as noise.","Small native edit fixtures do not establish repository-scale coding reliability; a measured Claude run needed test feedback to repair a missed case-folding requirement.","Full-window memory use and fit on physical 32 GB hardware remain unmeasured."]
-evidence = "[APPROX] On a 64 GB host, the pinned INT4 Safetensors conversion passed a proxy tool/result round trip and a strict string-boolean parsing edit/test fixture through Codex 0.164.0 and Claude 2.1.308 with filtering enabled. All 10 independent cases passed, test files were unchanged, and both clients exited successfully within 300 seconds. Codex received a complete apply_patch example; Claude used a real failing test to correct its first edit. These are reduced fixtures, not full-context or physical 32 GB validation."
-sources = ["https://huggingface.co/andrevp/Qwen3.5-9B-Distilled-OPUS-Heretic-MLX-VLM-4bit/tree/7fed86c81466cceaf316c4b82c1401e874f195d9","https://huggingface.co/Jackrong/Qwen3.5-9B-Claude-4.6-Opus-Reasoning-Distilled","https://huggingface.co/Qwen/Qwen3.5-9B#best-practices"]
+[model_guidance."qwen3.5:9b-unrestricted-mtp-q4_K_M"]
+input_modalities = ["text", "image"]
+name = "Qwen3.5 9B unrestricted MTP (GGUF)"
+summary = "Publisher-labeled uncensored GGUF with Unsloth imatrix metadata and an embedded MTP layer; native Qwen rendering preserves client compatibility."
+prompting = ["Give one bounded coding change, exact input/output requirements and acceptance examples; include only relevant files.", "Use native tools to inspect, edit and run unchanged tests. Return exact failures for at most two repair attempts, then report the unresolved issue.", "Request the needed output format explicitly. Use ailocal-fast for simple work and keep the selected role's thinking mode for difficult reasoning.", "Treat output-limit truncation as incomplete; do not repeat full repository context or claim tests passed without running them.", "Unrestricted behavior is not evidence of coding or factual accuracy; verify edits and claims with actual tools."]
+limitations = ["Short fixtures do not establish repository-scale accuracy or full-window retrieval quality.", "MTP accelerates decoding; calibration and QAT do not establish additional training-data knowledge.", "This replaces the earlier Opus-distilled weights; their training and quality evidence do not transfer.", "The publisher label does not independently establish the uncensoring method or universal non-refusal."]
+evidence = "[REAL] The reviewed native target SHA-256 2d1019622dd398ba68d17cd78651ec24ed39e4e7e3a5ad563d1060f66a5ab06f has Unsloth imatrix metadata and an embedded nextn layer. [APPROX] 2026-10-28 on the 64 GB M3 Max: ten coding tasks at three seeds passed 22/30 attempts and 3/3 tool rounds at both draft depth 2 and the selected depth 3. The calibrated standard also passed 22/30. The depth sweep selected depth 3 at 85.85 tokens/s versus calibrated standard 85.49 on a 256-token synthetic workload. Native-client, selected-depth and geometry follow-through are scoped in docs/model-audit.md. [UNVERIFIED] Universal non-refusal, repository-scale accuracy and physical 32 GB/full-window fit."
+sources = ["https://huggingface.co/localslm/Qwen3.5-9B-MTP-Uncensored/tree/2d76f180895809e97ea55c524bca2236de7a0e26", "https://huggingface.co/Qwen/Qwen3.5-9B#best-practices"]
+
+[model_guidance."qwen2.5-coder:1.5b-base"]
+name = "Qwen2.5-Coder 1.5B base"
+summary = "Fill-in-the-middle autocomplete only; send a FIM-formatted prompt, never a chat request."
+prompting = ["Format the request as <|fim_prefix|>prefix<|fim_suffix|>suffix<|fim_middle|>; the proxy drops a separate suffix field.","Send as much surrounding prefix and suffix as the 3,968-token input allows; context, not instructions, is what improves a completion.","Stop at the end of the line or block the editor needs; temperature 0.1 keeps suggestions stable."]
+limitations = ["A base model: it follows no instructions and has no system prompt, so pre-prompting does not improve it.","Apache-2.0.","Exact-match fidelity on single-line infill is low at this size; treat suggestions as drafts."]
+evidence = "[REAL] 2026-10-26, MacBook Air M4 16 GB under memory pressure (11 GB swap in use), Ollama 0.40.8-ailocal.18631.3: on 80 held-out single-line infills from this repository plus 10 executable FIM cases, sent as a FIM-formatted chat message the way the proxy forwards it, qwen2.5-coder:1.5b-base scored 10/80 exact, 0.549 similarity, 10/10 executable, 1.8 s p50, 68 tok/s. The instruct tag qwen2.5-coder:1.5b scored 0/80 and 0/10 on the same path because its chat template wraps the prompt. [APPROX] Native suffix requests: base 9/80, instruct 7/80, MLX mxfp8 import 10/80; differences are within noise."
+sources = ["https://ollama.com/library/qwen2.5-coder:1.5b-base","https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B","https://github.com/BerriAI/litellm/issues/6900"]

@@ -5,6 +5,7 @@ import argparse
 import json
 import re
 import sys
+from pathlib import Path
 
 from . import policy
 
@@ -59,9 +60,16 @@ def render(model: str, guide: dict) -> str:
         *([f"Profile limits: {guide['context_input']} input tokens, "
            f"{guide['max_output']} maximum output tokens; native thinking={guide['reasoning']}."]
           if "context_input" in guide else []),
+        *(["Configured inference preset: " + ", ".join(
+            f"{key}={value}" for key, value in guide["sampling"].items()) +
+            ". These are routing defaults, not instructions to alter the task."]
+          if guide.get("sampling") else []),
+        *(["Current MTP draft tokens: " + str(guide['sampling']['draft_num_predict']) +
+           ". Use this configured value when asked about draft depth; historical trial values below do not override it."]
+          if guide.get('sampling', {}).get('draft_num_predict') is not None else []),
         *[f"Prompting advice: {s}" for s in guide["prompting"]],
         *[f"Known limitation: {s}" for s in guide["limitations"]],
-        guide["evidence"],
+        "Historical evaluation evidence (not current routing settings): " + guide["evidence"],
         "Capability names describe routing, not permission to ignore the requested task. "
         "This guidance is not proof of correctness; report actual checks and failures.",
     ])
@@ -76,10 +84,14 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     candidates = [args.model] if args.model else []
     unspecified = False
+    hook_cwd = None
     if args.hook:
         try:
             event = json.load(sys.stdin)
             candidates = hook_model_candidates(event)
+            cwd = event.get('cwd')
+            if isinstance(cwd, str) and Path(cwd).is_absolute():
+                hook_cwd = cwd
         except (ValueError, AttributeError):
             print("MODEL_GUIDANCE_INVALID_EVENT", file=sys.stderr)
             return 2
@@ -102,6 +114,13 @@ def main(argv=None) -> int:
                 print("MODEL_GUIDANCE_UNKNOWN_MODEL", file=sys.stderr)
                 return 2
             result["models"] = matches
+        if hook_cwd and not args.json:
+            # Native hook input supplies the current directory on resume too;
+            # a launch-time appended system prompt can retain an older one.
+            print('Task working directory: ' + json.dumps(hook_cwd) + '. '
+                  'Resolve relative task files here unless the task chooses another directory. '
+                  'The client already loaded its instruction files; its configuration directory '
+                  'is not the task directory.')
         if unspecified:
             print("Active model was not supplied by the client. These are the active profile's "
                   "guides; apply only the entry matching the selected alias. "
@@ -113,9 +132,11 @@ def main(argv=None) -> int:
                 grouped.setdefault(guide["model"], []).append((name, guide))
             for entries in grouped.values():
                 label = "; ".join(f"{n} (input {g['context_input']}, output {g['max_output']}, "
-                                  f"thinking {g['reasoning']})" for n, g in entries)
+                                  f"thinking {g['reasoning']}, " + ", ".join(
+                                      f"{key}={value}" for key, value in g.get("sampling", {}).items()) + ")"
+                                  for n, g in entries)
                 guide = {k: v for k, v in entries[0][1].items()
-                         if k not in ("context_input", "max_output", "reasoning")}
+                         if k not in ("context_input", "max_output", "reasoning", "sampling")}
                 print("\n" + render(label, guide))
         else:
             print(json.dumps(result, indent=2) if args.json else "\n\n".join(

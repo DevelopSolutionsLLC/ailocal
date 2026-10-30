@@ -191,6 +191,8 @@ def _gate_suites(repo: pathlib.Path, full: bool) -> list:
              [py, "tests/measurement-contracts.py"]),
             ("model guidance (profile knowledge, native switching and MCP)",
              [py, "tests/model-guidance.py"]),
+            ("delegation session binding and explicit image inputs",
+             [py, "tests/delegation-inputs.py"]),
             ("reasoning effort survives the installed LiteLLM adapter",
              ["/bin/bash", "tests/in-container.sh", "tests/reasoning-effort-impl.py"]),
             ("instruction duplication (one always-on file, no authored model facts)",

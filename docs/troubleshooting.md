@@ -134,7 +134,7 @@ python3 tests/measure_cache.py --quick     # active: a cold then a warm turn, wi
                                            # plain ACTIVE/INACTIVE verdict
 ```
 
-A healthy warm turn re-prefills only a few dozen tokens ([REAL] ~99.8% reuse on `qwen3.5:4b`, 16 GB). A warm turn that re-prefills the whole prompt is a genuine cache miss — look for an engine upgrade, a newly introduced hybrid/recurrent model, or interleaving background requests (fast/haiku) evicting the single resident slot on the 16 GB tier, where `architecture` and `fast` share one `qwen3.5:4b` backend (`OLLAMA_NUM_PARALLEL=1`). That last case is a memory limit, not a bug: more memory would give each role its own slot.
+A healthy warm turn re-prefills only a few dozen tokens ([REAL] ~99.8% reuse on `qwen3.5:4b`, 16 GB). A warm turn that re-prefills the whole prompt is a genuine cache miss — look for an engine upgrade, a newly introduced hybrid/recurrent model, or interleaving background requests (fast/haiku) evicting the single resident slot on the 16 GB tier, where `architecture` and `fast` share one `qwen3.5:4b-mtp-q4_K_M` backend (the figure was measured on `qwen3.5:4b`) (`OLLAMA_NUM_PARALLEL=1`). That last case is a memory limit, not a bug: more memory would give each role its own slot.
 
 **Fix** — wait; client and proxy share a 900 s timeout and give up together. To avoid the stall, keep sessions shorter or use a smaller capability for routine work.
 
@@ -288,7 +288,7 @@ chmod 600 "${AILOCAL_STATE:-$HOME/.local/state/ailocal}/searxng/settings.yml"
 
 ## VS Code is configured but not answering
 
-**Likely cause** — the connector is installed but the model list was not refreshed, or the extension is absent.
+**Likely cause** — the API key was never pasted into the native **ailocal** provider, the provider group is stale after a profile change, or the VS Code build predates the Custom Endpoint provider.
 
 **Verify** — open a Copilot chat and confirm the request appears in `docker logs ailocal-litellm`.
 
@@ -298,7 +298,7 @@ chmod 600 "${AILOCAL_STATE:-$HOME/.local/state/ailocal}/searxng/settings.yml"
 ailocal clients vscode
 ```
 
-Then reload the VS Code window.
+Then reload the VS Code window. `ailocal check` reports a stale group and a missing key separately.
 
 **Status** — configuration issue. GUI submission cannot be automated, so the final step is manual.
 
@@ -314,7 +314,7 @@ Then reload the VS Code window.
 "chat.viewSessions.enabled": false
 ```
 
-**Status** — upstream behaviour, not a defect. Responses through the proxy are unaffected: reasoning arrives in `reasoning_content` and the answer in `content`, which is what the connector expects.
+**Status** — upstream behaviour, not a defect. Responses through the proxy are unaffected: reasoning arrives in `reasoning_content` and the answer in `content`, which is what the Custom Endpoint provider reads.
 
 ---
 
@@ -458,6 +458,20 @@ grep executable .venv/pyvenv.cfg          # does that interpreter still exist?
 SearXNG logs a bot-detection line during boot. It is expected on a single-user local instance reached only from LiteLLM, and can be ignored.
 
 **Status** — cosmetic.
+
+---
+
+## A thinking-mode turn ends with no reply
+
+**Symptom** — a Qwen3.5 session with thinking on completes a tool loop correctly, then stops with reasoning and no visible answer. A delegated run returns `DELEGATE_EMPTY`.
+
+**Cause** — a client that does not replay reasoning sends earlier loop turns without it, and Ollama's Qwen renderer wrote an empty think block for each one: the non-thinking signature. Repeated, it led the model to answer inside its open think block. The patched runtime omits that block in thinking-mode tool loops, and the proxy replays Codex reasoning so it is rendered ([ADR 016](adr/016-qwen-reasoning-history.md)). [REAL] Stock: 13 of 16 runs ended empty across the four Qwen backends; patched: 16 of 16 replied. An [open upstream report](https://github.com/ollama/ollama/issues/18916) tracks the stock behaviour.
+
+**Verify** — `ollama --version` reports `0.40.8-ailocal.18631.4` or later; `ailocal check` says so too.
+
+**Fix** — if the runtime is stock, `ailocal install` builds and selects the patched one. If a turn still ends empty, request an explicit follow-up (`resume=<id>` for a delegation) or choose a non-thinking role such as Codex's `implementation` default. ailocal never switches model or mode on its own, and an empty final reply is a failure even when a file changed.
+
+**Status** — fixed in the patched runtime; residual cases are reported, not retried.
 
 ---
 

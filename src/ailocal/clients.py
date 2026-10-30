@@ -23,6 +23,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import tomllib
 from datetime import datetime
 from pathlib import Path
@@ -234,7 +235,10 @@ def provision_local_agent(names=("claude", "codex")) -> bool:
     return success
 
 
-CONNECTOR_EXT = "Gethnet.litellm-connector-copilot"
+VSCODE_VENDOR = "customendpoint"
+VSCODE_PROVIDER_NAME = "ailocal"
+COPILOT_GUIDE_START = "<!-- ailocal:model-guidance:start -->"
+COPILOT_GUIDE_END = "<!-- ailocal:model-guidance:end -->"
 
 #: One canonical proxy URL for every host client, owned by runtime. It is
 #: 127.0.0.1 and not `localhost` on purpose: Docker publishes the port on IPv4
@@ -283,11 +287,6 @@ def _sh(*args, timeout: int = 900) -> int:
         return 1
 
 
-def _extensions() -> list[str]:
-    out = _code("--list-extensions")
-    return [l.strip().lower() for l in (out or "").splitlines() if l.strip()]
-
-
 # ── shared mechanics ────────────────────────────────────────────────────────
 
 def backup(path: Path) -> bool:
@@ -322,25 +321,28 @@ def retire_managed_dir(dst: Path) -> None:
     manifest names what we wrote, and nothing else is touched, so a user's own
     file in the same directory survives and keeps the directory alive.
     """
+    if not dst.is_dir() or dst.is_symlink():
+        return                            # nothing shipped here, or not ours to walk
     manifest = dst / MANIFEST_NAME
     names = (manifest.read_text().split() if manifest.is_file()
              else list(RETIRED_UNMANAGED.get(dst.name, ())))
-    if not names:
-        return
+    removed = manifest.is_file()
     for name in names:
         target = dst / name
-        if target.is_symlink():
-            continue                      # someone else's link, not ours
+        if target.is_symlink() or not target.exists():
+            continue                      # someone else's link, or already gone
         if target.is_dir():
             shutil.rmtree(target, ignore_errors=True)
         else:
             target.unlink(missing_ok=True)
+        removed = True
     manifest.unlink(missing_ok=True)
     try:
-        dst.rmdir()                       # only when we emptied it
+        dst.rmdir()                       # only when empty: ours, emptied, or left empty
         info(f"retired {dst}")
     except OSError:
-        info(f"retired ailocal content in {dst} (other files kept)")
+        if removed:
+            info(f"retired ailocal content in {dst} (other files kept)")
 
 
 def install_managed_dir(src: Path, dst: Path) -> None:
@@ -509,9 +511,6 @@ DEPRECATED_SETTINGS = (
 #: inactivityTimeout is the one that earns its place — a 26B model cold-loads
 #: tens of GB emitting no tokens, which trips the connector's 60s default.
 RECOMMENDED_SETTINGS = {
-    "litellm-connector.inactivityTimeout": 300,
-    "litellm-connector.enableResponsesApi": False,
-    "litellm-connector.disableCaching": True,
     # Paired with the instruction files ailocal deploys; without the location
     # the deployed files are dead weight.
     "github.copilot.chat.codeGeneration.useInstructionFiles": True,
@@ -537,46 +536,90 @@ def _vscode_user_dir() -> Path | None:
     return None
 
 
+def native_vscode_available() -> bool:
+    bundle = _vscode_app()
+    try:
+        package = json.loads((bundle / "Contents/Resources/app/extensions/copilot/package.json").read_text()) if bundle else {}
+        return any(g.get("vendor") == VSCODE_VENDOR for g in package.get("contributes", {}).get("languageModelChatProviders", []))
+    except (OSError, ValueError):
+        return False
+
+
 def _write_json(path: Path, data, indent) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.parent.mkdir(parents=True, exist_ok=True)
-    tmp.write_text(json.dumps(data, indent=indent), encoding="utf-8")
-    os.replace(tmp, path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
+    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent,
+                                     prefix=path.name + '.', delete=False) as stream:
+        tmp = Path(stream.name)
+        try:
+            stream.write(json.dumps(data, indent=indent))
+            stream.flush()
+            tmp.chmod(mode)
+            os.replace(tmp, path)
+        finally:
+            tmp.unlink(missing_ok=True)
+
+
+def vscode_owned(group) -> bool:
+    """ailocal's native group, or the retired connector group aimed at this proxy."""
+    return isinstance(group, dict) and (
+        (group.get("vendor") == VSCODE_VENDOR and group.get("name") == VSCODE_PROVIDER_NAME)
+        or (group.get("vendor") == "litellm-connector" and group.get("name") == "LiteLLM"
+            and str(group.get("baseUrl", "")).rstrip("/") == BASE_URL.rstrip("/")))
+
+
+def vscode_provider_document(existing: list, models: dict) -> list:
+    """Native BYOK projection; preserve foreign groups and the stored key reference.
+
+    Explicit models retain each alias's exact geometry. Discovery through
+    /v1/models alone does not supply reliable context/output limits.
+    """
+    if not isinstance(existing, list) or any(not isinstance(g, dict) for g in existing):
+        raise ValueError("chatLanguageModels.json must be an array of provider objects")
+    owned = [g for g in existing if vscode_owned(g)]
+    keys = [g["apiKey"] for g in owned if isinstance(g.get("apiKey"), str)]
+    group = {"name": VSCODE_PROVIDER_NAME, "vendor": VSCODE_VENDOR,
+             "apiType": "chat-completions", "models": []}
+    if keys:
+        group["apiKey"] = keys[0]
+    for role, info in models.items():
+        if role == "completion":
+            continue  # FIM is an API capability, not a chat/agent picker model.
+        geometry = policy.geometry(info.get("context_input"), info.get("max_output"))
+        model = {"id": "ailocal-" + role,
+                 "name": policy.capability_description(info, info.get("guidance", {})),
+                 "url": BASE_URL.rstrip("/") + "/v1/chat/completions",
+                 "toolCalling": True,
+                 "vision": "image" in info.get("guidance", {}).get("input_modalities", ["text"]),
+                 "streaming": True,
+                 "thinking": bool(info.get("reasoning")),
+                 "maxInputTokens": geometry["context_input"],
+                 "maxOutputTokens": geometry["max_output"],
+                 "modelOptions": {key: info[key] for key in ("temperature", "top_p")
+                                  if info.get(key) is not None}}
+        if info.get("reasoning"):
+            model["supportsReasoningEffort"] = ["none", "low", "medium", "high"]
+            model["reasoningEffortFormat"] = "chat-completions"
+        group["models"].append(model)
+    return [g for g in existing if not vscode_owned(g)] + [group]
 
 
 def _provider_group(models_json: Path, dry: bool) -> None:
-    """Write the provider group, preserving the SecretStorage key reference.
-
-    Only the API key VALUE lives in SecretStorage and cannot be seeded from
-    outside VS Code; the file holds a reference to it, and discarding that
-    reference forces the user to re-enter the key. Model entries are not
-    written: the connector discovers them from the proxy's /model/info."""
-    vendor, name = "litellm-connector", "LiteLLM"
+    """Configure native Custom Endpoint without reading or writing secret values."""
     try:
         existing = json.loads(models_json.read_text(encoding="utf-8")) or []
     except FileNotFoundError:
         existing = []
-    except ValueError:
-        warn("existing chatLanguageModels.json unparseable; it will be replaced "
-             "and any API key reference in it lost")
-        existing = []
-
-    carried = next((e.get("apiKey") for e in existing
-                    if isinstance(e, dict) and e.get("vendor") == vendor
-                    and isinstance(e.get("apiKey"), str)), None)
-    group = {"name": name, "vendor": vendor, "baseUrl": BASE_URL}
-    if carried:
-        group["apiKey"] = carried
-    merged = [e for e in existing
-              if not (isinstance(e, dict) and e.get("vendor") == vendor)] + [group]
+    from . import generation
+    models = generation.load_models_yaml(policy.profile_path(policy.active_tier()))
+    merged = vscode_provider_document(existing, models)
 
     if dry:
         print(f"  would write: {json.dumps(merged)}")
         return
     _write_json(models_json, merged, "\t")
-    if carried:
-        info("provider group written, existing API key reference preserved "
-             f"({carried[:28]}…)")
+    if merged[-1].get("apiKey"):
+        info("native Custom Endpoint configured; API key reference preserved")
     else:
         # The instruction itself is printed once, by target_vscode, so this only
         # reports the state it found.
@@ -627,7 +670,7 @@ def _ensure_recommended(settings_json: Path) -> None:
     missing = {k: v for k, v in RECOMMENDED_SETTINGS.items()
                if f'"{k}"' not in text}
     if not missing:
-        info("recommended connector settings already present")
+        info("recommended Copilot settings already present")
         return
     backup(settings_json)
     # Textual insertion, not a reparse: a user's comments and formatting are
@@ -637,16 +680,7 @@ def _ensure_recommended(settings_json: Path) -> None:
     i = text.index("{")
     ins = "".join(f'\n    "{k}": {json.dumps(v)},' for k, v in missing.items())
     settings_json.write_text(text[:i + 1] + ins + text[i + 1:], encoding="utf-8")
-    info(f"recommended connector settings added: {', '.join(missing)}")
-
-
-def _install_extension(ext: str, installed: list[str]) -> None:
-    if ext.lower() in installed:
-        info(f"{ext} already installed")
-    elif _code("--install-extension", ext, "--force") is not None:
-        info(f"installed {ext}")
-    else:
-        warn(f"{ext} install failed — install it from the Marketplace")
+    info(f"recommended Copilot settings added: {', '.join(missing)}")
 
 
 #: install_vscode's three outcomes. ABSENT and FAILED are BOTH non-zero, so a
@@ -680,12 +714,10 @@ def install_vscode(argv: list[str]) -> int:
             warn(f"VS Code not installed — {CLIENTS['vscode'][1]}")
         return VSCODE_ABSENT
 
-    installed = _extensions()
-    if not dry:
-        # The connector, and nothing else. Language extensions are the user's
-        # choice about their editor, not something a local-model runtime needs
-        # in order to answer a chat turn.
-        _install_extension(CONNECTOR_EXT, installed)
+    if not native_vscode_available():
+        warn("VS Code's native Custom Endpoint provider is unavailable. Update VS Code "
+             "to a build that includes it, then run ailocal clients vscode.")
+        return VSCODE_FAILED
 
     # A user directory that cannot be written is a real failure and says so.
     # Reporting it as absence would send the caller down the "you have no VS
@@ -695,8 +727,13 @@ def install_vscode(argv: list[str]) -> int:
         _prune_deprecated(user_dir / "settings.json", dry)
         if not dry:
             _ensure_recommended(user_dir / "settings.json")
-            provision_vscode_research(user_dir / "mcp.json")
-    except OSError as exc:
+            if not provision_vscode_research(user_dir / "mcp.json"):
+                return VSCODE_FAILED
+            if not provision_vscode_agent(user_dir / "mcp.json"):
+                return VSCODE_FAILED
+            if not provision_copilot_mcp():
+                return VSCODE_FAILED
+    except (OSError, ValueError) as exc:
         warn(f"VS Code configuration failed under {user_dir}: {exc}")
         return VSCODE_FAILED
 
@@ -712,11 +749,44 @@ def _copilot_instructions() -> None:
     _concat_shared(data / "clients/copilot/ailocal.instructions.md",
                    data / "clients/claude/references/build-checklist.md",
                    dest / "ailocal.instructions.md", claude_only=False)
+    target = dest / "ailocal.instructions.md"
+    target.write_text(target.read_text() + "\n\n" + copilot_model_guidance())
     # ONE instruction file. session-primer.md was deployed beside this one with
     # the same `applyTo: "**"`, so both loaded on every turn and stated the
     # terminal protocol twice — in two wordings, which is worse than once.
     (dest / "session-primer.md").unlink(missing_ok=True)
     info("Copilot instruction files deployed to ~/.copilot/instructions/")
+
+
+def copilot_model_guidance(models=None) -> str:
+    """Profile-owned advice in native instructions, available without MCP."""
+    if models is None:
+        from . import generation
+        models = generation.load_models_yaml(policy.profile_path(policy.active_tier()))
+    lines = [COPILOT_GUIDE_START, "# Current ailocal model guidance",
+             "Generated by ailocal from profiles/<active tier>.toml; do not edit this block.",
+             "Apply only the entry matching the selected ailocal alias. For a hosted model, "
+             "use this advice only when preparing a local delegation. Guidance is not proof of correctness."]
+    grouped = {}
+    for role, cfg in models.items():
+        if role != "completion":
+            grouped.setdefault(cfg["active"], []).append((role, cfg))
+    for backend, entries in grouped.items():
+        lines += ["", "Backend: " + backend]
+        for role, cfg in entries:
+            geometry = policy.geometry(cfg.get("context_input"), cfg.get("max_output"))
+            preset = ", ".join(f"{key}={cfg[key]}" for key in (
+                "temperature", "top_p", "draft_num_predict") if cfg.get(key) is not None)
+            lines.append(f"ailocal-{role}: {geometry['context_input']} input, "
+                         f"{geometry['max_output']} output; thinking={bool(cfg.get('reasoning'))}; {preset}.")
+        guide = entries[0][1].get("guidance", {})
+        lines += [guide.get("summary", "No exact-backend guidance recorded.")]
+        lines += ["Prompting advice: " + item for item in guide.get("prompting", [])]
+        lines += ["Known limitation: " + item for item in guide.get("limitations", [])]
+    lines += ["", "For current source links and scoped evaluation evidence, use agent.model_guide "
+              "or run ailocal profile guide <selected-alias>. Do not infer a tier from installed RAM.",
+              COPILOT_GUIDE_END]
+    return "\n".join(lines) + "\n"
 
 
 
@@ -751,9 +821,9 @@ def target_vscode() -> None:
     print("\n  ONE MANUAL STEP — VS Code keeps model keys in its own encrypted")
     print("  storage, which no supported interface lets ailocal write.")
     print("    grep LITELLM_MASTER_KEY ~/.local/state/ailocal/env")
-    print("    Copilot Chat → model picker → \"Manage Models…\" → \"LiteLLM\" → "
+    print("    Copilot Chat → model picker → \"Manage Language Models\" → \"ailocal\" → "
           "paste it")
-    print(f"  (base URL, if asked: {BASE_URL})")
+    print(f"  (native Custom Endpoint; API URL: {BASE_URL}/v1/chat/completions)")
     print("  Launcher: `ailocal-code [path]` opens VS Code in the profile configured above.")
 
 
@@ -937,42 +1007,89 @@ def provision_local_research(home: Path) -> bool:
     return True
 
 
-def provision_vscode_research(mcp_json: Path) -> bool:
-    """Register research in VS Code's user mcp.json beside the LiteLLM provider.
+def _provision_vscode_mcp(mcp_json: Path, name: str, component: str) -> bool:
+    """Use VS Code's native registration for its Local harness.
 
     VS Code launched from the Dock inherits launchd's minimal PATH, so the entry
-    names the launcher absolutely. A server named `research` that is not this
+    names the launcher absolutely. A server of the same name that is not this
     launcher is someone else's and is left in place."""
     launcher = shutil.which('ailocal')
     if not launcher:
-        warn('ailocal is not on PATH; VS Code research MCP not registered')
+        warn(f'ailocal is not on PATH; VS Code {name} MCP not registered')
         return False
-    entry = {'command': launcher, 'args': ['mcp', 'research']}
+    entry = {'command': launcher, 'args': ['mcp', name]}
     try:
         data = json.loads(mcp_json.read_text(encoding='utf-8')) if mcp_json.is_file() else {}
-        existing = data.get('servers', {}).get('research')
+        existing = data.get('servers', {}).get(name)
     except (ValueError, AttributeError):
-        warn(f'invalid {mcp_json}; VS Code research MCP registration left untouched')
+        warn(f'invalid {mcp_json}; VS Code {name} MCP registration left untouched')
         return False
-    if existing is not None and (existing.get('args') != entry['args']
+    if existing is not None and (not isinstance(existing, dict) or existing.get('args') != entry['args']
                                  or Path(existing.get('command', '')).name != 'ailocal'):
-        warn('VS Code already has a different `research` MCP server; it is preserved')
+        warn(f'VS Code already has a different `{name}` MCP server; it is preserved')
         return False
-    if provision_mcp_runtime(policy.data_root() / 'integrations/local-research',
-                             'local-research') is None:
+    if provision_mcp_runtime(policy.data_root() / 'integrations' / component, component) is None:
         return False
     if existing != entry:
         # VS Code's own CLI owns the write and the file format.
-        _code('--add-mcp', json.dumps({'name': 'research', **entry}))
+        _code('--add-mcp', json.dumps({'name': name, **entry}))
         try:
-            written = json.loads(mcp_json.read_text(encoding='utf-8'))['servers']['research']
+            written = json.loads(mcp_json.read_text(encoding='utf-8'))['servers'][name]
         except (OSError, ValueError, KeyError, TypeError):
             written = None
         if written != entry:
-            warn('VS Code research MCP registration failed; run: ailocal clients vscode')
+            warn(f'VS Code {name} MCP registration failed; run: ailocal clients vscode')
             return False
-    info('research MCP registered for VS Code Copilot Chat')
+    info(f'{name} MCP registered for VS Code Local harness')
     return True
+
+
+def provision_vscode_research(mcp_json: Path) -> bool:
+    return _provision_vscode_mcp(mcp_json, 'research', 'local-research')
+
+
+def provision_vscode_agent(mcp_json: Path) -> bool:
+    return _provision_vscode_mcp(mcp_json, 'agent', 'local-agent')
+
+
+def provision_copilot_mcp() -> bool:
+    """Portable Copilot scope, in addition to the Local harness's profile file.
+
+    Public JSON format, no secrets or VS Code input variables. Preserve foreign
+    servers and operator options; update only our executable and arguments.
+    """
+    path = policy.client_mcp_path('copilot', local=False)
+    launcher = shutil.which('ailocal')
+    if not launcher:
+        warn('ailocal is not on PATH; Copilot global MCP not registered')
+        return False
+    try:
+        data = json.loads(path.read_text()) if path.is_file() else {}
+        if not isinstance(data, dict) or not isinstance(data.get('mcpServers', {}), dict):
+            raise ValueError
+        servers = data.setdefault('mcpServers', {})
+        for name in ('research', 'agent'):
+            entry = servers.get(name)
+            if entry is not None and (not isinstance(entry, dict)
+                    or Path(entry.get('command', '')).name != 'ailocal'
+                    or entry.get('args') != ['mcp', name]):
+                warn(f'Copilot global `{name}` MCP collision; file preserved')
+                return False
+        changed = False
+        for name in ('research', 'agent'):
+            entry = {**servers.get(name, {}), 'command': launcher, 'args': ['mcp', name]}
+            if servers.get(name) != entry:
+                servers[name] = entry
+                changed = True
+        if changed:
+            if path.is_file():
+                backup(path)
+            _write_json(path, data, 2)
+        info('research and agent MCP registered in Copilot global scope')
+        return True
+    except (OSError, ValueError, TypeError):
+        warn('Copilot global MCP configuration invalid or unwritable; file preserved')
+        return False
 
 
 # ── Claude Code ─────────────────────────────────────────────────────────────

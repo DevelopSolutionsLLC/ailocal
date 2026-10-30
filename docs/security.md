@@ -92,6 +92,18 @@ Follow [AI development maintenance](maintenance.md) for upstream issue review, c
 
 ---
 
+## Model artifacts
+
+The shipped 16 GB profile serves standard Qwen 4B MTP from Ollama's library and unrestricted Qwen 4B MTP from the community publisher `localslm` on Hugging Face. The latter is a third-party derivative, not an official Qwen release. Model cards, refusal counts and names are publisher claims rather than security certification or independently reproduced quality evidence.
+
+The [source importer](../src/ailocal/model_sources.py) uses native Ollama pull/create for GGUF and asset-only Safetensors imports. It does not execute downloaded repository Python, installation scripts or pickle checkpoints. Snapshot recipes bind a repository commit and verify Git/LFS content hashes. Native recipes bind the target weight SHA-256 and any explicitly declared draft SHA-256, require the selected built-in renderer/parser, and record the resulting alias manifest digest. A changed recipe or resulting manifest invalidates the receipt. Successful empty-message loading is a compatibility check, not a malware scan or full-window memory/quality test.
+
+**Medium — native source pin verification, fixed 2026-10-27.** The former verifier searched the entire generated Modelfile for matching `FROM`/`DRAFT` lines. A publisher-controlled multiline template or license could contain such text and impersonate a reviewed asset, potentially causing an unreviewed target to pass the pin check. [APPROX] A simulated daemon response reproduced that false acceptance; no malicious real-world model was demonstrated. Verification now reads only Ollama's leading asset header, requires the first `FROM` to be the target, checks the exact external-draft list, and revalidates asset bindings even for existing receipts. Regression cases cover template/license spoofing, projector confusion, fake draft directives and old receipts. [REAL] All four existing native source-backed selections passed the stricter binding check against the actual daemon.
+
+**Medium — incomplete full-artifact locking, remaining limit.** Standard library tags are mutable, and native recipes currently pin the main weights and declared heads rather than every projector and metadata layer in the source manifest. An upstream change could therefore alter an unpinned component without changing the reviewed main-weight hash. Fully locking the model supply chain requires reviewed complete-manifest/component pins and an explicit update procedure. An alias receipt detects a change after import; it does not independently authenticate its publisher or make an unpinned source tag immutable.
+
+Hashes establish byte identity, not absence of poisoned behavior, backdoors or unsafe generated code. [Hugging Face's security features](https://huggingface.co/docs/hub/security) provide additional scanning and account protections, and [Safetensors](https://huggingface.co/docs/safetensors/index) avoids pickle-style serialization execution; neither establishes that a model behaves safely. GGUF/Safetensors still enter native parsers and inference libraries. This review did not fuzz those parsers, independently audit training data, certify community publishers, or perform a fresh full-toolchain advisory/container scan. Unrestricted weights have fewer refusal constraints; client tool permissions and isolation remain separate controls.
+
 ## Commit attribution
 
 The rule and its rationale live in

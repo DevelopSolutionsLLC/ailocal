@@ -84,10 +84,22 @@ def main() -> None:
                 patch.object(M, "verify_load", return_value=False):
             check(not M.install("fixture:mlx", source) and root.exists(),
                   "visible but unloadable model fails installation and preserves verified assets")
+        check(not M.current("fixture:mlx", source), "an import without a receipt is not current")
         with patch.object(M.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as create, \
-                patch.object(M, "verify_load", return_value=True):
+                patch.object(M, "verify_load", return_value=True), \
+                patch.object(M, "_digest", return_value="sha256:one"):
             check(M.install("fixture:mlx", source) and not root.exists(),
                   "successful native import removes the duplicate source weight copy")
+            check(M.current("fixture:mlx", source),
+                  "a successful import records its pinned revision and manifest")
+            check(not M.current("fixture:mlx", {**source, "revision": "c" * 40}),
+                  "a changed pinned revision makes the installed tag stale")
+        with patch.object(M, "_digest", return_value="sha256:other"):
+            check(not M.current("fixture:mlx", source),
+                  "a tag whose manifest was replaced is stale")
+        with patch.object(M, "_digest", return_value=None):
+            check(not M.current("fixture:mlx", source),
+                  "an absent tag is never current")
             check(create.call_args_list[0].args[0][:3] == ["ollama", "create", "fixture:mlx"]
                   and create.call_args_list[0].kwargs["env"]["OLLAMA_MODELS"]
                   == str(M.policy.ollama_model_store()),
@@ -99,6 +111,119 @@ def main() -> None:
         except ValueError:
             check(not (root / "model.safetensors").exists()
                   and not list(root.glob('*.partial')), "corrupt weights are refused and partial file removed")
+
+    _suite.section("NATIVE GGUF RENDERING (SIMULATED DAEMON, NO WEIGHT CONVERSION)")
+    native = {"model": "hf.co/fixture/model:weights.gguf", "sha256": "d" * 64,
+              "renderer": "qwen3.5", "parser": "qwen3.5"}
+    expected = M.policy.ollama_model_store() / "blobs" / ("sha256-" + native["sha256"])
+    calls = []
+
+    def daemon(request, **kwargs):
+        body = json.loads(request.data)
+        calls.append((request.full_url, body))
+        response = ({"modelfile": f"FROM {expected}\n", "renderer": "qwen3.5", "parser": "qwen3.5"} if request.full_url.endswith('/api/show')
+                    else {"status": "success"})
+        return io.BytesIO(json.dumps(response).encode())
+
+    with tempfile.TemporaryDirectory() as box, \
+            patch.object(M.policy, "state_root", return_value=Path(box)), \
+            patch.object(M.policy, "ollama_binary", return_value="ollama"), \
+            patch.object(M.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as pull, \
+            patch.object(M.urllib.request, "urlopen", side_effect=daemon), \
+            patch.object(M, "verify_load", return_value=True), \
+            patch.object(M, "_digest", return_value="sha256:native"):
+        check(M.install("fixture:mtp", native), "native GGUF recipe loads through Ollama")
+        check(pull.call_args.args[0] == ["ollama", "pull", native["model"]]
+              and next(body for url, body in calls if url.endswith('/api/create'))
+                  == {"model": "fixture:mtp", "from": native["model"],
+                                   "renderer": "qwen3.5", "parser": "qwen3.5", "stream": False},
+              "native pull/create supplies built-in rendering without converted files or quantization")
+        check([body for url, body in calls if url.endswith('/api/delete')] == [{"model": native["model"]}]
+              and calls.index(next(c for c in calls if c[0].endswith('/api/delete')))
+              > calls.index(next(c for c in calls if c[0].endswith('/api/create'))),
+              "the repository pull's own manifest is dropped only after the alias verifies")
+        check(M.current("fixture:mtp", native)
+              and not M.current("fixture:mtp", {**native, "parser": "other"}),
+              "receipt binds the native renderer/parser recipe and weight pin")
+        calls.clear()
+        check(not M.install("fixture:wrong", {**native, "sha256": "e" * 64})
+              and not any(url.endswith('/api/create') for url, _ in calls),
+              "a different weight digest fails before creating an alias")
+
+        wrong = expected.with_name("sha256-" + "e" * 64)
+        for header in (f'FROM {wrong}\nTEMPLATE """\nFROM {expected}\n"""\n',
+                       f'FROM {wrong}\nFROM {expected}\n',
+                       f'FROM {wrong}\nLICENSE """\nFROM {expected}\n"""\n'):
+            calls.clear()
+            def spoofed(request, **kwargs):
+                calls.append((request.full_url, json.loads(request.data)))
+                return io.BytesIO(json.dumps({"modelfile": header, "renderer": "qwen3.5",
+                                               "parser": "qwen3.5"}).encode())
+            with patch.object(M.urllib.request, "urlopen", side_effect=spoofed):
+                check(not M.install("fixture:spoofed", native)
+                      and not any(url.endswith('/api/create') for url, _ in calls),
+                      "template/license/projector text cannot impersonate the pinned target")
+                check(not M.current("fixture:mtp", native),
+                      "a matching legacy receipt cannot grandfather a spoofed native target")
+
+        paired = {**native, "draft_model": "hf.co/fixture/model:head.gguf",
+                  "draft_sha256": "f" * 64}
+        draft_path = M.policy.ollama_model_store() / "blobs" / ("sha256-" + "f" * 64)
+
+        def paired_daemon(request, **kwargs):
+            body = json.loads(request.data)
+            calls.append((request.full_url, body))
+            if request.full_url.endswith('/api/create'):
+                return io.BytesIO(b'{"status":"success"}')
+            modelfile = (f"FROM {draft_path}\n" if body["model"] == paired["draft_model"]
+                         else f"FROM {expected}\nDRAFT {draft_path}\n")
+            return io.BytesIO(json.dumps({"modelfile": modelfile,
+                                         "renderer": "qwen3.5", "parser": "qwen3.5"}).encode())
+
+        calls.clear()
+        with patch.object(M.urllib.request, "urlopen", side_effect=paired_daemon):
+            check(M.install("fixture:paired", paired), "native separate MTP head loads with its target")
+            created = next(body for url, body in calls if url.endswith('/api/create'))
+            check(created.get("draft_files") == {"draft.gguf": "sha256:" + "f" * 64},
+                  "native draft_files attaches the exact pulled head without conversion")
+            check([body for url, body in calls if url.endswith('/api/delete')]
+                  == [{"model": paired["model"]}, {"model": paired["draft_model"]}],
+                  "both repository pulls are dropped once the paired alias verifies")
+            check(M.current("fixture:paired", paired)
+                  and not M.current("fixture:paired", {**paired, "draft_sha256": "a" * 64})
+                  and not M.current("fixture:paired", native),
+                  "receipt binds the MTP head pin, including its removal from policy")
+            def contained_head(request, **kwargs):
+                response = paired_daemon(request, **kwargs)
+                if json.loads(request.data).get("model") == paired["draft_model"]:
+                    return io.BytesIO(response.read().replace(b'FROM ', b'DRAFT '))
+                return response
+
+            with patch.object(M.urllib.request, "urlopen", side_effect=contained_head):
+                calls.clear()
+                check(M.install("fixture:contained-head", {**paired, "model": "gemma4:26b-a4b-it-qat"}),
+                      "native original target and a pinned DRAFT inside a source manifest are supported")
+                check([body for url, body in calls if url.endswith('/api/delete')]
+                      == [{"model": paired["draft_model"]}],
+                      "an official library source tag is kept; only the repository head pull is dropped")
+            calls.clear()
+            check(not M.install("fixture:bad-head", {**paired, "draft_sha256": "a" * 64})
+                  and not any(url.endswith('/api/create') for url, _ in calls),
+                  "a mismatched draft digest fails before alias creation")
+        calls.clear()
+        with patch.object(M.urllib.request, "urlopen", side_effect=daemon):
+            # A daemon which silently drops the draft must fail after create.
+            with patch.object(M.subprocess, "run", return_value=SimpleNamespace(returncode=0)):
+                check(not M.install("fixture:dropped-head", {**paired, "draft_sha256": "d" * 64}),
+                      "native create which omits DRAFT fails verification")
+        fake_head = {"modelfile": f'FROM {expected}\nTEMPLATE """\nDRAFT {draft_path}\n"""\n',
+                     "renderer": "qwen3.5", "parser": "qwen3.5"}
+        check(not M._native_matches(fake_head, paired),
+              "a DRAFT line inside a template cannot impersonate an attached head")
+        unclaimed = {"modelfile": f"FROM {expected}\nDRAFT {draft_path}\n",
+                     "renderer": "qwen3.5", "parser": "qwen3.5"}
+        check(not M._native_matches(unclaimed, native),
+              "an undeclared external draft cannot pass native source verification")
 
     _suite.section("NATIVE LOAD CHECK (SIMULATED DAEMON, NO GENERATION)")
     with patch.object(M.urllib.request, "urlopen", return_value=io.BytesIO(
@@ -174,6 +299,7 @@ def main() -> None:
             patch.object(I, "_installed_models", return_value={"fixture:mlx": 2.0}), \
             patch.object(I.policy, "effective_summary", return_value={"roles": {
                 "cyber": {"model": "fixture:mlx", "source": source}}}), \
+            patch.object(M, "current", return_value=True), \
             patch.object(M, "verify_load", return_value=False), \
             patch.object(M, "install") as reimport, \
             patch.object(I, "_run") as download, \
@@ -181,6 +307,19 @@ def main() -> None:
         result = I.pull_models()
     check(result == 1 and not reimport.called and not download.called,
           "reinstall rejects unloadable existing models without repeating an unchanged download/import")
+
+    with patch.object(I, "_has", return_value=True), \
+            patch.object(I, "_out", return_value="Ollama model list"), \
+            patch.object(I, "_installed_models", return_value={"fixture-mlx:latest": 2.0}), \
+            patch.object(I.policy, "effective_summary", return_value={"roles": {
+                "cyber": {"model": "fixture-mlx", "source": source}}}), \
+            patch.object(M, "current", return_value=False), \
+            patch.object(M, "verify_load", return_value=True) as load, \
+            patch.object(M, "install", return_value=True) as reimport, \
+            contextlib.redirect_stdout(io.StringIO()):
+        result = I.pull_models()
+    check(result == 0 and reimport.call_args.args == ("fixture-mlx", source) and not load.called,
+          "an imported tag that is not the pinned revision is re-imported, not trusted by name")
 
     _suite.section("INSTALL VALIDATION CONTROLS THE EXIT STATUS")
     from ailocal import clients, generation, runtime
@@ -247,8 +386,10 @@ def main() -> None:
         I.cmd_install(["--yes"])
     check(targets["claude"].called and targets["codex"].called,
           "--yes provisions the claude-local and codex-local roots its own check requires")
-    check(not targets["vscode"].called and not shell.called and not agent.called,
-          "--yes never merges VS Code settings, edits ~/.zshrc or registers the agent MCP")
+    check(not targets["vscode"].called and not shell.called,
+          "--yes never merges VS Code settings or edits ~/.zshrc")
+    check(agent.call_args is not None and sorted(agent.call_args.args[0]) == ["claude", "codex"],
+          "--yes registers the agent MCP in the claude-local and codex-local roots only")
 
     _suite.section("CONCURRENT LIFECYCLE COMMANDS FAIL FAST")
     from ailocal import cli
@@ -709,6 +850,79 @@ def main() -> None:
     except SystemExit:
         refused = True
     check(refused, "installing a shipped tree over itself is refused")
+
+    _suite.section("EXPLICIT MODEL UPGRADE PRESERVES GEOMETRY AND BACKS UP POLICY")
+    from ailocal import policy as P
+    with tempfile.TemporaryDirectory() as upgrade_box:
+        config = Path(upgrade_box) / 'config'
+        shutil.copytree(RESOURCES / 'profiles', config / 'profiles')
+        path = config / 'profiles/32gb.toml'
+        shipped_arch_input = P.resolve_role('32gb', 'architecture', RESOURCES)['context_input']
+        original = path.read_text().replace(f'context_input = {shipped_arch_input}', 'context_input = 65536')
+        original = original.replace('[completion]\n', '[completion]\nenabled = false\n')
+        original = original.replace('temperature = 0.7', 'temperature = 0.2')
+        original = original.replace('disk_gb = 21', 'disk_gb = 16')
+        original = original.replace('role = "Unrestricted coding (separate model)"',
+                                    'role = "Unrestricted assistant (MLX 9B)"')
+        path.write_text('# operator comment\n' + original)
+        before = path.read_bytes()
+        clients_before = (config / 'profiles/clients.toml').read_bytes()
+        authored = P.load_profile('32gb', config)
+        shared_total = max(cfg['context_input'] + cfg['max_output'] for role, cfg in authored.items()
+                           if role in P.ROLES and cfg['active'] == authored['architecture']['active'])
+        result = I.upgrade_model_defaults(RESOURCES, config)
+        after = P.load_profile('32gb', config)
+        check('32gb' in result['updated'] and (result['backup'] / '32gb.toml').read_bytes() == before,
+              'model upgrade retains complete original policy in backup')
+        check(after['architecture']['max_output'] == 16384
+              and after['architecture']['context_input'] + after['architecture']['max_output'] == shared_total,
+              'shared runner aligns to largest authored window, preserving output reserve')
+        check(after['implementation']['temperature'] == 0.7
+              and after['completion'].get('enabled', True),
+              'explicit upgrade adopts shipped sampling and enables the working FIM model')
+        shipped32 = P.load_profile('32gb', RESOURCES)
+        check(after['disk_gb'] == shipped32['disk_gb'] and after['cyber']['role'] == shipped32['cyber']['role'],
+              'explicit upgrade adopts model-describing role text and download footprint')
+        check(path.read_text().startswith('# operator comment\n')
+              and (config / 'profiles/clients.toml').read_bytes() == clients_before,
+              'model upgrade preserves unrelated comments and client routing policy')
+        check(not I.upgrade_model_defaults(RESOURCES, config)['updated'],
+              'repeating model upgrade is a no-op')
+        authored = path.read_text().replace(
+            'weaknesses = ["shares its budget with every other chat capability"]\n',
+            'weaknesses = [\n  "old",\n]\n# keep this note with top_p\n', 1)
+        path.write_text(authored)
+        I.upgrade_model_defaults(RESOURCES, config)
+        check('# keep this note with top_p\n' in path.read_text()
+              and P.load_profile('32gb', config)['implementation']['weaknesses']
+                  == P.load_profile('32gb', RESOURCES)['implementation']['weaknesses'],
+              'replacing a multi-line value keeps the authored comment that follows it')
+        for tier in ('16gb', '32gb'):
+            target = config / f'profiles/{tier}.toml'
+            target.write_text(target.read_text().replace('temperature = 0.7', 'temperature = 0.3'))
+        originals = {t: (config / f'profiles/{t}.toml').read_bytes() for t in ('16gb', '32gb')}
+        real_replace, calls = I.os.replace, []
+        def flaky(src, dst):
+            calls.append(dst)
+            if len(calls) == 2:
+                raise OSError(28, 'No space left on device')
+            real_replace(src, dst)
+        try:
+            with patch.object(I.os, 'replace', side_effect=flaky):
+                I.upgrade_model_defaults(RESOURCES, config)
+            check(False, 'a failed profile write restores every profile already replaced')
+        except OSError:
+            check(all((config / f'profiles/{t}.toml').read_bytes() == b for t, b in originals.items())
+                  and not list((config / 'profiles').glob('*.upgrade-tmp')),
+                  'a failed profile write restores every profile already replaced')
+        path.write_text(path.read_text().replace('temperature = 0.7', 'temperature = 0.2'))
+        (config / 'profiles/128gb.toml').write_text('invalid = [')
+        before = path.read_bytes()
+        try:
+            I.upgrade_model_defaults(RESOURCES, config)
+            check(False, 'invalid later tier prevents every model-policy write')
+        except P.ProfileError:
+            check(path.read_bytes() == before, 'invalid later tier prevents every model-policy write')
 
     _suite.section("TIER SELECTION NEVER ROUNDS UP")
     for gb, expected in ((8, None), (16, "16gb"), (31, "16gb"), (32, "32gb"),
