@@ -43,7 +43,9 @@ class PatchInstall(unittest.TestCase):
                          router_patch_file=self.patchfile,
                          router_patch_sha256=candidate._sha(self.patchfile),
                          stop_patch_file=self.patchfile,
-                         stop_patch_sha256=candidate._sha(self.patchfile))
+                         stop_patch_sha256=candidate._sha(self.patchfile),
+                         qwen35_patch_file=self.patchfile,
+                         qwen35_patch_sha256=candidate._sha(self.patchfile))
         tools = patch.object(candidate.shutil, "which", side_effect=lambda name: "/usr/bin/" + name)
         tools.start()
         self.addCleanup(tools.stop)
@@ -72,6 +74,10 @@ class PatchInstall(unittest.TestCase):
             return "--- PASS: TestLoadStackedExpertsSwitchGLU (0.01s)\n--- PASS: TestMoERouterMixedPrecisionConfig (0.01s)\nPASS\n"
         if args[0].endswith("stop.test"):
             return "--- PASS: TestStopBuffer (0.01s)\nPASS\n"
+        if args[0].endswith("qwen35-history.test"):
+            return ("--- PASS: TestQwen35HistoryOmitsEmptyLoopThinkBlocks (0.00s)\n"
+                    "--- PASS: TestQwen35HistoryKeepsReplayedReasoning (0.00s)\n"
+                    "--- PASS: TestQwen35HistoryKeepsNonThinkingAndPrefill (0.00s)\nPASS\n")
         return ""
 
     def build(self, runner=None):
@@ -99,6 +105,30 @@ class PatchInstall(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "did not execute"):
             self.build(skipped)
         self.assertEqual(list((self.root / "runtimes").iterdir()), [])
+
+    def test_native_regressions_cannot_pollute_the_operator_model_store(self):
+        operator = self.root / "operator-models"
+        operator.mkdir()
+        (operator / "existing").write_text("operator data")
+        stores, hosts = [], []
+
+        def vendor_test(args, deadline, **kwargs):
+            if args[0].endswith(".test"):
+                env = kwargs["env"]
+                store = Path(env["OLLAMA_MODELS"])
+                stores.append(store)
+                hosts.append(env["OLLAMA_HOST"])
+                store.mkdir(parents=True, exist_ok=True)
+                (store / "regression-model").write_text("vendor fixture")
+            return self.run_step(args, deadline, **kwargs)
+
+        with patch.dict(os.environ, OLLAMA_MODELS=str(operator), OLLAMA_HOST="127.0.0.1:11434"):
+            self.build(vendor_test)
+        self.assertEqual((operator / "existing").read_text(), "operator data")
+        self.assertFalse((operator / "regression-model").exists())
+        self.assertEqual(len(stores), 3)
+        self.assertTrue(all(store != operator and not store.exists() for store in stores))
+        self.assertEqual(hosts, ["127.0.0.1:0"] * 3)
 
     def test_symlink_or_invalid_receipt_is_rejected(self):
         binary = self.build()
@@ -160,6 +190,31 @@ class PatchInstall(unittest.TestCase):
               self.assertRaisesRegex(RuntimeError, "stop patch checksum")):
             candidate.prepare()
         download.assert_not_called()
+
+    def test_qwen35_history_pin_and_native_regression_are_required(self):
+        self.spec["qwen35_patch_sha256"] = "wrong"
+        with (patch.object(candidate, "_run", side_effect=self.run_step),
+              patch.object(candidate, "_download") as download,
+              self.assertRaisesRegex(RuntimeError, "Qwen3.5 history patch checksum")):
+            candidate.prepare()
+        download.assert_not_called()
+        self.spec["qwen35_patch_sha256"] = candidate._sha(self.patchfile)
+        partial = ("--- PASS: TestQwen35HistoryOmitsEmptyLoopThinkBlocks (0.00s)\n"
+                   "--- PASS: TestQwen35HistoryKeepsReplayedReasoning (0.00s)\nPASS\n")
+        for output in ("PASS\n", partial, "--- SKIP: TestQwen35HistoryOmitsEmptyLoopThinkBlocks\nPASS\n"):
+            def skipped(args, deadline, **kwargs):
+                return output if args[0].endswith("qwen35-history.test") else self.run_step(args, deadline, **kwargs)
+            with self.assertRaisesRegex(RuntimeError, "Qwen3.5 history regression"):
+                self.build(skipped)
+
+    def test_optional_vendor_parity_skip_does_not_skip_required_regressions(self):
+        def optional_parity(args, deadline, **kwargs):
+            output = self.run_step(args, deadline, **kwargs)
+            if args[0].endswith("qwen35-history.test"):
+                output += "--- SKIP: TestQwen38TokenizerMatchesReference (0.00s)\n"
+            return output
+
+        self.assertTrue(candidate.verify(self.build(optional_parity)))
 
     def test_failed_build_and_missing_regression_leave_no_runtime(self):
         for failure in ("build", "missing regression"):

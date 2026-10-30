@@ -3,15 +3,44 @@
 import asyncio
 import json
 import threading
+import warnings
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import litellm
+from litellm.types.llms.openai import ResponsesAPIResponse
+from openai.types.responses.response_reasoning_item import ResponseReasoningItem
 from harness import Suite, load_module
 
 router = load_module('reasoning_router', Path('/app/config/hooks/reasoning_router.py'))
+repair = load_module('tool_repair', Path('/app/config/hooks/tool_repair.py'))
 suite = Suite('Reasoning effort transport [APPROX: fake model backend]')
 captured = []
+
+
+def reasoning_history_checks():
+    """Use the installed SDK types; model_copy alone skips nested validation."""
+    reasoning = ResponseReasoningItem(
+        id='rs_fixture', type='reasoning', summary=[],
+        content=[{'type': 'reasoning_text', 'text': 'Inspect the task file.'}],
+        encrypted_content='opaque-fixture')
+    response = ResponsesAPIResponse(
+        id='resp_fixture', created_at=0, model='fixture', object='response',
+        status='completed', output=[reasoning])
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        fixed = repair._with_reasoning_summaries(response)
+        payload = fixed.output[0].model_dump()
+        fixed.model_dump_json()
+    suite.check(payload['summary'] == [{'type': 'summary_text', 'text': 'Inspect the task file.'}]
+                and payload['content'] == [],
+                'typed SDK reasoning serializes a valid summary without warnings')
+    suite.check(payload['id'] == 'rs_fixture' and payload['encrypted_content'] == 'opaque-fixture',
+                'reasoning identity and encrypted replay data survive normalization')
+    suite.check(not reasoning.summary and bool(reasoning.content) and response.output[0] is reasoning,
+                'normalization leaves the original typed SDK response unchanged')
+    suite.check(repair._with_reasoning_summaries(fixed) is fixed,
+                'already normalized typed reasoning passes through unchanged')
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -53,6 +82,7 @@ server = HTTPServer(('127.0.0.1', 0), Handler)
 thread = threading.Thread(target=server.serve_forever, daemon=True)
 thread.start()
 try:
+    reasoning_history_checks()
     for effort, expected in [('none', False), ('minimal', 'low'), ('low', 'low'),
                              ('medium', 'medium'), ('high', 'high'), ('xhigh', 'xhigh')]:
         body = send({'reasoning_effort': effort})
