@@ -258,7 +258,7 @@ PY
 )
   echo "$out" | sed 's/^/        /'
   echo "$out" | grep -q "STATUS=ok"        && check 0 "Cadence accepts the contract"        || check 1 "Cadence accepts the contract"
-  echo "$out" | grep -q "SCHEMA=1"          && check 0 "schema_version 1 is accepted unchanged" || check 1 "schema_version 1 is accepted unchanged"
+  echo "$out" | grep -q "SCHEMA=3"          && check 0 "schema_version 3 is accepted" || check 1 "schema_version 3 is accepted"
   echo "$out" | grep -q "CLAUDE_NATIVE_LSP=working" \
     && check 0 "Cadence reads claude native LSP as working" \
     || check 1 "Cadence reads claude native LSP as working"

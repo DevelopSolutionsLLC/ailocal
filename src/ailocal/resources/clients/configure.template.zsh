@@ -173,6 +173,7 @@ claude-local() {
   env "${slots[@]}" \
     CLAUDE_CONFIG_DIR="$cfg/claude" \
     ANTHROPIC_BASE_URL="$base" ANTHROPIC_API_KEY="$key" \
+    LOCAL_AGENT_CALLER=local \
     CLAUDE_CODE_DISABLE_1M_CONTEXT=1 \
     ENABLE_TOOL_SEARCH=${AILOCAL_TOOL_SEARCH:-true} \
     "${_workflow_env[@]}" \
@@ -193,7 +194,8 @@ codex-local() {
     echo "codex-local: no key in ${state}/env — run ailocal install" >&2
     return 1
   fi
-  CODEX_HOME="$cfg/codex" OPENAI_API_KEY="$key" OPENAI_BASE_URL="$base/v1" command codex "$@"
+  CODEX_HOME="$cfg/codex" OPENAI_API_KEY="$key" OPENAI_BASE_URL="$base/v1" \
+    command codex -c 'mcp_servers.agent.env.LOCAL_AGENT_CALLER="local"' "$@"
 }
 
 # The profile ailocal configures. `--profile ailocal` created an EMPTY profile:

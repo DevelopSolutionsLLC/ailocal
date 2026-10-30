@@ -13,6 +13,7 @@
     "Launch with: claude-local"
   ],
   "model": "ailocal-architecture",
+  "autoMemoryEnabled": false,
   "hooks": {
     "SessionStart": [
       {

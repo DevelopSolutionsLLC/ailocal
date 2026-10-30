@@ -118,7 +118,7 @@ Codex's `config.toml` is co-owned: regeneration preserves native trust records, 
 | `~/.zshrc` | `clients` | Exactly two marker-commented lines (`# ailocal-configure` first, `# ailocal-finalize` last), inserted idempotently after a timestamped backup. |
 | `~/.copilot/instructions/ailocal.instructions.md` | `clients vscode` | The one Copilot instruction file: local-stack facts, terminal protocol, and the shared build checklist appended. |
 | VS Code `User/mcp.json` | `clients vscode` | Registers `research` through VS Code's native `--add-mcp`, with the absolute launcher path because a Dock-launched VS Code has a minimal `PATH`. Other servers are preserved and a foreign `research` entry is left untouched. |
-| VS Code `User/chatLanguageModels.json`, `User/settings.json` | `clients vscode` | Merges the `litellm-connector` provider group and prunes deprecated/harmful settings. The API **key** is not written: it lives in VS Code SecretStorage, which no supported interface lets ailocal touch — that one step stays manual. |
+| VS Code `User/chatLanguageModels.json`, `User/settings.json` | `clients vscode`, `start` | `clients vscode` writes the native `customendpoint` group named `ailocal` (explicit aliases, limits, thinking and sampling from the active profile; FIM excluded), replacing a retired `litellm-connector` group only when it targets this proxy, and prunes deprecated/harmful settings. `start` refreshes an already configured group and the marked model-guidance block of the Copilot instruction file; it never creates a provider, and an unparseable editor file is reported and preserved rather than blocking the stack. The API **key** is not written: it lives in VS Code SecretStorage, which no supported interface lets ailocal touch — that one step stays manual. |
 
 `~/.zshrc` is created if absent and backed up (`.zshrc.bak.<timestamp>`, newest 3 kept) before either line is inserted.
 
@@ -174,23 +174,23 @@ deployment          ~/.config/ailocal/<client>/ — clients read the deployed co
                     never the checkout or the generated staging area
 ```
 
-External consumers read the deployed `integration-contract.json` from the client config root — never the repository.
+External consumers read the deployed `integration-contract.json` from the client config root — never the repository. Schema 3 adds `instructions.<client>.max_bytes`, the largest instruction file each client root should carry; a co-installed composer (Cadence) fits it, and `ailocal check` warns about any file over it whoever wrote it. ailocal writes no `CLAUDE.md` or `AGENTS.md` and works without one; see [ADR 017](adr/017-instruction-budget.md).
 
 ---
 
 ## Geometry
 
-The one rule every profile follows: **admission is bounded by memory, up to the backend's native window; compaction is the client's latency budget, never a geometry input.** Each profile states its numbers against this rule once, in its header, with the evidence for them.
+The one rule every profile follows: **admission is bounded by memory, up to the backend's native window; compaction is the client's latency budget, never a geometry input.** Each profile carries its budgets and links the evidence and remaining hardware limits.
 
 - The native window caps everything. Every shipped chat backend reports 262144 tokens (`max_position_embeddings`, `ollama show`), so no role totals more.
-- Memory decides how much of that window a tier admits. KV grows per token in use: [REAL] 45.4 KB/token for Gemma 4 26B-A4B on the MLX runner, and 32 KiB/token for every Qwen3.5 4B/9B variant, calculated from `config.json` (8 full-attention layers × 2 × 4 KV heads × 256 dims × 2 bytes). 16 GB admits 131072 in total (~4 GiB of KV beside ~3.7 GiB of weights); 32, 64 and 128 GB admit the native window.
+- The operator chooses the admitted window within the native limit and available memory. Architecture retains the original live totals of 106496 / 139264 / 196608 / 262144 tokens for 16/32/64/128 GB; Cyber uses the same total per tier, with its own output reserve. Aliases sharing one primary backend use the same total. Shipped chat defaults use GGUF MTP with eager context allocation and q8_0 KV; targets, draft heads, projectors, runtime buffers, macOS and Docker all consume memory. Historical MLX figures do not establish this working set. Earlier native-maximum probes loaded individually on the 64 GB host; physical 16/32/128 GB fit and simultaneous filled-window residency remain unverified. See the [native model audit](model-audit.md#installed-clients-cache-and-memory).
 - Roles that share a backend share its window and differ only in output reserve: `context_input = total − max_output`.
-- Cyber follows the same rule as the primary on its tier. It is a second resident model, so two filled windows at once fit only on 128 GB; on smaller tiers Ollama evicts the idle model and Cyber's shorter `keep_alive` releases it.
-- Cold prefill grows with depth ([REAL] 64 GB: 231,390 tokens took 561 s). That cost is bounded by where each client compacts, not by admitting less: a smaller window removes history from every session to make a rare cold resume cheaper.
+- Shipped Cyber budgets follow the primary's window; edited operator budgets can differ. Cyber is a separate model, so residency must include both backends rather than assuming two full windows fit. Ollama can evict an idle model when another loads, and Cyber's shorter `keep_alive` releases it sooner. The current 64 GB native trial observed automatic fast-model eviction and zero swap.
+- Cold prefill grows with depth. The historical 64 GB measurement of 231,390 tokens in 561 seconds was on MLX and does not transfer to the new GGUF targets. Clients bound conversation latency through their own compaction; the declared window remains an admission budget, not a cold-prefill performance guarantee.
 
 ## Context and compaction: who owns what
 
-**ailocal owns the numbers, not the conversation.** It holds no conversation state, never summarises, and never rewrites a client's history. It owns geometry — `policy.geometry()` derives `total_context` (Ollama `num_ctx`), `num_predict`, and `max_input_tokens = context_input` from each profile — and declares to each client the window LiteLLM admits.
+**ailocal owns the numbers, not the conversation.** It stores no conversation history, never summarises, and never rewrites a client's history. Delegation stores private session identity and permission bindings under the state root, without prompts, replies or transcripts; native clients own their history. A resume inherits the recorded worker, mode, model and working directory, rejects conflicting options or changed execution policy, and rechecks the current operator ceiling. Unmanaged sessions must start fresh. [ADR 015](adr/015-delegation-inputs-and-resume.md) records that contract and explicit image attachment delivery. It owns geometry — `policy.geometry()` derives `total_context` (Ollama `num_ctx`), `num_predict`, and `max_input_tokens = context_input` from each profile — and declares to each client the window LiteLLM admits.
 
 **The clients compact, at their own default points.** ailocal sets no trigger; each client computes one from the window it is given, and that point lies below admission:
 
