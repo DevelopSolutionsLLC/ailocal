@@ -288,7 +288,7 @@ chmod 600 "${AILOCAL_STATE:-$HOME/.local/state/ailocal}/searxng/settings.yml"
 
 ## VS Code is configured but not answering
 
-**Likely cause** — the connector is installed but the model list was not refreshed, or the extension is absent.
+**Likely cause** — the API key was never pasted into the native **ailocal** provider, the provider group is stale after a profile change, or the VS Code build predates the Custom Endpoint provider.
 
 **Verify** — open a Copilot chat and confirm the request appears in `docker logs ailocal-litellm`.
 
@@ -298,7 +298,7 @@ chmod 600 "${AILOCAL_STATE:-$HOME/.local/state/ailocal}/searxng/settings.yml"
 ailocal clients vscode
 ```
 
-Then reload the VS Code window.
+Then reload the VS Code window. `ailocal check` reports a stale group and a missing key separately.
 
 **Status** — configuration issue. GUI submission cannot be automated, so the final step is manual.
 
@@ -314,7 +314,7 @@ Then reload the VS Code window.
 "chat.viewSessions.enabled": false
 ```
 
-**Status** — upstream behaviour, not a defect. Responses through the proxy are unaffected: reasoning arrives in `reasoning_content` and the answer in `content`, which is what the connector expects.
+**Status** — upstream behaviour, not a defect. Responses through the proxy are unaffected: reasoning arrives in `reasoning_content` and the answer in `content`, which is what the Custom Endpoint provider reads.
 
 ---
 
