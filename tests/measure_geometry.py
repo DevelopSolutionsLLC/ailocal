@@ -106,32 +106,32 @@ def resident(model):
     return entry["size"] if entry else None
 
 
-def load_cold(model, num_ctx):
+def load_cold(model, num_ctx, options=None):
     """Stop, then load at num_ctx with a one-token prompt. On llama_cpp this
     exposes the whole eagerly-allocated KV; on MLX it exposes only weights,
     because MLX allocates KV lazily as tokens arrive."""
     subprocess.run(["ollama", "stop", model], capture_output=True)
     time.sleep(4)
     api("/api/generate", {"model": model, "prompt": "hi", "stream": False,
-                          "options": {"num_ctx": num_ctx, "num_predict": 1},
+                          "options": {**(options or {}), "num_ctx": num_ctx, "num_predict": 1},
                           "keep_alive": "120s"})
     time.sleep(2)
     return resident(model)
 
 
-def fill(model, target_tokens, num_ctx):
+def fill(model, target_tokens, num_ctx, options=None):
     """One cold, uncached prefill. Returns the API's own token accounting."""
     subprocess.run(["ollama", "stop", model], capture_output=True)
     time.sleep(4)
     prompt = f"# geometry probe {target_tokens} {time.time_ns()}\n" + CHUNK * max(1, target_tokens // 18)
     r = api("/api/generate", {"model": model, "prompt": prompt, "stream": False,
-                             "options": {"num_ctx": num_ctx, "num_predict": 8},
+                             "options": {**(options or {}), "num_ctx": num_ctx, "num_predict": 8},
                              "keep_alive": "120s"})
     return (r.get("prompt_eval_count", 0),
             r.get("prompt_eval_duration", 0) / 1e9, resident(model))
 
 
-def ceiling(model, num_ctx, want):
+def ceiling(model, num_ctx, want, options=None):
     """Does the role's output ceiling actually deliver? finish_reason is the
     signal: 'length' at the requested count demonstrates that budget. A natural
     'stop' below it leaves the advertised ceiling unmeasured."""
@@ -140,7 +140,7 @@ def ceiling(model, num_ctx, want):
         "prompt": "List 400 distinct short code-review rules, numbered, one per "
                   "line. Do not stop early.",
         "stream": False,
-        "options": {"num_ctx": num_ctx, "num_predict": want},
+        "options": {**(options or {}), "num_ctx": num_ctx, "num_predict": want},
         "keep_alive": "60s"})
     return r.get("eval_count", 0), r.get("done_reason", "?")
 
@@ -212,6 +212,7 @@ def measure(args, models):
     seen, ceilings = {}, {}
     for role, cfg in summary["roles"].items():
         model, num_ctx = cfg["active"], cfg["num_ctx"]
+        options = {"draft_num_predict": cfg["draft_num_predict"]} if cfg.get("draft_num_predict") is not None else {}
         if not cfg.get("enabled") or cfg.get("max_output") is None:
             print(f"\n[{role}] {model} — no generation route, skipped")
             continue
@@ -229,7 +230,7 @@ def measure(args, models):
             # A small load identifies the runner before choosing an eager/lazy
             # KV measurement. Recent Ollama versions auto-select MLX even for
             # tags that do not end in -mlx.
-            load_cold(model, min(num_ctx, 8192))
+            load_cold(model, min(num_ctx, 8192), options)
             eng = engine_of(model)
             print(f"  runner       {eng} (reported by Ollama)")
             if eng == "llama_cpp":
@@ -237,8 +238,8 @@ def measure(args, models):
                 # the FIM role's whole 4480-token window, so that role silently
                 # reported no KV at all.
                 low = max(1024, num_ctx // 4)
-                lo = load_cold(model, low)
-                hi = load_cold(model, num_ctx)
+                lo = load_cold(model, low, options)
+                hi = load_cold(model, num_ctx, options)
                 if lo and hi and num_ctx > low:
                     span = num_ctx - low
                     per = (hi - lo) / span
@@ -255,9 +256,9 @@ def measure(args, models):
                               f"fixed overhead dominates, so treat this as an "
                               f"upper bound, not a KV rate")
             else:
-                base = load_cold(model, num_ctx)
+                base = load_cold(model, num_ctx, options)
                 depth = min(cfg["context_input"], 4096 if args.quick else 40000)
-                n, _, after = fill(model, depth, num_ctx)
+                n, _, after = fill(model, depth, num_ctx, options)
                 if base and after and n:
                     print(f"  resident     {base/GIB:.2f} GiB loaded, "
                           f"{after/GIB:.2f} GiB after {n} tokens")
@@ -270,7 +271,7 @@ def measure(args, models):
         if not args.quick:
             # The deepest prompt the role admits: the worst cold resume a
             # client can hit before its own compaction runs.
-            n, secs, after = fill(model, cfg["context_input"], num_ctx)
+            n, secs, after = fill(model, cfg["context_input"], num_ctx, options)
             if n and secs:
                 print(f"  cold prefill {n} tokens in {secs:.1f}s "
                       f"({n/secs:.0f} tok/s) — the cost of resuming a session "
@@ -292,7 +293,7 @@ def measure(args, models):
                   f"{ceilings[ckey]})")
         else:
             ceilings[ckey] = role
-            got, why = ceiling(model, num_ctx, cfg["max_output"])
+            got, why = ceiling(model, num_ctx, cfg["max_output"], options)
             print(f"  output       reached {got} of {cfg['max_output']} "
                   f"(done_reason={why})")
 

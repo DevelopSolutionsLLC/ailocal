@@ -136,17 +136,17 @@ def main() -> None:
     check(not source.exists(), "the source checkout is gone")
     r = run([str(venv / 'bin/python3'), '-c',
              'from ailocal import policy,model_sources; '
-             'assert all(len(policy.resolve_role(t,"cyber")["source"]["revision"])==40 '
-             'for t in ("16gb","32gb")); print("pinned MLX sources ok")'], env)
-    check(r.returncode == 0 and 'pinned MLX sources ok' in r.stdout,
-          'small MLX profiles and importer ship in the wheel without a checkout', r.stderr[-300:])
+             'assert all(policy.resolve_role(t,"cyber")["model"] in policy.required_models(t) '
+             'for t in policy.TIERS); print("profiles and importer ok")'], env)
+    check(r.returncode == 0 and 'profiles and importer ok' in r.stdout,
+          'profiles and the model importer ship in the wheel without a checkout', r.stderr[-300:])
     r = run([str(venv / 'bin/python3'), '-c',
              'import hashlib; from ailocal import policy,ollama_patch; '
              's=policy.ollama_patch_spec(); '
              'assert all(len(s[k])==64 for k in ("native_archive_sha256","native_cli_sha256")); '
              'assert "/v"+s["base_version"]+"/" in s["native_archive_url"]; '
              'assert all(hashlib.sha256(s[k].read_bytes()).hexdigest()==s[k.replace("_file","_sha256")] '
-             'for k in ("patch_file","security_patch_file","router_patch_file","stop_patch_file")); '
+             'for k in ("patch_file","security_patch_file","router_patch_file","stop_patch_file","qwen35_patch_file")); '
              'print("native patch assets ok")'], env)
     check(r.returncode == 0 and 'native patch assets ok' in r.stdout,
           'native loader/security patches and their pins ship without the checkout', r.stderr[-300:])
@@ -186,7 +186,10 @@ def main() -> None:
     r = ran("profile", "profile", "active-tier", allow_nonzero=False)
     check(r.stdout.strip() == "64gb", "the active tier reads back from managed state")
     r = ran("guide", "profile", "guide", "ailocal-cyber", "--tier", "16gb", "--json", allow_nonzero=False)
-    check(json.loads(r.stdout)['models']['ailocal-cyber']['evidence'].startswith('[APPROX]'),
+    guide = json.loads(r.stdout)['models']['ailocal-cyber']
+    check(guide['model'] == 'qwen3.5:4b-unrestricted-mtp-q4_K_M'
+          and '[REAL]' in guide['evidence'] and '[APPROX]' in guide['evidence']
+          and '0fe4f588e328513e7b55158a699fa68bc55be226ca338714e633569d4d2e5007' in guide['evidence'],
           'profile model knowledge ships and resolves without the checkout')
     ran("check", "check")
 
