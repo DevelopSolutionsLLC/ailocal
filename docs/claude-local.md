@@ -12,8 +12,9 @@ ailocal; everything below lives in ailocal's own config root.
 | | hosted `claude` | `claude-local` |
 |---|---|---|
 | Inference | Anthropic | LiteLLM → Ollama on `127.0.0.1` |
-| Context | model's full window | the profile's `num_ctx` (1M-context beta disabled) |
+| Context | model's full window | the launch default's `context_input` (`CLAUDE_CODE_MAX_CONTEXT_TOKENS`; 1M-context beta disabled) |
 | Tool discovery | eager | **MCP tool search on** |
+| Auto-memory | on | **off** by default (`autoMemoryEnabled: false`; an explicit setting wins) |
 | Native Workflow | on | **off**, with an escape hatch |
 | Artifacts | hosted `Artifact` → claude.ai | **bundled local artifact MCP** → `127.0.0.1` |
 | Web search | Anthropic | ailocal's own SearXNG |
@@ -72,7 +73,7 @@ disk, and hosted `claude` keeps Anthropic's native Workflow either way.
 ## Artifacts
 
 `claude-local` publishes artifacts locally through a bundled MCP server — see
-[the README's Artifacts section](../README.md#artifacts) and
+[the README](../README.md#what-a-local-session-gets) and
 [ADR 011](adr/011-bundled-artifacts.md). Nothing to clone or install separately.
 
 ## How the artifact tool is routed
