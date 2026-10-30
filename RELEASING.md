@@ -8,6 +8,7 @@ From v0.9.0, `main` is a public contract. ailocal's published interface is its C
 
 - The version lives in `pyproject.toml` and `src/ailocal/__init__.py`; the gate fails unless they agree and `CHANGELOG.md` has a section for it.
 - Full gate: `python3 tests/gate.py --full`, then `ailocal check`.
+- There is one install path: `pipx install git+https://github.com/DevelopSolutionsLLC/ailocal.git@vX.Y.Z`. The README's install block and the release notes carry that one command for the release being cut; the wheel is attached to the release as the downloadable artifact, not offered as a second path.
 - Update `README.md` when installation changes and `AGENTS.md` when the developer workflow changes.
 
 ### The clean-install check
@@ -17,9 +18,12 @@ From v0.9.0, `main` is a public contract. ailocal's published interface is its C
 ## Cutting the release
 
 ```sh
+sed -i '' 's/ailocal.git@v[0-9.]*/ailocal.git@vX.Y.Z/' README.md   # the one install command
 python3 tests/gate.py --full
+python3 tests/installed-runtime.py
 ailocal check
+python3 -m pip wheel . --no-deps -w /tmp/ailocal-dist   # outside the checkout: the gate rejects any untracked root entry
 git tag -a vX.Y.Z -m "ailocal vX.Y.Z"
 git push origin main --follow-tags
-gh release create vX.Y.Z --notes-file <(sed -n '/## vX.Y.Z/,/^## /p' CHANGELOG.md)
+gh release create vX.Y.Z /tmp/ailocal-dist/ailocal-X.Y.Z-py3-none-any.whl --notes-file <(sed -n '/## vX.Y.Z/,/^## /p' CHANGELOG.md)
 ```
