@@ -12,6 +12,7 @@ Release policy and the meaning of each bump: [RELEASING.md](RELEASING.md).
 ### Fixed
 
 - Runtime preparation runs the upstream renderer suite from its package directory, as `go test` does. Run from the payload directory, two upstream fixture tests failed to open `testdata/` and every build of `0.40.8-ailocal.18631.4` from the shipped pins was refused [REAL 2026-10-30]. The install warning now carries the failing step's last lines instead of the exception class alone.
+- Native imports drop a repository pull's own `hf.co/...` manifest once the alias verifies, so `ollama list` shows only the names policy chose; shared layers are kept and an official library source tag is never removed. [REAL 2026-10-30] A Cyber import had left `hf.co/localslm/Qwen3.5-4B-MTP-Uncensored:model_q4_k_m.gguf` beside `qwen3.5:4b-unrestricted-mtp-q4_K_M`.
 - Every profile selection must be a `name:tag` identity and never `:latest`; `tests/profiles.py` fails otherwise. `ollama create` without a tag publishes `name:latest`, which names nothing, and an earlier naming scheme left such entries in `ollama list`.
 - Isolate native runtime regression tests from the operator's model store and Ollama listener. Runtime preparation also runs the upstream renderer suite; the three required Qwen history regressions must execute even when optional upstream parity tests skip.
 - Validate typed SDK reasoning summaries before copying them, preserving replay metadata without serialization warnings that can include reasoning text.

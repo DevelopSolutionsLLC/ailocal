@@ -248,6 +248,23 @@ def _native(model: str, source: dict) -> bool:
     created = call("/api/show", {"model": model})
     if not _native_matches(created, source):
         raise ValueError("native alias did not retain its reviewed weights and rendering")
+    # The alias now references the pinned blobs itself. Dropping a repository
+    # pull's own manifest keeps `ollama list` to the names policy chose and
+    # prunes only layers nothing references; a re-import re-reads the manifest
+    # without re-downloading shared weights. Library tags stay: operators use
+    # them directly, and `current()` rechecks the alias, never the pull.
+    for name in (source["model"], source.get("draft_model")):
+        if not name or name == model or not name.startswith("hf.co/"):
+            continue
+        request = urllib.request.Request(base + "/api/delete", method="DELETE",
+                                         data=json.dumps({"model": name}).encode(),
+                                         headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(request, timeout=60):
+                pass
+        except OSError:
+            print(f"  Source pull {name} was not removed; `ollama rm {name}` tidies the list",
+                  flush=True)
     return verify_load(model)
 
 
