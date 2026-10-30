@@ -40,6 +40,7 @@ model DID supply — so it is a schema-compatibility normalisation, not inferenc
 """
 
 import collections
+import copy
 import json
 import logging
 import os
@@ -686,6 +687,55 @@ def _responses_stream_from_complete(response, request_data=None):
     yield {"type": f"response.{terminal}", "response": _plain(response)}
 
 
+_REASONING_TEXT_PARTS = ("output_text", "text", "reasoning_text")
+
+
+def _summarised_reasoning(item):
+    """One de-streamed reasoning item in the shape LiteLLM's own streaming path emits.
+
+    LiteLLM's non-streaming Responses bridge (`_extract_reasoning_output_items`)
+    writes reasoning as `content: [output_text]` with no `summary`; its streaming
+    path writes `summary: [summary_text]`. Codex 0.165 requires `summary` and
+    accepts only `reasoning_text`/`text` content, so it drops the whole item and
+    never replays reasoning. Qwen3.5 then sees every prior tool-loop turn as an
+    empty think block and answers inside its open one (#38). The text stays
+    reasoning: it moves to `summary`, never to visible content, and LiteLLM's
+    input side already reads replayed reasoning from either field.
+    """
+    payload = item.model_dump() if hasattr(item, "model_dump") else item
+    if not isinstance(payload, dict) or payload.get("type") != "reasoning" or payload.get("summary"):
+        return item
+    texts = [part["text"] for part in payload.get("content") or ()
+             if isinstance(part, dict) and part.get("type") in _REASONING_TEXT_PARTS
+             and isinstance(part.get("text"), str) and part["text"].strip()]
+    if not texts:
+        return item
+    update = {"summary": [{"type": "summary_text", "text": "\n".join(texts)}], "content": []}
+    if hasattr(item, "model_copy"):
+        # model_copy does not validate nested values. Keep SDK field types so
+        # serialization cannot warn with the reasoning text in its diagnostic.
+        validated = type(item).model_validate({**payload, **update})
+        return item.model_copy(update={key: getattr(validated, key) for key in update})
+    return {**item, **update}
+
+
+def _with_reasoning_summaries(response):
+    """The response with every reasoning item summarised, or the same object if none changed.
+
+    UPSTREAM  LiteLLM 1.106.2 `_extract_reasoning_output_items`; BerriAI/litellm#41262, #45552.
+    REPRO     a de-streamed /v1/responses turn from a thinking model must emit
+      `response.output_item.done` whose reasoning item carries `summary`.
+    RETIRE    when LiteLLM's non-streaming bridge emits `summary` itself.
+    """
+    output = list(getattr(response, "output", None) or ())
+    summarised = [_summarised_reasoning(item) for item in output]
+    if all(new is old for new, old in zip(summarised, output)):
+        return response
+    clone = response.model_copy() if hasattr(response, "model_copy") else copy.copy(response)
+    clone.output = summarised
+    return clone
+
+
 class _CompletedResponseStream:
     """An already-completed Responses result, served as the stream the client asked for.
 
@@ -825,7 +875,7 @@ class ToolRepair(CustomLogger):
         if not _destreamed_responses_result(request_data, response):
             return None
         log.info("tool_repair: re-streaming a de-streamed /v1/responses web search")
-        return _CompletedResponseStream(response, request_data)
+        return _CompletedResponseStream(_with_reasoning_summaries(response), request_data)
 
     async def async_post_call_success_hook(self, data, user_api_key_dict, response):
         try:

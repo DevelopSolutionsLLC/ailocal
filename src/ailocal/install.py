@@ -11,6 +11,7 @@ where the file still matches the digest recorded when it was installed.
 from __future__ import annotations
 
 import hashlib
+import copy
 import json
 import os
 import plistlib
@@ -19,6 +20,8 @@ import shutil
 import subprocess
 import sys
 import time
+import tempfile
+import tomllib
 from pathlib import Path
 
 from . import policy, runtime
@@ -267,6 +270,135 @@ def provision(source: Path, config: Path, state: Path, *,
         record["config"].pop(rel, None)
     return {"installed": installed, "preserved": sorted(set(preserved)),
             "absent": absent, "retired": retired, "backup": backup}
+
+
+def upgrade_model_defaults(source: Path, config: Path) -> dict:
+    """Explicitly adopt model/sampling/features while retaining authored geometry.
+
+    Normal installation still preserves edits. Every candidate is parsed and
+    compared before any live file changes; complete originals are backed up.
+    """
+    fields = ("active", "preferred", "source", "runtime_patch", "draft_num_predict",
+              "stop", "reasoning", "temperature", "top_p", "top_k", "min_p",
+              "presence_penalty", "repeat_penalty", "enabled", "role", "purpose",
+              "strengths", "weaknesses")
+
+    def literal(value):
+        if isinstance(value, dict):
+            return "{" + ", ".join(json.dumps(k) + " = " + literal(v) for k, v in value.items()) + "}"
+        return json.dumps(value, ensure_ascii=False)
+
+    def value_end(body, start):
+        # A value ends at the first line that completes it as TOML, so comments
+        # and blank lines after a multi-line array stay with the next row.
+        end = start
+        for line in body[start:].splitlines(keepends=True):
+            end += len(line)
+            try:
+                tomllib.loads(body[start:end])
+                return end
+            except tomllib.TOMLDecodeError:
+                continue
+        raise ValueError("model upgrade could not delimit an authored profile value")
+
+    def table(text, header, values):
+        # header None is the top-level preamble before the first table.
+        match = (re.match(r"", text) if header is None else
+                 re.search(r"(?m)^" + re.escape(header) + r"[ \t]*(?:#[^\n]*)?$", text))
+        if not match:
+            return text.rstrip() + "\n\n" + header + "\n" + "".join(
+                key + " = " + literal(value) + "\n" for key, value in values.items() if value is not None)
+        start = match.end()
+        following = re.search(r"(?m)^\[", text[start:])
+        end = start + following.start() if following else len(text)
+        body = text[start:end]
+        for key, value in values.items():
+            row = re.search(r"(?m)^[ \t]*" + re.escape(key) + r"[ \t]*=", body)
+            replacement = key + " = " + literal(value) + "\n" if value is not None else ""
+            if row:
+                body = body[:row.start()] + replacement + body[value_end(body, row.start()):]
+            elif value is not None:
+                body = body.rstrip() + "\n" + replacement
+        if header is None:
+            return body.rstrip() + "\n\n" + text[end:]
+        return text[:start] + "\n" + body.lstrip("\n").rstrip() + "\n\n" + text[end:]
+
+    prepared = {}
+    with tempfile.TemporaryDirectory(prefix="ailocal-model-policy-") as tmp:
+        root = Path(tmp)
+        for tier in policy.TIERS:
+            path = policy.profile_path(tier, config)
+            if not path.is_file():
+                continue  # A deliberately removed profile is not resurrected.
+            if path.resolve() == policy.profile_path(tier, source).resolve() or path.is_symlink():
+                raise ValueError("model upgrade refuses shipped-source paths and profile symlinks")
+            before = policy.load_profile(tier, config)
+            shipped = policy.load_profile(tier, source)
+            expected = copy.deepcopy(before)
+            text = path.read_text()
+            if "disk_gb" in shipped:  # download footprint follows the models
+                expected["disk_gb"] = shipped["disk_gb"]
+                text = table(text, None, {"disk_gb": shipped["disk_gb"]})
+            for role in policy.ROLES:
+                if role not in shipped:
+                    continue
+                if role not in expected:
+                    expected[role] = copy.deepcopy(shipped[role])
+                    text = table(text, "[" + role + "]", expected[role])
+                else:
+                    updates = {key: shipped[role].get(key) for key in fields}
+                    for key, value in updates.items():
+                        if value is None:
+                            expected[role].pop(key, None)
+                        else:
+                            expected[role][key] = copy.deepcopy(value)
+                    text = table(text, "[" + role + "]", updates)
+                model = shipped[role]["active"]
+                guide = copy.deepcopy(shipped["model_guidance"][model])
+                expected.setdefault("model_guidance", {})[model] = guide
+                text = table(text, "[model_guidance." + json.dumps(model) + "]", guide)
+            # Shared GGUF aliases use one runner window. Increase smaller input
+            # budgets to that authored maximum, retaining every output reserve.
+            groups = {}
+            for role in policy.ROLES:
+                cfg = expected.get(role, {})
+                if cfg.get("enabled", True) and cfg.get("active"):
+                    groups.setdefault(cfg["active"], []).append(role)
+            for roles in groups.values():
+                total = max(policy.geometry(expected[r]["context_input"], expected[r]["max_output"])["total_context"] for r in roles)
+                for role in roles:
+                    ci = total - expected[role]["max_output"]
+                    if expected[role]["context_input"] != ci:
+                        expected[role]["context_input"] = ci
+                        text = table(text, "[" + role + "]", {"context_input": ci})
+            candidate = policy.profile_path(tier, root)
+            candidate.parent.mkdir(parents=True, exist_ok=True)
+            candidate.write_text(text)
+            if policy.load_profile(tier, root) != expected:
+                raise ValueError("model upgrade could not preserve unrelated profile policy")
+            if before != expected:
+                prepared[path] = text
+    if not prepared:
+        return {"updated": [], "backup": None}
+    backup = config / "backups" / ("model-defaults-" + str(time.time_ns()))
+    backup.mkdir(parents=True)
+    for path in prepared:
+        shutil.copy2(path, backup / path.name)
+    changed = []
+    try:
+        for path, text in prepared.items():
+            temporary = path.with_suffix(".toml.upgrade-tmp")
+            temporary.write_text(text)
+            os.replace(temporary, path)
+            changed.append(path)
+    except BaseException:
+        for path in reversed(changed):
+            shutil.copy2(backup / path.name, path)
+        raise
+    finally:
+        for path in prepared:
+            path.with_suffix(".toml.upgrade-tmp").unlink(missing_ok=True)
+    return {"updated": [path.stem for path in prepared], "backup": backup}
 
 
 # ── host prerequisites ──────────────────────────────────────────────────────
@@ -738,13 +870,15 @@ def pull_models() -> int:
                     raise SystemExit("conflicting source declarations for one model")
                 sources[cfg["model"]] = cfg["source"]
 
+    from .model_sources import current
     have = _installed_models()
     def size_of(tag):
         for name, gb in have.items():
             # Only an omitted :latest is equivalent. A shared model-name
             # prefix does not establish the requested runner/quantization.
             if name == tag or name == f"{tag}:latest" or f"{name}:latest" == tag:
-                return gb, True
+                # An imported tag is present only as the pinned revision.
+                return gb, tag not in sources or current(tag, sources[tag])
         return 0.0, False
 
     step("Model set for this profile")
@@ -883,11 +1017,11 @@ def _write_env(assume_yes: bool) -> None:
 #: the check that emits it so the wording cannot drift from the README.
 VSCODE_KEY_STEPS = ("grep LITELLM_MASTER_KEY ~/.local/state/ailocal/env\n"
                     "then in VS Code: Copilot Chat → model picker → "
-                    "'Manage Models…' → LiteLLM → paste the key")
+                    "'Manage Language Models' → ailocal → paste the key")
 
 
 def _vscode_provider_group():
-    """The connector's entry in chatLanguageModels.json, or None.
+    """ailocal's native provider entry in chatLanguageModels.json, or None.
 
     Read-only and side-effect free: it must never be the thing that creates the
     user directory it is inspecting.
@@ -903,14 +1037,15 @@ def _vscode_provider_group():
     except (OSError, ValueError):
         return None
     return next((g for g in groups if isinstance(g, dict)
-                 and g.get("vendor") == "litellm-connector"), None)
+                 and g.get("vendor") == clients.VSCODE_VENDOR
+                 and g.get("name") == clients.VSCODE_PROVIDER_NAME), None)
 
 
 def _vscode_findings() -> list:
     """The VS Code side of "can a local model answer here?".
 
-    Three things, and only three: the connector points at the proxy URL this
-    installation actually serves, the API key reference survived (its VALUE
+    Three things, and only three: the native provider projects the active
+    profile's aliases, limits and sampling, the API key reference survived (its VALUE
     lives in SecretStorage and cannot be read from outside VS Code), and no
     setting is present that routes Copilot's utility/`tools` calls onto the
     selected local model. That last one is not cosmetic: it fires several
@@ -936,18 +1071,22 @@ def _vscode_findings() -> list:
     except (OSError, ValueError):
         groups = []
     group = next((g for g in groups if isinstance(g, dict)
-                  and g.get("vendor") == "litellm-connector"), None)
+                  and g.get("vendor") == clients.VSCODE_VENDOR
+                  and g.get("name") == clients.VSCODE_PROVIDER_NAME), None)
     want = runtime.proxy_url().rstrip("/")
     if group is None:
         out.append(CheckResult("vscode-provider", WARN,
                                "MISSING no LiteLLM provider group",
                                str(models_json), "run ailocal clients vscode"))
     else:
-        have = str(group.get("baseUrl", "")).rstrip("/")
-        out.append(passed("vscode-provider", f"vscode   connector baseUrl {have}")
-                   if have == want else
+        from . import generation
+        models = generation.load_models_yaml(policy.profile_path(policy.active_tier()))
+        expected = clients.vscode_provider_document([], models)[-1]
+        matches = group.get("models") == expected["models"] and group.get("apiType") == expected["apiType"]
+        out.append(passed("vscode-provider", "vscode   native aliases, geometry and sampling match the active profile")
+                   if matches else
                    CheckResult("vscode-provider", WARN,
-                               f"STALE connector baseUrl {have}, proxy is {want}",
+                               f"STALE native model configuration; proxy is {want}",
                                str(models_json), "run ailocal clients vscode"))
         # The key VALUE lives in VS Code's SecretStorage, which no supported
         # interface lets ailocal write — see the note on VSCODE_KEY_STEPS's use
@@ -1016,13 +1155,12 @@ def client_audit() -> list:
         elif name == "vscode" and not (_vscode_provider_group() or {}).get("apiKey"):
             # NOT "configured": the provider can be perfectly written and the
             # model picker still empty. VS Code keeps BYOK keys in SecretStorage,
-            # and neither the connector (7 commands, no key import, no URI
-            # handler, no env var) nor the `code` CLI (--add-mcp is the only
+            # and neither the Custom Endpoint provider nor the `code` CLI (--add-mcp is the only
             # non-interactive provisioning flag, and it is for MCP servers)
             # exposes a supported way to seed it. The vendor's own alternative
             # is a literal key in chatLanguageModels.json, which its docs warn
             # against and which would trade Keychain for a 0644 file. So this
-            # step is a connector/VS Code boundary, not ailocal configuration,
+            # step is a VS Code boundary, not ailocal configuration,
             # and saying so is more useful than a green tick that lies.
             group = _vscode_provider_group()
             out.append(CheckResult(
@@ -1040,12 +1178,6 @@ def client_audit() -> list:
 
     if unlaunched or not _clients.present("vscode"):
         return out
-    if "gethnet.litellm-connector-copilot" in _out("code", "--list-extensions").lower():
-        out.append(passed("client", "vscode   connector extension installed"))
-    elif _has("code"):
-        out.append(CheckResult("client", WARN,
-                               "MISSING VS Code connector extension", "VS Code",
-                               "ailocal clients vscode"))
     return out + _vscode_findings()
 
 
@@ -1150,6 +1282,10 @@ Idempotent.
                      directory first, and the path is printed. Use this after a
                      release changes a default you never chose to diverge from;
                      without it, an edited file is kept and never updated.
+  --upgrade-models   explicitly adopt shipped models, sampling, enabled features,
+                     role text, download size and guides in all existing tiers. Back up originals; retain
+                     authored output/context budgets, aligning shared runners to
+                     their largest authored window. Other client policy is kept.
 """
 
 
@@ -1189,6 +1325,13 @@ def cmd_install(argv: list[str]) -> int:
         dim(f"absent {rel} (shipped default you removed)")
     for rel in report["retired"]:
         dim(f"retired {rel} (no longer shipped)")
+    if "--upgrade-models" in argv:
+        upgrade = upgrade_model_defaults(source, policy.config_root())
+        if upgrade["updated"]:
+            ok("model policy upgraded: " + ", ".join(upgrade["updated"]))
+            warn(f"original profiles saved to {upgrade['backup']}")
+        else:
+            ok("model policy already matches shipped defaults")
 
     step("Detecting hardware profile")
     ram = _memory_gb()
@@ -1213,7 +1356,10 @@ def cmd_install(argv: list[str]) -> int:
         try:
             candidate_binary = str(ollama_patch.prepare())
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-            warn(f"Patched Ollama preparation failed ({type(error).__name__}); "
+            # The last lines of a failed build step name the failing test or
+            # check; the exception class alone sends the operator to the logs.
+            detail = " ".join(str(error).strip().splitlines()[-3:])[-400:]
+            warn(f"Patched Ollama preparation failed ({type(error).__name__}): {detail}; "
                  "the current service and runtime selection were preserved")
             return 1
     elif requested_patch == "none":
@@ -1283,7 +1429,8 @@ def cmd_install(argv: list[str]) -> int:
     # Deploying into a user's client roots is never implied by --yes: it edits
     # ~/.zshrc and merges VS Code's settings.json, which is not something an
     # unattended run should decide for someone. The claude-local/codex-local
-    # roots are ailocal's own, so --yes provisions those (see below).
+    # roots are ailocal's own, so --yes provisions those, including the agent
+    # MCP registered only there (see below).
     step("Documentation MCP (Claude/Codex)")
     from . import clients
     # Public docs registration is part of every rollout, including --yes.
@@ -1308,11 +1455,15 @@ def cmd_install(argv: list[str]) -> int:
         # [REAL] 2026-10-25: a fresh `install --yes` failed its own check on
         # both. Those roots and runtimes live under ailocal's own roots, so
         # provisioning them decides nothing for the operator.
-        for name in (n for n in detected if n in ("claude", "codex")):
+        local = [n for n in detected if n in ("claude", "codex")]
+        for name in local:
             clients._TARGETS[name]()
+        if local and not clients.provision_local_agent(local):
+            step("Agent MCP registration needs attention")
+            return 1
         ok(f"Detected {', '.join(detected)} — ailocal-owned roots provisioned; "
-           "~/.zshrc, VS Code and the agent MCP are not configured under "
-           "--yes. Run: ailocal clients")
+           "~/.zshrc and VS Code are not configured under --yes. "
+           "Run: ailocal clients")
     else:
         print("\n  ⚠ Configuring backs up, then rewrites/merges existing client configs.")
         targets = _ask(f"Configure which? [Enter for the detected "

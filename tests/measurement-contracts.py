@@ -23,7 +23,8 @@ import measure_sampling as sampling
 class MeasurementContracts(unittest.TestCase):
     def test_quick_geometry_bounds_prefill_and_skips_full_output_generation(self):
         summary = {"roles": {"implementation": {"active": "fixture-model", "enabled": True,
-                    "num_ctx": 196608, "context_input": 163840, "max_output": 32768}}}
+                    "num_ctx": 196608, "context_input": 163840, "max_output": 32768,
+                    "draft_num_predict": 1}}}
         for quick in (True, False):
             with (self.subTest(quick=quick),
                   patch.object(geometry.P, "profile_summary", return_value=summary),
@@ -34,12 +35,13 @@ class MeasurementContracts(unittest.TestCase):
                   patch.object(geometry, "fill", return_value=(4096, 1, 2 * geometry.GIB)) as fill,
                   patch.object(geometry, "ceiling", return_value=(32768, "length")) as ceiling):
                 geometry.measure(SimpleNamespace(tier="fixture", quick=quick), [])
-            self.assertEqual(fill.call_args_list[0].args, ("fixture-model", 4096 if quick else 40000, 196608))
+            self.assertEqual(fill.call_args_list[0].args,
+                             ("fixture-model", 4096 if quick else 40000, 196608, {"draft_num_predict": 1}))
             if quick:
                 self.assertEqual(fill.call_count, 1)
                 ceiling.assert_not_called()
             else:
-                ceiling.assert_called_once_with("fixture-model", 196608, 32768)
+                ceiling.assert_called_once_with("fixture-model", 196608, 32768, {"draft_num_predict": 1})
 
     def test_prefill_salt_does_not_multiply_the_requested_workload(self):
         with (patch.object(geometry, "api", return_value={}) as api,
@@ -66,6 +68,25 @@ class MeasurementContracts(unittest.TestCase):
         self.assertTrue(payload["raw"])
         self.assertFalse(payload["think"])
         self.assertEqual(payload["prompt"], "original prefix and generated continuation")
+
+    def test_cache_profile_draft_depth_reaches_warmup_cold_and_warm_requests(self):
+        for draft in (0, 2):
+            role = {"active": "fixture", "context_input": 4096, "max_output": 512,
+                    "draft_num_predict": draft}
+            response = {"prompt_eval_count": 100, "prompt_eval_cached_count": 80,
+                        "prompt_eval_duration": 1000000000, "response": "continuation"}
+            with (self.subTest(draft=draft),
+                  patch.object(cache.P, "resolve_role", return_value=role),
+                  patch.object(cache, "versions", return_value=("fixture", "fixture")),
+                  patch.object(cache, "resolve_log", return_value=Path('/nonexistent-cache-log')),
+                  patch.object(cache, "api", return_value=response) as api,
+                  patch.object(cache, "engine_of", return_value="llama_cpp"),
+                  patch.object(cache, "release_model"), patch.object(cache.subprocess, "run"),
+                  patch.object(cache.time, "sleep"), contextlib.redirect_stdout(io.StringIO())):
+                self.assertEqual(cache.main(["--tier", "fixture", "--quick"]), 0)
+            self.assertEqual(len(api.call_args_list), 3)
+            self.assertEqual([c.args[1]["options"]["draft_num_predict"] for c in api.call_args_list],
+                             [draft, draft, draft])
 
     def test_sampling_forwards_explicit_budget_and_prompt(self):
         response = {"message": {"content": "fixture", "thinking": ""}, "done_reason": "stop",

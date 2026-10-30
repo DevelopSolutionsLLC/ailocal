@@ -1,248 +1,107 @@
-# 64 GB profile — validated on this hardware class.
-#
-# One resident model serves architecture, implementation and review; they are
-# role boundaries with one geometry, not model boundaries. Ollama keeps a single
-# copy in memory, so the three roles cost one model's VRAM rather than three.
-#
-# Engine behaviour (context enforcement, truncation) is owned by
-# deploy/litellm/registry.yaml.
-disk_gb = 42
+# 64gb — native GGUF MTP backends; measured on the 64 GB M3 Max.
+# Architecture retains its pre-reset authored window; Cyber matches its total.
+# Physical 32/128 GB fit and full-window quality are unverified.
+# GGUF uses eager context allocation and q8_0 KV; historical MLX geometry evidence does not transfer.
+# Exact sources, native trials and limitations: docs/model-audit.md.
+disk_gb = 55
 
-# Geometry follows the one rule in docs/architecture.md#geometry: admission is
-# bounded by memory up to the backend's native window, and compaction is the
-# client's latency budget, never a geometry input. Every chat role totals the
-# native 262144: Gemma roles as 229376 + 32768, the Qwen fast role as 253952 + 8192.
-
-# ── architecture — shared large-context coding/reasoning tier ─────────────────
-# The one big-context capability every client shares (Claude Code, Codex, VS Code):
-# design, deep reasoning, AND large interactive/agent prompts.
-#
-# [REAL] gemma4:26b-mlx supports 262144 natively (`ollama show`). The MLX runner
-# allocates KV LAZILY -- measured identical resident size (16.01 GiB) when loaded
-# at num_ctx 16384, 98304, 147456 and 262144 -- so a large declared window costs
-# nothing until tokens actually occupy it, and KV then grows at 45.4 KB/token
-# (16.49 GiB at 7,785 tokens -> 22.09 GiB at 137,233, cold, nothing else resident).
-# A filled native window is ~11 GiB of KV on ~16 GiB of weights, ~28 GiB resident,
-# so memory admits the whole native window on 64 GB.
-#
-# [REAL] Cold prefill RE-MEASURED on the MLX runner (ollama 0.32.13,
-# num_predict 1, every prompt carrying a unique preamble so Ollama cannot reuse
-# a cached KV prefix, nothing else resident):
-#     34,017 tok ->  34.0 s (1002 tok/s)    133,899 tok -> 236.3 s (567 tok/s)
-#     66,881 tok ->  83.2 s ( 804 tok/s)    166,571 tok -> 340.4 s (489 tok/s)
-#                                           231,390 tok -> 560.9 s (412 tok/s)
-# Measure the cache and you get a different answer: the same 231,390-token
-# prompt takes 154 s when it shares a prefix with the previous one. Only the
-# unique-preamble numbers above describe a cache miss, which is the case that
-# hurts. That latency is what each client's own compaction point bounds; it is
-# not a reason to admit less than memory allows. The earlier 163840 admission
-# traded ~29% of history on every session for a cheaper rare cold resume.
 [architecture]
 role = "Lead architect"
-active = "gemma4:26b-mlx"
-reasoning = true  # [REAL] gemma4:26b-mlx reports the `thinking` capability
-                  # (`ollama show`) and returns reasoning_content. The models
-                  # this line used to name (gpt-oss:20b, qwen3-coder) are gone.
-context_input = 229376
+active = "gemma4:26b-qat-mtp"
+preferred = ["gemma4:26b-qat-mtp"]
+draft_num_predict = 2
+source = {"model" = "gemma4:26b-a4b-it-qat", "sha256" = "4c856523d61d77922dbc0b26753a6bf6208e5d69d80db0c04dcd776832d054c5", "renderer" = "gemma4-large", "parser" = "gemma4", "draft_model" = "hf.co/HauhauCS/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-MTP:mtp-gemma-4-26B-A4B-it.gguf", "draft_sha256" = "62bd3af7f66c9308de9a5454233852f8c7324c93767e8dfb824ed45b9179864a"}
+reasoning = true
+context_input = 163840
 max_output = 32768
-  # max_output raised 2026-08-21. [REAL] With no ceiling, gemma4 finished
-  # real coding tasks in 2,337-5,175 tokens, so 8192 was not truncating
-  # normal work -- but at the OLD sampling it looped, spending 13k-23k
-  # CHARACTERS on reasoning and returning an EMPTY response 7 times in 25.
-  # That failure is silent: the client sees a short answer, not an error.
-  # A ceiling cannot fix looping, it only moves where the truncation lands,
-  # This is output headroom; sampling guidance alone does not prove a cure.
-  # Costs nothing: MLX allocates KV lazily, and num_ctx 196608 was verified
-  # to load at 16.15 GiB resident, identical to a small window.
 temperature = 1.0
 keep_alive = "6h"
 purpose = ["architecture", "complex refactoring", "multi-step debugging", "design", "repository-wide planning", "large interactive/agent prompts"]
-strengths = ["full native window shared across clients", "holds a whole subsystem in view", "strong code generation"]
-weaknesses = ["slower", "cold prefill near the full window costs ~9 min on a cache miss", "~28 GiB resident when the window is filled"]
+strengths = ["native MTP", "native Ollama GGUF", "native tool calling"]
+weaknesses = ["cold prefill and long thinking can dominate task latency", "filled-window memory and task quality are unverified"]
 top_p = 0.95
 top_k = 64
 repeat_penalty = 1.0
-  # Google's published Gemma 4 setting, applied verbatim: temperature 1.0,
-  # top_k 64, top_p 0.95. REPLACES the previous temp 0.1-0.2 / top_k 20,
-  # which was chosen for run-to-run reproducibility. Two measurements drove
-  # the change (2026-08-21, Ollama 0.32.14): sampling costs NOTHING in
-  # throughput here -- draft acceptance was 0.79 at temp 0.1 and 0.77 at
-  # temp 1.0, a gap inside the measured spread. This does not establish
-  # equal throughput on every workload or improved coding quality. The
-  # vendor preset is the baseline; quality requires scored task results.
-  # Anything needing determinism should pass a per-request temperature
-  # rather than pinning the whole role.
-# ── implementation — everyday working coder ──────────────────────────────────
 [implementation]
 role = "Daily coding"
-active = "gemma4:26b-mlx"
-  # Same physical model as architecture, deliberately: this is a role boundary
-  # (sampling, output ceiling), not a model boundary.
-  #
-  # The three Gemma roles declare the same window. The MLX runner enforces
-  # context per request (registry.yaml) and allocates KV lazily, so they share
-  # ONE resident copy of the weights whatever window each declares.
-  # [REAL] Capabilities on 2026-08-21 (`ollama show gemma4:26b-mlx`):
-  # completion, tools, thinking. NO insert, and NO vision -- the MLX
-  # conversion drops vision that the GGUF gemma4:26b keeps. An earlier
-  # version of this line read "insert YES, thinking NO" and was wrong on
-  # both counts while `reasoning = true` sat directly beneath it.
+active = "gemma4:26b-qat-mtp"
+preferred = ["gemma4:26b-qat-mtp"]
+draft_num_predict = 2
+source = {"model" = "gemma4:26b-a4b-it-qat", "sha256" = "4c856523d61d77922dbc0b26753a6bf6208e5d69d80db0c04dcd776832d054c5", "renderer" = "gemma4-large", "parser" = "gemma4", "draft_model" = "hf.co/HauhauCS/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-MTP:mtp-gemma-4-26B-A4B-it.gguf", "draft_sha256" = "62bd3af7f66c9308de9a5454233852f8c7324c93767e8dfb824ed45b9179864a"}
 reasoning = true
-context_input = 229376
+context_input = 163840
 max_output = 32768
-  # max_output raised 2026-08-21. [REAL] With no ceiling, gemma4 finished
-  # real coding tasks in 2,337-5,175 tokens, so 8192 was not truncating
-  # normal work -- but at the OLD sampling it looped, spending 13k-23k
-  # CHARACTERS on reasoning and returning an EMPTY response 7 times in 25.
-  # That failure is silent: the client sees a short answer, not an error.
-  # A ceiling cannot fix looping, it only moves where the truncation lands,
-  # This is output headroom; sampling guidance alone does not prove a cure.
-  # Costs nothing: MLX allocates KV lazily, and num_ctx 196608 was verified
-  # to load at 16.15 GiB resident, identical to a small window.
 temperature = 1.0
 keep_alive = "6h"
-  # 6h, NOT -1. [REAL] keep_alive is LAST-WRITER-WINS on a shared model, and
-  # architecture, implementation and review are all ONE resident
-  # gemma4:26b-mlx. Measured 2026-08-21: a request carrying -1 set
-  # expires_at to the year 2318, and a later 6h request reset it to +6h.
-  # So the role used LAST governed the whole model -- and implementation is
-  # the highest-frequency role, which meant 16 GiB stayed pinned forever
-  # while architecture's 6h looked like the policy. Three roles sharing one
-  # model must declare the SAME keep_alive or the shortest one is fiction.
 purpose = ["implementation", "features", "refactoring", "tests", "shell", "python", "typescript"]
-strengths = ["fast", "low memory", "excellent everyday code generation"]
+strengths = ["native MTP", "native Ollama GGUF", "native tool calling"]
 weaknesses = ["architecture", "repository-wide planning"]
 top_p = 0.95
 top_k = 64
 repeat_penalty = 1.0
-  # Google's published Gemma 4 setting, applied verbatim: temperature 1.0,
-  # top_k 64, top_p 0.95. REPLACES the previous temp 0.1-0.2 / top_k 20,
-  # which was chosen for run-to-run reproducibility. Two measurements drove
-  # the change (2026-08-21, Ollama 0.32.14): sampling costs NOTHING in
-  # throughput here -- draft acceptance was 0.79 at temp 0.1 and 0.77 at
-  # temp 1.0, a gap inside the measured spread. This does not establish
-  # equal throughput on every workload or improved coding quality. The
-  # vendor preset is the baseline; quality requires scored task results.
-  # Anything needing determinism should pass a per-request temperature
-  # rather than pinning the whole role.
-# ── review — code review / bug & security detection ──────────────────────────
 [review]
 role = "Code review"
-active = "gemma4:26b-mlx"
-reasoning = true  # thinking AND tools, both reported by `ollama show`.
-  # Full input AND full output. A review emits findings, not bulk code -- but
-  # the MLX runner allocates KV lazily, so an unused output ceiling costs
-  # nothing here, and a review that DOES have a lot to say should not be
-  # truncated mid-finding. 32768 matches architecture for that reason.
-context_input = 229376
+active = "gemma4:26b-qat-mtp"
+preferred = ["gemma4:26b-qat-mtp"]
+draft_num_predict = 2
+source = {"model" = "gemma4:26b-a4b-it-qat", "sha256" = "4c856523d61d77922dbc0b26753a6bf6208e5d69d80db0c04dcd776832d054c5", "renderer" = "gemma4-large", "parser" = "gemma4", "draft_model" = "hf.co/HauhauCS/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-MTP:mtp-gemma-4-26B-A4B-it.gguf", "draft_sha256" = "62bd3af7f66c9308de9a5454233852f8c7324c93767e8dfb824ed45b9179864a"}
+reasoning = true
+context_input = 163840
 max_output = 32768
-  # max_output raised 2026-08-21. [REAL] With no ceiling, gemma4 finished
-  # real coding tasks in 2,337-5,175 tokens, so 8192 was not truncating
-  # normal work -- but at the OLD sampling it looped, spending 13k-23k
-  # CHARACTERS on reasoning and returning an EMPTY response 7 times in 25.
-  # That failure is silent: the client sees a short answer, not an error.
-  # A ceiling cannot fix looping, it only moves where the truncation lands,
-  # This is output headroom; sampling guidance alone does not prove a cure.
-  # Costs nothing: MLX allocates KV lazily, and num_ctx 196608 was verified
-  # to load at 16.15 GiB resident, identical to a small window.
 temperature = 1.0
 keep_alive = "6h"
-  # 6h, NOT -1. [REAL] keep_alive is LAST-WRITER-WINS on a shared model, and
-  # architecture, implementation and review are all ONE resident
-  # gemma4:26b-mlx. Measured 2026-08-21: a request carrying -1 set
-  # expires_at to the year 2318, and a later 6h request reset it to +6h.
-  # So the role used LAST governed the whole model -- and implementation is
-  # the highest-frequency role, which meant 16 GiB stayed pinned forever
-  # while architecture's 6h looked like the policy. Three roles sharing one
-  # model must declare the SAME keep_alive or the shortest one is fiction.
 purpose = ["code review", "bug detection", "security review", "alternative solutions"]
-strengths = ["careful analysis", "security awareness", "concrete findings"]
+strengths = ["native MTP", "native Ollama GGUF", "native tool calling"]
 weaknesses = ["slower than the implementation tier", "not for bulk generation"]
 top_p = 0.95
 top_k = 64
 repeat_penalty = 1.0
-  # Google's published Gemma 4 setting, applied verbatim: temperature 1.0,
-  # top_k 64, top_p 0.95. REPLACES the previous temp 0.1-0.2 / top_k 20,
-  # which was chosen for run-to-run reproducibility. Two measurements drove
-  # the change (2026-08-21, Ollama 0.32.14): sampling costs NOTHING in
-  # throughput here -- draft acceptance was 0.79 at temp 0.1 and 0.77 at
-  # temp 1.0, a gap inside the measured spread. This does not establish
-  # equal throughput on every workload or improved coding quality. The
-  # vendor preset is the baseline; quality requires scored task results.
-  # Anything needing determinism should pass a per-request temperature
-  # rather than pinning the whole role.
-  # Reasoning is on for architecture, implementation AND review -- this block
-  # previously claimed "here and nowhere else", which contradicted the two
-  # roles above it. Review is the tier where thinking most clearly
-  # earns its latency. The proxy translates per-request reasoning_effort into
-  # native thinking control; Gemma supports on/off rather than graded effort.
-# ── fast — lightweight tool-enabled agent (NOT autocomplete) ────────────────
-# Deliberately not the completion tier: this model exposes no FIM/insert
-# capability, so inline autocomplete would fail QUIETLY.
 [fast]
 role = "Fast agent"
-active = "qwen3.5:9b-mlx"
+active = "qwen3.5:9b-calibrated-mtp-q4_K_M"
+preferred = ["qwen3.5:9b-calibrated-mtp-q4_K_M"]
 runtime_patch = "gemma4-switch-glu"
+draft_num_predict = 3
+source = {"model" = "hf.co/unsloth/Qwen3.5-9B-MTP-GGUF:Qwen3.5-9B-Q4_K_M.gguf", "sha256" = "e8dd94817e95d6c0939102049d068418269978377b13616c4726235e232841fe", "renderer" = "qwen3.5", "parser" = "qwen3.5"}
 stop = ["<|im_end|>", "<|im_start|>"]
-preferred = ["qwen3.5:9b-mlx", "qwen3.5:2b-mlx"]
-# The official 9B MLX backend replaces the GGUF runner. Earlier GGUF tool-loop,
-# memory and latency measurements do not validate this checkpoint's performance.
-# Same 32 KiB/token KV as the 32 GB tier's primary: ~8 GiB at the native window
-# beside Gemma's ~28 GiB still fits 64 GB [calculated].
 reasoning = false
 context_input = 253952
 max_output = 8192
 temperature = 0.0
 keep_alive = "20m"
 purpose = ["task classification", "doc summarisation", "quick edits", "tool-driven lookups"]
-strengths = ["tiny footprint", "native tool calling", "MLX runner; prefill depends on cache reuse"]
+strengths = ["native MTP", "imatrix calibration", "native Ollama GGUF", "native tool calling"]
 weaknesses = ["no FIM/insert - cannot do inline autocomplete", "weaker on large refactors"]
 top_p = 0.9
 top_k = 20
 repeat_penalty = 1.0
 min_p = 0.0
 presence_penalty = 1.5
-  # Retained fast-role sampling; no MLX quality improvement is implied.
-  # Deliberate low-temperature role setting; not a guarantee of determinism.
-# ── completion — inline autocomplete (FIM) ───────────────────────────────────
-# Disabled until Ollama supports the pinned Qwen2 MLX candidate. No GGUF fallback.
 [completion]
-role = "Autocomplete (unavailable: Qwen2 MLX loader)"
-enabled = false  # Qwen2 MLX is not supported by the pinned Ollama loader
-active = "ailocal-qwen2.5-coder-3b:mlx-529a507"
-source = { repository = "mlx-community/Qwen2.5-Coder-3B-4bit", revision = "529a507eac8bcf5117c34fd5a4e31922ccab9e47" }
-preferred = ["ailocal-qwen2.5-coder-3b:mlx-529a507"]
+role = "Autocomplete (FIM)"
+active = "qwen2.5-coder:3b-base"
+stop = ["<|endoftext|>", "<|fim_pad|>", "<|file_sep|>", "<|repo_name|>", "<|fim_prefix|>", "<|fim_suffix|>", "<|fim_middle|>"]
+preferred = ["qwen2.5-coder:3b-base", "qwen2.5-coder:1.5b-base"]
 reasoning = false
 context_input = 3968
-  # max_output 512, raised from 128. A FIM suggestion is a few lines, not a
-  # paragraph, but 128 truncated multi-line completions mid-block. 512 is
-  # still far too small to be used as a chat role, which is the point.
 max_output = 512
 temperature = 0.1
 keep_alive = "2h"
 purpose = ["inline completion", "FIM", "quick syntax fixes", "small transforms"]
-strengths = ["very fast", "tiny footprint", "native FIM tokens"]
-weaknesses = ["no deep reasoning", "short context"]
+strengths = ["native FIM tokens", "very fast", "~2 GB footprint"]
+weaknesses = ["no reasoning", "short context", "not for chat"]
 top_p = 0.9
 top_k = 20
 repeat_penalty = 1.0
-  # Deliberate low-temperature role setting; not a guarantee of determinism.
 
-# ── cyber — unrestricted coding on a separate model ─────────────────────────
-# A separate model on purpose: abliterated weights are the capability, so it
-# cannot share the primary's resident copy. Same Gemma 4 26B-A4B architecture,
-# so it follows architecture's shape (reasoning, 32768 output) and Google's
-# Gemma 4 sampling. [REAL] Imported and loaded on the patched Ollama / M3 Max
-# 64 GB. [APPROX] At 8K context, two non-thinking coding fixtures and a tool
-# round passed; short coding samples decoded at about 99-100 tokens/s.
-# https://huggingface.co/google/gemma-4-26B-A4B-it
 [cyber]
 role = "Unrestricted coding"
-active = "ailocal-gemma4-26b-uncensored:mlx-46ab84d"
-source = { repository = "00cyre/Gemma-4-26B-A4B-it-Uncensored-MLX-4bit", revision = "46ab84dbe20198a2ee5e66c3e69c039b8c60ad59" }
-runtime_patch = "gemma4-switch-glu"
+active = "gemma4:26b-unrestricted-qat-mtp-q4_K_M"
+preferred = ["gemma4:26b-unrestricted-qat-mtp-q4_K_M"]
+draft_num_predict = 3
+source = {"model" = "hf.co/HauhauCS/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-MTP:Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf", "sha256" = "3c13133469e431312fffb8b1d9c85ae42199e6bb5746ea1da84e8ddf2097d73c", "renderer" = "gemma4-large", "parser" = "gemma4", "draft_model" = "hf.co/HauhauCS/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-MTP:mtp-gemma-4-26B-A4B-it.gguf", "draft_sha256" = "62bd3af7f66c9308de9a5454233852f8c7324c93767e8dfb824ed45b9179864a"}
 reasoning = true
-context_input = 229376
+context_input = 163840
 max_output = 32768
 temperature = 1.0
 top_p = 0.95
@@ -250,42 +109,43 @@ top_k = 64
 min_p = 0.0
 presence_penalty = 0.0
 repeat_penalty = 1.0
-  # 20m like `fast`, the other model beside the primary: a second ~16 GiB of
-  # weights is released soon after it goes idle instead of held for 6h.
 keep_alive = "20m"
 purpose = ["refusal-sensitive coding", "security research", "tool-driven edits"]
-strengths = ["uncensored Gemma 4 26B-A4B weights", "native tool calling and thinking", "same window as architecture"]
+strengths = ["native MTP", "native Ollama GGUF", "native tool calling"]
 weaknesses = ["a second ~16 GiB model beside the primary - a cold load on first use", "repository coding quality and full-window prefill unmeasured"]
 
-# One guide per exact backend, shared by all capability aliases using it.
-[model_guidance."gemma4:26b-mlx"]
-name = "Gemma 4 26B-A4B"
-prompting = ["Retrieve the relevant subsystem before requesting a change; a large window is not a reason to read an entire repository.","Use actual tool calls for inspection and edits, then verify the requested behavior with the client's tools."]
-limitations = ["Cold prefill can take minutes near the admitted window; keep stable context and avoid unnecessary rereads.","Reasoning can exhaust output without a final answer; an empty or truncated reply is incomplete, not success."]
-evidence = "[REAL] Local prefill and memory measurements inform this profile. [UNVERIFIED] These prompting suggestions have not been shown to improve repository task accuracy."
-summary = "Gemma 4 26B MLX: shared coding and reasoning weights; capability aliases select different context budgets."
-sources = ["https://huggingface.co/google/gemma-4-26B-A4B-it"]
 
-[model_guidance."qwen3.5:9b-mlx"]
-name = "Qwen3.5 9B"
-prompting = ["Give one bounded change with relevant code, explicit input/output requirements and a few acceptance examples.","Use the client's real syntax/test tools, return the exact failing output for repair, and stop or escalate after repeated failure."]
-limitations = ["Guidance is a starting point, not a measured guarantee of coding correctness."]
-evidence = "[REAL] On the 64 GB host, Ollama 0.40.8-ailocal.18631.3 loaded the official MLX checkpoint, reported runner=mlx and completed a simple native tool/result round trip; its manifest matched the reviewed digest. [APPROX] One implementation-role edit fixture, non-thinking t0.7, 90-second client limits: Both Codex and Claude timed out with unchanged fixture code and failing independent assertions. [UNVERIFIED] Full-window behavior and physical target-tier memory fit. Earlier GGUF measurements do not transfer."
-summary = "Qwen3.5 9B MLX: keep tasks bounded and verify edits with real tools."
-sources = ["https://ollama.com/library/qwen3.5:9b-mlx","https://huggingface.co/Qwen/Qwen3.5-9B#best-practices"]
+[model_guidance."gemma4:26b-qat-mtp"]
+input_modalities = ["text", "image"]
+name = "Gemma 4 26B-A4B QAT MTP (GGUF)"
+summary = "Official quantization-aware-trained target with a digest-pinned native MTP head; no weights are converted."
+prompting = ["Retrieve the relevant subsystem before requesting a change; a large context window does not make cold prefill cheap.", "Give exact requirements and acceptance examples. Use native tools to edit and run unchanged tests; return the actual failure for a bounded repair.", "Use ailocal-fast for simple single-step work. Keep the selected role's thinking mode for difficult tasks; MTP speeds decoding, not all prefill or reasoning.", "A response that exhausts its output ceiling without a final result is incomplete. Never report a test as passed without its actual result."]
+limitations = ["Short fixtures do not establish repository-scale accuracy or full-window retrieval quality.", "MTP accelerates decoding; calibration and QAT do not establish additional training-data knowledge.", "GGUF allocates context eagerly; older MLX memory and prefill measurements do not transfer.", "Reasoning can consume the output ceiling without a final answer; treat truncation as incomplete."]
+evidence = "[REAL] On the 64 GB M3 Max, native Ollama 0.40.8-ailocal.18631.3 loaded the official QAT GGUF plus the published 251937728-byte MTP head through native draft_files and completed three tool rounds including recovery. [APPROX] At 16K context, non-thinking vendor sampling, draft length 3 and three 256-token samples, median decode was 123.89 tokens/s versus calibrated MLX 121.65 and the installed legacy MLX 74.91. Ten small coding cases passed 9/10; both MLX arms passed 10/10, so accuracy parity is not established. Native-client and geometry follow-through are recorded in docs/model-audit.md. [UNVERIFIED] Full-window task accuracy and physical 64 GB simultaneous-residency limits."
+sources = ["https://ollama.com/library/gemma4:26b-a4b-it-qat", "https://huggingface.co/HauhauCS/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-MTP/tree/f9093662a2e7ae0503f637088bc96f77a1a70c83", "https://huggingface.co/google/gemma-4-26B-A4B-it"]
 
-[model_guidance."ailocal-qwen2.5-coder-3b:mlx-529a507"]
-name = "Qwen2.5-Coder 3B"
-summary = "Disabled MLX autocomplete candidate: Qwen2 is unsupported by this Ollama MLX loader."
-prompting = ["Do not select or invoke this disabled capability."]
-limitations = ["MLX weights exist, but native load and fill-in-the-middle behavior are unverified. No GGUF fallback is configured."]
-evidence = "[UNVERIFIED] Source metadata inspected; this candidate is disabled and has not been installed or validated."
-sources = ["https://huggingface.co/mlx-community/Qwen2.5-Coder-3B-4bit"]
+[model_guidance."qwen3.5:9b-calibrated-mtp-q4_K_M"]
+input_modalities = ["text", "image"]
+name = "Qwen3.5 9B calibrated MTP (GGUF)"
+summary = "Unsloth imatrix-calibrated Q4_K_M with an embedded native MTP layer and image input; verify generated code with real tests."
+prompting = ["Give one bounded coding change, exact input/output requirements and acceptance examples; include only relevant files.", "Use native tools to inspect, edit and run unchanged tests. Return exact failures for at most two repair attempts, then report the unresolved issue.", "Request the needed output format explicitly. Use ailocal-fast for simple work and keep the selected role's thinking mode for difficult reasoning.", "Treat output-limit truncation as incomplete; do not repeat full repository context or claim tests passed without running them."]
+limitations = ["Small fixtures do not establish repository-scale accuracy or full-window retrieval quality.", "Calibration and MTP optimize inference; they do not add training-data knowledge or establish universal accuracy parity.", "Physical 32/128 GB full-window fit is unverified on the 64 GB measurement host."]
+evidence = "[REAL] 2026-10-28: the native HF pull matched target SHA-256 e8dd94817e95d6c0939102049d068418269978377b13616c4726235e232841fe. Ollama reports 77 calibration chunks, 248 imatrix entries, one nextn layer and vision capability. [APPROX] On the 64 GB M3 Max, ten coding tasks at three seeds passed 22/30 attempts and 3/3 tool rounds at both draft depth 2 and the selected depth 3; the former standard passed 21/30 and Cyber 22/30. A separate matched 256-token decode comparison reached 77.92 tokens/s versus former standard 69.24 and Cyber 77.23. The depth sweep selected depth 3 at 85.49 tokens/s versus Cyber 85.85; these are bounded synthetic workloads. Selected-depth, installed-client and geometry follow-through are recorded in docs/model-audit.md."
+sources = ["https://huggingface.co/unsloth/Qwen3.5-9B-MTP-GGUF/tree/9716a636ee4bddc3fed678220b7a33dd2a4160ae", "https://huggingface.co/Qwen/Qwen3.5-9B#best-practices"]
 
-[model_guidance."ailocal-gemma4-26b-uncensored:mlx-46ab84d"]
-name = "Gemma 4 26B-A4B uncensored"
-prompting = ["Give one bounded coding change with relevant source, explicit acceptance criteria and real test output.","Use the client's tools for inspection and verification; return exact errors for a bounded repair attempt.","Use non-thinking mode for simple requests when appropriate; reserve thinking for work that benefits from it."]
-limitations = ["Upstream describes this conversion as refusal-validated and capability-unverified, and observed a garbled token; verify every API and claim against the real code.","Text-only conversion; do not send images or audio.","Keep earlier turns' thinking out of history except on tool-call turns, as Google's Gemma 4 card advises.","Native Codex edit pilots produced invalid patch formatting; verify actual file changes and tests rather than trusting client exit status.","Short direct-provider checks do not establish repository-scale reliability or full-window performance.","A benign non-refusal is not evidence of universal non-refusal or coding correctness."]
-evidence = "[REAL] Checkpoint load and native tool calls work with the reviewed Ollama patches on the 64 GB host. [APPROX] Two small coding fixtures passed, with about 99–100 tokens/s in non-thinking mode. Native Codex edit pilots did not complete a verified change; larger workloads and 128 GB hardware remain unmeasured."
-summary = "Unrestricted Gemma 4 26B-A4B MLX conversion with native thinking and tools; verify edits with real tests."
-sources = ["https://huggingface.co/00cyre/Gemma-4-26B-A4B-it-Uncensored-MLX-4bit","https://huggingface.co/google/gemma-4-26B-A4B-it"]
+[model_guidance."gemma4:26b-unrestricted-qat-mtp-q4_K_M"]
+input_modalities = ["text", "image"]
+name = "Gemma 4 26B-A4B unrestricted QAT MTP (GGUF)"
+summary = "HauhauCS balanced unrestricted QAT target with its published native MTP head and built-in Gemma rendering."
+prompting = ["Retrieve the relevant subsystem before requesting a change; a large context window does not make cold prefill cheap.", "Give exact requirements and acceptance examples. Use native tools to edit and run unchanged tests; return the actual failure for a bounded repair.", "Use ailocal-fast for simple single-step work. Keep the selected role's thinking mode for difficult tasks; MTP speeds decoding, not all prefill or reasoning.", "A response that exhausts its output ceiling without a final result is incomplete. Never report a test as passed without its actual result.", "Unrestricted behavior is not evidence of coding or factual accuracy; verify edits and claims with actual tools."]
+limitations = ["Short fixtures do not establish repository-scale accuracy or full-window retrieval quality.", "MTP accelerates decoding; calibration and QAT do not establish additional training-data knowledge.", "Uncensoring can alter capability; test every edit and factual claim.", "Historical results from the old unrestricted MLX conversion do not transfer."]
+evidence = "[REAL] Native HF pull/create retained target SHA-256 3c13133469e431312fffb8b1d9c85ae42199e6bb5746ea1da84e8ddf2097d73c and MTP SHA-256 62bd3af7f66c9308de9a5454233852f8c7324c93767e8dfb824ed45b9179864a. The same managed Ollama runtime loaded both without a new patch or tensor conversion. [APPROX] On the 64 GB M3 Max, 16K context, non-thinking vendor sampling and draft length 3: median 111.19 tokens/s, 9/10 small coding cases and 3/3 tool rounds including recovery. This outpaced the native Huihui QAT-plus-head trial at 93.32 tokens/s; neither result proves general accuracy parity. Final sampling, speed and native-client evidence are in docs/model-audit.md. [UNVERIFIED] Universal non-refusal and full-window quality; physical 128 GB was not tested."
+sources = ["https://huggingface.co/HauhauCS/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-MTP/tree/f9093662a2e7ae0503f637088bc96f77a1a70c83", "https://huggingface.co/google/gemma-4-26B-A4B-it"]
+
+[model_guidance."qwen2.5-coder:3b-base"]
+name = "Qwen2.5-Coder 3B base"
+summary = "Fill-in-the-middle autocomplete only; send a FIM-formatted prompt, never a chat request."
+prompting = ["Format the request as <|fim_prefix|>prefix<|fim_suffix|>suffix<|fim_middle|>; the proxy drops a separate suffix field.","Send as much surrounding prefix and suffix as the 3,968-token input allows; context, not instructions, is what improves a completion.","Stop at the end of the line or block the editor needs; temperature 0.1 keeps suggestions stable."]
+limitations = ["A base model: it follows no instructions and has no system prompt, so pre-prompting does not improve it.","Qwen Research License: non-commercial use only.","Exact-match fidelity on single-line infill is low at this size; treat suggestions as drafts."]
+evidence = "[REAL] 2026-10-26, MacBook Air M4 16 GB under memory pressure (11 GB swap in use), Ollama 0.40.8-ailocal.18631.3: on 80 held-out single-line infills from this repository plus 10 executable FIM cases, sent as a FIM-formatted chat message the way the proxy forwards it, qwen2.5-coder:3b-base scored 9/80 exact, 0.571 similarity, 10/10 executable, 3.3 s p50, 32 tok/s; the 1.5B base scored 10/80, 0.549 and 10/10 at about twice the speed. The instruct tag scored 0/80 and 0/10 on this path because its chat template wraps the prompt. [UNVERIFIED] Latency on 64/128 GB hardware; this host is not the target tier."
+sources = ["https://ollama.com/library/qwen2.5-coder:3b-base","https://huggingface.co/Qwen/Qwen2.5-Coder-3B","https://github.com/BerriAI/litellm/issues/6900"]

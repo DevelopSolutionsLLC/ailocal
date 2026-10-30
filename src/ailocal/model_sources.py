@@ -1,7 +1,8 @@
-"""Fetch pinned MLX assets and verify that Ollama can load selected models.
+"""Provision reviewed model assets through Ollama's native import interfaces.
 
 Ollama imports local Safetensors directories but cannot pull these unpublished
-MLX snapshots. This adapter only retrieves verified assets, never model code.
+MLX snapshots. Native GGUF recipes use Ollama's own pull/create, with a pinned
+weight hash and its built-in renderer/parser. No model weights are rewritten.
 """
 from __future__ import annotations
 
@@ -112,8 +113,168 @@ def fetch(source: dict, *, timeout: int = 900) -> Path:
     return root
 
 
+def _receipts() -> Path:
+    return policy.state_root() / "model-sources" / "imports.json"
+
+
+def _digest(model: str) -> str | None:
+    """The serving daemon's manifest digest for `model`, or None."""
+    try:
+        with urllib.request.urlopen(f"{policy.ollama_url().rstrip('/')}/api/tags",
+                                    timeout=15) as response:
+            listed = json.load(response).get("models") or []
+    except (OSError, ValueError):
+        return None
+    for entry in listed:
+        if entry.get("name") in (model, f"{model}:latest"):
+            return entry.get("digest")
+    return None
+
+
+def _native_assets(shown: dict) -> dict[str, list[str]]:
+    """Read only Ollama's leading asset directives, never template/license text.
+
+    This is the generated /api/show header, not a general Modelfile parser.
+    The first FROM is the target; later FROMs can name projectors. Stop before
+    TEMPLATE/RENDERER/etc., whose quoted contents are publisher-controlled.
+    """
+    assets: dict[str, list[str]] = {"FROM": [], "DRAFT": []}
+    text = shown.get("modelfile")
+    if not isinstance(text, str):
+        return assets
+    for line in text.splitlines():
+        if not line.strip() or line.startswith("#"):
+            continue
+        directive, separator, value = line.partition(" ")
+        if not separator or directive not in assets:
+            break
+        assets[directive].append(value)
+    return assets
+
+
+def _native_matches(shown: dict, source: dict) -> bool:
+    if not isinstance(shown, dict):
+        return False
+    root = policy.ollama_model_store() / "blobs"
+    assets = _native_assets(shown)
+    drafts = ([str(root / ("sha256-" + source["draft_sha256"]))]
+              if "draft_sha256" in source else [])
+    return (assets["FROM"][:1] == [str(root / ("sha256-" + source["sha256"]))]
+            and assets["DRAFT"] == drafts
+            and shown.get("renderer") == source["renderer"]
+            and shown.get("parser") == source["parser"])
+
+
+def current(model: str, source: dict) -> bool:
+    """Whether the installed `model` is this source's import.
+
+    Imported tags do not name their revision, so a changed pin would otherwise
+    leave the old weights serving under the same tag. The receipt binds the tag
+    to the pinned revision and to the manifest Ollama created; a missing
+    receipt, a different pin or a replaced manifest means re-import.
+    """
+    try:
+        entry = json.loads(_receipts().read_text()).get(model) or {}
+    except (OSError, ValueError, AttributeError):
+        return False
+    matched = (isinstance(entry, dict)
+            and {key: value for key, value in entry.items() if key != "digest"} == source
+            and entry.get("digest") is not None
+            and entry.get("digest") == _digest(model))
+    if not matched or "model" not in source:
+        return matched
+    # Recheck native asset bindings even for old receipts: they may predate a
+    # stricter verifier. A receipt alone cannot grandfather an invalid pin.
+    try:
+        request = urllib.request.Request(
+            f"{policy.ollama_url().rstrip('/')}/api/show",
+            data=json.dumps({"model": model}).encode(),
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=15) as response:
+            return _native_matches(json.load(response), source)
+    except (OSError, ValueError):
+        return False
+
+
+def _record(model: str, source: dict) -> None:
+    path = _receipts()
+    try:
+        receipts = json.loads(path.read_text())
+    except (OSError, ValueError):
+        receipts = {}
+    receipts[model] = {**source, "digest": _digest(model)}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".partial")
+    temporary.write_text(json.dumps(receipts, indent=2, sort_keys=True) + "\n")
+    temporary.replace(path)
+
+
+def _native(model: str, source: dict) -> bool:
+    """Configure supported native rendering on a digest-checked GGUF pull."""
+    if subprocess.run([policy.ollama_binary(), "pull", source["model"]],
+                      timeout=3600).returncode:
+        return False
+    base = policy.ollama_url().rstrip("/")
+
+    def call(path, body):
+        request = urllib.request.Request(base + path, data=json.dumps(body).encode(),
+                                         headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=180) as response:
+            return json.load(response)
+
+    shown = call("/api/show", {"model": source["model"]})
+    expected = policy.ollama_model_store() / "blobs" / ("sha256-" + source["sha256"])
+    if _native_assets(shown)["FROM"][:1] != [str(expected)]:
+        raise ValueError("native source weight digest differs from the reviewed pin")
+    recipe = {"model": model, "from": source["model"],
+              "renderer": source["renderer"], "parser": source["parser"], "stream": False}
+    draft = None
+    if "draft_model" in source:
+        if subprocess.run([policy.ollama_binary(), "pull", source["draft_model"]],
+                          timeout=3600).returncode:
+            return False
+        head = call("/api/show", {"model": source["draft_model"]})
+        draft = policy.ollama_model_store() / "blobs" / ("sha256-" + source["draft_sha256"])
+        head_assets = _native_assets(head)
+        if (head_assets["FROM"][:1] != [str(draft)]
+                and head_assets["DRAFT"] != [str(draft)]):
+            raise ValueError("native draft weight digest differs from the reviewed pin")
+        # DRAFT/draft_files is Ollama's native GGUF attachment interface. It
+        # reuses the pulled, digest-checked blob without rewriting its tensors.
+        recipe["draft_files"] = {"draft.gguf": "sha256:" + source["draft_sha256"]}
+    result = call("/api/create", recipe)
+    if result.get("status") != "success":
+        return False
+    created = call("/api/show", {"model": model})
+    if not _native_matches(created, source):
+        raise ValueError("native alias did not retain its reviewed weights and rendering")
+    # The alias now references the pinned blobs itself. Dropping a repository
+    # pull's own manifest keeps `ollama list` to the names policy chose and
+    # prunes only layers nothing references; a re-import re-reads the manifest
+    # without re-downloading shared weights. Library tags stay: operators use
+    # them directly, and `current()` rechecks the alias, never the pull.
+    for name in (source["model"], source.get("draft_model")):
+        if not name or name == model or not name.startswith("hf.co/"):
+            continue
+        request = urllib.request.Request(base + "/api/delete", method="DELETE",
+                                         data=json.dumps({"model": name}).encode(),
+                                         headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(request, timeout=60):
+                pass
+        except OSError:
+            print(f"  Source pull {name} was not removed; `ollama rm {name}` tidies the list",
+                  flush=True)
+    return verify_load(model)
+
+
 def install(model: str, source: dict) -> bool:
     try:
+        if "model" in source:
+            if not _native(model, source):
+                return False
+            _record(model, source)
+            return True
         root = fetch(source)
         modelfile = root / "Modelfile"
         modelfile.write_text(f'FROM "{root}"\n', encoding="utf-8")
@@ -128,6 +289,7 @@ def install(model: str, source: dict) -> bool:
             return False
         if not verify_load(model):
             return False
+        _record(model, source)
         # Ollama owns the imported blobs; retaining a second weight copy would
         # double the smaller tiers' disk requirement without serving inference.
         shutil.rmtree(root)

@@ -46,6 +46,7 @@ def ollama_patch_spec() -> dict:
     spec["security_patch_file"] = root / spec["security_patch_file"]
     spec["router_patch_file"] = root / spec["router_patch_file"]
     spec["stop_patch_file"] = root / spec["stop_patch_file"]
+    spec["qwen35_patch_file"] = root / spec["qwen35_patch_file"]
     return spec
 
 
@@ -81,6 +82,8 @@ def ollama_binary() -> str:
 
 def client_mcp_path(client: str, *, local: bool) -> Path:
     """Native user-scope MCP locations, respecting hosted client overrides."""
+    if client == "copilot" and not local:
+        return Path(os.environ.get("COPILOT_HOME") or Path.home() / ".copilot") / "mcp-config.json"
     if client not in ("claude", "codex"):
         raise ValueError("unsupported documentation client")
     if local:
@@ -154,7 +157,7 @@ LEGACY_CONTEXT_FIELD = "context"
 #:   preferred/purpose/strengths/weaknesses -> [] (documentation only)
 OPTIONAL_ROLE_FIELDS = ("provider", "source", "runtime_patch", "stop", "max_output", "reasoning", "temperature",
                         "top_p", "top_k", "min_p", "presence_penalty",
-                        "repeat_penalty", "keep_alive",
+                        "repeat_penalty", "keep_alive", "draft_num_predict",
                         "preferred", "purpose", "strengths",
                         "weaknesses")
 
@@ -340,6 +343,80 @@ def load_client_policy(repo_root=None) -> dict:
     return data
 
 
+#: What a delegated worker may be granted, weakest first. `full` lifts the
+#: worker CLI's own sandbox and permission prompts.
+DELEGATE_MODES = ("text", "research", "edit", "full")
+DELEGATE_DEFAULT_CEILING = "edit"
+
+
+def delegate_ceilings(repo_root=None) -> dict:
+    """The strongest mode `delegate` may grant each worker CLI.
+
+    Operator policy, read from `[claude]`/`[codex] delegate_max_mode`; an absent
+    key keeps the sandboxed default, and an invalid one fails closed.
+    """
+    data = load_client_policy(repo_root)
+    out = {}
+    for client in ("claude", "codex"):
+        mode = (data.get(client) or {}).get("delegate_max_mode", DELEGATE_DEFAULT_CEILING)
+        if mode not in DELEGATE_MODES:
+            raise ProfileError(CLIENT_POLICY_INVALID,
+                               f"{client}.delegate_max_mode must be one of "
+                               f"{', '.join(DELEGATE_MODES)}")
+        out[client] = mode
+    return out
+
+
+#: Largest instruction file (CLAUDE.md / AGENTS.md) a local client root should
+#: carry. [REAL] 2026-10-29, Qwen3.5 9B via claude-local: with the 17 KB composed
+#: policy loaded, 2/6 fixture runs re-read that file or took its directory for the
+#: working directory; with it excluded, every run edited the task file. #39, ADR 017.
+INSTRUCTION_DEFAULT_MAX_BYTES = 4096
+
+
+def instruction_budgets(repo_root=None) -> dict:
+    """Per-client instruction-file budget, from `[claude]`/`[codex] instruction_max_bytes`.
+
+    Published in the integration contract so a co-installed instruction composer
+    can fit it, and checked by `ailocal check` whoever wrote the file. An absent
+    key keeps the measured default; a non-positive or non-integer one fails closed.
+    """
+    data = load_client_policy(repo_root)
+    out = {}
+    for client in ("claude", "codex"):
+        value = (data.get(client) or {}).get("instruction_max_bytes", INSTRUCTION_DEFAULT_MAX_BYTES)
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ProfileError(CLIENT_POLICY_INVALID,
+                               f"{client}.instruction_max_bytes must be a positive integer")
+        out[client] = value
+    return out
+
+
+def client_capability_targets(repo_root=None) -> dict:
+    """Only model-routing fields target capabilities; worker modes do not."""
+    data = load_client_policy(repo_root)
+    delegate_ceilings(repo_root)
+    instruction_budgets(repo_root)
+    out = {}
+    for client, mapping in data.items():
+        if client == "compat":
+            values = list(mapping.values())
+        elif client == "claude":
+            slots = mapping.get("slots", {})
+            if not isinstance(slots, dict):
+                raise ProfileError(CLIENT_POLICY_INVALID, "claude.slots must be a table")
+            values = list(slots.values())
+            if "launch_default" in mapping:
+                values.append(mapping["launch_default"])
+        else:
+            values = [mapping["default"]] if "default" in mapping else []
+        if any(not isinstance(value, str) for value in values):
+            raise ProfileError(CLIENT_POLICY_INVALID,
+                               f"{client} routing targets must name capabilities")
+        out[client] = set(values)
+    return out
+
+
 def slot_problems(tier=None, repo_root=None) -> list:
     """Client slot assignments that violate profile geometry.
 
@@ -429,8 +506,10 @@ def _validate_guidance(data: dict) -> None:
         raise ProfileError(PROFILE_SCHEMA_INVALID, "model_guidance must be a table")
     for model, guide in guides.items():
         required = {"summary", "prompting", "limitations", "evidence", "sources"}
-        if not isinstance(guide, dict) or not required <= set(guide) <= required | {"name"}:
+        if not isinstance(guide, dict) or not required <= set(guide) <= required | {"name", "input_modalities"}:
             raise ProfileError(PROFILE_SCHEMA_INVALID, "invalid model_guidance fields")
+        if guide.get("input_modalities", ["text"]) not in (["text"], ["text", "image"]):
+            raise ProfileError(PROFILE_SCHEMA_INVALID, "model_guidance.input_modalities must be text or text/image")
         if "name" in guide and (not isinstance(guide["name"], str) or not guide["name"].strip()):
             raise ProfileError(PROFILE_SCHEMA_INVALID, "model_guidance.name must be text")
         for field in ("summary", "evidence"):
@@ -492,17 +571,37 @@ def _validate_role(role: str, cfg) -> None:
         raise ProfileError(PROFILE_SCHEMA_INVALID,
                            f"{role} missing {', '.join(missing)}")
     source = cfg.get("source")
+    draft = cfg.get("draft_num_predict")
+    if draft is not None and (type(draft) is not int or draft < 0):
+        raise ProfileError(PROFILE_SCHEMA_INVALID,
+                           f"{role}.draft_num_predict must be a nonnegative integer")
     if cfg.get("runtime_patch") is not None and cfg["runtime_patch"] != ollama_patch_spec()["id"]:
         raise ProfileError(PROFILE_SCHEMA_INVALID, f"{role}.runtime_patch is unsupported")
     if cfg.get("stop") is not None and (
             not isinstance(cfg["stop"], list) or not cfg["stop"]
             or not all(isinstance(token, str) and token for token in cfg["stop"])):
         raise ProfileError(PROFILE_SCHEMA_INVALID, f"{role}.stop must be a nonempty string list")
-    if source is not None and (
-            not isinstance(source, dict) or set(source) != {"repository", "revision"}
-            or not re.fullmatch(r"[\w.-]+/[\w.-]+", str(source.get("repository", "")))
-            or not re.fullmatch(r"[0-9a-f]{40}", str(source.get("revision", "")))):
-        raise ProfileError(PROFILE_SCHEMA_INVALID, f"{role}.source requires a repository and pinned commit")
+    if source is not None:
+        snapshot = (isinstance(source, dict) and set(source) == {"repository", "revision"}
+                    and re.fullmatch(r"[\w.-]+/[\w.-]+", str(source.get("repository", "")))
+                    and re.fullmatch(r"[0-9a-f]{40}", str(source.get("revision", ""))))
+        native_keys = {"model", "sha256", "renderer", "parser"}
+        draft_keys = {"draft_model", "draft_sha256"}
+        native_ref = r"(?:hf\.co/[\w.-]+/[\w.-]+|(?:[\w-]+/)?[\w.-]+):[\w.-]+"
+        native = (isinstance(source, dict)
+                  and set(source) in (native_keys, native_keys | draft_keys)
+                  and isinstance(source["model"], str)
+                  and re.fullmatch(native_ref, source["model"])
+                  and re.fullmatch(r"[0-9a-f]{64}", str(source["sha256"]))
+                  and all(isinstance(source[k], str) and re.fullmatch(r"[\w.-]+", source[k])
+                          for k in ("renderer", "parser"))
+                  and ("draft_model" not in source or (
+                      isinstance(source["draft_model"], str)
+                      and re.fullmatch(native_ref, source["draft_model"])
+                      and re.fullmatch(r"[0-9a-f]{64}", str(source["draft_sha256"])))))
+        if not (snapshot or native):
+            raise ProfileError(PROFILE_SCHEMA_INVALID,
+                               f"{role}.source requires a pinned snapshot or native model/hash/renderer/parser")
     ci = cfg.get("context_input")
     if not isinstance(ci, int) or ci <= 0:
         raise ProfileError(ROLE_CONFIG_INVALID, f"{role}.context_input invalid")
@@ -620,5 +719,9 @@ def model_guides(tier=None, repo_root=None) -> dict:
         "ailocal-" + role: {
             "model": cfg["model"], "context_input": cfg["context_input"],
             "max_output": cfg["max_output"], "reasoning": cfg["reasoning"],
+            "source": cfg.get("source"),
+            "sampling": {key: cfg[key] for key in (
+                "temperature", "top_p", "top_k", "min_p", "presence_penalty",
+                "repeat_penalty", "draft_num_predict") if cfg.get(key) is not None},
             **cfg["guidance"],
         } for role, cfg in summary["roles"].items() if cfg["enabled"]}}

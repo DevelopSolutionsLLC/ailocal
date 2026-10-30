@@ -384,6 +384,28 @@ def destream_checks() -> None:
     check(getattr(stream, "completed_response", None) is resp,
           "completed_response is exposed for the proxy's container-ownership pass")
 
+    # #38: Codex drops a reasoning item without `summary`, so it never replays it.
+    reasoning = {"type": "reasoning", "id": "rs_1", "status": "completed", "role": "assistant",
+                 "content": [{"type": "output_text", "text": "Read calc.py first.", "annotations": []}],
+                 "encrypted_content": None}
+    message = {"type": "message", "id": "msg_1", "content": [{"type": "output_text", "text": "DONE"}]}
+    withreasoning = ResponsesAPIResponse()
+    withreasoning.output = [reasoning, message]
+    fixed = tr._with_reasoning_summaries(withreasoning)
+    item = fixed.output[0]
+    check(item["summary"] == [{"type": "summary_text", "text": "Read calc.py first."}] and item["content"] == [],
+          "a de-streamed reasoning item carries its text as summary_text, not output_text content")
+    check(fixed.output[1] is message and withreasoning.output[0] is reasoning,
+          "visible content is untouched and the original response is not mutated")
+    summarised = dict(reasoning, summary=[{"type": "summary_text", "text": "kept"}])
+    already = ResponsesAPIResponse()
+    already.output = [summarised]
+    check(tr._with_reasoning_summaries(already) is already,
+          "an item that already has a summary is passed through unchanged")
+    empty = ResponsesAPIResponse()
+    empty.output = [dict(reasoning, content=[])]
+    check(tr._with_reasoning_summaries(empty) is empty, "no reasoning text -> no summary invented")
+
 
 SECTIONS = {"repair": repair_checks, "native-args": native_arg_checks,
             "destream": destream_checks}

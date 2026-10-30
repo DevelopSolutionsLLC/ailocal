@@ -66,16 +66,16 @@ def check_capabilities_declare_backends(tier: str | None = None) -> list[CheckRe
 def check_client_mappings() -> list[CheckResult]:
     """Every clients.toml mapping must target a capability this tier defines."""
     tier = P.resolve_active_tier()
-    known = set(P.load_profile(tier))
+    profile = P.load_profile(tier)
+    known = {name for name in P.ROLES if name in profile}
     try:
-        policy = P.load_client_policy()
+        targets = P.client_capability_targets()
     except P.ProfileError as exc:
         return [CheckResult("client-policy", FAIL, "clients.toml is invalid",
                             f"{exc.code}: {exc}")]
     out = []
-    for client, mapping in sorted(policy.items()):
-        unknown = sorted({v for v in mapping.values()
-                          if isinstance(v, str) and v not in known})
+    for client, capabilities in sorted(targets.items()):
+        unknown = sorted(capabilities - known)
         out.append(CheckResult(
             f"client:{client}", FAIL if unknown else PASS,
             f"{client} mappings resolve" if not unknown
@@ -358,6 +358,41 @@ def check_generated_in_sync() -> CheckResult:
                        "ailocal start regenerates them; commit the result")
 
 
+def check_instruction_budget() -> list[CheckResult]:
+    """Instruction files in ailocal's client roots fit the published budget.
+
+    ailocal writes no CLAUDE.md or AGENTS.md and needs none; another tool may.
+    Whoever wrote one, a file past `instruction_max_bytes` degrades the local
+    models (#39), so it is reported here rather than trusted to its writer. A
+    warning, not a failure: the file is not ailocal's to rewrite.
+    """
+    out = []
+    budgets = P.instruction_budgets()
+    for client, name in (("claude", "CLAUDE.md"), ("codex", "AGENTS.md")):
+        path = P.deployed_client_root() / client / name
+        if not path.is_file():
+            out.append(CheckResult(f"{client}-instructions", PASS,
+                                   f"{client}  no {name} in its root (none required)"))
+            continue
+        size, limit = path.stat().st_size, budgets[client]
+        if size <= limit:
+            out.append(CheckResult(f"{client}-instructions", PASS,
+                                   f"{client}  {name} fits the instruction budget ({size}/{limit} bytes)"))
+            continue
+        head = path.read_text(encoding="utf-8", errors="replace")[:600]
+        owner = m.group(1) if (m := re.search(r"owner:\s*([\w.-]+)", head)) else "unknown"
+        fix = ("cadence install, with a Cadence that reads contract schema 3"
+               if owner.lower() == "cadence" else
+               f"trim {path}, or raise {client}.instruction_max_bytes in profiles/clients.toml")
+        out.append(CheckResult(f"{client}-instructions", WARN,
+                               f"{client}  {name} exceeds the instruction budget "
+                               f"({size}/{limit} bytes, owner: {owner})",
+                               detail="Long instruction files made local models re-read them or treat "
+                                      "their directory as the working directory.",
+                               remediation=fix))
+    return out
+
+
 def deterministic_checks(tier: str | None = None) -> list[CheckResult]:
     """The configuration layer of `ailocal check`. No live service calls."""
     results: list[CheckResult] = [check_active_tier()]
@@ -368,6 +403,7 @@ def deterministic_checks(tier: str | None = None) -> list[CheckResult]:
     results += check_compose_config()
     results += check_generated_present()
     results += check_client_slots()
+    results += check_instruction_budget()
     results += [check_alias_uniqueness(),
                 check_no_raw_backend_tags(), check_codex_no_mcp(),
                 check_local_artifacts(),
