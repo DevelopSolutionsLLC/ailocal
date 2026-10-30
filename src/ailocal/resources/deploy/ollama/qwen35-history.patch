@@ -1,0 +1,105 @@
+diff --git a/model/renderers/qwen35.go b/model/renderers/qwen35.go
+index f55e190..449e08d 100644
+--- a/model/renderers/qwen35.go
++++ b/model/renderers/qwen35.go
+@@ -304,6 +304,15 @@ func (r *Qwen35Renderer) Render(messages []api.Message, tools []api.Tool, think
+ 				r.variant != qwen35Renderer38,
+ 			)
+ 
++			// An empty think block on a completed turn of the current tool loop
++			// is the non-thinking signature. Repeated, it leads the model to
++			// answer inside its open think block and end the turn without
++			// </think>. Omit it; turns before the last query, a prefill and
++			// non-thinking prompts keep their reference rendering.
++			if renderAssistantThinkBlock && isThinking && i > lastQueryIndex && !prefill && contentReasoning == "" {
++				renderAssistantThinkBlock = false
++			}
++
+ 			if renderAssistantThinkBlock {
+ 				sb.WriteString(imStartTag + message.Role + "\n<think>\n" + contentReasoning + "\n</think>\n\n" + content)
+ 			} else {
+diff --git a/model/renderers/qwen35_history_test.go b/model/renderers/qwen35_history_test.go
+new file mode 100644
+index 0000000..2cf9328
+--- /dev/null
++++ b/model/renderers/qwen35_history_test.go
+@@ -0,0 +1,79 @@
++package renderers
++
++import (
++	"strings"
++	"testing"
++
++	"github.com/ollama/ollama/api"
++)
++
++func qwen35HistoryLoop(firstThinking string) []api.Message {
++	call := func(name string) []api.ToolCall {
++		return []api.ToolCall{{Function: api.ToolCallFunction{
++			Name:      name,
++			Arguments: testArgsOrdered([]orderedArg{{Key: "location", Value: "Paris"}}),
++		}}}
++	}
++	return []api.Message{
++		{Role: "user", Content: "Plan a picnic in Paris."},
++		{Role: "assistant", Thinking: firstThinking, ToolCalls: call("get_weather")},
++		{Role: "tool", Content: "22C"},
++		{Role: "assistant", ToolCalls: call("get_uv")},
++		{Role: "tool", Content: "5"},
++	}
++}
++
++// Clients that do not replay reasoning send tool-loop turns with no thinking.
++// Rendering them as empty think blocks repeats the non-thinking signature.
++func TestQwen35HistoryOmitsEmptyLoopThinkBlocks(t *testing.T) {
++	for name, r := range map[string]*Qwen35Renderer{
++		"qwen3.5": {isThinking: true, emitEmptyThinkOnNoThink: true},
++		"qwen3.8": newQwen38Renderer(),
++	} {
++		got, err := r.Render(qwen35HistoryLoop(""), qwen35WeatherUVTools(), &api.ThinkValue{Value: true})
++		if err != nil {
++			t.Fatal(err)
++		}
++		if strings.Contains(got, "<think>\n\n</think>") {
++			t.Fatalf("%s: empty loop think block rendered:\n%s", name, got)
++		}
++		if strings.Count(got, "<|im_start|>assistant\n<tool_call>") != 2 {
++			t.Fatalf("%s: loop turns must render without a think block:\n%s", name, got)
++		}
++		if !strings.HasSuffix(got, "<|im_start|>assistant\n<think>\n") {
++			t.Fatalf("%s: thinking generation prefix changed:\n%s", name, got)
++		}
++	}
++}
++
++func TestQwen35HistoryKeepsReplayedReasoning(t *testing.T) {
++	r := &Qwen35Renderer{isThinking: true}
++	got, err := r.Render(qwen35HistoryLoop("Need weather first."), qwen35WeatherUVTools(), nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !strings.Contains(got, "<|im_start|>assistant\n<think>\nNeed weather first.\n</think>\n\n<tool_call>") {
++		t.Fatalf("replayed reasoning must keep its think block:\n%s", got)
++	}
++	if strings.Count(got, "<|im_start|>assistant\n<tool_call>") != 1 {
++		t.Fatalf("only the turn without reasoning omits its block:\n%s", got)
++	}
++}
++
++func TestQwen35HistoryKeepsNonThinkingAndPrefill(t *testing.T) {
++	got, err := newQwen38Renderer().Render(qwen35HistoryLoop(""), qwen35WeatherUVTools(), &api.ThinkValue{Value: false})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if strings.Count(got, "<think>\n\n</think>") != 3 {
++		t.Fatalf("non-thinking prompts keep their empty blocks:\n%s", got)
++	}
++	msgs := append(qwen35HistoryLoop(""), api.Message{Role: "assistant", Content: "Bring"})
++	got, err = (&Qwen35Renderer{isThinking: true}).Render(msgs, qwen35WeatherUVTools(), nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !strings.HasSuffix(got, "<|im_start|>assistant\n<think>\n\n</think>\n\nBring") {
++		t.Fatalf("a continued assistant prefill keeps its rendering:\n%s", got)
++	}
++}

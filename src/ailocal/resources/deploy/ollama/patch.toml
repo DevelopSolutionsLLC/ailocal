@@ -3,8 +3,8 @@ id = "gemma4-switch-glu"
 base_version = "0.40.8"
 # Why the base is held older than the ≈N-2 policy would pick: read by
 # `ailocal update`, which reports the base's N-position against upstream.
-hold = "the reviewed backport patches (18631, security, router, stop) target this exact base; a newer base needs them re-applied and the native regression re-run before it can be selected"
-version = "0.40.8-ailocal.18631.3"
+hold = "the reviewed backport patches (18631, security, router, stop, qwen35-history) target this exact base; a newer base needs them re-applied and the native regression re-run before it can be selected"
+version = "0.40.8-ailocal.18631.4"
 source_commit = "f580b5484a58c8370c35d669555bf887783a3f68"
 source_url = "https://codeload.github.com/ollama/ollama/tar.gz/f580b5484a58c8370c35d669555bf887783a3f68"
 source_sha256 = "3b78aa7e3c95682f41ada1dcbd106567796c9151dfc7758e1ae34a85fc58271a"
@@ -24,6 +24,12 @@ router_patch_file = "router.patch"
 router_patch_sha256 = "9a2ea86d3c3901c4a0bd2c464d1e5ac0eeeef2e8a69999d0f5f1bd1e872fe881"
 stop_patch_file = "stop.patch"
 stop_patch_sha256 = "792e86da2683541499331512ce21b7cca37ac0675747f033534a2b87b330a0d2"
+# Qwen3.5/3.8 render a completed tool-loop turn with no replayed reasoning as an
+# empty think block, the non-thinking signature; the model then answers inside
+# its open think block and ends the turn empty (#38). Omit that empty block only.
+# RETIRE when upstream renders it so, or every client replays reasoning.
+qwen35_patch_file = "qwen35-history.patch"
+qwen35_patch_sha256 = "0b02b79201da852a53111a1a099d49ccabf1fb0b74b4c80227cede80dbdecf66"
 # MLX's native decode loop ignored Options.Stop; enforce request-local stops
 # before streaming or generating further turns, including split-token markers.
 # Pinned 00cyre checkpoint declares INT8 routers inside its global INT4 config.

@@ -46,7 +46,7 @@ def verify(path: Path) -> bool:
                 and path.name == "ollama" and path.is_file()
                 and os.access(path, os.X_OK)
                 and all(receipt.get(k) == spec[k] for k in
-                        ("version", "source_sha256", "patch_sha256", "security_patch_sha256", "router_patch_sha256", "stop_patch_sha256"))
+                        ("version", "source_sha256", "patch_sha256", "security_patch_sha256", "router_patch_sha256", "stop_patch_sha256", "qwen35_patch_sha256"))
                 and receipt.get("files") == _inventory(path.parent))
     except (OSError, ValueError, KeyError, TypeError):
         return False
@@ -263,6 +263,9 @@ def prepare() -> Path:
     stop_patch = Path(spec["stop_patch_file"])
     if _sha(stop_patch) != spec["stop_patch_sha256"]:
         raise RuntimeError("Bundled Ollama stop patch checksum mismatch")
+    qwen35_patch = Path(spec["qwen35_patch_file"])
+    if _sha(qwen35_patch) != spec["qwen35_patch_sha256"]:
+        raise RuntimeError("Bundled Ollama Qwen3.5 history patch checksum mismatch")
     root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".build-", dir=root) as temporary:
         work = Path(temporary)
@@ -291,8 +294,15 @@ def prepare() -> Path:
         _run(["git", "apply", str(router_patch)], deadline, cwd=source)
         _run(["git", "apply", "--check", str(stop_patch)], deadline, cwd=source)
         _run(["git", "apply", str(stop_patch)], deadline, cwd=source)
+        _run(["git", "apply", "--check", str(qwen35_patch)], deadline, cwd=source)
+        _run(["git", "apply", str(qwen35_patch)], deadline, cwd=source)
+        # Vendor tests must neither import fixtures into the operator's store
+        # nor contact their serving daemon. Keep test state inside this build.
+        test_models = work / "test-models"
+        test_models.mkdir()
         env = dict(os.environ, CGO_ENABLED="1", GOOS="darwin", GOARCH="arm64",
-                   GOTOOLCHAIN="local", GOFLAGS="-mod=readonly", GOWORK="off")
+                   GOTOOLCHAIN="local", GOFLAGS="-mod=readonly", GOWORK="off",
+                   OLLAMA_MODELS=str(test_models), OLLAMA_HOST="127.0.0.1:0")
         toolchain = _run(["go", "version"], deadline, cwd=source, env=env).strip()
         flags = (f"-s -w -X=github.com/ollama/ollama/version.Version={spec['version']} "
                  "-X=github.com/ollama/ollama/server.mode=release")
@@ -315,10 +325,25 @@ def prepare() -> Path:
             raise RuntimeError("MLX stop regression did not execute successfully")
         result += "\n" + stop_result
         stop_test.unlink()
+        history_test = payload / "qwen35-history.test"
+        _run(["go", "test", "-c", "-o", str(history_test), "./model/renderers"],
+             deadline, cwd=source, env=env)
+        # Run upstream reference cases too. Optional tokenizer/model parity
+        # tests may skip; the three required history regressions may not.
+        # The suite reads `testdata/` relative to its package, as `go test`
+        # runs it; from any other directory two fixture tests fail on open.
+        history_result = _run([str(history_test), "-test.v", "-test.timeout=60s"],
+                              deadline, cwd=source / "model" / "renderers", env=env)
+        if any(f"--- SKIP: {name}" in history_result or f"--- PASS: {name}" not in history_result for name in (
+                    "TestQwen35HistoryOmitsEmptyLoopThinkBlocks", "TestQwen35HistoryKeepsReplayedReasoning",
+                    "TestQwen35HistoryKeepsNonThinkingAndPrefill")):
+            raise RuntimeError("Qwen3.5 history regression did not execute successfully")
+        result += "\n" + history_result
+        history_test.unlink()
         if native != {name: _sha(payload / name) for name in native}:
             raise RuntimeError("Native Ollama payload changed during preparation")
         receipt = {k: spec[k] for k in
-                   ("version", "source_sha256", "patch_sha256", "security_patch_sha256", "router_patch_sha256", "stop_patch_sha256")}
+                   ("version", "source_sha256", "patch_sha256", "security_patch_sha256", "router_patch_sha256", "stop_patch_sha256", "qwen35_patch_sha256")}
         receipt.update(owner="ailocal", stock_binary=str(stock), stock_sha256=stock_hash,
                        native_origin=native_origin,
                        native_files=native, files=_inventory(payload),
