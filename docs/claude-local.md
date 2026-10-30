@@ -42,11 +42,7 @@ messages; the previous pin, LiteLLM 1.93, discarded those, which made deferred t
 undiscoverable. This is
 why the pin matters, and why `ailocal check` reports the running version.
 
-**Limitation.** `Grep` and `Glob` are frequently not present *and* not offered as deferred
-tools, so `ToolSearch` cannot acquire them. Use `grep`/`rg` and `find` through `Bash`.
-
-Do **not** conclude that tool search causes reduced tool surfaces inside subagents — see
-*Known subagent limitations*.
+`Grep` and `Glob` are a separate matter, unrelated to tool search; see [Known subagent limitations](#known-subagent-limitations).
 
 ## Native Workflow is off by default
 
