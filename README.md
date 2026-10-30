@@ -55,9 +55,11 @@ Open VS Code once after installing it; it creates its settings folder on first l
 ### 3. ailocal
 
 ```bash
-pipx install git+https://github.com/DevelopSolutionsLLC/ailocal.git
+pipx install git+https://github.com/DevelopSolutionsLLC/ailocal.git@v0.15.1
 ailocal install
 ```
+
+That is the only install path. The tag is the current release; the same wheel is attached to [the release](https://github.com/DevelopSolutionsLLC/ailocal/releases/latest) for download and verification.
 
 `ailocal install` detects your memory tier, pulls and verifies the models, builds the reviewed native runtime (Go and Xcode's command-line tools are required), starts the services, configures the clients it finds, and ends with `ailocal check`. It asks before touching any client configuration and exits nonzero with the fixing commands if validation fails. Allow 10 to 55 GB of model storage depending on your tier. It is safe to re-run.
 
@@ -106,7 +108,7 @@ ailocal uses VS Code's built-in [Custom Endpoint provider](https://code.visualst
 | `ailocal update --json` | which pinned images have newer candidates |
 | `ailocal audit` | are the pinned versions still free of advisories; nonzero when one is affected or yanked |
 
-To upgrade ailocal itself: `pipx upgrade ailocal && ailocal start`. That upgrades the package and regenerates the runtime; it does not change Ollama, models or pinned service images on its own.
+To upgrade ailocal itself, install the new release tag with `pipx install --force`, then `ailocal start`. That regenerates the runtime; it does not change Ollama, models or pinned service images on its own.
 
 ### Pinning Homebrew packages
 
