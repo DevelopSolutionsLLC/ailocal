@@ -41,10 +41,31 @@ launch_default = "architecture"
   #   now. (It was qwen3.5:2b when this note was written; 64/128 GB now serve
   #   the role with qwen3.5:9b -- see those profiles for the measurement.)
 slots = {opus = "architecture", sonnet = "implementation", haiku = "fast", fable = "review"}
+  # The strongest mode the agent MCP's `delegate` may grant a delegated claude-local
+  # worker, weakest first. "text": no tools, in an empty directory. "research": reads
+  # inside its working directory and web search through ailocal's research server, no
+  # writes or commands. "edit" (the default): edits confined to the working directory,
+  # Bash in the OS sandbox, ailocal's key files unreadable. "full": no sandbox and no
+  # permission prompts, with the parent's full environment (SSH agent, tokens) -- for
+  # tasks such as docker, git push or package installs. A call must ask for "full"
+  # explicitly; this setting only permits it. Read on every call.
+delegate_max_mode = "edit"
+  # Largest CLAUDE.md this client root should carry. Published in the integration
+  # contract for a co-installed instruction composer (Cadence) to fit, and checked by
+  # `ailocal check` whoever wrote the file. Measured: a 17 KB policy file made the
+  # local models re-read it or treat its directory as the working directory (#39).
+instruction_max_bytes = 4096
 
 # Codex CLI
 [codex]
 default = "implementation"
+  # As claude.delegate_max_mode, for a delegated codex-local worker. Codex offers no
+  # "research" mode (its read-only sandbox still runs code), so "research" here
+  # permits text only. "edit" is a workspace permission profile with ailocal's key
+  # files denied; "full" is danger-full-access.
+delegate_max_mode = "edit"
+  # As claude.instruction_max_bytes, for AGENTS.md in this root.
+instruction_max_bytes = 4096
 
 # External client compatibility names -> capability. These are NOT ailocal roles — they are model
 # IDs that Claude Code and the OpenAI SDK hard-code and cannot be told to stop sending (e.g.

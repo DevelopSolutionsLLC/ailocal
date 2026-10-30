@@ -26,7 +26,7 @@ from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from harness import REPO, Suite  # noqa: E402
+from harness import REPO, RESOURCES, Suite  # noqa: E402
 
 from ailocal.checks import BLOCKED, FAIL, PASS, SKIP, WARN, CheckResult, exit_code  # noqa: E402
 from ailocal.checks import config as C  # noqa: E402
@@ -44,6 +44,33 @@ PUBLIC = ("src/ailocal/checks/run.py",)
 
 def deterministic_checks() -> None:
     """The config layer must reach no service."""
+    shipped = P.load_client_policy(RESOURCES)
+    with patch.object(P, "load_client_policy", return_value=shipped):
+        check(all(r.status is PASS for r in C.check_client_mappings()),
+              "shipped delegate ceilings are not treated as model targets")
+    import copy
+    for field in ("launch_default", "slots"):
+        policy = copy.deepcopy(shipped)
+        if field == "slots":
+            policy["claude"][field]["opus"] = "missing-capability"
+        else:
+            policy["claude"][field] = "missing-capability"
+        with patch.object(P, "load_client_policy", return_value=policy):
+            check(any(r.status is FAIL and "missing-capability" in r.summary
+                      for r in C.check_client_mappings()),
+                  f"unknown Claude {field} routing target fails the health check")
+    policy = copy.deepcopy(shipped)
+    policy['compat']['fixture-metadata'] = 'disk_gb'
+    with patch.object(P, "load_client_policy", return_value=policy):
+        check(any(r.status is FAIL and "disk_gb" in r.summary
+                  for r in C.check_client_mappings()),
+              "profile metadata cannot satisfy a model routing target")
+    policy = copy.deepcopy(shipped)
+    policy["codex"]["delegate_max_mode"] = "invalid-mode"
+    with patch.object(P, "load_client_policy", return_value=policy):
+        check(any(r.status is FAIL and "delegate_max_mode" in (r.detail or "")
+                  for r in C.check_client_mappings()),
+              "invalid delegation ceiling fails the health check")
     opened: list[str] = []
 
     real_conn, real_open = socket.create_connection, urllib.request.urlopen

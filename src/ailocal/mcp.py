@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import ipaddress
+import json
 import os
 from pathlib import Path
 import sys
 from urllib.parse import urlsplit
 
-from . import policy, runtime
+from . import environment, policy, runtime
 
 
 def registration() -> dict:
@@ -39,8 +40,27 @@ def agent_environment() -> dict:
                 'LOCAL_AGENT_KEY': runtime.env_value('LITELLM_MASTER_KEY'),
                 'LOCAL_AGENT_CLAUDE_HOME': str(roots / 'claude'),
                 'LOCAL_AGENT_CODEX_HOME': str(roots / 'codex'),
+                'LOCAL_AGENT_CLAUDE_ENV': json.dumps(claude_launch_environment()),
+                # Every file that can hold the proxy key; a delegated child is
+                # denied reads of them (the sandbox otherwise reads most paths).
+                'LOCAL_AGENT_DENY_READ': json.dumps([str(p) for p in (
+                    environment.user_file(), environment.generated_file(),
+                    environment.legacy_file(), environment.legacy_projection())]),
+                # Research mode starts this server, as claude-local registers it.
+                'LOCAL_AGENT_RESEARCH_MCP': json.dumps(registration()),
                 'LOCAL_AGENT_DEFAULT_MODEL': 'ailocal-cyber',
                 'LOCAL_AGENT_STATE': str(policy.state_root() / 'local-agent')})
+    return env
+
+
+def claude_launch_environment() -> dict:
+    """What claude-local sets besides URL, key and config root: the built-in
+    slots from client policy plus its timeout and context switches."""
+    from .generation import SLOT_ENV, mn
+    slots = (policy.load_client_policy().get('claude') or {}).get('slots', {})
+    env = {SLOT_ENV[slot]: mn(cap) for slot, cap in slots.items() if slot in SLOT_ENV}
+    env.update({'CLAUDE_CODE_DISABLE_1M_CONTEXT': '1', 'ENABLE_TOOL_SEARCH': 'true',
+                'CLAUDE_CODE_DISABLE_WORKFLOWS': '1', 'API_TIMEOUT_MS': '900000'})
     return env
 
 
@@ -110,11 +130,20 @@ def main(argv: list[str]) -> int:
             print('research launch refused; check the active profile, loopback proxy and provisioned runtime',
                   file=sys.stderr)
             return 1
+    if argv == ['agent-policy']:
+        # Read by the agent server on every delegate, so an operator who lowers
+        # a ceiling does not have to restart a long-lived MCP process.
+        try:
+            print(json.dumps({'ceilings': policy.delegate_ceilings()}))
+        except policy.ProfileError as error:
+            print(f'agent policy unavailable: {error}', file=sys.stderr)
+            return 1
+        return 0
     if argv == ['agent']:
         try:
             return _exec_server('local-agent', agent_environment())
         except (RuntimeError, policy.ProfileError):
             print('agent launch refused; check the active profile and loopback proxy', file=sys.stderr)
             return 1
-    print('usage: ailocal mcp (research [--enable-answer] | agent)', file=sys.stderr)
+    print('usage: ailocal mcp (research [--enable-answer] | agent | agent-policy)', file=sys.stderr)
     return 2
