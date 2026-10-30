@@ -89,7 +89,7 @@ def resolve_log(explicit):
     return DEFAULT_LOG
 
 
-def generate(model, prompt, num_ctx, num_predict=8):
+def generate(model, prompt, num_ctx, num_predict=8, options=None):
     """One /api/generate turn. Returns the whole response dict.
 
     The caller reads prompt_eval_count (the FULL prompt length -- see the module
@@ -101,7 +101,7 @@ def generate(model, prompt, num_ctx, num_predict=8):
     return api("/api/generate", {
         "model": model, "prompt": prompt, "stream": False,
         "raw": True, "think": False,
-        "options": {"num_ctx": num_ctx, "num_predict": num_predict},
+        "options": {**(options or {}), "num_ctx": num_ctx, "num_predict": num_predict},
         "keep_alive": "120s"})
 
 
@@ -126,7 +126,7 @@ def evaluated_from_log(log, start_offset):
     return evaluated
 
 
-def probe(model, num_ctx, depth, log=None):
+def probe(model, num_ctx, depth, log=None, options=None):
     """Cold turn, then a warm turn that EXTENDS the same resident sequence.
 
     A real agent turn sends the prior prompt, the model's own reply, and a little
@@ -146,7 +146,7 @@ def probe(model, num_ctx, depth, log=None):
     time.sleep(4)
     # 24 output tokens so the extension the warm turn reuses is a realistic reply,
     # not a single token; still trivially cheap next to the prompt.
-    cold = generate(model, prompt, num_ctx, num_predict=24)
+    cold = generate(model, prompt, num_ctx, num_predict=24, options=options)
     cold_count = cold.get("prompt_eval_count", 0)
     cold_s = cold.get("prompt_eval_duration", 0) / 1e9
     print(f"  cold turn : {cold_count:>6} prompt tok, {cold_s:6.1f} s prefill "
@@ -155,7 +155,7 @@ def probe(model, num_ctx, depth, log=None):
 
     warm_prompt = prompt + cold.get("response", "") + "\n# follow-up marker line\n"
     off = log.stat().st_size if (log and log.is_file()) else None
-    warm = generate(model, warm_prompt, num_ctx)
+    warm = generate(model, warm_prompt, num_ctx, options=options)
     warm_count = warm.get("prompt_eval_count", 0)
     warm_s = warm.get("prompt_eval_duration", 0) / 1e9
 
@@ -263,6 +263,7 @@ def main(argv=None):
     model = role["active"]
     num_ctx = role["context_input"] + role["max_output"]
     depth = 4000 if args.quick else min(role["context_input"], 12000)
+    options = {"draft_num_predict": role["draft_num_predict"]} if role.get("draft_num_predict") is not None else {}
 
     ollama, _ = versions()
     log = resolve_log(args.log)
@@ -278,9 +279,7 @@ def main(argv=None):
             # Load once so the runner is known, then report it: cache behaviour is
             # a runner property (llama_cpp reuses a prefix; a recurrent/hybrid
             # model reuses only to its last snapshot offset).
-            api("/api/generate", {"model": model, "prompt": "hi", "stream": False,
-                                  "options": {"num_ctx": num_ctx, "num_predict": 1},
-                                  "keep_alive": "120s"})
+            generate(model, "hi", num_ctx, num_predict=1, options=options)
             # The runner is informational -- cache behaviour is a runner property,
             # but older Ollama builds omit the field, and a missing name must not
             # abort the measurement that IS the point of this script.
@@ -289,7 +288,7 @@ def main(argv=None):
             except RuntimeError:
                 runner = "unreported"
             print(f"Ollama {ollama}, runner {runner}")
-            probe(model, num_ctx, depth, log=log)
+            probe(model, num_ctx, depth, log=log, options=options)
     finally:
         for m in dict.fromkeys(models):
             release_model(m)

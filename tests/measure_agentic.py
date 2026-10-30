@@ -107,8 +107,8 @@ def server_log():
 #: block cross-checked against the publisher's model card. NOT the profile's
 #: values. `think` follows the model's documented mode for coding work.
 CANDIDATES = {
-    "gemma4:26b-uncensored-mlx": {
-        "label": "64/128 GB Cyber — unrestricted Gemma MLX, patched runtime required",
+    "huihui_ai/gemma-4-abliterated:26b-qat": {
+        "label": "64/128 GB Cyber — author's abliterated QAT GGUF",
         "options": {"temperature": 1.0, "top_k": 64, "top_p": 0.95,
                     "min_p": 0.0, "presence_penalty": 0.0, "repeat_penalty": 1.0},
         "think": True,
@@ -161,7 +161,7 @@ CANDIDATES = {
 for _tier in ("16gb", "32gb"):
     _cfg = P.resolve_role(_tier, "cyber", P.data_root())
     CANDIDATES[_cfg["model"]] = {
-        "label": f"{_tier} unrestricted MLX candidate; target hardware unmeasured",
+        "label": f"{_tier} unrestricted GGUF candidate; target hardware unmeasured",
         "options": {key: _cfg[key] for key in (
             "temperature", "top_p", "top_k", "min_p", "presence_penalty", "repeat_penalty", "stop")},
         "think": _cfg["reasoning"], "num_ctx": _cfg["total_context"],

@@ -333,9 +333,21 @@ model_classes:
   # completed simple proxy tool/result rounds. Native editing is unreliable;
   # retain this class's conservative tool surface rather than unknown passthrough.
   local_cyber:
-    # Exactly the cyber backends the shipped profiles select; a retired backend
-    # is removed here with its profile entry.
-    match_models: ["gemma4:26b-uncensored-mlx", "qwen3.5:4b-uncensored-mlx", "qwen3.5:9b-uncensored-mlx"]
+    # Preserve operator-selected legacy backends while classifying the shipped
+    # native GGUF selections conservatively as well.
+    match_models:
+      - "gemma4:26b-uncensored-mlx"
+      - "qwen3.5:4b-uncensored-mlx"
+      - "qwen3.5:9b-uncensored-mlx"
+      - "ailocal-gemma4-26b-uncensored:mlx-46ab84d"
+      - "ailocal-qwen3.5-4b-coder-uncensored:mlx-a0cd614"
+      - "ailocal-qwen3.5-9b-coder-uncensored:mlx-7fed86c"
+      - "huihui_ai/qwen3.5-abliterated:*"
+      - "huihui_ai/gemma-4-abliterated:*"
+      - "hf.co/localslm/Qwen3.5-4B-MTP-Uncensored:model_q4_k_m.gguf"
+      - "qwen3.5:4b-unrestricted-mtp-q4_K_M"
+      - "qwen3.5:9b-unrestricted-mtp-q4_K_M"
+      - "gemma4:26b-unrestricted-qat-mtp-q4_K_M"
     supports_tools: true
     supports_mcp: true
     supports_parallel_tools: false

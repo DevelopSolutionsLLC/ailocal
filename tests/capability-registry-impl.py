@@ -78,8 +78,15 @@ check(d["contexts_from_generated"] >= 5,
 check(d["aliases"] > 0, f"model_group_alias loaded ({d['aliases']})")
 
 print("\nMODEL CLASSIFICATION")
-for backend in ("qwen3.5:4b-uncensored-mlx",
-                "qwen3.5:9b-uncensored-mlx"):
+for backend in ("qwen3.5:4b-unrestricted-mtp-q4_K_M",
+                "qwen3.5:9b-unrestricted-mtp-q4_K_M",
+                "gemma4:26b-unrestricted-qat-mtp-q4_K_M",
+                "ailocal-gemma4-26b-uncensored:mlx-46ab84d",
+                "ailocal-qwen3.5-4b-coder-uncensored:mlx-a0cd614",
+                "ailocal-qwen3.5-9b-coder-uncensored:mlx-7fed86c",
+                "hf.co/localslm/Qwen3.5-4B-MTP-Uncensored:model_q4_k_m.gguf",
+                "huihui_ai/qwen3.5-abliterated:4b-Claude-4.6-Opus-q4_K",
+                "huihui_ai/qwen3.5-abliterated:9b-Claude-4.6-Opus-q4_K"):
     small = cr.Registry(path=REG_YAML, caps_json=CAPS, config_path=CONF)
     small.backends["cyber"] = backend
     check(small.model_class("ailocal-cyber")[0] == "local_cyber",
@@ -163,15 +170,13 @@ _ctx = {c: reg.max_context(f"ailocal-{c}")
         if c in reg.contexts}
 check(all(isinstance(v, int) and v > 0 for v in _ctx.values()),
       f"every local capability has a positive generated window ({_ctx})")
-# `fast > implementation` was NOT a durable invariant. It only held while
-# implementation was sized for a smaller model it no longer runs (16,384 input
-# on a 26B that architecture already drives at 81,920). Correcting that to
-# 65,536 on 2026-08-03 put implementation above fast, which is intended, so the
-# assertion was testing the stale policy rather than a property of the pipeline.
-# What is actually invariant: architecture is the largest window, because it is
-# the role defined as carrying whole-repository context.
-check(_ctx["architecture"] == max(_ctx.values()),
-      f"architecture has the largest generated window ({_ctx})")
+# Independent backends may have different authored windows. Roles sharing the
+# primary's backend must agree with its fixed runner window; the fast backend
+# need not have a smaller window than architecture.
+for capability, window in _ctx.items():
+    if reg.backend_of("ailocal-" + capability) == reg.backend_of("ailocal-architecture"):
+        check(window == _ctx["architecture"],
+              f"{capability} shares architecture's backend and generated window ({window})")
 if "completion" in _ctx:
     check(_ctx["completion"] == min(_ctx.values()),
           f"completion is the smallest window ({_ctx['completion']})")
