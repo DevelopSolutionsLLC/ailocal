@@ -2,10 +2,11 @@
 
 Release policy and the meaning of each bump: [RELEASING.md](RELEASING.md).
 
-## v0.15.1 (unreleased) — documentation
+## v0.15.1 (2026-10-30) — documentation
 
 ### Changed
 
+- One install path. The README and each release's notes carry the same command, `pipx install git+https://github.com/DevelopSolutionsLLC/ailocal.git@vX.Y.Z`, pinned to the release; upgrading installs the next tag with `--force`. The wheel stays attached to the release for download and verification.
 - Documentation states each rule once and keeps procedure apart from evidence. `docs/maintenance.md` holds procedure only; its dated measurements from 2026-10-22 to 2026-10-26 moved verbatim to `docs/model-audit.md`. `docs/architecture.md` carries one flow diagram and one on-disk layout. README, AGENTS.md and RELEASING.md are shortened without a change in meaning.
 
 ## v0.15.0 (2026-10-30) — local models and bound delegation
