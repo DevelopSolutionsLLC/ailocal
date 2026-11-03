@@ -638,7 +638,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as box, patch.object(I, "LA_DIR", Path(box)):
         agent = Path(box) / "com.ailocal.ollama.plist"
         desired = {"ProgramArguments": ["fixture-ollama", "serve"],
-                   "EnvironmentVariables": I.OLLAMA_ENV, "KeepAlive": True}
+                   "EnvironmentVariables": I._ollama_env(), "KeepAlive": True}
         agent.write_bytes(plistlib.dumps(desired))
         with patch.object(I, "_run", return_value=SimpleNamespace(returncode=0, stdout="state = running\n")), \
                 patch.object(I, "_ollama_binary_version", return_value="fixture-version"), \
@@ -646,7 +646,7 @@ def main() -> None:
             check(I._ollama_is_current("fixture-ollama"), "an intact healthy managed runtime needs no restart")
             api.return_value = {"version": "different-version"}
             check(not I._ollama_is_current("fixture-ollama"), "a different running version is never treated as current")
-            desired["EnvironmentVariables"] = dict(I.OLLAMA_ENV, OLLAMA_MODELS="/different-store")
+            desired["EnvironmentVariables"] = dict(I._ollama_env(), OLLAMA_MODELS="/different-store")
             agent.write_bytes(plistlib.dumps(desired))
             api.reset_mock()
             check(not I._ollama_is_current("fixture-ollama") and not api.called,
@@ -904,7 +904,7 @@ def main() -> None:
         check(got == expected, f"{gb} GB selects {expected or 'nothing'}", f"got {got}")
 
     _suite.section("OLLAMA ENVIRONMENT HAS ONE SOURCE")
-    # Both launch agents are generated from I.OLLAMA_ENV: the SERVER plist bakes
+    # Both launch agents are generated from I._ollama_env(): the SERVER plist bakes
     # it into the daemon, and com.ailocal.ollama-env publishes it to user shells.
     # They drifted on a real machine -- daemon on KEEP_ALIVE 6h / MAX_LOADED 4
     # while the shell agent still said -1 / 5 -- because a normal install
@@ -922,26 +922,33 @@ def main() -> None:
     I._run = lambda *a, **k: type("R", (), {"returncode": 0, "stdout": ""})()
     I._bootout = lambda label: None
     try:
-        server = I._write_agent("com.ailocal.ollama", ["/bin/true", "serve"],
-                                keep_alive=True, env=I.OLLAMA_ENV)
-        I._write_ollama_setenv_agent()
-        shell = agents / "com.ailocal.ollama-env.plist"
-        check(server.is_file() and shell.is_file(),
-              "a normal install writes BOTH the server and shell env agents")
-        baked = plistlib.loads(server.read_bytes()).get("EnvironmentVariables", {})
-        argv = plistlib.loads(shell.read_bytes())["ProgramArguments"][-1]
-        # `launchctl setenv K V; launchctl setenv K V; ...` -> {K: V}
-        published = dict(
-            part.split()[-2:] for part in argv.split(";") if "setenv" in part)
-        for key, want in I.OLLAMA_ENV.items():
-            check(baked.get(key) == want,
-                  f"server plist carries {key}={want}", f"got {baked.get(key)!r}")
-            check(published.get(key) == want,
-                  f"shell agent publishes {key}={want}",
-                  f"got {published.get(key)!r}")
-        check(set(published) == set(I.OLLAMA_ENV) == set(baked),
-              "neither artifact carries a key the other lacks",
-              f"baked={sorted(baked)} published={sorted(published)}")
+        for parallel in ("1", "2"):
+            with patch("ailocal.environment.value", return_value=parallel):
+                env = I._ollama_env()
+                server = I._write_agent("com.ailocal.ollama", ["/bin/true", "serve"],
+                                        keep_alive=True, env=env)
+                I._write_ollama_setenv_agent()
+            shell = agents / "com.ailocal.ollama-env.plist"
+            check(server.is_file() and shell.is_file(),
+                  f"parallel={parallel} writes BOTH the server and shell env agents")
+            baked = plistlib.loads(server.read_bytes()).get("EnvironmentVariables", {})
+            argv = plistlib.loads(shell.read_bytes())["ProgramArguments"][-1]
+            published = dict(
+                part.split()[-2:] for part in argv.split(";") if "setenv" in part)
+            check(baked == env == published,
+                  f"parallel={parallel} gives the server and shell identical settings")
+        with patch("ailocal.environment.value", return_value="3"):
+            try:
+                I._ollama_env()
+                check(False, "unsupported parallelism is rejected")
+            except ValueError:
+                check(True, "unsupported parallelism is rejected")
+            with patch.object(I, "_prepare_model_store") as prepare:
+                try:
+                    I.configure_ollama_services(False, binary="fixture-ollama")
+                    check(False, "bad parallelism prevents service changes")
+                except ValueError:
+                    check(not prepare.called, "bad parallelism prevents service changes")
     finally:
         I.LA_DIR, I.LOG_DIR = saved_la, saved_log
         I._run, I._bootout = saved_run, saved_bootout

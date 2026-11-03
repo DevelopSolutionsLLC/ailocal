@@ -65,31 +65,12 @@ OLLAMA_ENV = {
     # candidate. Paying a ~30 s reload of the large model to admit the small one
     # is the thrash worth avoiding.
     "OLLAMA_MAX_LOADED_MODELS": "4",
-    # 1, not 2. [REAL] 2026-08-21, Ollama 0.32.14. When the scheduler actually
-    # uses two slots it DIVIDES the declared window between them, so a role gets
-    # half the context its profile declares. Read straight off the runner for
-    # qwen2.5-coder:3b at num_ctx 4480:
-    #     np=2 -> "4608 cells, 2/2 seqs",  n_ctx_slot = 2304
-    #     np=1 -> "4608 cells, 1 slot",    n_ctx_slot = 4608
-    # The completion role declares 3968 max_input; under np=2 the runner could
-    # only hold 2304, so LiteLLM's pre-call guard would admit a request the
-    # backend then had to cut. Under np=1 a 3,020-token prompt is evaluated
-    # whole (prompt_eval_count 3020, verified on two CONCURRENT callers).
-    #
-    # Nothing loses by dropping to 1. Every model large enough to matter ALREADY
-    # runs single-slot -- the scheduler lowers parallelism itself at working
-    # window sizes, observed as `-np 1` on every qwen3.5 launch (135168 and
-    # 262144 both allocated their full declared cells at 1/1 seqs) -- and the
-    # MLX runner never sees this variable at all. So `2` was reaching exactly
-    # the models it hurt: the 4,480-token completion tier and the 2,048-token
-    # embedder. Two concurrent requests still both succeed; they queue on the
-    # single slot (measured 2.6 s wall for a pair, no reload, no error).
-    #
-    # SEPARATE and UNCHANGED: a prompt larger than the slot is front-truncated
-    # by `--context-shift --keep 4` with HTTP 200 and no error to the caller.
-    # That is a llama.cpp behaviour, not a parallelism one, and np=1 does not
-    # cure it -- it only makes the slot as large as the profile says. See
-    # registry.yaml's llama_cpp runtime_engines block.
+    # Conservative cross-tier default. [REAL] Ollama 0.32.14 split a 4,608-cell
+    # completion window between two slots, leaving 2,304 tokens in each. [REAL]
+    # Ollama 0.40.13 on this 128 GB Mac instead allocates two full 4,608-token
+    # slots for that model and two full 262,144-token slots for Gemma. Two-slot
+    # memory use on 16/32 GB tiers and the optional patched runtime remains
+    # unmeasured, so an operator can select 2 without changing those defaults.
     "OLLAMA_NUM_PARALLEL": "1",
     # These last two reach the llama_cpp runner ONLY, where they become
     # `--flash-attn on --cache-type-k q8_0 --cache-type-v q8_0`. The MLX runner
@@ -103,6 +84,15 @@ OLLAMA_ENV = {
     "OLLAMA_FLASH_ATTENTION": "1",
     "OLLAMA_KV_CACHE_TYPE": "q8_0",
 }
+
+
+def _ollama_env() -> dict[str, str]:
+    """Apply the operator's measured parallelism choice to both Ollama agents."""
+    from . import environment
+    parallel = environment.value("AILOCAL_OLLAMA_NUM_PARALLEL") or "1"
+    if parallel not in ("1", "2"):
+        raise ValueError("AILOCAL_OLLAMA_NUM_PARALLEL must be 1 or 2")
+    return dict(OLLAMA_ENV, OLLAMA_NUM_PARALLEL=parallel)
 
 
 def _run(*args, check: bool = False, capture: bool = False, **kw):
@@ -454,9 +444,9 @@ def _wait(predicate, attempts: int, delay: float) -> bool:
 # ── Ollama environment and login agents ─────────────────────────────────────
 
 def _write_ollama_setenv_agent() -> None:
-    """Login agent that publishes OLLAMA_ENV into the user's session.
+    """Login agent that publishes the effective Ollama env into the session.
 
-    SECOND consumer of the same dict. `com.ailocal.ollama` bakes OLLAMA_ENV into
+    SECOND consumer of the same settings. `com.ailocal.ollama` bakes them into
     the SERVER's own environment; this one publishes it to user shells, so a
     bare `ollama` CLI call sees what the daemon sees.
 
@@ -466,7 +456,7 @@ def _write_ollama_setenv_agent() -> None:
     install rewrote the first and only `--env-only` rewrote the second. Reading
     either one then implied a different runtime than the server actually had.
     """
-    setenv = "; ".join(f"launchctl setenv {k} {v}" for k, v in OLLAMA_ENV.items())
+    setenv = "; ".join(f"launchctl setenv {k} {v}" for k, v in _ollama_env().items())
     _write_agent("com.ailocal.ollama-env", ["/bin/sh", "-c", setenv])
 
 
@@ -696,7 +686,7 @@ def _ollama_is_current(binary: str) -> bool:
         with path.open("rb") as stream:
             actual = plistlib.load(stream)
         if (actual.get("ProgramArguments") != [binary, "serve"]
-                or actual.get("EnvironmentVariables") != OLLAMA_ENV
+                or actual.get("EnvironmentVariables") != _ollama_env()
                 or actual.get("KeepAlive") is not True):
             return False
         job = _run("launchctl", "print", f"gui/{os.getuid()}/com.ailocal.ollama", capture=True)
@@ -714,7 +704,7 @@ def _activate_ollama(binary: str) -> None:
     previous = path.read_bytes() if path.is_file() else None
     try:
         _write_agent("com.ailocal.ollama", [binary, "serve"], keep_alive=True,
-                     env=OLLAMA_ENV)
+                     env=_ollama_env())
         from .checks.services import http_json, Unreachable
         observed = "no response"
 
@@ -738,7 +728,7 @@ def _activate_ollama(binary: str) -> None:
             state = state or ("not registered" if job.returncode else "unreported")
             raise RuntimeError(f"Ollama {expected} did not become ready; "
                                f"last observed: {observed}; launchd: {state}")
-    except (OSError, RuntimeError, subprocess.SubprocessError):
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError):
         _restore_ollama_agent(previous)
         raise
     ok(f"Ollama {expected} is responding through the selected native runtime")
@@ -751,6 +741,7 @@ def configure_ollama_services(env_only: bool, *, binary: str | None = None) -> i
     watchdog agent and its login item are all stopped before launchd takes the
     port.
     """
+    _ollama_env()  # Reject an invalid operator override before changing a service.
     _prepare_model_store()
     _migrate_model_store()
 
@@ -758,7 +749,7 @@ def configure_ollama_services(env_only: bool, *, binary: str | None = None) -> i
         # Ollama.app is a launchd process and never reads a shell rc file, so
         # its environment has to be set where it actually looks.
         step("Setting Ollama env for this login session and every future one")
-        for k, v in OLLAMA_ENV.items():
+        for k, v in _ollama_env().items():
             _run("launchctl", "setenv", k, v)
             ok(f"{k}={v}")
         _write_ollama_setenv_agent()
@@ -790,7 +781,7 @@ def configure_ollama_services(env_only: bool, *, binary: str | None = None) -> i
     # Same dict, second consumer. Written HERE as well as in --env-only, so the
     # daemon's environment and the one published to user shells cannot disagree.
     _write_ollama_setenv_agent()
-    for k, v in OLLAMA_ENV.items():
+    for k, v in _ollama_env().items():
         _run("launchctl", "setenv", k, v)
     ok("session env matches the server's (com.ailocal.ollama-env refreshed)")
     return 0
@@ -1356,8 +1347,8 @@ def cmd_install(argv: list[str]) -> int:
     try:
         previous_agent = agent.read_bytes() if agent.is_file() else None
         configure_ollama_services(env_only=not managed, binary=candidate_binary)
-    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
-        detail = str(error) if isinstance(error, (OSError, RuntimeError)) else type(error).__name__
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+        detail = str(error) if isinstance(error, (OSError, RuntimeError, ValueError)) else type(error).__name__
         warn(f"Ollama activation failed ({detail}); "
              "the authored runtime selection was not changed")
         return 1

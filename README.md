@@ -35,6 +35,8 @@ Open Docker Desktop and Ollama once from your Applications folder. Both need one
 
 ailocal keeps the Ollama server available, but models load when first requested rather than at login.
 
+The cross-tier Ollama parallel-request default is 1. On a host where two slots have been measured, set `AILOCAL_OLLAMA_NUM_PARALLEL=2` in `~/.config/ailocal/.env.local` and run `ailocal install --yes` to make the selected value durable in both Ollama launch agents.
+
 Language servers are optional and only matter for Claude Code. Install the ones for languages you work in and ailocal enables the matching plugin:
 
 ```bash
