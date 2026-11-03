@@ -70,7 +70,6 @@ The complete on-disk footprint of `ailocal install` and the optional `ailocal cl
 | `litellm/config.yaml`, `litellm/capabilities.json` | `generation` | Bind-mounted into the proxy container. |
 | `litellm-config.sha` | `runtime` | Restart fingerprint. *(start path)* |
 | `searxng/settings.yml` | `runtime` | Rendered from the shipped template; may carry the GitHub search token, parent dir 0700. *(start path)* |
-| `agents/preload.sh` | `install` | Program for the preload LaunchAgent. Resolves the model tag at run time so it can never warm a stale one. *(launchd path)* |
 | `model-sources/imports.json` | `install` | Receipts binding each imported `name:tag` to its pinned source and the manifest Ollama created; a changed pin or replaced manifest means re-import. |
 | `local-agent/` | agent MCP | The owned empty working directory for `text` and `research` delegations, and private session bindings (identity and permissions only, no transcripts), 0700. |
 | `local-research/` | research MCP | Bounded SQLite caches of search responses and page text, and the Brave request ledger. |
@@ -93,7 +92,7 @@ Codex's `config.toml` is co-owned: regeneration preserves native trust records, 
 
 | Path | Written by | Notes |
 |---|---|---|
-| `~/Library/LaunchAgents/com.ailocal.{ollama,ollama-env,preload}.plist` | `install` | Bootstrapped into the GUI domain. `ailocal teardown` removes them. *(launchd path)* |
+| `~/Library/LaunchAgents/com.ailocal.{ollama,ollama-env}.plist` | `install` | Bootstrapped into the GUI domain. `ailocal teardown` removes them. The installer retires the former preload agent so no model warms at login. *(launchd path)* |
 | `~/Library/Logs/ailocal/*.log` | launchd | stdout/stderr of the agents above. *(launchd path)* |
 | `/Users/Shared/ollama/models` | `install` | Shared model store, group-writable + setgid. Existing `~/.ollama/models` is *moved* here (rename, one file at a time) before `OLLAMA_MODELS` is repointed. *(launchd path)* |
 | `~/.zshrc` | `clients` | Exactly two marker-commented lines (`# ailocal-configure` first, `# ailocal-finalize` last), inserted idempotently after a timestamped backup. |
