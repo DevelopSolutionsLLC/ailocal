@@ -33,6 +33,8 @@ brew install pipx
 
 Open Docker Desktop and Ollama once from your Applications folder. Both need one manual launch. `pipx` brings its own Python; you do not install Python or manage a virtual environment.
 
+ailocal keeps the Ollama server available, but models load when first requested rather than at login.
+
 Language servers are optional and only matter for Claude Code. Install the ones for languages you work in and ailocal enables the matching plugin:
 
 ```bash

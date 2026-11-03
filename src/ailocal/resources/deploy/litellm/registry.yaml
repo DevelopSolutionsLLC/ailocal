@@ -347,6 +347,7 @@ model_classes:
       - "hf.co/localslm/Qwen3.5-4B-MTP-Uncensored:model_q4_k_m.gguf"
       - "qwen3.5:4b-unrestricted-mtp-q4_K_M"
       - "qwen3.5:9b-unrestricted-mtp-q4_K_M"
+      - "gemma4:26b-unrestricted-qat-mtp"
       - "gemma4:26b-unrestricted-qat-mtp-q4_K_M"
     supports_tools: true
     supports_mcp: true
@@ -410,7 +411,7 @@ model_classes:
     # act as a parent agent. Heavy orchestration stays denied.
     denied_groups: [orchestration, scheduling, worktree, interactive]
     routing_hints:
-      warmup: true                 # keep_alive -1; worth pre-warming
+      warmup: true                 # routing hint; does not load at login
       notes: "Default target for agentic local work."
 
   # ── Local: weak at agentic loops ──────────────────────────────────────────
