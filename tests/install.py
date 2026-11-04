@@ -1,957 +1,524 @@
 #!/usr/bin/env python3
-"""install.py — bootstrapping a machine: provisioning, tier selection, audit.
-
-The provenance invariants: a config file is never replaced once the operator
-has edited it, a default they deleted is not resurrected, a file the
-distribution retires is removed only while it still matches what was shipped,
-and no manifest state can license an overwrite.
-
-Shipped assets (deploy/, clients/) are NOT provisioned — they are read in place
-from the package — so there is no data root here to assert about.
+"""Install: model sources, launchd services, teardown, config provenance, tier
+selection, install parity and client idempotence. Writes only temp roots, except
+the idempotence check, which runs `ailocal clients` against the env-selected roots.
 """
-from __future__ import annotations
-
-import plistlib
-import json
+import contextlib
 import hashlib
+import io
+import json
 import os
+import plistlib
+import re
 import shutil
-import subprocess
 import sys
 import tempfile
 import urllib.error
 from pathlib import Path
+from types import SimpleNamespace as NS
 from unittest.mock import MagicMock, patch
-from types import SimpleNamespace
-import contextlib
-import io
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-from harness import RESOURCES, Suite  # noqa: E402
-from ailocal import install as I  # noqa: E402
+from harness import REPO, RESOURCES, Suite, run  # noqa: E402
+from ailocal import install as I, model_sources as M, policy as P  # noqa: E402
 
-_suite = Suite()
-check = _suite.check
-
-
-def _roots():
-    box = Path(tempfile.mkdtemp(prefix="install-"))
-    return box, box / "config", box / "state"
+S = Suite("INSTALL")
+check, po = S.check, patch.object
+OK = NS(returncode=0, stdout="", stderr="")
+quiet = lambda: contextlib.redirect_stdout(io.StringIO())  # noqa: E731
+body = lambda request: json.loads(request.data)  # noqa: E731
 
 
-def main() -> None:
-    _suite.section("PINNED MODEL SOURCES (SIMULATED HUB AND NATIVE IMPORT)")
-    from ailocal import model_sources as M
-    source = {"repository": "fixture/model", "revision": "a" * 40}
-    files = {"config.json": b'{}', "model.safetensors": b'fixture-weights'}
-    entries = [{"rfilename": name, "size": len(body),
-                "lfs": {"sha256": hashlib.sha256(body).hexdigest()}}
-               for name, body in files.items()]
-    metadata = {"sha": source["revision"], "siblings": entries + [
-        {"rfilename": "execute.py"}, {"rfilename": "../outside.json"}]}
+def raises(exc, fn, *a, **k):
+    try:
+        fn(*a, **k)
+    except exc:
+        return True
+    return False
 
-    def hub(url, **kwargs):
-        if "/api/models/" in url:
-            return io.BytesIO(json.dumps(metadata).encode())
-        return io.BytesIO(files[url.rsplit('/', 1)[-1]])
 
-    with tempfile.TemporaryDirectory() as box, \
-            patch.object(M.policy, "state_root", return_value=Path(box)), \
-            patch.object(M.policy, "ollama_binary", return_value="ollama"), \
-            patch.object(M.urllib.request, "urlopen", side_effect=hub) as fetch:
-        root = M.fetch(source)
-        check(set(p.name for p in root.iterdir()) == set(files),
-              "model source downloads only assets; code and traversal paths are excluded")
+@contextlib.contextmanager
+def la():
+    with tempfile.TemporaryDirectory() as box, po(I, "LA_DIR", Path(box)), po(I, "LOG_DIR", Path(box) / "logs"):
+        yield Path(box)
+
+
+def model_sources():
+    S.section("pinned model sources")
+    src = {"repository": "fixture/model", "revision": "a" * 40}
+    files = {"config.json": b"{}", "model.safetensors": b"fixture-weights"}
+    meta = {"sha": src["revision"], "siblings": [
+        {"rfilename": n, "size": len(b), "lfs": {"sha256": hashlib.sha256(b).hexdigest()}}
+        for n, b in files.items()] + [{"rfilename": "execute.py"}, {"rfilename": "../outside.json"}]}
+    hub = lambda url, **k: io.BytesIO(json.dumps(meta).encode() if "/api/models/" in url  # noqa: E731
+                                      else files[url.rsplit("/", 1)[-1]])
+    with tempfile.TemporaryDirectory() as box, po(M.policy, "state_root", return_value=Path(box)), \
+            po(M.policy, "ollama_binary", return_value="ollama"), po(M.urllib.request, "urlopen", side_effect=hub) as fetch:
+        root = M.fetch(src)
         fetch.reset_mock()
-        M.fetch(source)
-        check(fetch.call_count == 1, "verified cached weights are not downloaded again")
-        metadata["sha"] = "b" * 40
-        try:
-            M.fetch(source)
-            check(False, "changed Hub revision is refused")
-        except ValueError:
-            check(True, "changed Hub revision is refused")
-        metadata["sha"] = source["revision"]
-        with patch.object(M.subprocess, "run", return_value=SimpleNamespace(returncode=1)):
-            check(not M.install("fixture:mlx", source) and root.exists(),
-                  "native import failure preserves verified assets and returns failure")
-        with patch.object(M.subprocess, "run", side_effect=[SimpleNamespace(returncode=0),
-                                                            SimpleNamespace(returncode=1)]):
-            check(not M.install("fixture:mlx", source) and root.exists(),
-                  "a successful import invisible to the daemon is a failure")
-        with patch.object(M.subprocess, "run", return_value=SimpleNamespace(returncode=0)), \
-                patch.object(M, "verify_load", return_value=False):
-            check(not M.install("fixture:mlx", source) and root.exists(),
-                  "visible but unloadable model fails installation and preserves verified assets")
-        check(not M.current("fixture:mlx", source), "an import without a receipt is not current")
-        with patch.object(M.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as create, \
-                patch.object(M, "verify_load", return_value=True), \
-                patch.object(M, "_digest", return_value="sha256:one"):
-            check(M.install("fixture:mlx", source) and not root.exists(),
-                  "successful native import removes the duplicate source weight copy")
-            check(M.current("fixture:mlx", source),
-                  "a successful import records its pinned revision and manifest")
-            check(not M.current("fixture:mlx", {**source, "revision": "c" * 40}),
-                  "a changed pinned revision makes the installed tag stale")
-        with patch.object(M, "_digest", return_value="sha256:other"):
-            check(not M.current("fixture:mlx", source),
-                  "a tag whose manifest was replaced is stale")
-        with patch.object(M, "_digest", return_value=None):
-            check(not M.current("fixture:mlx", source),
-                  "an absent tag is never current")
-            check(create.call_args_list[0].args[0][:3] == ["ollama", "create", "fixture:mlx"]
-                  and create.call_args_list[0].kwargs["env"]["OLLAMA_MODELS"]
-                  == str(M.policy.ollama_model_store()),
-                  "Ollama native create owns import, without force or a replacement backend")
-        files["model.safetensors"] = b'corrupt-weights'
-        try:
-            M.fetch(source)
-            check(False, "corrupt weights are refused")
-        except ValueError:
-            check(not (root / "model.safetensors").exists()
-                  and not list(root.glob('*.partial')), "corrupt weights are refused and partial file removed")
+        M.fetch(src)
+        check({p.name for p in root.iterdir()} == set(files) and fetch.call_count == 1,
+              "fetch downloads assets only, excluding code and traversal paths, and reuses verified weights")
+        meta["sha"] = "b" * 40
+        check(raises(ValueError, M.fetch, src), "a changed Hub revision is refused")
+        meta["sha"] = src["revision"]
+        for runs, load, label in (([NS(returncode=1)], True, "import failure"),
+                                  ([NS(returncode=0), NS(returncode=1)], True, "import invisible to the daemon"),
+                                  ([NS(returncode=0)] * 2, False, "unloadable import")):
+            with po(M.subprocess, "run", side_effect=runs), po(M, "verify_load", return_value=load):
+                check(not M.install("fixture:mlx", src) and root.exists() and not M.current("fixture:mlx", src),
+                      f"{label} fails, preserves verified assets and leaves no current receipt")
+        with po(M.subprocess, "run", return_value=NS(returncode=0)), po(M, "verify_load", return_value=True), \
+                po(M, "_digest", return_value="sha256:one"):
+            check(M.install("fixture:mlx", src) and not root.exists() and M.current("fixture:mlx", src)
+                  and not M.current("fixture:mlx", {**src, "revision": "c" * 40}),
+                  "a successful import drops the weight copy and its receipt binds the tag to the pinned revision")
+        for dig in ("sha256:other", None):
+            with po(M, "_digest", return_value=dig):
+                check(not M.current("fixture:mlx", src), f"a replaced or absent tag ({dig}) is stale")
+        files["model.safetensors"] = b"corrupt-weights"
+        check(raises(ValueError, M.fetch, src) and not (root / "model.safetensors").exists()
+              and not list(root.glob("*.partial")), "corrupt weights are refused and the partial file removed")
 
-    _suite.section("NATIVE GGUF RENDERING (SIMULATED DAEMON, NO WEIGHT CONVERSION)")
-    native = {"model": "hf.co/fixture/model:weights.gguf", "sha256": "d" * 64,
-              "renderer": "qwen3.5", "parser": "qwen3.5"}
-    expected = M.policy.ollama_model_store() / "blobs" / ("sha256-" + native["sha256"])
+
+def native_gguf():
+    S.section("native GGUF import and load check")
+    native = {"model": "hf.co/fixture/model:weights.gguf", "sha256": "d" * 64, "renderer": "qwen3.5", "parser": "qwen3.5"}
+    paired = {**native, "draft_model": "hf.co/fixture/model:head.gguf", "draft_sha256": "f" * 64}
+    blobs = M.policy.ollama_model_store() / "blobs"
+    target, head, wrong = (blobs / ("sha256-" + c * 64) for c in "dfe")
     calls = []
-
-    def daemon(request, **kwargs):
-        body = json.loads(request.data)
-        calls.append((request.full_url, body))
-        response = ({"modelfile": f"FROM {expected}\n", "renderer": "qwen3.5", "parser": "qwen3.5"} if request.full_url.endswith('/api/show')
-                    else {"status": "success"})
-        return io.BytesIO(json.dumps(response).encode())
-
-    with tempfile.TemporaryDirectory() as box, \
-            patch.object(M.policy, "state_root", return_value=Path(box)), \
-            patch.object(M.policy, "ollama_binary", return_value="ollama"), \
-            patch.object(M.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as pull, \
-            patch.object(M.urllib.request, "urlopen", side_effect=daemon), \
-            patch.object(M, "verify_load", return_value=True), \
-            patch.object(M, "_digest", return_value="sha256:native"):
-        check(M.install("fixture:mtp", native), "native GGUF recipe loads through Ollama")
-        check(pull.call_args.args[0] == ["ollama", "pull", native["model"]]
-              and next(body for url, body in calls if url.endswith('/api/create'))
-                  == {"model": "fixture:mtp", "from": native["model"],
-                                   "renderer": "qwen3.5", "parser": "qwen3.5", "stream": False},
-              "native pull/create supplies built-in rendering without converted files or quantization")
-        check([body for url, body in calls if url.endswith('/api/delete')] == [{"model": native["model"]}]
-              and calls.index(next(c for c in calls if c[0].endswith('/api/delete')))
-              > calls.index(next(c for c in calls if c[0].endswith('/api/create'))),
-              "the repository pull's own manifest is dropped only after the alias verifies")
-        check(M.current("fixture:mtp", native)
-              and not M.current("fixture:mtp", {**native, "parser": "other"}),
-              "receipt binds the native renderer/parser recipe and weight pin")
-        calls.clear()
-        check(not M.install("fixture:wrong", {**native, "sha256": "e" * 64})
-              and not any(url.endswith('/api/create') for url, _ in calls),
-              "a different weight digest fails before creating an alias")
-
-        wrong = expected.with_name("sha256-" + "e" * 64)
-        for header in (f'FROM {wrong}\nTEMPLATE """\nFROM {expected}\n"""\n',
-                       f'FROM {wrong}\nFROM {expected}\n',
-                       f'FROM {wrong}\nLICENSE """\nFROM {expected}\n"""\n'):
+    show = lambda mf: io.BytesIO(json.dumps({"modelfile": mf, "renderer": "qwen3.5", "parser": "qwen3.5"}).encode())  # noqa: E731
+    sent = lambda ep: [b for u, b in calls if u.endswith(ep)]  # noqa: E731
+    def daemon(modelfile):
+        def answer(request, **k):
+            calls.append((request.full_url, body(request)))
+            if request.full_url.endswith("/api/show"):
+                return show(modelfile(body(request)["model"]))
+            return io.BytesIO(b'{"status":"success"}')
+        return lambda: po(M.urllib.request, "urlopen", side_effect=answer)
+    single = daemon(lambda m: f"FROM {target}\n")
+    pair = daemon(lambda m: f"FROM {head}\n" if m == paired["draft_model"] else f"FROM {target}\nDRAFT {head}\n")
+    with tempfile.TemporaryDirectory() as box, po(M.policy, "state_root", return_value=Path(box)), \
+            po(M.policy, "ollama_binary", return_value="ollama"), po(M, "verify_load", return_value=True), \
+            po(M.subprocess, "run", return_value=NS(returncode=0)) as pull, po(M, "_digest", return_value="sha256:n"):
+        with single():
+            check(M.install("fixture:mtp", native), "a native GGUF recipe loads through Ollama")
+            urls = [u for u, _ in calls]
+            check(pull.call_args.args[0] == ["ollama", "pull", native["model"]] and sent("/api/create") == [
+                {"model": "fixture:mtp", "from": native["model"], "renderer": "qwen3.5", "parser": "qwen3.5", "stream": False}],
+                "native pull/create supplies the renderer without conversion")
+            # The repository pull's manifest used to linger as a second tag.
+            check(sent("/api/delete") == [{"model": native["model"]}]
+                  and max(i for i, u in enumerate(urls) if u.endswith("/api/delete"))
+                  > max(i for i, u in enumerate(urls) if u.endswith("/api/create")),
+                  "the repository pull's manifest is dropped only after the alias verifies")
+            check(M.current("fixture:mtp", native) and not M.current("fixture:mtp", {**native, "parser": "other"}),
+                  "the receipt binds renderer, parser and weight pin")
             calls.clear()
-            def spoofed(request, **kwargs):
-                calls.append((request.full_url, json.loads(request.data)))
-                return io.BytesIO(json.dumps({"modelfile": header, "renderer": "qwen3.5",
-                                               "parser": "qwen3.5"}).encode())
-            with patch.object(M.urllib.request, "urlopen", side_effect=spoofed):
-                check(not M.install("fixture:spoofed", native)
-                      and not any(url.endswith('/api/create') for url, _ in calls),
-                      "template/license/projector text cannot impersonate the pinned target")
-                check(not M.current("fixture:mtp", native),
-                      "a matching legacy receipt cannot grandfather a spoofed native target")
-
-        paired = {**native, "draft_model": "hf.co/fixture/model:head.gguf",
-                  "draft_sha256": "f" * 64}
-        draft_path = M.policy.ollama_model_store() / "blobs" / ("sha256-" + "f" * 64)
-
-        def paired_daemon(request, **kwargs):
-            body = json.loads(request.data)
-            calls.append((request.full_url, body))
-            if request.full_url.endswith('/api/create'):
-                return io.BytesIO(b'{"status":"success"}')
-            modelfile = (f"FROM {draft_path}\n" if body["model"] == paired["draft_model"]
-                         else f"FROM {expected}\nDRAFT {draft_path}\n")
-            return io.BytesIO(json.dumps({"modelfile": modelfile,
-                                         "renderer": "qwen3.5", "parser": "qwen3.5"}).encode())
-
-        calls.clear()
-        with patch.object(M.urllib.request, "urlopen", side_effect=paired_daemon):
-            check(M.install("fixture:paired", paired), "native separate MTP head loads with its target")
-            created = next(body for url, body in calls if url.endswith('/api/create'))
-            check(created.get("draft_files") == {"draft.gguf": "sha256:" + "f" * 64},
-                  "native draft_files attaches the exact pulled head without conversion")
-            check([body for url, body in calls if url.endswith('/api/delete')]
-                  == [{"model": paired["model"]}, {"model": paired["draft_model"]}],
-                  "both repository pulls are dropped once the paired alias verifies")
-            check(M.current("fixture:paired", paired)
-                  and not M.current("fixture:paired", {**paired, "draft_sha256": "a" * 64})
-                  and not M.current("fixture:paired", native),
-                  "receipt binds the MTP head pin, including its removal from policy")
-            def contained_head(request, **kwargs):
-                response = paired_daemon(request, **kwargs)
-                if json.loads(request.data).get("model") == paired["draft_model"]:
-                    return io.BytesIO(response.read().replace(b'FROM ', b'DRAFT '))
-                return response
-
-            with patch.object(M.urllib.request, "urlopen", side_effect=contained_head):
-                calls.clear()
-                check(M.install("fixture:contained-head", {**paired, "model": "gemma4:26b-a4b-it-qat"}),
-                      "native original target and a pinned DRAFT inside a source manifest are supported")
-                check([body for url, body in calls if url.endswith('/api/delete')]
-                      == [{"model": paired["draft_model"]}],
-                      "an official library source tag is kept; only the repository head pull is dropped")
+            check(not M.install("fixture:wrong", {**native, "sha256": "e" * 64}) and not sent("/api/create"),
+                  "a different weight digest fails before creating an alias")
+            check(not M.install("fixture:dropped", {**paired, "draft_sha256": "d" * 64}), "a create that omits DRAFT fails")
+        for hide in ('TEMPLATE """\nFROM {t}\n"""', "FROM {t}", 'LICENSE """\nFROM {t}\n"""'):
             calls.clear()
-            check(not M.install("fixture:bad-head", {**paired, "draft_sha256": "a" * 64})
-                  and not any(url.endswith('/api/create') for url, _ in calls),
+            with daemon(lambda m: f"FROM {wrong}\n" + hide.format(t=target) + "\n")():
+                check(not M.install("fixture:spoofed", native) and not sent("/api/create")
+                      and not M.current("fixture:mtp", native),
+                      f"a wrong FROM hiding the target in {hide.split()[0]} neither installs nor keeps a legacy receipt")
+        calls.clear()
+        with pair():
+            check(M.install("fixture:paired", paired), "a separate MTP head loads with its target")
+            check(sent("/api/create")[0].get("draft_files") == {"draft.gguf": "sha256:" + "f" * 64}
+                  and sent("/api/delete") == [{"model": paired["model"]}, {"model": paired["draft_model"]}],
+                  "draft_files attaches the pulled head; both repository pulls are dropped")
+            check(M.current("fixture:paired", paired) and not M.current("fixture:paired", {**paired, "draft_sha256": "a" * 64})
+                  and not M.current("fixture:paired", native), "the receipt binds the head pin, including its removal")
+            calls.clear()
+            check(not M.install("fixture:bad", {**paired, "draft_sha256": "a" * 64}) and not sent("/api/create"),
                   "a mismatched draft digest fails before alias creation")
-        calls.clear()
-        with patch.object(M.urllib.request, "urlopen", side_effect=daemon):
-            # A daemon which silently drops the draft must fail after create.
-            with patch.object(M.subprocess, "run", return_value=SimpleNamespace(returncode=0)):
-                check(not M.install("fixture:dropped-head", {**paired, "draft_sha256": "d" * 64}),
-                      "native create which omits DRAFT fails verification")
-        fake_head = {"modelfile": f'FROM {expected}\nTEMPLATE """\nDRAFT {draft_path}\n"""\n',
-                     "renderer": "qwen3.5", "parser": "qwen3.5"}
-        check(not M._native_matches(fake_head, paired),
-              "a DRAFT line inside a template cannot impersonate an attached head")
-        unclaimed = {"modelfile": f"FROM {expected}\nDRAFT {draft_path}\n",
-                     "renderer": "qwen3.5", "parser": "qwen3.5"}
-        check(not M._native_matches(unclaimed, native),
-              "an undeclared external draft cannot pass native source verification")
+    fake = {"modelfile": f'FROM {target}\nTEMPLATE """\nDRAFT {head}\n"""\n', "renderer": "qwen3.5", "parser": "qwen3.5"}
+    check(not M._native_matches(fake, paired) and not M._native_matches({**fake, "modelfile": f"FROM {target}\nDRAFT {head}\n"},
+                                                                         native),
+          "a templated or undeclared DRAFT line cannot impersonate an attached head")
 
-    _suite.section("NATIVE LOAD CHECK (SIMULATED DAEMON, NO GENERATION)")
-    with patch.object(M.urllib.request, "urlopen", return_value=io.BytesIO(
-            b'{"done":true,"done_reason":"load"}')) as request:
-        check(M.verify_load("fixture:mlx"), "completed native load passes")
-        payload = json.loads(request.call_args.args[0].data)
-        check(payload["messages"] == [] and payload["keep_alive"] == "1s"
-              and payload["options"] == {"num_ctx": 2048}
-              and request.call_args.kwargs["timeout"] == 120,
-              "load check generates no tokens, uses a small context and bounded residency/timeout")
-    for body in (b'{}', b'[]', b'{"done":false,"done_reason":"load"}',
-                 b'{"done":true,"done_reason":"unload"}',
-                 b'{"done":true,"done_reason":"load","error":"private detail"}', b'invalid'):
-        output = io.StringIO()
-        with patch.object(M.urllib.request, "urlopen", return_value=io.BytesIO(body)), \
-                contextlib.redirect_stdout(output):
-            check(not M.verify_load("fixture:mlx"), "incomplete, invalid or failed load is refused")
-        check("private detail" not in output.getvalue(), "daemon body is not disclosed")
-    for error in (TimeoutError(), urllib.error.HTTPError(
-            'http://127.0.0.1:11434/api/chat', 500, 'private detail', {}, None)):
-        with patch.object(M.urllib.request, "urlopen", side_effect=error), \
-                contextlib.redirect_stdout(io.StringIO()):
-            check(not M.verify_load("fixture:mlx"), "timeout or unsupported runtime is a load failure")
+    with po(M.urllib.request, "urlopen", return_value=io.BytesIO(b'{"done":true,"done_reason":"load"}')) as req:
+        check(M.verify_load("fixture:mlx") and body(req.call_args.args[0])["messages"] == [] and req.call_args.kwargs["timeout"]
+              == 120, "a completed native load passes; the check generates nothing and is bounded")
+    for resp in (b"{}", b"[]", b'{"done":false,"done_reason":"load"}', b'{"done":true,"done_reason":"unload"}',
+                 b'{"done":true,"done_reason":"load","error":"private detail"}', b"invalid",
+                 TimeoutError(), urllib.error.HTTPError("http://x/api/chat", 500, "private detail", {}, None)):
+        out, kw = io.StringIO(), {"side_effect": resp} if isinstance(resp, Exception) else {"return_value": io.BytesIO(resp)}
+        with po(M.urllib.request, "urlopen", **kw), contextlib.redirect_stdout(out):
+            check(not M.verify_load("fixture:mlx") and "private detail" not in out.getvalue(),
+                  f"failed load {resp!r:.40} is refused without disclosing the daemon body")
 
-    _suite.section("RETIRED PRESETS ARE REMOVED WITHOUT TOUCHING AUTHORED FILES")
-    with tempfile.TemporaryDirectory(prefix="retired-clients-") as root:
-        clients_root = Path(root) / "clients"
-        codex = clients_root / "codex"
-        codex.mkdir(parents=True)
-        generated = codex / "plan.config.toml"
-        generated.write_text('# Generated by ailocal. Do not edit.\nmodel = "old"\n')
-        authored = codex / "review.config.toml"
-        authored.write_text('model = "operator-choice"\n')
-        outside = Path(root) / "outside.toml"
-        outside.write_text('# Generated by ailocal. Do not edit.\n')
-        symlink = codex / "cyber.config.toml"
-        symlink.symlink_to(outside)
-        with patch.object(I.policy, "deployed_client_root", return_value=clients_root), \
-             contextlib.redirect_stdout(io.StringIO()):
-            I.retire_generated_clients()
-            I.retire_generated_clients()
-        check(not generated.exists(), "retired generated preset is removed idempotently")
-        check(authored.read_text() == 'model = "operator-choice"\n',
-              "authored native profile is preserved")
-        check(symlink.is_symlink() and outside.exists(),
-              "retirement never follows or removes symlinks")
 
-    _suite.section("MODEL PULLS REQUIRE THE EXACT SELECTED VARIANT")
-    for requested, installed, pulls in (
-        ("vendor/model:mlx-4bit", "vendor/model:mlx-4bit-custom", True),
-        ("vendor/model:mlx-4bit", "vendor/model:latest", True),
-        ("vendor/model:mlx-4bit", "vendor/model:mlx-4bit", False),
-        ("vendor/model", "vendor/model:latest", False),
-        ("vendor/model:latest", "vendor/model", False),
-    ):
-        with patch.object(I, "_has", return_value=True), \
-             patch.object(I, "_out", return_value="Ollama model list"), \
-             patch.object(I, "_installed_models", return_value={installed: 16.0}), \
-             patch.object(I.policy, "effective_summary", return_value={
-                 "roles": {"implementation": {"model": requested, "enabled": True}}}), \
-             patch.object(I, "_run", return_value=SimpleNamespace(returncode=0)) as run, \
-             patch.object(I.policy, "ollama_binary", return_value="ollama"), \
-             patch.object(M, "verify_load", return_value=True) as load, \
-             contextlib.redirect_stdout(io.StringIO()):
-            result = I.pull_models()
-        check(run.call_args_list == ([(("ollama", "pull", requested), {})] if pulls else []),
-              f"{installed} {'does not satisfy' if pulls else 'satisfies'} {requested}")
-        check(result == 0 and load.call_args.args == (requested,),
-              "new and already installed models must pass the native loader")
+def model_pulls():
+    S.section("model pulls")
+    src = {"repository": "fixture/model", "revision": "a" * 40}
+    def pulls(st, models, roles):
+        for o, n, v in ((I, "_has", True), (I, "_out", "list"), (I, "_installed_models", models),
+                        (I.policy, "effective_summary", {"roles": roles}), (I.policy, "ollama_binary", "ollama")):
+            st.enter_context(po(o, n, return_value=v))
+        st.enter_context(quiet())
+    for want, have, pull in (("v/m:mlx-4bit", "v/m:mlx-4bit-custom", True), ("v/m:mlx-4bit", "v/m:latest", True),
+                             ("v/m:mlx-4bit", "v/m:mlx-4bit", False), ("v/m", "v/m:latest", False), ("v/m:latest", "v/m", False)):
+        with contextlib.ExitStack() as st:
+            pulls(st, {have: 16.0}, {"implementation": {"model": want, "enabled": True}})
+            r = st.enter_context(po(I, "_run", return_value=OK))
+            load = st.enter_context(po(M, "verify_load", return_value=True))
+            rc = I.pull_models()
+        check(r.call_args_list == ([(("ollama", "pull", want), {})] if pull else []) and rc == 0
+              and load.call_args.args == (want,), f"{have} {'does not satisfy' if pull else 'satisfies'} {want}; loads verified")
+    for current, loads, label in ((True, False, "an unloadable current import fails without re-downloading"),
+                                  (False, True, "an import not at the pinned revision is re-imported")):
+        with contextlib.ExitStack() as st:
+            pulls(st, {"fixture-mlx:latest": 2.0}, {"cyber": {"model": "fixture-mlx", "source": src}})
+            st.enter_context(po(M, "current", return_value=current))
+            st.enter_context(po(M, "verify_load", return_value=loads))
+            imp = st.enter_context(po(M, "install", return_value=True))
+            dl = st.enter_context(po(I, "_run"))
+            rc = I.pull_models()
+        check((rc == 1 and not imp.called and not dl.called) if current else
+              (rc == 0 and imp.call_args.args == ("fixture-mlx", src)), label)
 
-    with patch.object(I, "_has", return_value=True), \
-            patch.object(I, "_out", return_value="Ollama model list"), \
-            patch.object(I, "_installed_models", return_value={"fixture:mlx": 2.0}), \
-            patch.object(I.policy, "effective_summary", return_value={"roles": {
-                "cyber": {"model": "fixture:mlx", "source": source}}}), \
-            patch.object(M, "current", return_value=True), \
-            patch.object(M, "verify_load", return_value=False), \
-            patch.object(M, "install") as reimport, \
-            patch.object(I, "_run") as download, \
-            contextlib.redirect_stdout(io.StringIO()):
-        result = I.pull_models()
-    check(result == 1 and not reimport.called and not download.called,
-          "reinstall rejects unloadable existing models without repeating an unchanged download/import")
 
-    with patch.object(I, "_has", return_value=True), \
-            patch.object(I, "_out", return_value="Ollama model list"), \
-            patch.object(I, "_installed_models", return_value={"fixture-mlx:latest": 2.0}), \
-            patch.object(I.policy, "effective_summary", return_value={"roles": {
-                "cyber": {"model": "fixture-mlx", "source": source}}}), \
-            patch.object(M, "current", return_value=False), \
-            patch.object(M, "verify_load", return_value=True) as load, \
-            patch.object(M, "install", return_value=True) as reimport, \
-            contextlib.redirect_stdout(io.StringIO()):
-        result = I.pull_models()
-    check(result == 0 and reimport.call_args.args == ("fixture-mlx", source) and not load.called,
-          "an imported tag that is not the pinned revision is re-imported, not trusted by name")
-
-    _suite.section("INSTALL VALIDATION CONTROLS THE EXIT STATUS")
-    from ailocal import clients, generation, runtime
+def install_flow():
+    S.section("cmd_install")
+    from ailocal import cli, clients, generation, runtime
     from ailocal.checks import run as checks_run
+    def stack(st, verdict=0, required=None, present=False):
+        for n in ("require_prerequisites", "configure_ollama_services", "_write_env", "_print_plan", "distribution_source"):
+            st.enter_context(po(I, n))
+        for obj, n, v in ((I.policy, "required_runtime_patch", required), (I, "_memory_gb", 64), (I, "select_tier", "64gb"),
+                          (generation, "main", 0), (runtime, "cmd_start", 0), (clients, "present", present),
+                          (checks_run, "main", verdict), (runtime, "compose", None), (clients, "report_missing", None),
+                          (I, "provision", {"installed": [], "preserved": [], "absent": [], "retired": []})):
+            st.enter_context(po(obj, n, return_value=v))
+        st.enter_context(patch("ailocal.ollama_patch.prepare", return_value=Path("/fixture/ollama")))
+        return st.enter_context(patch("ailocal.environment.set_ollama_patch"))
     for verdict, required in ((0, None), (1, None), (0, "gemma4-switch-glu")):
-        output = io.StringIO()
-        with contextlib.ExitStack() as stack:
-            for name in ("require_prerequisites", "configure_ollama_services",
-                         "_write_env", "_print_plan"):
-                stack.enter_context(patch.object(I, name))
-            order = []
-            stack.enter_context(patch.object(I, "pull_models", side_effect=lambda: order.append("models") or 0))
-            stack.enter_context(patch.object(I, "_retire_model_warmup", side_effect=lambda: order.append("retire")))
-            stack.enter_context(patch.object(I.policy, "required_runtime_patch", return_value=required))
-            persist_runtime = stack.enter_context(patch("ailocal.environment.set_ollama_patch"))
-            stack.enter_context(patch("ailocal.ollama_patch.prepare", return_value=Path("/fixture/ollama")))
-            stack.enter_context(patch.object(I, "distribution_source"))
-            stack.enter_context(patch.object(I, "provision", return_value={
-                "installed": [], "preserved": [], "absent": [], "retired": []}))
-            stack.enter_context(patch.object(I, "_memory_gb", return_value=64))
-            stack.enter_context(patch.object(I, "select_tier", return_value="64gb"))
-            stack.enter_context(patch.object(generation, "main", return_value=0))
-            stack.enter_context(patch.object(runtime, "compose"))
-            stack.enter_context(patch.object(runtime, "cmd_start", return_value=0))
-            stack.enter_context(patch.object(clients, "present", return_value=False))
-            stack.enter_context(patch.object(clients, "report_missing"))
-            stack.enter_context(patch.object(checks_run, "main", return_value=verdict))
-            stack.enter_context(contextlib.redirect_stdout(output))
-            result = I.cmd_install(["--yes"])
-        check(order == ["retire", "models"], "installer retires login warmup before model work")
-        check(persist_runtime.called == bool(required),
-              "profile-native runtime requirements are activated and saved without a separate flag")
-        check(result == verdict, f"install returns validation status {verdict}")
-        check(("proxy is ready" in output.getvalue()) == (verdict == 0),
-              f"install only claims readiness after passing validation (status {verdict})")
-
-    _suite.section("--yes PROVISIONS AILOCAL-OWNED ROOTS ONLY")
-    with contextlib.ExitStack() as stack:
-        for name in ("require_prerequisites", "configure_ollama_services",
-                     "_write_env", "_print_plan", "_retire_model_warmup"):
-            stack.enter_context(patch.object(I, name))
-        stack.enter_context(patch.object(I, "pull_models", return_value=0))
-        stack.enter_context(patch.object(I.policy, "required_runtime_patch", return_value=None))
-        stack.enter_context(patch.object(I, "distribution_source"))
-        stack.enter_context(patch.object(I, "provision", return_value={
-            "installed": [], "preserved": [], "absent": [], "retired": []}))
-        stack.enter_context(patch.object(I, "_memory_gb", return_value=64))
-        stack.enter_context(patch.object(I, "select_tier", return_value="64gb"))
-        stack.enter_context(patch.object(generation, "main", return_value=0))
-        stack.enter_context(patch.object(runtime, "compose"))
-        stack.enter_context(patch.object(runtime, "cmd_start", return_value=0))
-        stack.enter_context(patch.object(clients, "present", return_value=True))
-        stack.enter_context(patch.object(clients, "report_missing"))
+        out, order = io.StringIO(), []
+        with contextlib.ExitStack() as st:
+            persist = stack(st, verdict, required)
+            st.enter_context(po(I, "pull_models", side_effect=lambda: order.append("models") or 0))
+            st.enter_context(po(I, "_retire_model_warmup", side_effect=lambda: order.append("retire")))
+            st.enter_context(contextlib.redirect_stdout(out))
+            rc = I.cmd_install(["--yes"])
+        check(order == ["retire", "models"] and persist.called == bool(required) and rc == verdict
+              and ("proxy is ready" in out.getvalue()) == (verdict == 0),
+              f"install (verdict {verdict}, patch {required}) retires warmup first, returns validation, claims readiness only on pass")
+    with contextlib.ExitStack() as st:
+        stack(st, present=True)
+        st.enter_context(po(I, "pull_models", return_value=0))
+        st.enter_context(po(I, "_retire_model_warmup"))
         targets = {n: MagicMock() for n in clients.TARGETS}
-        stack.enter_context(patch.dict(clients._TARGETS, targets))
-        shell = stack.enter_context(patch.object(clients, "ensure_shell_sourcing"))
-        agent = stack.enter_context(patch.object(clients, "provision_local_agent"))
-        stack.enter_context(patch.object(checks_run, "main", return_value=0))
-        stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+        st.enter_context(patch.dict(clients._TARGETS, targets))
+        shell = st.enter_context(po(clients, "ensure_shell_sourcing"))
+        agent = st.enter_context(po(clients, "provision_local_agent"))
+        st.enter_context(quiet())
         I.cmd_install(["--yes"])
-    check(targets["claude"].called and targets["codex"].called,
-          "--yes provisions the claude-local and codex-local roots its own check requires")
-    check(not targets["vscode"].called and not shell.called,
-          "--yes never merges VS Code settings or edits ~/.zshrc")
-    check(agent.call_args is not None and sorted(agent.call_args.args[0]) == ["claude", "codex"],
-          "--yes registers the agent MCP in the claude-local and codex-local roots only")
-
-    _suite.section("CONCURRENT LIFECYCLE COMMANDS FAIL FAST")
-    from ailocal import cli
-    with tempfile.TemporaryDirectory() as box, \
-            patch.object(I.policy, "state_root", return_value=Path(box)):
+    check(targets["claude"].called and targets["codex"].called and not targets["vscode"].called and not shell.called
+          and sorted(agent.call_args.args[0]) == ["claude", "codex"],
+          "--yes provisions and registers the agent MCP in the claude/codex local roots only")
+    with po(I.policy, "ollama_patch_selection", return_value="unknown"), po(I, "require_prerequisites") as prereq:
+        check(raises(SystemExit, I.cmd_install, ["--yes"]) and not prereq.called,
+              "an unknown runtime selection is rejected before any mutation")
+    with tempfile.TemporaryDirectory() as box, po(I.policy, "state_root", return_value=Path(box)):
         with cli._lifecycle_lock():
-            try:
-                with cli._lifecycle_lock():
-                    check(False, "overlapping lifecycle commands cannot acquire the same lock")
-            except SystemExit as error:
-                check("lifecycle command is running" in str(error),
-                      "overlapping lifecycle commands fail promptly with an actionable message")
+            held = raises(SystemExit, cli._lifecycle_lock().__enter__)
         with cli._lifecycle_lock():
-            check(True, "lifecycle lock is released after the command finishes")
+            check(held, "overlapping lifecycle commands fail fast; the lock is released afterwards")
 
-    with patch.object(I.policy, "ollama_patch_selection", return_value="unknown-runtime"), \
-            patch.object(I, "require_prerequisites") as prerequisites:
-        try:
-            I.cmd_install(["--yes"])
-            check(False, "unknown authored runtime selection is rejected")
-        except SystemExit:
-            check(not prerequisites.called, "unknown authored runtime is rejected before any installation mutation")
 
-    with tempfile.TemporaryDirectory() as box, \
-            patch.object(I, "LA_DIR", Path(box)), \
-            patch.object(I, "_bootout", side_effect=OSError("agent still running")), \
-            patch("ailocal.ollama_patch.remove") as remove_payload, \
-            contextlib.redirect_stdout(io.StringIO()):
-        agent = Path(box) / "com.ailocal.ollama.plist"
-        agent.write_bytes(b"preserve running service")
-        try:
-            I.remove_login_agents()
-            check(False, "a running agent prevents runtime deletion")
-        except OSError:
-            check(agent.exists() and not remove_payload.called,
-                  "failure to stop an agent preserves its service file and runtime")
-
-    _suite.section("STOCK OLLAMA STARTUP RESTORATION (SIMULATED LAUNCHD)")
-    for initial, expected in (("enabled", False), ("disabled", True),
-                              ("true", True), ("false", False), (None, False)):
-        with tempfile.TemporaryDirectory() as box, patch.object(I, "LA_DIR", Path(box)):
-            line = f'"com.ollama.ollama" => {initial}' if initial else ''
-            response = SimpleNamespace(returncode=0, stdout=f'disabled services = {{\n{line}\n}}')
-            with patch.object(I, "_run", return_value=response) as native:
+def launchd():
+    S.section("launchd services")
+    for initial, disabled in (("enabled", False), ("disabled", True), ("true", True), ("false", False), (None, False)):
+        with la() as box:
+            line = f'"com.ollama.ollama" => {initial}' if initial else ""
+            with po(I, "_run", return_value=NS(returncode=0, stdout=f"disabled services = {{\n{line}\n}}")) as r:
                 I._save_ollama_startup()
-                record = I._read_ollama_startup()
-                check(record["disabled"] is expected, "capture the original stock startup preference")
-                native.reset_mock()
+                first = I._read_ollama_startup()["disabled"]
+                r.reset_mock()
                 I._save_ollama_startup()
-                check(not native.called, "reinstall never overwrites the first startup preference")
-            receipt = Path(box) / "com.ailocal.ollama.restore.json"
-            check(receipt.stat().st_mode & 0o777 == 0o600, "startup receipt is private")
+            receipt = box / "com.ailocal.ollama.restore.json"
+            mode = receipt.stat().st_mode & 0o777
             calls = []
-            def launchctl(*args, **kwargs):
-                calls.append(args)
-                return SimpleNamespace(returncode=0, stdout=(
-                    'disabled services = {"com.ollama.ollama" => disabled}'))
-            with patch.object(I, "_run", side_effect=launchctl), \
-                    patch.object(I, "_bootout", side_effect=lambda label: calls.append(("stop", label))), \
-                    patch("ailocal.ollama_patch.remove", return_value=([], [])), \
-                    contextlib.redirect_stdout(io.StringIO()):
+            with po(I, "_run", side_effect=lambda *a, **k: calls.append(a) or NS(
+                    returncode=0, stdout='disabled services = {"com.ollama.ollama" => disabled}')), \
+                    po(I, "_bootout", side_effect=lambda label: calls.append(("stop", label))), \
+                    patch("ailocal.ollama_patch.remove", return_value=([], [])), quiet():
                 I.remove_login_agents()
-            action = "disable" if expected else "enable"
-            change = next(n for n, args in enumerate(calls) if args[:2] == ("launchctl", action))
-            last_stop = max(n for n, args in enumerate(calls) if args[0] == "stop")
-            check(change > last_stop and not receipt.exists(),
-                  "teardown restores startup only after all owned services stop, then retires its receipt")
-
-    for response in (SimpleNamespace(returncode=1, stdout="private failure"),
-                     SimpleNamespace(returncode=0, stdout=""),
-                     SimpleNamespace(returncode=0, stdout='disabled services = {"com.ollama.ollama" => unknown}')):
-        with tempfile.TemporaryDirectory() as box, patch.object(I, "LA_DIR", Path(box)), \
-                patch.object(I, "_run", return_value=response) as native:
-            try:
-                I._save_ollama_startup()
-                check(False, "failed or unrecognized discovery must stop before mutating startup")
-            except RuntimeError:
-                check(native.call_count == 1 and I._read_ollama_startup() is None,
-                      "failed discovery does not guess a preference or create a restore receipt")
-
-    with tempfile.TemporaryDirectory() as box, patch.object(I, "LA_DIR", Path(box)):
-        agent = Path(box) / "com.ailocal.ollama.plist"
-        agent.write_text("legacy managed agent")
-        with patch.object(I, "_run") as native:
-            I._save_ollama_startup()
-            record = I._read_ollama_startup()
-        check(record["disabled"] is None and not native.called,
-              "legacy installations never present the already managed setting as an original preference")
-        output = io.StringIO()
-        with patch.object(I, "_run") as native, contextlib.redirect_stdout(output):
-            I._restore_ollama_startup(record)
-        check(not native.called and "launchctl enable" in output.getvalue(),
-              "unknown historical startup state gives an explicit recovery command without guessing")
-
-    with tempfile.TemporaryDirectory() as box, patch.object(I, "LA_DIR", Path(box)):
-        receipt = Path(box) / "com.ailocal.ollama.restore.json"
+            change = next(n for n, a in enumerate(calls) if a[:2] == ("launchctl", "disable" if disabled else "enable"))
+            check(first is disabled and not r.called and mode == 0o600 and not receipt.exists()
+                  and change > max(n for n, a in enumerate(calls) if a[0] == "stop"),
+                  f"startup '{initial}' is captured once, privately, and restored after every owned service stops")
+    with la() as box:
+        receipt = box / "com.ailocal.ollama.restore.json"
         receipt.write_text(json.dumps({"owner": "ailocal", "schema": 1, "disabled": False}))
-        with patch.object(I, "_stock_ollama_disabled", return_value=True), \
-                patch.object(I, "_run", return_value=SimpleNamespace(returncode=1)), \
-                patch.object(I, "_bootout"), patch("ailocal.ollama_patch.remove") as remove_payload, \
-                contextlib.redirect_stdout(io.StringIO()):
-            try:
-                I.remove_login_agents()
-                check(False, "failed startup restoration must fail teardown")
-            except RuntimeError:
-                check(receipt.exists() and not remove_payload.called,
-                      "failed restoration retains its receipt and runtime so teardown can be retried")
-        with patch.object(I, "_stock_ollama_disabled", return_value=False), \
-                patch.object(I, "_run") as native, contextlib.redirect_stdout(io.StringIO()):
-            I._restore_ollama_startup({"disabled": True})
-        check(not native.called, "teardown preserves a startup override changed outside ailocal")
-
-        for invalid in ('{', '{}', '[]', '{"owner":"other","schema":1,"disabled":false}',
-                        '{"owner":"ailocal","schema":1,"disabled":"false"}'):
-            receipt.write_text(invalid)
-            with patch.object(I, "_bootout") as stop:
-                try:
-                    I.remove_login_agents()
-                    check(False, "invalid receipt must stop teardown")
-                except RuntimeError:
-                    check(not stop.called and receipt.read_text() == invalid,
-                          "invalid or foreign receipt is preserved and rejected before stopping services")
-        receipt.unlink()
-        outside = Path(box) / "outside"
-        outside.write_text("operator data")
-        receipt.symlink_to(outside)
-        try:
-            I._save_ollama_startup()
-            check(False, "startup receipt must not follow symlinks")
-        except RuntimeError:
-            check(outside.read_text() == "operator data", "startup receipt never follows a symlink")
-
+        with po(I, "_stock_ollama_disabled", return_value=True), po(I, "_run", return_value=NS(returncode=1)), \
+                po(I, "_bootout"), patch("ailocal.ollama_patch.remove") as rm, quiet():
+            failed = raises(RuntimeError, I.remove_login_agents)
+        check(failed and receipt.exists() and not rm.called, "a failed restoration keeps its receipt and runtime for a retry")
+        for bad in ("{", "[]", '{"owner":"other","schema":1,"disabled":false}', '{"owner":"ailocal","schema":1,"disabled":"false"}'):
+            receipt.write_text(bad)
+            with po(I, "_bootout") as stop:
+                check(raises(RuntimeError, I.remove_login_agents) and not stop.called and receipt.read_text() == bad,
+                      f"invalid receipt {bad} is kept and rejected before stopping services")
     for disable_ok in (True, False):
-        with tempfile.TemporaryDirectory() as box, patch.object(I, "LA_DIR", Path(box)), \
-                patch.object(I, "_prepare_model_store"), patch.object(I, "_migrate_model_store"), \
-                patch.object(I, "_stock_ollama_disabled", return_value=False), \
-                patch.object(I, "_ollama_is_current", return_value=True), \
-                patch.object(I, "_write_ollama_setenv_agent"), \
-                patch.object(I, "_activate_ollama") as activate, \
-                contextlib.redirect_stdout(io.StringIO()):
-            def native(*args, **kwargs):
-                if args[:2] == ("launchctl", "disable"):
-                    check(I._read_ollama_startup()["disabled"] is False,
-                          "install records the operator preference before disabling stock startup")
-                    return SimpleNamespace(returncode=0 if disable_ok else 1)
-                return SimpleNamespace(returncode=0)
-            with patch.object(I, "_run", side_effect=native):
-                try:
-                    I.configure_ollama_services(False, binary="fixture-ollama")
-                    check(disable_ok, "startup disable failure cannot report successful configuration")
-                except RuntimeError:
-                    check(not disable_ok, "startup disable failure is explicit")
-            check(not activate.called,
-                  "healthy reinstall and failed startup disable never replace the managed server")
-
-    _suite.section("AN ALREADY MIGRATED STORE DOES NOT STOP THE DAEMON")
-    with tempfile.TemporaryDirectory() as box:
-        home = Path(box) / "home"
-        source = home / ".ollama/models/manifests/fixture"
-        dest = Path(box) / "shared/manifests/fixture"
-        source.parent.mkdir(parents=True)
-        dest.parent.mkdir(parents=True)
-        source.write_text("existing model")
-        dest.write_text("existing model")
-        with patch.object(I.Path, "home", return_value=home), \
-                patch.object(I, "MODEL_STORE", str(Path(box) / "shared")), \
-                patch.object(I, "_out") as probe, patch.object(I, "_run") as mutate:
-            I._migrate_model_store()
-        check(not probe.called and not mutate.called and source.exists() and dest.exists(),
-              "duplicate metadata does not stop Ollama or change either store")
-
-    _suite.section("LOGIN WARMUP IS RETIRED WITHOUT TOUCHING OPERATOR FILES")
-    with tempfile.TemporaryDirectory() as box:
-        root = Path(box)
-        agents = root / "LaunchAgents"
-        agents.mkdir()
-        preload = agents / "com.ailocal.preload.plist"
-        preload.write_text("old launch agent")
-        legacy = root / "agents/preload.sh"
-        legacy.parent.mkdir()
+        seen = []
+        native = lambda *a, **k: OK if a[:2] != ("launchctl", "disable") else (  # noqa: E731
+            seen.append(I._read_ollama_startup()["disabled"]) or NS(returncode=0 if disable_ok else 1))
+        with la(), po(I, "_prepare_model_store"), po(I, "_migrate_model_store"), po(I, "_write_ollama_setenv_agent"), \
+                po(I, "_stock_ollama_disabled", return_value=False), po(I, "_ollama_is_current", return_value=True), \
+                po(I, "_activate_ollama") as act, po(I, "_run", side_effect=native), quiet():
+            ok = not raises(RuntimeError, I.configure_ollama_services, False, binary="fixture-ollama")
+        check(ok == disable_ok and seen == [False] and not act.called,
+              f"stock startup disable {'succeeds' if disable_ok else 'fails explicitly'} after recording the preference")
+    with la() as box, po(I, "_bootout") as bo, po(I.policy, "state_root", return_value=box):
+        (legacy := box / "agents/preload.sh").parent.mkdir()
         legacy.write_text("#!/bin/sh\n# operator script\n")
-        with patch.object(I, "LA_DIR", agents), \
-                patch.object(I, "_bootout") as bootout, \
-                patch.object(I.policy, "state_root", return_value=root), \
-                contextlib.redirect_stdout(io.StringIO()):
+        (box / "com.ailocal.preload.plist").write_text("old")
+        with quiet():
             I._retire_model_warmup()
-            check(not preload.exists() and bootout.call_args.args == ("com.ailocal.preload",),
-                  "old login preload agent is stopped and removed")
-            check(legacy.exists(), "unmarked legacy warmup file is preserved")
-            legacy.write_text("#!/bin/sh\n# Generated by ailocal. Do not edit.\n")
-            I._retire_model_warmup()
-            check(not legacy.exists(), "generated legacy warmup file is retired")
+        check(not (box / "com.ailocal.preload.plist").exists() and bo.call_args.args == ("com.ailocal.preload",)
+              and legacy.exists(), "the login preload agent is retired; an unmarked script is preserved")
+        legacy.write_text("#!/bin/sh\n# Generated by ailocal. Do not edit.\n")
+        I._retire_model_warmup()
+        check(not legacy.exists(), "a generated legacy warmup script is retired")
 
-    _suite.section("NATIVE RUNTIME ACTIVATION ROLLS BACK ON FAILURE")
-    with patch.object(I, "_run", side_effect=[
-            SimpleNamespace(returncode=0, stdout="", stderr=""),
-            SimpleNamespace(returncode=0, stdout="state = running", stderr=""),
-            SimpleNamespace(returncode=0, stdout="state = exiting", stderr=""),
-            SimpleNamespace(returncode=113, stdout="", stderr="Could not find service fixture")
-            ]) as native, patch.object(I.time, "sleep"):
-        I._bootout("fixture")
-        check(native.call_count == 4,
-              "successful bootout waits until launchd actually forgets the draining job")
-    with tempfile.TemporaryDirectory() as box, \
-            patch.object(I, "LA_DIR", Path(box)), \
-            patch.object(I, "LOG_DIR", Path(box) / "logs"), \
-            patch.object(I, "_bootout"), \
-            patch.object(I, "_run", return_value=SimpleNamespace(
-                returncode=5, stdout="", stderr="Bootstrap failed: 5: Input/output error")) as native:
-        try:
-            I._write_agent("fixture", ["/bin/true"])
-            check(False, "registration failure is explicit")
-        except OSError:
-            check(native.call_count == 1,
-                  "bootstrap failure cannot be hidden by legacy load's false zero exit status")
-    with tempfile.TemporaryDirectory() as box, \
-            patch.object(I, "LA_DIR", Path(box)), \
-            patch.object(I, "LOG_DIR", Path(box) / "logs"):
-        target = Path(box) / "com.ailocal.ollama.plist"
-        target.write_bytes(b"old configuration")
-        calls = []
-        def stopped(label):
-            check(target.read_bytes() == b"old configuration",
-                  "the old launch agent stops before its configuration is replaced")
-        def launched(*args, **kwargs):
-            calls.append(args)
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
-        with patch.object(I, "_bootout", side_effect=stopped), patch.object(I, "_run", side_effect=launched):
-            I._write_agent("com.ailocal.ollama", ["/bin/true"], keep_alive=True)
-        check(any(args[:2] == ("launchctl", "kickstart") for args in calls),
-              "a persistent native job is explicitly started after registration")
+
+def activation():
+    S.section("native runtime activation")
     from ailocal.checks import services
-    with tempfile.TemporaryDirectory() as box, \
-            patch.object(I, "LA_DIR", Path(box)), \
-            patch.object(I, "LOG_DIR", Path(box) / "logs"), \
-            patch.object(I, "_bootout"), \
-            patch.object(I, "_ollama_binary_version", return_value="candidate-version"), \
-            patch.object(services, "http_json", return_value={"version": "candidate-version"}):
-        def pending_start(*args, **kwargs):
-            pending = args[:2] == ("launchctl", "kickstart")
-            return SimpleNamespace(returncode=3 if pending else 0, stdout="", stderr="start pending" if pending else "")
-        with patch.object(I, "_run", side_effect=pending_start):
-            I._activate_ollama("fixture-ollama")
-        check(plistlib.loads((Path(box) / "com.ailocal.ollama.plist").read_bytes())["ProgramArguments"][0] == "fixture-ollama",
-              "a transient start result is settled by the selected daemon's actual version")
-    with tempfile.TemporaryDirectory() as box, patch.object(I, "LA_DIR", Path(box)):
-        agent = Path(box) / "com.ailocal.ollama.plist"
-        desired = {"ProgramArguments": ["fixture-ollama", "serve"],
-                   "EnvironmentVariables": I._ollama_env(), "KeepAlive": True}
-        agent.write_bytes(plistlib.dumps(desired))
-        with patch.object(I, "_run", return_value=SimpleNamespace(returncode=0, stdout="state = running\n")), \
-                patch.object(I, "_ollama_binary_version", return_value="fixture-version"), \
-                patch.object(services, "http_json", return_value={"version": "fixture-version"}) as api:
-            check(I._ollama_is_current("fixture-ollama"), "an intact healthy managed runtime needs no restart")
-            api.return_value = {"version": "different-version"}
-            check(not I._ollama_is_current("fixture-ollama"), "a different running version is never treated as current")
-            desired["EnvironmentVariables"] = dict(I._ollama_env(), OLLAMA_MODELS="/different-store")
-            agent.write_bytes(plistlib.dumps(desired))
-            api.reset_mock()
-            check(not I._ollama_is_current("fixture-ollama") and not api.called,
-                  "changed native configuration still requires service replacement")
-
-    with tempfile.TemporaryDirectory() as box:
-        agent = Path(box) / "com.ailocal.ollama.plist"
-        agent.write_bytes(b"previous managed agent")
-
-        def replace_agent(*args, **kwargs):
-            agent.write_bytes(b"candidate managed agent")
-
-        with patch.object(I, "LA_DIR", Path(box)), \
-                patch.object(I, "_write_agent", side_effect=replace_agent), \
-                patch.object(I, "_wait", return_value=False), \
-                patch.object(I, "_run", return_value=SimpleNamespace(
-                    returncode=0, stdout="Warning: client version is fixture-patched\n"
-                    "state = exited\nruns = 1\nlast exit code = 78\nTOKEN = private-value\n")) as native, \
-                patch.object(I, "_bootout"):
+    states = [OK] + [NS(returncode=0, stdout=f"state = {s}", stderr="") for s in ("running", "exiting")]
+    with po(I, "_run", side_effect=states + [NS(returncode=113, stdout="", stderr="Could not find service")]) as r, po(I.time, "sleep"):
+        I._bootout("fixture")
+        check(r.call_count == 4, "bootout waits until launchd forgets the draining job")
+    with la() as box, po(I, "_bootout"):
+        with po(I, "_run", return_value=NS(returncode=5, stdout="", stderr="Bootstrap failed: 5")) as r:
+            check(raises(OSError, I._write_agent, "fixture", ["/bin/true"]) and r.call_count == 1,
+                  "a bootstrap failure is explicit, not hidden by legacy load")
+        (target := box / "com.ailocal.ollama.plist").write_bytes(b"old")
+        calls, stopped_on = [], []
+        with po(I, "_bootout", side_effect=lambda label: stopped_on.append(target.read_bytes())), \
+                po(I, "_run", side_effect=lambda *a, **k: calls.append(a) or OK):
+            I._write_agent("com.ailocal.ollama", ["/bin/true"], keep_alive=True)
+        check(stopped_on == [b"old"] and any(a[:2] == ("launchctl", "kickstart") for a in calls),
+              "the old agent stops before replacement; a persistent job is kickstarted")
+        want = {"ProgramArguments": ["fixture-ollama", "serve"], "EnvironmentVariables": I._ollama_env(), "KeepAlive": True}
+        target.write_bytes(plistlib.dumps(want))
+        with po(I, "_run", return_value=NS(returncode=0, stdout="state = running\n")), \
+                po(I, "_ollama_binary_version", return_value="v"), po(services, "http_json", return_value={"version": "v"}):
+            intact = I._ollama_is_current("fixture-ollama")
+            target.write_bytes(plistlib.dumps({**want, "EnvironmentVariables": {**I._ollama_env(), "OLLAMA_MODELS": "/x"}}))
+            check(intact and not I._ollama_is_current("fixture-ollama"), "an intact runtime needs no restart; changed config does")
+        target.write_bytes(b"previous")
+        job = "Warning: client version is fixture-patched\nstate = exited\nlast exit code = 78\nTOKEN = private-value\n"
+        with po(I, "_write_agent", side_effect=lambda *a, **k: target.write_bytes(b"candidate")), \
+                po(I, "_wait", return_value=False), po(I, "_run", return_value=NS(returncode=0, stdout=job)) as r:
             try:
                 I._activate_ollama("fixture-ollama")
-                check(False, "wrong daemon version fails activation")
-            except RuntimeError as error:
-                check("last exit code = 78" in str(error) and "private-value" not in str(error),
-                      "activation reports launchd failure state without exposing its environment")
-                check(agent.read_bytes() == b"previous managed agent",
-                      "failed activation restores the previous service definition")
-                check(any(call.args[:2] == ("launchctl", "bootstrap") for call in native.call_args_list),
-                      "failed activation reloads the previous managed service")
+                err = ""
+            except RuntimeError as e:
+                err = str(e)
+        check("last exit code = 78" in err and "private-value" not in err and target.read_bytes() == b"previous"
+              and any(c.args[:2] == ("launchctl", "bootstrap") for c in r.call_args_list),
+              "failed activation reports launchd state without its environment and reloads the previous agent")
 
-    _suite.section("FAILED TEARDOWN DOES NOT CLAIM SUCCESS OR REMOVE LOGIN AGENTS")
-    output = io.StringIO()
-    with patch.object(runtime, "_confirm", return_value=True), \
-            patch.object(runtime, "compose", return_value=SimpleNamespace(returncode=1)), \
-            patch.object(I, "remove_login_agents") as remove_agents, \
-            patch.object(I, "retire_generated_clients") as retire_clients, \
-            contextlib.redirect_stdout(output):
-        result = runtime.cmd_teardown([])
-    check(result != 0, "Docker removal failure returns a nonzero exit status")
-    check(not remove_agents.called, "failed Docker removal preserves login agents")
-    check(not retire_clients.called, "failed Docker removal does not retire client files")
-    check("Teardown incomplete" in output.getvalue()
-          and "Teardown complete." not in output.getvalue(),
-          "failed teardown reports an incomplete uninstall with recovery instructions")
 
-    _suite.section("SUCCESSFUL TEARDOWN RETIRES GENERATED PRESETS THROUGH OWNED ROOTS")
-    with tempfile.TemporaryDirectory(prefix="teardown-clients-") as root:
-        clients_root = Path(root) / "clients"
-        codex = clients_root / "codex"
-        codex.mkdir(parents=True)
-        for name in ("plan", "review", "cyber"):
-            (codex / f"{name}.config.toml").write_text(
-                '# Generated by ailocal. Do not edit.\nmodel = "old"\n')
-        authored = clients_root / "profiles/operator.toml"
-        authored.parent.mkdir()
-        authored.write_text('operator = true\n')
-        with patch.object(runtime, "_confirm", return_value=True), \
-             patch.object(runtime, "compose", return_value=SimpleNamespace(returncode=0)) as compose, \
-             patch.object(runtime, "_docker") as docker, \
-             patch.object(I, "remove_login_agents"), \
-             patch.object(I.policy, "deployed_client_root", return_value=clients_root), \
-             contextlib.redirect_stdout(io.StringIO()):
-            result = runtime.cmd_teardown([])
-        check(result == 0 and not list(codex.glob("*.config.toml")),
-              "successful teardown removes the retired generated presets")
-        check(authored.read_text() == 'operator = true\n',
-              "teardown preserves authored configuration")
-        check(compose.call_args.args == ("down", "--volumes", "--remove-orphans")
-              and not docker.called,
-              "Compose owns network removal; teardown does not target a hardcoded network")
-
-    _suite.section("A FRESH INSTALL POPULATES THE CONFIG ROOT, AND ONLY THAT")
-    box, cfg, state = _roots()
-    I.provision(RESOURCES, cfg, state)
-
-    check(sorted(p.name for p in cfg.iterdir()) == ["profiles"],
-          "the config root receives profiles/ and nothing else")
-    check((cfg / "profiles" / "64gb.toml").is_file(),
-          "config root receives the authored profiles")
-    check((cfg / "profiles" / "clients.toml").is_file(),
-          "config root receives client policy")
-    check((state / I.MANIFEST_NAME).is_file(), "a manifest is recorded")
-
-    _suite.section("AN EDITED PROFILE SURVIVES AN UPGRADE")
-    edited = cfg / "profiles" / "64gb.toml"
-    edited.write_text(edited.read_text() + "\n# operator edit\n")
-    keep = edited.read_text()
-    untouched = cfg / "profiles" / "32gb.toml"
-
-    report = I.provision(RESOURCES, cfg, state)
-    check("profiles/64gb.toml" in report["preserved"],
-          "an edited profile is reported as preserved")
-    check(edited.read_text() == keep, "an edited profile is NOT overwritten")
-    check(untouched.read_text() == (RESOURCES / "profiles" / "32gb.toml").read_text(),
-          "an unedited profile still matches what was shipped")
-
-    report = I.provision(RESOURCES, cfg, state)
-    check("profiles/64gb.toml" in report["preserved"],
-          "an edit survives a SECOND upgrade (the manifest records what was "
-          "shipped, not what is on disk)")
-    check(edited.read_text() == keep, "and is still not overwritten")
-
-    _suite.section("--reset-config TAKES THE DEFAULT, AFTER BACKING THE EDIT UP")
-    # The whole point of the flag is to override the preservation asserted
-    # above, so it is tested immediately after it and against the SAME edit.
-    shipped_64 = (RESOURCES / "profiles" / "64gb.toml").read_text()
-    report = I.provision(RESOURCES, cfg, state, reset=True)
-    check(report["preserved"] == [],
-          "reset preserves nothing: an edited file is no longer exempt")
-    check(edited.read_text() == shipped_64,
-          "the edited profile now matches what was shipped")
-    backup = report.get("backup")
-    check(backup is not None and (backup / "profiles" / "64gb.toml").is_file(),
-          "the operator's version was copied to a backup FIRST",
-          repr(backup))
-    check(backup is not None
-          and (backup / "profiles" / "64gb.toml").read_text() == keep,
-          "and the backup holds the edit byte-for-byte, not the default")
-    check(not (backup / "profiles" / "32gb.toml").exists(),
-          "only files it was about to replace are backed up, not the whole tree")
-
-    report = I.provision(RESOURCES, cfg, state, reset=True)
-    check(report.get("backup") is None,
-          "a reset with nothing edited creates no backup directory")
-
-    # Restore the edit so the sections below still describe an edited tree.
-    edited.write_text(keep)
-    I.provision(RESOURCES, cfg, state)
-
-    _suite.section("A DELETED DEFAULT IS REPORTED, NEVER RESURRECTED")
-    (cfg / "profiles" / "16gb.toml").unlink()
-    report = I.provision(RESOURCES, cfg, state)
-    check("profiles/16gb.toml" in report["absent"],
-          "a default the operator removed is reported")
-    check(not (cfg / "profiles" / "16gb.toml").exists(),
-          "and it is not written back")
-
-    I.provision(RESOURCES, cfg, state, reset=True)
-    check((cfg / "profiles" / "16gb.toml").is_file(),
-          "reset DOES write back a deleted default: the operator asked for the "
-          "shipped tree, and a hole is not part of it")
-    # That reset also took the default for 64gb.toml, by design. Put the edit
-    # back so the sections below still describe an edited tree.
-    edited.write_text(keep)
-    I.provision(RESOURCES, cfg, state)
-
-    _suite.section("A CORRUPT MANIFEST NEVER LICENSES AN OVERWRITE")
-    (state / I.MANIFEST_NAME).write_text("{ not json")
-    report = I.provision(RESOURCES, cfg, state)
-    check(edited.read_text() == keep,
-          "with no provenance, an edited file is still preserved")
-
-    _suite.section("A RETIRED POLICY FILE IS REMOVED, UNLESS IT WAS EDITED")
-    stale = cfg / "profiles" / "99gb.toml"
-    stale.write_text("# a format or tier we no longer ship\n")
-    I.provision(RESOURCES, cfg, state)          # records it as shipped? no: not in source
-    check(stale.is_file(),
-          "a file the distribution never shipped is left alone")
-    stale.unlink()
-
-    _suite.section("THE SOURCE IS THE PACKAGE, NEVER A GUESSED CHECKOUT")
-    check(I.distribution_source() == RESOURCES,
-          "the distribution is the package's own resource tree")
-    check((I.distribution_source() / "profiles" / "64gb.toml").is_file()
-          and (I.distribution_source() / "deploy").is_dir()
-          and (I.distribution_source() / "clients").is_dir(),
-          "every shipped component is reachable from the package alone")
-    # A config root pointed at the package's own resources would copy profiles/
-    # onto itself, truncating the files it is reading.
-    try:
-        I.provision(RESOURCES, RESOURCES, state)
-        refused = False
-    except SystemExit:
-        refused = True
-    check(refused, "installing a shipped tree over itself is refused")
-
-    _suite.section("EXPLICIT MODEL UPGRADE PRESERVES GEOMETRY AND BACKS UP POLICY")
-    from ailocal import policy as P
-    with tempfile.TemporaryDirectory() as upgrade_box:
-        config = Path(upgrade_box) / 'config'
-        shutil.copytree(RESOURCES / 'profiles', config / 'profiles')
-        path = config / 'profiles/32gb.toml'
-        shipped_arch_input = P.resolve_role('32gb', 'architecture', RESOURCES)['context_input']
-        original = path.read_text().replace(f'context_input = {shipped_arch_input}', 'context_input = 65536')
-        original = original.replace('[completion]\n', '[completion]\nenabled = false\n')
-        original = original.replace('temperature = 0.7', 'temperature = 0.2')
-        original = original.replace('disk_gb = 21', 'disk_gb = 16')
-        original = original.replace('role = "Unrestricted coding (separate model)"',
-                                    'role = "Unrestricted assistant (MLX 9B)"')
-        path.write_text('# operator comment\n' + original)
-        before = path.read_bytes()
-        clients_before = (config / 'profiles/clients.toml').read_bytes()
-        authored = P.load_profile('32gb', config)
-        shared_total = max(cfg['context_input'] + cfg['max_output'] for role, cfg in authored.items()
-                           if role in P.ROLES and cfg['active'] == authored['architecture']['active'])
-        result = I.upgrade_model_defaults(RESOURCES, config)
-        after = P.load_profile('32gb', config)
-        check('32gb' in result['updated'] and (result['backup'] / '32gb.toml').read_bytes() == before,
-              'model upgrade retains complete original policy in backup')
-        check(after['architecture']['max_output'] == 16384
-              and after['architecture']['context_input'] + after['architecture']['max_output'] == shared_total,
-              'shared runner aligns to largest authored window, preserving output reserve')
-        check(after['implementation']['temperature'] == 0.7
-              and after['completion'].get('enabled', True),
-              'explicit upgrade adopts shipped sampling and enables the working FIM model')
-        shipped32 = P.load_profile('32gb', RESOURCES)
-        check(after['disk_gb'] == shipped32['disk_gb'] and after['cyber']['role'] == shipped32['cyber']['role'],
-              'explicit upgrade adopts model-describing role text and download footprint')
-        check(path.read_text().startswith('# operator comment\n')
-              and (config / 'profiles/clients.toml').read_bytes() == clients_before,
-              'model upgrade preserves unrelated comments and client routing policy')
-        check(not I.upgrade_model_defaults(RESOURCES, config)['updated'],
-              'repeating model upgrade is a no-op')
-        authored = path.read_text().replace(
-            'weaknesses = ["shares its budget with every other chat capability"]\n',
-            'weaknesses = [\n  "old",\n]\n# keep this note with top_p\n', 1)
-        path.write_text(authored)
-        I.upgrade_model_defaults(RESOURCES, config)
-        check('# keep this note with top_p\n' in path.read_text()
-              and P.load_profile('32gb', config)['implementation']['weaknesses']
-                  == P.load_profile('32gb', RESOURCES)['implementation']['weaknesses'],
-              'replacing a multi-line value keeps the authored comment that follows it')
-        for tier in ('16gb', '32gb'):
-            target = config / f'profiles/{tier}.toml'
-            target.write_text(target.read_text().replace('temperature = 0.7', 'temperature = 0.3'))
-        originals = {t: (config / f'profiles/{t}.toml').read_bytes() for t in ('16gb', '32gb')}
-        real_replace, calls = I.os.replace, []
-        def flaky(src, dst):
-            calls.append(dst)
-            if len(calls) == 2:
-                raise OSError(28, 'No space left on device')
-            real_replace(src, dst)
-        try:
-            with patch.object(I.os, 'replace', side_effect=flaky):
-                I.upgrade_model_defaults(RESOURCES, config)
-            check(False, 'a failed profile write restores every profile already replaced')
-        except OSError:
-            check(all((config / f'profiles/{t}.toml').read_bytes() == b for t, b in originals.items())
-                  and not list((config / 'profiles').glob('*.upgrade-tmp')),
-                  'a failed profile write restores every profile already replaced')
-        path.write_text(path.read_text().replace('temperature = 0.7', 'temperature = 0.2'))
-        (config / 'profiles/128gb.toml').write_text('invalid = [')
-        before = path.read_bytes()
-        try:
-            I.upgrade_model_defaults(RESOURCES, config)
-            check(False, 'invalid later tier prevents every model-policy write')
-        except P.ProfileError:
-            check(path.read_bytes() == before, 'invalid later tier prevents every model-policy write')
-
-    _suite.section("TIER SELECTION NEVER ROUNDS UP")
-    for gb, expected in ((8, None), (16, "16gb"), (31, "16gb"), (32, "32gb"),
-                         (63, "32gb"), (64, "64gb"), (127, "64gb"),
-                         (128, "128gb"), (192, "128gb")):
-        got = I.tier_for_memory(gb)
-        check(got == expected, f"{gb} GB selects {expected or 'nothing'}", f"got {got}")
-
-    _suite.section("OLLAMA ENVIRONMENT HAS ONE SOURCE")
-    # Both launch agents are generated from I._ollama_env(): the SERVER plist bakes
-    # it into the daemon, and com.ailocal.ollama-env publishes it to user shells.
-    # They drifted on a real machine -- daemon on KEEP_ALIVE 6h / MAX_LOADED 4
-    # while the shell agent still said -1 / 5 -- because a normal install
-    # rewrote the first and only `--env-only` rewrote the second. Reading either
-    # one then implied a different runtime than the server actually had.
-    #
-    # Written into a temp LA_DIR through the REAL writer, with launchctl
-    # neutralised: this asserts what the installer GENERATES, which is the thing
-    # that regressed. It says nothing about what is installed on this machine or
-    # what the running daemon holds -- those are separate claims.
-    agents = box / "LaunchAgents"
-    saved_la, saved_log, saved_run, saved_bootout = (
-        I.LA_DIR, I.LOG_DIR, I._run, I._bootout)
-    I.LA_DIR, I.LOG_DIR = agents, box / "Logs"
-    I._run = lambda *a, **k: type("R", (), {"returncode": 0, "stdout": ""})()
-    I._bootout = lambda label: None
-    try:
-        for parallel in ("1", "2"):
+def ollama_env():
+    S.section("Ollama environment")
+    # The server and shell agents once drifted (KEEP_ALIVE/MAX_LOADED) because only one was rewritten.
+    with la() as box, po(I, "_run", return_value=OK), po(I, "_bootout"):
+        for parallel in ("1", "2"):  # NUM_PARALLEL is the operator's measured setting, preserved
             with patch("ailocal.environment.value", return_value=parallel):
                 env = I._ollama_env()
-                server = I._write_agent("com.ailocal.ollama", ["/bin/true", "serve"],
-                                        keep_alive=True, env=env)
+                server = I._write_agent("com.ailocal.ollama", ["/bin/true", "serve"], keep_alive=True, env=env)
                 I._write_ollama_setenv_agent()
-            shell = agents / "com.ailocal.ollama-env.plist"
-            check(server.is_file() and shell.is_file(),
-                  f"parallel={parallel} writes BOTH the server and shell env agents")
-            baked = plistlib.loads(server.read_bytes()).get("EnvironmentVariables", {})
-            argv = plistlib.loads(shell.read_bytes())["ProgramArguments"][-1]
-            published = dict(
-                part.split()[-2:] for part in argv.split(";") if "setenv" in part)
-            check(baked == env == published,
-                  f"parallel={parallel} gives the server and shell identical settings")
-        with patch("ailocal.environment.value", return_value="3"):
-            try:
-                I._ollama_env()
-                check(False, "unsupported parallelism is rejected")
-            except ValueError:
-                check(True, "unsupported parallelism is rejected")
-            with patch.object(I, "_prepare_model_store") as prepare:
-                try:
-                    I.configure_ollama_services(False, binary="fixture-ollama")
-                    check(False, "bad parallelism prevents service changes")
-                except ValueError:
-                    check(not prepare.called, "bad parallelism prevents service changes")
-    finally:
-        I.LA_DIR, I.LOG_DIR = saved_la, saved_log
-        I._run, I._bootout = saved_run, saved_bootout
+            argv = plistlib.loads((box / "com.ailocal.ollama-env.plist").read_bytes())["ProgramArguments"][-1]
+            shell = dict(part.split()[-2:] for part in argv.split(";") if "setenv" in part)
+            check(plistlib.loads(server.read_bytes())["EnvironmentVariables"] == env == shell
+                  and env.get("OLLAMA_NUM_PARALLEL") == parallel, f"parallel={parallel}: server and shell agents agree")
+        with patch("ailocal.environment.value", return_value="3"), po(I, "_prepare_model_store") as prep:
+            check(raises(ValueError, I._ollama_env) and raises(ValueError, I.configure_ollama_services, False, binary="x")
+                  and not prep.called, "unsupported parallelism is rejected before service changes")
 
-    shutil.rmtree(box, ignore_errors=True)
-    sys.exit(_suite.report())
+
+def teardown():
+    S.section("teardown and retired presets")
+    from ailocal import runtime
+    out = io.StringIO()
+    with po(runtime, "_confirm", return_value=True), po(runtime, "compose", return_value=NS(returncode=1)), \
+            po(I, "remove_login_agents") as ra, po(I, "retire_generated_clients") as rc, contextlib.redirect_stdout(out):
+        result = runtime.cmd_teardown([])
+    check(result != 0 and not ra.called and not rc.called and "Teardown incomplete" in out.getvalue()
+          and "Teardown complete." not in out.getvalue(), "failed Docker removal fails teardown and keeps agents and clients")
+    with tempfile.TemporaryDirectory() as box:
+        root, outside = Path(box) / "clients", Path(box) / "outside.toml"
+        (codex := root / "codex").mkdir(parents=True)
+        gen = '# Generated by ailocal. Do not edit.\nmodel = "old"\n'
+        (codex / "plan.config.toml").write_text(gen)
+        (codex / "review.config.toml").write_text('model = "operator"\n')
+        outside.write_text(gen)
+        (codex / "cyber.config.toml").symlink_to(outside)
+        with po(runtime, "_confirm", return_value=True), po(runtime, "compose", return_value=NS(returncode=0)) as compose, \
+                po(runtime, "_docker") as docker, po(I, "remove_login_agents"), \
+                po(I.policy, "deployed_client_root", return_value=root), quiet():
+            result = runtime.cmd_teardown([])
+            I.retire_generated_clients()
+        check(result == 0 and compose.call_args.args == ("down", "--volumes", "--remove-orphans") and not docker.called
+              and not (codex / "plan.config.toml").exists() and (codex / "review.config.toml").exists()
+              and (codex / "cyber.config.toml").is_symlink() and outside.exists(),
+              "teardown leaves networks to Compose and retires generated presets idempotently, keeping authored files and symlinks")
+
+
+def provenance():
+    S.section("config provenance")
+    with tempfile.TemporaryDirectory() as box:
+        box = Path(box)
+        cfg, state = box / "config", box / "state"
+        I.provision(RESOURCES, cfg, state)
+        check(sorted(p.name for p in cfg.iterdir()) == ["profiles"] and (cfg / "profiles/64gb.toml").is_file()
+              and (cfg / "profiles/clients.toml").is_file() and (state / I.MANIFEST_NAME).is_file(),
+              "a fresh install writes profiles/ only, and records a manifest")
+        check(I.distribution_source() == RESOURCES and raises(SystemExit, I.provision, RESOURCES, RESOURCES, state),
+              "the source is the package's resources; installing it over itself is refused")
+        src, cfg, state = box / "src", box / "c2", box / "s2"
+        (src / "profiles").mkdir(parents=True)
+        for n in "abcd":
+            (src / f"profiles/{n}.toml").write_text(f"{n} = 1\n")
+        I.provision(src, cfg, state)
+        edited, keep = cfg / "profiles/a.toml", "a = 'operator'\n"
+        edited.write_text(keep)
+        for n in (1, 2):  # the manifest records what shipped, so the edit survives repeatedly
+            rep = I.provision(src, cfg, state)
+            check("profiles/a.toml" in rep["preserved"] and edited.read_text() == keep, f"an edit survives upgrade #{n}")
+        rep = I.provision(src, cfg, state, reset=True)
+        bk = rep.get("backup")
+        check(rep["preserved"] == [] and edited.read_text() == "a = 1\n" and bk is not None
+              and (bk / "profiles/a.toml").read_text() == keep and not (bk / "profiles/b.toml").exists(),
+              "--reset-config takes the default after backing up only the edited file")
+        check(I.provision(src, cfg, state, reset=True).get("backup") is None, "a reset with nothing edited makes no backup")
+        (cfg / "profiles/b.toml").unlink()
+        rep = I.provision(src, cfg, state)
+        check("profiles/b.toml" in rep["absent"] and not (cfg / "profiles/b.toml").exists(), "a deleted default is not resurrected")
+        check(I.provision(src, cfg, state, reset=True) and (cfg / "profiles/b.toml").is_file(), "reset restores a deleted default")
+        (cfg / "profiles/d.toml").write_text("d = 'operator'\n")
+        I.provision(src, cfg, state)
+        for n in "cd":
+            (src / f"profiles/{n}.toml").unlink()
+        rep = I.provision(src, cfg, state)
+        check(not (cfg / "profiles/c.toml").exists() and (cfg / "profiles/d.toml").read_text() == "d = 'operator'\n"
+              and "profiles/c.toml" in rep["retired"], "a retired file is removed only while it matches what shipped")
+        (cfg / "profiles/x.toml").write_text("never shipped\n")
+        edited.write_text(keep)
+        (state / I.MANIFEST_NAME).write_text("{ not json")
+        I.provision(src, cfg, state)
+        check(edited.read_text() == keep and (cfg / "profiles/x.toml").is_file(),
+              "a corrupt manifest licenses no overwrite; unshipped files are left alone")
+
+
+def model_upgrade():
+    S.section("--upgrade-models and tier selection")
+    with tempfile.TemporaryDirectory() as box:
+        config = Path(box) / "config"
+        shutil.copytree(RESOURCES / "profiles", config / "profiles")
+        prof = lambda t: config / f"profiles/{t}.toml"  # noqa: E731
+        path, ctx = prof("32gb"), P.resolve_role("32gb", "architecture", RESOURCES)["context_input"]
+        text = path.read_text()
+        for old, new in ((f"context_input = {ctx}", "context_input = 65536"), ("[completion]\n", "[completion]\nenabled = false\n"),
+                         ("temperature = 0.7", "temperature = 0.2"), ("disk_gb = 21", "disk_gb = 16")):
+            text = text.replace(old, new)
+        path.write_text("# operator comment\n" + text)
+        before, routing = path.read_bytes(), prof("clients").read_bytes()
+        authored = P.load_profile("32gb", config)
+        total = max(c["context_input"] + c["max_output"] for r, c in authored.items()
+                    if r in P.ROLES and c["active"] == authored["architecture"]["active"])
+        res = I.upgrade_model_defaults(RESOURCES, config)
+        after, shipped = P.load_profile("32gb", config), P.load_profile("32gb", RESOURCES)
+        arch = after["architecture"]
+        check("32gb" in res["updated"] and (res["backup"] / "32gb.toml").read_bytes() == before, "the original policy is backed up")
+        check(arch["max_output"] == 16384 and arch["context_input"] + arch["max_output"] == total
+              and after["implementation"]["temperature"] == 0.7 and after["completion"].get("enabled", True)
+              and after["disk_gb"] == shipped["disk_gb"],
+              "the shared runner keeps the largest authored window; shipped sampling, FIM and footprint are adopted")
+        check(path.read_text().startswith("# operator comment\n") and prof("clients").read_bytes() == routing
+              and not I.upgrade_model_defaults(RESOURCES, config)["updated"],
+              "comments and client routing are preserved; a repeat is a no-op")
+        for t in ("16gb", "32gb"):
+            prof(t).write_text(prof(t).read_text().replace("temperature = 0.7", "temperature = 0.3"))
+        originals, real, calls = {t: prof(t).read_bytes() for t in ("16gb", "32gb")}, I.os.replace, []
+
+        def flaky(a, b):
+            calls.append(b)
+            if len(calls) == 2:
+                raise OSError(28, "No space left on device")
+            real(a, b)
+        with po(I.os, "replace", side_effect=flaky):
+            failed = raises(OSError, I.upgrade_model_defaults, RESOURCES, config)
+        check(failed and all(prof(t).read_bytes() == b for t, b in originals.items())
+              and not list((config / "profiles").glob("*.upgrade-tmp")), "a failed write restores every replaced profile")
+    for gb, want in ((8, None), (16, "16gb"), (31, "16gb"), (32, "32gb"), (63, "32gb"), (127, "64gb"), (128, "128gb")):
+        check(I.tier_for_memory(gb) == want, f"{gb} GB selects {want}", f"got {I.tier_for_memory(gb)}")
+
+
+def parity():
+    S.section("install parity")
+    from ailocal.checks import install_parity as IP
+    with tempfile.TemporaryDirectory() as td:
+        stale = Path(td) / "ailocal"
+        shutil.copytree(REPO / "src/ailocal", stale, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        with po(IP, "installed_root", return_value=stale):
+            check(IP.compare(REPO)[0], "a matching installation passes")
+            (stale / "extra.py").touch()
+            check(not IP.compare(REPO)[0], "an added file is detected (paths are hashed)")
+            (stale / "generation.py").write_text((stale / "generation.py").read_text() + "# drift\n")
+            ok, why = IP.compare(REPO)
+            check(not ok and "STALE" in why.upper() and IP.REMEDIATION == "pipx install --force . && ailocal start",
+                  "a stale install is refused; the remedy reinstalls and restarts", why)
+        with po(IP, "installed_root", return_value=None):
+            check(not IP.compare(REPO)[0], "no installation fails closed")
+    check(REPO / "src/ailocal" not in P.deployed_client_root().parents, "generated config drift is a separate concern")
+
+
+def fingerprint() -> dict:
+    """Duplication-sensitive state of the env-selected roots."""
+    clients, state, fp = P.deployed_client_root(), P.state_root(), {}
+    for p in (state / "litellm/config.yaml", state / "litellm/capabilities.json", clients / "codex/model_catalog.json",
+              clients / "claude/settings.json", clients / "codex/config.toml"):
+        text = re.sub(r'"generated_at":\s*"[^"]*"', "", p.read_text()) if p.is_file() else "absent"
+        fp[str(p)] = hashlib.sha256(text.encode()).hexdigest()
+    toml = clients / "codex/config.toml"
+    fp["codex_mcp"] = len(re.findall(r"^\[mcp_servers\.", toml.read_text(), re.M)) if toml.is_file() else 0
+    cj = clients / "claude/.claude.json"
+    fp["claude_mcp_names"] = sorted(json.loads(cj.read_text()).get("mcpServers", {})) if cj.is_file() else []
+    if os.environ.get("ZDOTDIR"):  # never read the operator's own ~/.zshrc
+        rc = Path(os.environ["ZDOTDIR"]) / ".zshrc"
+        fp["zshrc"] = rc.read_text().count("ailocal") if rc.is_file() else 0
+    return fp
+
+
+def idempotence():
+    S.section("idempotence: ailocal clients claude codex, twice")
+    cmd = [os.environ.get("AILOCAL_PY", sys.executable), "-m", "ailocal.cli", "clients", "claude", "codex"]
+    first = run(cmd, timeout=300)
+    if check(first.returncode == 0, "the first run succeeds", (first.stdout + first.stderr)[-400:]):
+        a = fingerprint()
+        second = run(cmd, timeout=300)
+        diff = {k: v for k, v in fingerprint().items() if a.get(k) != v}
+        check(second.returncode == 0 and not diff, "a second run changes nothing", repr(diff)[:400])
+
+
+def main() -> int:
+    for section in (model_sources, native_gguf, model_pulls, install_flow, launchd, activation, ollama_env,
+                    teardown, provenance, model_upgrade, parity, idempotence):
+        try:
+            section()
+        except Exception as exc:  # noqa: BLE001
+            S.error(section.__name__, exc)
+    return S.report()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
