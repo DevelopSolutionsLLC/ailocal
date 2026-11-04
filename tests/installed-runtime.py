@@ -151,13 +151,6 @@ def main() -> None:
     check(r.returncode == 0 and 'native patch assets ok' in r.stdout,
           'native loader/security patches and their pins ship without the checkout', r.stderr[-300:])
     r = run([str(venv / 'bin/python3'), '-c',
-             'from ailocal import policy; s=policy.documentation_servers(); '
-             'assert set(s)=={"claude-code-docs","openai-docs","microsoft-learn"}; '
-             'assert all(url.startswith("https://") for url in s.values()); '
-             'print("documentation endpoints ok")'], env)
-    check(r.returncode == 0 and 'documentation endpoints ok' in r.stdout,
-          'documentation endpoints resolve from the installed wheel without a checkout', r.stderr[-300:])
-    r = run([str(venv / 'bin/python3'), '-c',
              'from ailocal import mcp; e=mcp.launch_environment(); '
              'assert e["LOCAL_RESEARCH_MODEL"] == "ailocal-fast"; '
              'assert e["LOCAL_RESEARCH_ENABLE_ANSWER"] == "0"; '

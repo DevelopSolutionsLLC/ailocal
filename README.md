@@ -186,7 +186,7 @@ A thinking-mode Qwen turn can end with reasoning and no final reply. ailocal rep
 | Native Workflow (`claude-local`) | off | `AILOCAL_NATIVE_WORKFLOWS=1` |
 | Local artifacts | on, bundled | — |
 | Web search | ailocal's own SearXNG, keyless | `BRAVE_API` adds budgeted Brave to research |
-| Hosted Claude/Codex settings | public documentation MCPs only; kept after teardown | native client configuration |
+| Hosted Claude/Codex settings | never written; documentation MCPs come from Cadence | native client configuration |
 
 Every `claude-local` variable is process-scoped: set it inline for one session. The full table is in [docs/claude-local.md](docs/claude-local.md#configuration).
 
