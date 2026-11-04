@@ -358,38 +358,56 @@ def check_generated_in_sync() -> CheckResult:
                        "ailocal start regenerates them; commit the result")
 
 
+def _guide_hook_bytes() -> tuple[int | None, int | None]:
+    """(launch-default payload, model-unspecified payload) of Claude's guide hook."""
+    from ailocal import guidance
+    default = (P.load_client_policy().get("claude") or {}).get("launch_default")
+    event = {"hook_event_name": "SessionStart", "cwd": "/"}
+    named = guidance.hook_bytes({**event, "model": f"ailocal-{default}"}) if default else None
+    return named, guidance.hook_bytes(event)
+
+
 def check_instruction_budget() -> list[CheckResult]:
-    """Instruction files in ailocal's client roots fit the published budget.
+    """Always-on instructions in ailocal's client roots fit the published budget.
 
     ailocal writes no CLAUDE.md or AGENTS.md and needs none; another tool may.
     Whoever wrote one, a file past `instruction_max_bytes` degrades the local
-    models (#39), so it is reported here rather than trusted to its writer. A
-    warning, not a failure: the file is not ailocal's to rewrite.
+    models (#39), so it is reported here rather than trusted to its writer. In
+    the Claude root the guide hook's SessionStart output counts too: Claude
+    Code adds it to the same context. A warning, not a failure: the file is not
+    ailocal's to rewrite.
     """
     out = []
     budgets = P.instruction_budgets()
     for client, name in (("claude", "CLAUDE.md"), ("codex", "AGENTS.md")):
         path = P.deployed_client_root() / client / name
-        if not path.is_file():
+        size, limit = (path.stat().st_size if path.is_file() else 0), budgets[client]
+        hook = worst = None
+        if client == "claude":
+            hook, worst = _guide_hook_bytes()
+        total = size + (hook or 0)
+        parts = (f"{name} {size}" if size else f"no {name}") + (
+            f" + guide hook {hook}" if hook is not None else "")
+        if total <= limit:
             out.append(CheckResult(f"{client}-instructions", PASS,
-                                   f"{client}  no {name} in its root (none required)"))
+                                   f"{client}  {parts} bytes fit the instruction budget ({total}/{limit})"))
             continue
-        size, limit = path.stat().st_size, budgets[client]
-        if size <= limit:
-            out.append(CheckResult(f"{client}-instructions", PASS,
-                                   f"{client}  {name} fits the instruction budget ({size}/{limit} bytes)"))
-            continue
-        head = path.read_text(encoding="utf-8", errors="replace")[:600]
+        head = path.read_text(encoding="utf-8", errors="replace")[:600] if size else ""
         owner = m.group(1) if (m := re.search(r"owner:\s*([\w.-]+)", head)) else "unknown"
-        fix = ("cadence install, with a Cadence that reads contract schema 3"
-               if owner.lower() == "cadence" else
-               f"trim {path}, or raise {client}.instruction_max_bytes in profiles/clients.toml")
+        if size > limit:
+            fix = ("cadence install, with a Cadence that reads contract schema 3"
+                   if owner.lower() == "cadence" else
+                   f"trim {path}, or raise {client}.instruction_max_bytes in profiles/clients.toml")
+        else:
+            fix = (f"the file fits alone; shorten the profile's model_guidance or raise "
+                   f"{client}.instruction_max_bytes in profiles/clients.toml")
+        detail = "Long always-on instructions made local models re-read them or treat their directory as the working directory."
+        if worst is not None:
+            detail += f" With no model in the SessionStart event the guide hook prints {worst} bytes."
         out.append(CheckResult(f"{client}-instructions", WARN,
-                               f"{client}  {name} exceeds the instruction budget "
-                               f"({size}/{limit} bytes, owner: {owner})",
-                               detail="Long instruction files made local models re-read them or treat "
-                                      "their directory as the working directory.",
-                               remediation=fix))
+                               f"{client}  {parts} bytes exceed the instruction budget "
+                               f"({total}/{limit}, owner: {owner})",
+                               detail=detail, remediation=fix))
     return out
 
 
