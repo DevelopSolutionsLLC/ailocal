@@ -1,10 +1,7 @@
-"""Common mechanics for the ailocal test suites.
+"""Shared mechanics for the test suites: reporting, module loading, temp dirs.
 
-Owns reporting, exit status, module loading, temporary state and subprocess
-execution — the parts every suite reimplemented. It holds no ailocal policy:
-domain assertions stay in the domain suites.
-
-Standard library only, matching the rest of core ailocal.
+Importing it points AILOCAL_DATA at the checkout's resources (unless already
+set) and puts the checkout's src/ first for this process and its children.
 """
 
 from __future__ import annotations
@@ -20,53 +17,24 @@ import tempfile
 import types
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
-#: The ONE copy of every shipped default. A checkout run points both managed
-#: roots here, so tests read exactly the bytes a wheel carries.
 RESOURCES = REPO / "src" / "ailocal" / "resources"
 
-# ── the one test environment owner ──────────────────────────────────────────
-# A suite runs against the WORKING TREE'S CODE and the REAL installation's
-# policy. Declaring that belongs here, once, rather than in an exported variable
-# every contributor has to remember: importing this module IS the declaration.
-#
-# AILOCAL_DATA points at the checkout's resources, because those ARE the shipped
-# assets and a suite must exercise the ones it is editing.
-#
-# AILOCAL_CONFIG is deliberately NOT set. The checkout is not a config root. It
-# used to carry profiles/ at its top level, which is what made pointing the
-# policy root at it look reasonable, but the config root also owns `.env` — so
-# the override quietly asserted that a secrets file belongs in the checkout, and
-# `ailocal check` failed under the suite the moment one was not there. Suites
-# read the operator's real config root, exactly as the product does. The shipped
-# profiles now live beside the other shipped assets under RESOURCES, so the
-# checkout no longer resembles a config root at all.
-#
-# Set, not overwritten: an isolated run (tests/installed-runtime.py) points this
-# somewhere else on purpose.
 os.environ.setdefault("AILOCAL_DATA", str(RESOURCES))
 if str(REPO / "src") not in sys.path:
     sys.path.insert(0, str(REPO / "src"))
-# Subprocesses launched by a suite need the same declaration.
 _pp = os.environ.get("PYTHONPATH", "")
 if str(REPO / "src") not in _pp.split(os.pathsep):
-    os.environ["PYTHONPATH"] = (f"{REPO / 'src'}{os.pathsep}{_pp}" if _pp
-                                else str(REPO / "src"))
+    os.environ["PYTHONPATH"] = os.pathsep.join(p for p in (str(REPO / "src"), _pp) if p)
 
 _GREEN, _RED, _YELLOW, _RESET = "\033[32m", "\033[31m", "\033[33m", "\033[0m"
 
 
 class Suite:
-    """Collects named checks and turns them into a process exit status.
-
-    Output is stable: one `PASS`/`FAIL`/`SKIP` line per check. The gate keys off
-    the exit status and greps FAIL lines only to render context, so the label is
-    the diagnostic — make it say what was expected.
-    """
+    """One PASS/FAIL/SKIP line per check; report() returns the exit status."""
 
     def __init__(self, title: str = "") -> None:
         self.failures: list[str] = []
-        self.passed = 0
-        self.skipped = 0
+        self.passed = self.skipped = 0
         if title:
             print(title)
 
@@ -74,7 +42,6 @@ class Suite:
         print(f"\n{title}")
 
     def check(self, ok: object, label: str, detail: str = "") -> bool:
-        """Record one named check. Returns the boolean outcome for chaining."""
         ok = bool(ok)
         if ok:
             self.passed += 1
@@ -87,17 +54,13 @@ class Suite:
         return ok
 
     def skip(self, label: str, reason: str = "") -> None:
-        """Record a check that could not run. Never fails the suite."""
         self.skipped += 1
-        suffix = f" — {reason}" if reason else ""
-        print(f"  {_YELLOW}SKIP{_RESET}  {label}{suffix}")
+        print(f"  {_YELLOW}SKIP{_RESET}  {label}{f' — {reason}' if reason else ''}")
 
     def error(self, label: str, exc: BaseException) -> None:
-        """Record an unexpected exception as a failure rather than a traceback."""
         self.check(False, label, f"{type(exc).__name__}: {exc}")
 
     def report(self) -> int:
-        """Print the summary and return the exit status: 0 clean, 1 otherwise."""
         print()
         if self.failures:
             print(f"FAILED ({len(self.failures)})")
@@ -110,10 +73,7 @@ class Suite:
 
 
 def load_module(name: str, path: os.PathLike | str) -> types.ModuleType:
-    """Import a Python file that is not on sys.path, under an explicit name.
-
-    Raises FileNotFoundError rather than surfacing an opaque loader error.
-    """
+    """Import a file that is not on sys.path, registered under `name`."""
     path = pathlib.Path(path)
     if not path.is_file():
         raise FileNotFoundError(path)
@@ -128,7 +88,6 @@ def load_module(name: str, path: os.PathLike | str) -> types.ModuleType:
 
 @contextlib.contextmanager
 def temp_dir(prefix: str = "ailocal-test-"):
-    """A temporary directory removed on exit, including after a failure."""
     path = pathlib.Path(tempfile.mkdtemp(prefix=prefix))
     try:
         yield path
@@ -138,19 +97,13 @@ def temp_dir(prefix: str = "ailocal-test-"):
 
 def run(cmd: list[str], timeout: int = 60, cwd: os.PathLike | str | None = None,
         env: dict | None = None) -> subprocess.CompletedProcess:
-    """Run a command, capturing output. A timeout is reported, never raised.
-
-    On timeout the result carries returncode 124 and the reason in stderr, so a
-    hung child fails one check instead of aborting the suite.
-    """
+    """Capture output; a timeout returns code 124 instead of raising."""
     try:
         return subprocess.run(cmd, capture_output=True, text=True,
                               timeout=timeout, cwd=cwd, env=env)
     except subprocess.TimeoutExpired as exc:
-        return subprocess.CompletedProcess(
-            cmd, 124, exc.stdout or "", f"timed out after {timeout}s")
+        return subprocess.CompletedProcess(cmd, 124, exc.stdout or "", f"timed out after {timeout}s")
 
 
 def main(fn) -> None:
-    """Run a suite entry point and exit with its status."""
     sys.exit(fn())
