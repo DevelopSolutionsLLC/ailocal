@@ -454,6 +454,34 @@ class DelegationContractTests(unittest.TestCase):
                 with self.assertRaises(policy.ProfileError, msg=bad):
                     policy.instruction_budgets()
 
+    def test_instruction_budget_counts_the_guide_hook(self):
+        """Claude Code adds the SessionStart guide to the context CLAUDE.md is in."""
+        from ailocal.checks import config as C
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (tmp / 'profiles').mkdir()
+        shutil.copy(RES / 'profiles/clients.toml', tmp / 'profiles/clients.toml')
+        shutil.copy(RES / 'profiles/64gb.toml', tmp / 'profiles/64gb.toml')
+        event = {'hook_event_name': 'SessionStart', 'cwd': '/'}
+        with patch.dict(os.environ, {'AILOCAL_CONFIG': str(tmp)}), \
+                patch('sys.stdin', io.StringIO(json.dumps(event))), \
+                contextlib.redirect_stdout(io.StringIO()) as printed:
+            self.assertEqual(guidance.main(['--hook', '--tier', '64gb']), 0)
+            self.assertEqual(guidance.hook_bytes(event, '64gb'), len(printed.getvalue().encode()))
+        (tmp / 'claude').mkdir()
+        (tmp / 'claude/CLAUDE.md').write_text('owner: cadence\n' + 'x' * 2985)
+        with patch.object(policy, 'deployed_client_root', return_value=tmp), \
+                patch.dict(os.environ, {'AILOCAL_CONFIG': str(tmp)}):
+            with patch.object(C, '_guide_hook_bytes', return_value=(1000, 9000)):
+                claude = next(r for r in C.check_instruction_budget() if r.name == 'claude-instructions')
+                self.assertEqual(claude.status, C.PASS)
+                self.assertIn('CLAUDE.md 3000 + guide hook 1000', claude.summary)
+            with patch.object(C, '_guide_hook_bytes', return_value=(1200, 9000)):
+                claude = next(r for r in C.check_instruction_budget() if r.name == 'claude-instructions')
+                self.assertEqual(claude.status, C.WARN)
+                self.assertIn('4200/4096', claude.summary)
+                self.assertIn('9000 bytes', claude.detail)
+                self.assertIn('fits alone', claude.remediation)
+
     def test_denied_calls_are_not_retried_and_are_reported(self):
         # #39: a delegated local model re-issued one denied Read 228 times, and
         # replied DONE after denied writes while the run still reported success.
