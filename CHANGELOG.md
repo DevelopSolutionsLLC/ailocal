@@ -6,6 +6,7 @@ Release policy and the meaning of each bump: [RELEASING.md](RELEASING.md).
 
 ### Security
 
+- LiteLLM 1.106.2 → 1.106.5 (digest `sha256:7d6ae6c8…`), outside the critical GHSA-w4c7-34wj-hqm8. The advisory reaches only Enterprise-licensed proxies and this one has none; the upgrade removes the finding rather than relying on that. Restart the stack (`ailocal start`) after reinstalling.
 - The patched Ollama runtime (`0.40.8-ailocal.18631.5`) builds against the `golang.org/x` graph of stock Ollama 0.40.14, with x/net raised to v0.62.0, which fixes GO-2026-6860 and GO-2026-6866; the build links `x/net/html`. x/crypto v0.58.0 is the latest tag and remains inside GO-2026-5932 (`x/crypto/openpgp`, not imported). A test now requires `[security_dependencies]` to equal the go.mod lines `security.patch` applies.
 
 ### Fixed
