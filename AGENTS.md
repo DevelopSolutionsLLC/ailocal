@@ -94,7 +94,7 @@ Only `src/`, `tests/`, `docs/` and project metadata. No generated artifact is ev
 
 - Never hand-edit or commit a generated file. Edit the profile.
 - Chat backends follow the model-format rule in [docs/maintenance.md](docs/maintenance.md#model-format): originals or calibrated/QAT builds only, GGUF by default, MLX only with recorded same-model evidence.
-- Every model selection is a `name:tag` Ollama identity, never `:latest` and never a repository URL; a native import creates the alias from a hash-pinned pull and drops the pull's own manifest. `tests/profiles.py` enforces the form.
+- Every model selection is a `name:tag` Ollama identity, never `:latest` and never a repository URL; a native import creates the alias from a hash-pinned pull and drops the pull's own manifest. `tests/policy.py` enforces the form.
 - One capability is one `model_list` entry named `ailocal-<capability>`, never a raw model tag.
 - Geometry is derived, never restated: `num_ctx = context_input + max_output`, `num_predict = max_output`, `max_input_tokens = context_input`.
 - Claude Code's process-wide context and output variables are projected from the launch-default role. They cannot describe the smaller background slots; `settings.json` lists those limits rather than implying parity.
