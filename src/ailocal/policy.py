@@ -20,12 +20,6 @@ from pathlib import Path
 TIERS = ("16gb", "32gb", "64gb", "128gb")
 
 
-def documentation_servers() -> dict[str, str]:
-    """The shipped public documentation endpoints, read in place."""
-    with (data_root() / "clients/documentation.toml").open("rb") as stream:
-        return tomllib.load(stream)["servers"]
-
-
 def ollama_model_store() -> Path:
     """The daemon and native Safetensors importer must use the same store."""
     return Path(os.environ.get("OLLAMA_MODELS", "/Users/Shared/ollama/models"))
@@ -85,7 +79,7 @@ def client_mcp_path(client: str, *, local: bool) -> Path:
     if client == "copilot" and not local:
         return Path(os.environ.get("COPILOT_HOME") or Path.home() / ".copilot") / "mcp-config.json"
     if client not in ("claude", "codex"):
-        raise ValueError("unsupported documentation client")
+        raise ValueError(f"no native MCP location for {client}")
     if local:
         root = deployed_client_root() / client
     elif client == "codex":

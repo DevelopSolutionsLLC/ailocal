@@ -324,8 +324,7 @@ def main() -> None:
     _suite.section("INSTALL VALIDATION CONTROLS THE EXIT STATUS")
     from ailocal import clients, generation, runtime
     from ailocal.checks import run as checks_run
-    for verdict, docs_ok, required in ((0, True, None), (1, True, None),
-                                      (0, False, None), (0, True, "gemma4-switch-glu")):
+    for verdict, required in ((0, None), (1, None), (0, "gemma4-switch-glu")):
         output = io.StringIO()
         with contextlib.ExitStack() as stack:
             for name in ("require_prerequisites", "configure_ollama_services",
@@ -347,16 +346,14 @@ def main() -> None:
             stack.enter_context(patch.object(runtime, "cmd_start", return_value=0))
             stack.enter_context(patch.object(clients, "present", return_value=False))
             stack.enter_context(patch.object(clients, "report_missing"))
-            docs = stack.enter_context(patch.object(clients, "provision_documentation", return_value=docs_ok))
             stack.enter_context(patch.object(checks_run, "main", return_value=verdict))
             stack.enter_context(contextlib.redirect_stdout(output))
             result = I.cmd_install(["--yes"])
-        check(docs.called, "unattended fresh install provisions documentation MCPs")
         check(order == ["retire", "models"], "installer retires login warmup before model work")
         check(persist_runtime.called == bool(required),
               "profile-native runtime requirements are activated and saved without a separate flag")
-        check(result == (verdict or int(not docs_ok)), f"install returns validation status {verdict}, docs {docs_ok}")
-        check(("proxy is ready" in output.getvalue()) == (verdict == 0 and docs_ok),
+        check(result == verdict, f"install returns validation status {verdict}")
+        check(("proxy is ready" in output.getvalue()) == (verdict == 0),
               f"install only claims readiness after passing validation (status {verdict})")
 
     _suite.section("--yes PROVISIONS AILOCAL-OWNED ROOTS ONLY")
@@ -376,7 +373,6 @@ def main() -> None:
         stack.enter_context(patch.object(runtime, "cmd_start", return_value=0))
         stack.enter_context(patch.object(clients, "present", return_value=True))
         stack.enter_context(patch.object(clients, "report_missing"))
-        stack.enter_context(patch.object(clients, "provision_documentation", return_value=True))
         targets = {n: MagicMock() for n in clients.TARGETS}
         stack.enter_context(patch.dict(clients._TARGETS, targets))
         shell = stack.enter_context(patch.object(clients, "ensure_shell_sourcing"))

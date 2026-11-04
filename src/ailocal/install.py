@@ -1402,13 +1402,7 @@ def cmd_install(argv: list[str]) -> int:
     # unattended run should decide for someone. The claude-local/codex-local
     # roots are ailocal's own, so --yes provisions those, including the agent
     # MCP registered only there (see below).
-    step("Documentation MCP (Claude/Codex)")
     from . import clients
-    # Public docs registration is part of every rollout, including --yes.
-    # It does not opt the operator into provider, shell or VS Code rewrites.
-    if not clients.provision_documentation():
-        step("Documentation setup needs attention")
-        return 1
     step("Client configs (optional)")
     detected = [n for n in clients.TARGETS if clients.present(n)]
     print("  Supported clients are optional consumers of the proxy — ailocal")

@@ -6,6 +6,7 @@ Release policy and the meaning of each bump: [RELEASING.md](RELEASING.md).
 
 ### Changed
 
+- ailocal no longer registers the public documentation MCPs (Claude Code, OpenAI, Microsoft Learn) and no longer writes hosted Claude or Codex roots. Cadence declares the same servers for hosted and local roots; they need no local runtime, so they are Cadence's under its ownership test, and two registrars wrote one entry. Without Cadence, the local roots carry no documentation MCPs; inference, routing and ailocal's bundled integrations are unaffected. Registrations already made are left in place.
 - `codex-local` runs in Codex's `workspace-write` sandbox instead of `danger-full-access`; `approval_policy` stays `never`. The full-access default cited the Docker socket and Ollama, but Codex reaches the proxy itself, outside the command sandbox, and no measurement required it. Pass `--sandbox danger-full-access` for a session that needs it. Delegated Codex runs are unchanged: they select a permission profile per mode.
 
 ### Security
