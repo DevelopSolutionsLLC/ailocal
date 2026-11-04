@@ -4,9 +4,6 @@ Release policy and the meaning of each bump: [RELEASING.md](RELEASING.md).
 
 ## Unreleased
 
-- `ailocal install` fails when client configuration fails (an unrecognised answer at the prompt) instead of finishing with exit 0.
-- Regeneration keeps the `[marketplaces.*]` and `[plugins.*]` tables `codex plugin` writes into codex-local's `config.toml`; Cadence's plugin registration no longer reports as drift.
-
 ### Changed
 
 - ailocal no longer registers the public documentation MCPs (Claude Code, OpenAI, Microsoft Learn) and no longer writes hosted Claude or Codex roots. Cadence declares the same servers for hosted and local roots; they need no local runtime, so they are Cadence's under its ownership test, and two registrars wrote one entry. Without Cadence, the local roots carry no documentation MCPs; inference, routing and ailocal's bundled integrations are unaffected. Registrations already made are left in place.
@@ -22,6 +19,8 @@ Release policy and the meaning of each bump: [RELEASING.md](RELEASING.md).
 - The patched Ollama runtime (`0.40.8-ailocal.18631.5`) builds against the `golang.org/x` graph of stock Ollama 0.40.14, with x/net raised to v0.62.0, which fixes GO-2026-6860 and GO-2026-6866; the build links `x/net/html`. x/crypto v0.58.0 is the latest tag and remains inside GO-2026-5932 (`x/crypto/openpgp`, not imported). A test now requires `[security_dependencies]` to equal the go.mod lines `security.patch` applies.
 
 ### Fixed
+- `ailocal install` fails when client configuration fails (an unrecognised answer at the prompt) instead of finishing with exit 0.
+- Regeneration keeps the `[marketplaces.*]` and `[plugins.*]` tables `codex plugin` writes into codex-local's `config.toml`; Cadence's plugin registration no longer reports as drift.
 
 - `ailocal check` counts the guide hook's SessionStart output toward the Claude root's instruction budget (ADR 017). A Cadence-composed 3.5 KB CLAUDE.md plus the 128 GB launch-default guide is 6.3 KB against 4,096 bytes; the check warns instead of reporting the file alone as within budget.
 - The generated Codex config disables the `.system` skills Codex 0.166.0 bundles: `review-agent` is added and the removed `plugin-creator` dropped. A check compares the list with the installed root's skills.
