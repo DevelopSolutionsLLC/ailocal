@@ -96,12 +96,11 @@ command = "ailocal"
 args = ["mcp", "research"]
 
 # ── Skills budget ───────────────────────────────────────────────────────────
-# Codex reserves a hardcoded ~2% of the context window for skill metadata. Its
-# built-in .system skills (image generation, skill/plugin authoring, doc lookup)
-# are irrelevant to a local coding proxy but eat that budget — producing the
-# "Skill descriptions were shortened to fit the 2% skills context budget" notice
-# and inflating every prompt. Disable them so the budget (and the prompt) go to
-# real work. ${CODEX_HOME} is substituted at install time by install-clients.sh.
+# Codex reserves about 2% of the context window for skill metadata. Its bundled
+# .system skills (image generation, skill authoring and installation, OpenAI
+# docs, delegated review) do not serve a local coding proxy and shorten the
+# descriptions of skills that do. Disabled by path; the list matches the
+# .system skills Codex 0.166.0 installs.
 [[skills.config]]
 path = "${CODEX_HOME}/skills/.system/imagegen/SKILL.md"
 enabled = false
@@ -109,11 +108,11 @@ enabled = false
 path = "${CODEX_HOME}/skills/.system/skill-creator/SKILL.md"
 enabled = false
 [[skills.config]]
-path = "${CODEX_HOME}/skills/.system/plugin-creator/SKILL.md"
-enabled = false
-[[skills.config]]
 path = "${CODEX_HOME}/skills/.system/skill-installer/SKILL.md"
 enabled = false
 [[skills.config]]
 path = "${CODEX_HOME}/skills/.system/openai-docs/SKILL.md"
+enabled = false
+[[skills.config]]
+path = "${CODEX_HOME}/skills/.system/review-agent/SKILL.md"
 enabled = false

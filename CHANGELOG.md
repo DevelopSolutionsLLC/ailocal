@@ -15,6 +15,7 @@ Release policy and the meaning of each bump: [RELEASING.md](RELEASING.md).
 
 ### Fixed
 
+- The generated Codex config disables the `.system` skills Codex 0.166.0 bundles: `review-agent` is added and the removed `plugin-creator` dropped. A check compares the list with the installed root's skills.
 - `ailocal status` names the MCP servers Codex's config registers and says they were not probed. It printed "MCP registered, NOT reachable" whenever the config existed, citing a document that no longer exists (#43).
 - The patched Ollama build keeps Go's module cache, build cache and GOPATH in its temporary build space, which is removed when the build ends. Before, it used Go's defaults, `~/go` and `~/Library/Caches/go-build`, which outlived the build and no receipt or teardown named.
 
