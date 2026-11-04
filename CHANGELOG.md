@@ -9,6 +9,10 @@ Release policy and the meaning of each bump: [RELEASING.md](RELEASING.md).
 - ailocal no longer registers the public documentation MCPs (Claude Code, OpenAI, Microsoft Learn) and no longer writes hosted Claude or Codex roots. Cadence declares the same servers for hosted and local roots; they need no local runtime, so they are Cadence's under its ownership test, and two registrars wrote one entry. Without Cadence, the local roots carry no documentation MCPs; inference, routing and ailocal's bundled integrations are unaffected. Registrations already made are left in place.
 - `codex-local` runs in Codex's `workspace-write` sandbox instead of `danger-full-access`; `approval_policy` stays `never`. The full-access default cited the Docker socket and Ollama, but Codex reaches the proxy itself, outside the command sandbox, and no measurement required it. Pass `--sandbox danger-full-access` for a session that needs it. Delegated Codex runs are unchanged: they select a permission profile per mode.
 
+- The test suites are consolidated from 44 files and 13,300 lines into 12 gate suites, one per area, plus the out-of-gate measurement scripts: 25 files, 6,500 lines. Checks of wording, of the test harness and of removed features are gone; regression checks for fixed bugs are kept. The gate runs 17 checks instead of 43.
+- ShellCheck is required: the gate fails without it instead of skipping. The gate also parses `.zsh` with `zsh -n`, not `bash -n`.
+- `AILOCAL_VSCODE_USER` overrides the VS Code user directory, so tests isolate every client root without changing `HOME`.
+
 ### Security
 
 - LiteLLM 1.106.2 → 1.106.5 (digest `sha256:7d6ae6c8…`), outside the critical GHSA-w4c7-34wj-hqm8. The advisory reaches only Enterprise-licensed proxies and this one has none; the upgrade removes the finding rather than relying on that. Restart the stack (`ailocal start`) after reinstalling.

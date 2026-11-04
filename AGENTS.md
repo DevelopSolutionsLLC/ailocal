@@ -40,6 +40,10 @@ python3 tests/gate.py          # the regression gate
 python3 tests/gate.py --full   # adds the client compatibility matrix; required before a release
 ```
 
+The gate runs one suite per area — `policy`, `clients`, `install`, `audit`, `ollama-patch`, `gateway`, `gateway-impl` (inside the proxy image), `guidance`, `research`, `artifacts`, `checks`, `measurement-contracts` — then the repository invariants. Each suite runs alone as `python3 tests/<name>.py`.
+
+To test against scratch roots, set `AILOCAL_CONFIG`, `AILOCAL_CLIENTS`, `AILOCAL_STATE`, `AILOCAL_RUNTIMES`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `AILOCAL_VSCODE_USER`. Never point `HOME` elsewhere: a real CLI then looks for a login keychain there and macOS shows a dialog.
+
 The gate refuses to run when the installed package or the generated files are stale, because the suites would then test code `ailocal start` never executes. Reinstall and start first.
 
 ShellCheck is required and runs at `warning` severity; the gate fails without it (`brew install shellcheck`). `.zsh` is covered by `zsh -n` instead — ShellCheck does not implement zsh.
