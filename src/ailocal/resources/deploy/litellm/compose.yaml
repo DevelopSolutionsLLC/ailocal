@@ -31,18 +31,18 @@ services:
     # a commit. `ailocal check` gates the running build against
     # the validated version.
     #
-    # Pinned to 1.106.2 — the clean release BerriAI blessed after the 2026-10-21
-    # supply-chain compromise, when v1.107.0 shipped a credential-stealer + RAT to
-    # PyPI and to the floating latest/main-stable/main-latest tags
-    # (BerriAI/litellm#47826; compromised digest sha256:1bbcb144…). A digest pin was
-    # never affected; holding ~N-2 behind newest is the point. 1.106.2 carries the
-    # GHSA-7hp6-4w63-5g45 fix (>= 1.102.2). From 1.103 the proxy opens the upstream
-    # stream before any callback runs, so a streamed /v1/responses web search returns
-    # 500 (BerriAI/litellm#42770, open) unless tool_repair's
-    # async_post_call_success_deployment_hook re-streams it first. Re-run the
-    # websearch probes before moving. Digest read from ghcr 2026-10-22; re-verify the
-    # 1.106.2 signature against BerriAI's cosign.pub before relying on it.
-    image: ghcr.io/berriai/litellm:v1.106.2@sha256:7294b90f868c5c38c99b83021c7ba46f9b439e95f8e32964c925c7d2563a03f7
+    # Pinned to 1.106.5 (2026-10-27), the first 1.106.x outside the critical
+    # GHSA-w4c7-34wj-hqm8 (Enterprise-licensed proxies only; this one has no
+    # license). After the 2026-10-21 supply-chain compromise v1.107.0 shipped a
+    # credential stealer to PyPI and the floating tags (BerriAI/litellm#47826;
+    # compromised digest sha256:1bbcb144…); a digest pin was never affected.
+    # From 1.103 the proxy opens the upstream stream before any callback runs, so
+    # a streamed /v1/responses web search returns 500 (BerriAI/litellm#42770,
+    # open) unless tool_repair's async_post_call_success_deployment_hook
+    # re-streams it first. Re-run the websearch probes before moving. Digest read
+    # from ghcr 2026-11-04. 1.106.3 rotated BerriAI's cosign key; verify against
+    # the cosign.pub at the v1.106.5 tag.
+    image: ghcr.io/berriai/litellm:v1.106.5@sha256:7d6ae6c8d73d1b6aea4cb75d07c4a8a953f0809b0764522b8eab693734c5e905
     container_name: ${AILOCAL_LITELLM_CONTAINER:-ailocal-litellm}
     restart: unless-stopped
     mem_limit: 2g
@@ -87,7 +87,7 @@ services:
       # The version this stack was VALIDATED against. `ailocal check` compares
       # it to the running library and fails loudly on drift, so a floating tag or
       # a manual pull can never again leave docs and runtime disagreeing.
-      - AILOCAL_LITELLM_VERSION=1.106.2
+      - AILOCAL_LITELLM_VERSION=1.106.5
       # capability_registry.py — the Local Agent Gateway's registry (Phase A).
       - AILOCAL_REGISTRY=/app/config/registry.yaml
       # Phase D task negotiation: infer the tools a task needs from the first
