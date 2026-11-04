@@ -4,6 +4,10 @@ Release policy and the meaning of each bump: [RELEASING.md](RELEASING.md).
 
 ## Unreleased
 
+### Security
+
+- The patched Ollama runtime (`0.40.8-ailocal.18631.5`) builds against the `golang.org/x` graph of stock Ollama 0.40.14, with x/net raised to v0.62.0, which fixes GO-2026-6860 and GO-2026-6866; the build links `x/net/html`. x/crypto v0.58.0 is the latest tag and remains inside GO-2026-5932 (`x/crypto/openpgp`, not imported). A test now requires `[security_dependencies]` to equal the go.mod lines `security.patch` applies.
+
 ### Fixed
 
 - The patched Ollama build keeps Go's module cache, build cache and GOPATH in its temporary build space, which is removed when the build ends. Before, it used Go's defaults, `~/go` and `~/Library/Caches/go-build`, which outlived the build and no receipt or teardown named.
