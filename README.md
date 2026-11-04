@@ -84,7 +84,7 @@ claude-local        # Claude Code, against your local models
 codex-local         # Codex CLI, against your local models
 ```
 
-In either client, `/model` lists exactly the enabled `ailocal-*` capabilities with the same labels. Each selection carries its own context window and reasoning default. Installed a client later? Run `ailocal clients`.
+In either client, `/model` lists exactly the enabled `ailocal-*` capabilities with the same labels. Each selection carries its own context window and reasoning default. `codex-local` runs commands in Codex's `workspace-write` sandbox without approval prompts: writes stay in the workspace and commands get no network; `codex-local --sandbox danger-full-access` lifts that for one session. Installed a client later? Run `ailocal clients`.
 
 ### VS Code: paste the key once
 

@@ -36,11 +36,13 @@ model_catalog_json = "${CODEX_HOME}/model_catalog.json"
 
 # ── Approval & Sandbox ──────────────────────────────────────────────────────
 
-# Never prompt for approval — equivalent of --full-auto on the command line
+# Never prompt; a command the sandbox refuses fails back to the model.
 approval_policy = "never"
 
-# Disable the macOS sandbox. Required for local stack (Docker socket, Ollama).
-sandbox_mode = "danger-full-access"
+# Writes confined to the workspace; commands have no network. Model and MCP
+# traffic is Codex's own and is not sandboxed. No measurement required full
+# access. https://learn.chatgpt.com/docs/sandboxing
+sandbox_mode = "workspace-write"
 
 # ── Reasoning & Verbosity ───────────────────────────────────────────────────
 

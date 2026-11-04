@@ -4,6 +4,10 @@ Release policy and the meaning of each bump: [RELEASING.md](RELEASING.md).
 
 ## Unreleased
 
+### Changed
+
+- `codex-local` runs in Codex's `workspace-write` sandbox instead of `danger-full-access`; `approval_policy` stays `never`. The full-access default cited the Docker socket and Ollama, but Codex reaches the proxy itself, outside the command sandbox, and no measurement required it. Pass `--sandbox danger-full-access` for a session that needs it. Delegated Codex runs are unchanged: they select a permission profile per mode.
+
 ### Security
 
 - LiteLLM 1.106.2 → 1.106.5 (digest `sha256:7d6ae6c8…`), outside the critical GHSA-w4c7-34wj-hqm8. The advisory reaches only Enterprise-licensed proxies and this one has none; the upgrade removes the finding rather than relying on that. Restart the stack (`ailocal start`) after reinstalling.
