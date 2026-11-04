@@ -25,7 +25,7 @@ import tomllib
 from pathlib import Path
 
 from . import policy, runtime
-from .runtime import dim, ok, step, warn
+from .runtime import bad, dim, ok, step, warn
 
 LA_DIR = Path.home() / "Library" / "LaunchAgents"
 LOG_DIR = Path.home() / "Library" / "Logs" / "ailocal"
@@ -1435,8 +1435,9 @@ def cmd_install(argv: list[str]) -> int:
                        f"{', '.join(detected)} | a name | all | none]")
         if targets == "none":
             ok("Skipped — run later with: ailocal clients [claude|codex|vscode]")
-        else:
-            clients.main(targets.split())
+        elif clients.main(targets.split()):
+            bad("Client configuration failed; run: ailocal clients [claude|codex|vscode]")
+            return 1
 
     from .checks import run as checks_run
     if checks_run.main(["check"]):
