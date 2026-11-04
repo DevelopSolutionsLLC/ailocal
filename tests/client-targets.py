@@ -487,6 +487,18 @@ def main() -> None:
     except ValueError:
         check(True, 'invalid provider file fails closed')
 
+    _suite.section("CODEX: EVERY BUNDLED .system SKILL IS DISABLED, AND ONLY THOSE")
+    from ailocal import policy
+    template = (policy.data_root() / "clients/codex/config.template.toml").read_text(encoding="utf-8")
+    disabled = set(re.findall(r'skills/\.system/([^/]+)/SKILL\.md"\nenabled = false', template))
+    bundled = policy.deployed_client_root() / "codex" / "skills" / ".system"
+    if bundled.is_dir():
+        installed = {p.name for p in bundled.iterdir() if (p / "SKILL.md").is_file()}
+        check(disabled == installed, "the disable list matches the installed Codex's .system skills",
+              f"disabled {sorted(disabled)}, installed {sorted(installed)}")
+    else:
+        check(bool(disabled), f"disable list parsed (no installed .system skills at {bundled} to compare)")
+
     _suite.section("STATUS: THE CODEX LINE REPORTS REGISTRATIONS, NOT A FIXED FAILURE (#43)")
     from ailocal import runtime
     with tempfile.TemporaryDirectory() as tmp:
