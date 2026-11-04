@@ -2,6 +2,12 @@
 
 Release policy and the meaning of each bump: [RELEASING.md](RELEASING.md).
 
+## Unreleased
+
+### Fixed
+
+- The patched Ollama build keeps Go's module cache, build cache and GOPATH in its temporary build space, which is removed when the build ends. Before, it used Go's defaults, `~/go` and `~/Library/Caches/go-build`, which outlived the build and no receipt or teardown named.
+
 ## v0.15.1 (2026-10-30) — documentation
 
 ### Changed
