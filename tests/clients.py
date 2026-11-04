@@ -327,6 +327,12 @@ def codex() -> None:
               "external MCP registrations (nested, quoted names) survive")
         check(servers["research"] == {"command": "ailocal"} and merged(out, tpl) == out,
               "the template owns its own server; preservation is a fixed point")
+        PLUG = ('[marketplaces.cadence]\nsource_type = "local"\nsource = "/x/cadence-plugin"\n\n'
+                '[plugins."cadence@cadence"]\nenabled = true\n')
+        out = merged(T + "\n" + PLUG)
+        check(tomllib.loads(out)["plugins"] == {"cadence@cadence": {"enabled": True}}
+              and "[marketplaces.cadence]" in out and merged(out, out) == out,
+              "codex plugin registrations survive, as a fixed point")
 
     S.section("CODEX GENERATED CONFIG")
     template = (CLIENTS_RES / "codex/config.template.toml").read_text(encoding="utf-8")
