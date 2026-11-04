@@ -360,5 +360,21 @@ class PatchInstall(unittest.TestCase):
         self.assertFalse((self.root / "escaped").exists())
 
 
+class ShippedManifest(unittest.TestCase):
+    def test_security_dependencies_match_the_shipped_go_mod_patch(self):
+        """The audit reads [security_dependencies]; the build applies security.patch.
+        A pin that differs from the patch would audit a graph that is never built."""
+        import re
+        import tomllib
+        from ailocal import policy
+        root = policy.data_root() / "deploy" / "ollama"
+        spec = tomllib.loads((root / "patch.toml").read_text(encoding="utf-8"))
+        text = (root / spec["security_patch_file"]).read_text(encoding="utf-8")
+        go_mod = text.split("diff --git a/go.sum")[0]
+        added = dict(re.findall(r"(?m)^\+\t(\S+) (v\S+)", go_mod))
+        self.assertEqual(added, spec["security_dependencies"])
+        self.assertEqual(candidate._sha(root / spec["security_patch_file"]), spec["security_patch_sha256"])
+
+
 if __name__ == "__main__":
     unittest.main()

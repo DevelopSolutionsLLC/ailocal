@@ -467,7 +467,7 @@ SearXNG logs a bot-detection line during boot. It is expected on a single-user l
 
 **Cause** — a client that does not replay reasoning sends earlier loop turns without it, and Ollama's Qwen renderer wrote an empty think block for each one: the non-thinking signature. Repeated, it led the model to answer inside its open think block. The patched runtime omits that block in thinking-mode tool loops, and the proxy replays Codex reasoning so it is rendered ([ADR 016](adr/016-qwen-reasoning-history.md)). [REAL] Stock: 13 of 16 runs ended empty across the four Qwen backends; patched: 16 of 16 replied. An [open upstream report](https://github.com/ollama/ollama/issues/18916) tracks the stock behaviour.
 
-**Verify** — `ollama --version` reports `0.40.8-ailocal.18631.4` or later; `ailocal check` says so too.
+**Verify** — `ollama --version` reports `0.40.8-ailocal.18631.5` or later; `ailocal check` says so too.
 
 **Fix** — if the runtime is stock, `ailocal install` builds and selects the patched one. If a turn still ends empty, request an explicit follow-up (`resume=<id>` for a delegation) or choose a non-thinking role such as Codex's `implementation` default. ailocal never switches model or mode on its own, and an empty final reply is a failure even when a file changed.
 
