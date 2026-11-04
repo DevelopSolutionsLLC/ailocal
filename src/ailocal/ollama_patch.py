@@ -300,8 +300,13 @@ def prepare() -> Path:
         # nor contact their serving daemon. Keep test state inside this build.
         test_models = work / "test-models"
         test_models.mkdir()
+        # Go's module and build caches default to ~/go and the user cache
+        # directory, where they outlive the build and no receipt names them.
+        # Keep them in this build's temporary space; -modcacherw lets it be removed.
         env = dict(os.environ, CGO_ENABLED="1", GOOS="darwin", GOARCH="arm64",
-                   GOTOOLCHAIN="local", GOFLAGS="-mod=readonly", GOWORK="off",
+                   GOTOOLCHAIN="local", GOFLAGS="-mod=readonly -modcacherw", GOWORK="off",
+                   GOPATH=str(work / "gopath"), GOMODCACHE=str(work / "gomodcache"),
+                   GOCACHE=str(work / "gocache"),
                    OLLAMA_MODELS=str(test_models), OLLAMA_HOST="127.0.0.1:0")
         toolchain = _run(["go", "version"], deadline, cwd=source, env=env).strip()
         flags = (f"-s -w -X=github.com/ollama/ollama/version.Version={spec['version']} "
