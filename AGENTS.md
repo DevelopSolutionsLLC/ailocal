@@ -42,7 +42,7 @@ python3 tests/gate.py --full   # adds the client compatibility matrix; required 
 
 The gate refuses to run when the installed package or the generated files are stale, because the suites would then test code `ailocal start` never executes. Reinstall and start first.
 
-ShellCheck runs at `warning` severity and is skipped when absent (`brew install shellcheck`). `.zsh` is covered by `zsh -n` instead — ShellCheck does not implement zsh.
+ShellCheck is required and runs at `warning` severity; the gate fails without it (`brew install shellcheck`). `.zsh` is covered by `zsh -n` instead — ShellCheck does not implement zsh.
 
 These suites are deliberately OUT of the gate because they take minutes, not seconds:
 
