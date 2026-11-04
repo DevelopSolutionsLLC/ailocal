@@ -487,6 +487,20 @@ def main() -> None:
     except ValueError:
         check(True, 'invalid provider file fails closed')
 
+    _suite.section("STATUS: THE CODEX LINE REPORTS REGISTRATIONS, NOT A FIXED FAILURE (#43)")
+    from ailocal import runtime
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = Path(tmp) / "config.toml"
+        check(runtime.codex_status(cfg) == "", "absent config: not installed")
+        cfg.write_text('model = "m"\n[mcp_servers.research]\ncommand = "ailocal"\n'
+                       '[mcp_servers.agent]\ncommand = "ailocal"\n')
+        line = runtime.codex_status(cfg)
+        check("agent, research" in line and "NOT reachable" not in line and "not probed" in line,
+              "registered servers are named and called unprobed", line)
+        cfg.write_text('model = "m"\n')
+        check("no MCP servers" in runtime.codex_status(cfg), "no registration is stated")
+        cfg.write_text("[mcp_servers\n")
+        check("unreadable" in runtime.codex_status(cfg), "malformed config is reported")
     sys.exit(_suite.report())
 
 
