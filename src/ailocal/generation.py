@@ -407,7 +407,7 @@ def write_integration_contract(models):
                 # working | failing | blocked | blocked_namespace_dispatch.
                 # Any other string degrades to "configured but not verified".
                 "execution": "working",
-                "verified_by": "tests/lsp-baseline.py",
+                "verified_by": "tests/clients.py",
                 "scope": "python",
             },
             # ailocal provisions no Codex LSP bridge. Current research/grepai
@@ -418,7 +418,7 @@ def write_integration_contract(models):
                 "schema_preserved": False,
                 "execution": "not_configured",
                 "reason": "no_validated_lsp_bridge",
-                "verified_by": "tests/clients.sh codex",
+                "verified_by": "tests/clients.py",
             },
         },
     }
@@ -741,6 +741,8 @@ _CODEX_PROJECTS = re.compile(
     r'(?ms)^\[(?:projects|hooks\.state)\.".*?"\]\n(?:(?!^\[).*?\n)*')
 _CODEX_TUI_FLAG = re.compile(
     r'(?m)^\[tui\]\n(?:(?!\[)[^\n]*\n)*?(screen_reader_detection_done\s*=[^\n]*)$')
+_CODEX_PLUGINS = re.compile(
+    r'(?ms)^\[(?:marketplaces|plugins)\.[^\n]+\][ \t]*\n(?:(?!^\[).*?\n)*')
 _CODEX_MCP = re.compile(
     r'(?ms)^\[mcp_servers\.[^\n]+\][ \t]*(?:#[^\n]*)?\n(?:(?!^\[).*?\n)*')
 
@@ -773,8 +775,9 @@ def _keep_codex_projects(text: str) -> str:
     and only while the template has no `[tui]` table of its own.
 
     MCP servers outside the template belong to their registrars (for example,
-    Cadence), including their nested env/tool tables. Preserve those native
-    tables too. Template-owned servers and model settings are always regenerated.
+    Cadence), including their nested env/tool tables, and so do the
+    `[marketplaces.*]` and `[plugins.*]` tables `codex plugin` writes. Preserve
+    them. Template-owned servers and model settings are always regenerated.
     """
     if not CODEX_CONFIG.exists():
         return text
@@ -795,7 +798,7 @@ def _keep_codex_projects(text: str) -> str:
         server = next(iter(tomllib.loads(header)["mcp_servers"]))
         if server not in owned_servers:
             external_mcp.append(block)
-    for b in _CODEX_PROJECTS.findall(live) + external_mcp:
+    for b in _CODEX_PROJECTS.findall(live) + _CODEX_PLUGINS.findall(live) + external_mcp:
         lines = b.rstrip("\n").split("\n")
         while lines and (not lines[-1].strip() or lines[-1].lstrip().startswith("#")):
             lines.pop()
@@ -870,7 +873,7 @@ def flush_stage():
     through restores every destination already replaced, so the tree ends up
     entirely old or entirely new. There is no commit marker to consult: LiteLLM
     and the clients read their generated files directly, so a partial run leaves
-    mixed state that is servable (tests/generation-rollback.py proves it by
+    mixed state that is servable (tests/clients.py proves it by
     fault injection). Every temp file is written and validated before any
     destination is touched."""
     tmp, backups, replaced = {}, {}, []

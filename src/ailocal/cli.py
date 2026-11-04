@@ -90,7 +90,7 @@ def _usage() -> str:
 
 #: `ailocal profile <query>`. Scalars print bare so `$(...)` captures them
 #: cleanly; every failure prints the error CODE to stderr and exits non-zero.
-#: The login preload agent is the runtime consumer of `role --field`.
+#: `role --field` remains a stable query interface for client tooling.
 def _profile(argv: list[str]) -> int:
     from . import policy as P
     query = argv[0] if argv else ""

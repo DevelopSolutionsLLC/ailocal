@@ -1,57 +1,17 @@
 #!/usr/bin/env python3
-"""Compare candidate models for the agentic default. NOT a gate, NOT a test.
-
-`measure_geometry.py` answers "do the profile's numbers still hold for the model
-we already ship". This answers a different question: "should we still ship it".
-Selected candidates run the same matrix and the script prints what it
-measured. It asserts nothing, keeps no history and has no pass/fail opinion; a
-human reads the table and decides.
+"""Compare candidate models for the agentic default. Out of the gate; asserts nothing.
 
     python3 tests/measure_agentic.py --quick    # decode-only plumbing smoke
     python3 tests/measure_agentic.py            # active model, 32K decode/tools pilot
     python3 tests/measure_agentic.py --prefill  # opt into expensive prefill probes
     python3 tests/measure_agentic.py --models gemma4:26b-mlx
 
-FOUR THINGS ARE MEASURED, because decode tok/s alone picks the wrong model:
-
-  decode + acceptance   median tok/s over several runs, paired with whatever
-                        `speculate_stats` the MLX runner wrote during them.
-                        Ollama runs MTP speculative decoding ON BY DEFAULT with
-                        a runtime depth controller -- no flag, no DRAFT
-                        directive. The runner does NOT emit one stats line per
-                        request, so a run with no line proves nothing on its
-                        own. Missing statistics across every repeat still do
-                        not establish whether drafting was active.
-  prefill cold + warm   what Claude Code actually waits on. The warm repeat
-                        exercises the runner's prefix trie; the gap between the
-                        two is the real cost of a cache miss.
-  tool loop             multi-step tool calling. "King for agentic default" is a
-                        correctness question at least as much as a speed one.
-  resident              GiB at depth, which is what the 64 GB profile rests on.
-
-SAMPLING: each candidate runs at ITS OWN VENDOR-RECOMMENDED settings, so neither
-is measured off-spec. This turned out NOT to be a throughput question: gemma4
-accepted 0.79 of its drafts at temp 0.1 and 0.77 at temp 1.0, a difference far
-inside the run-to-run spread. Sampling is therefore an output-QUALITY decision
-for the profiles, not a speed one, and this script does not settle it.
-
-TWO LABELS, kept apart deliberately:
-  [REAL]    produced through the real runner on this machine.
-  [APPROX]  the tool loop. It drives Ollama's /api/chat directly rather than the
-            LiteLLM gateway, because the generated config has NO route for a
-            challenger (config.yaml maps every ailocal-* alias onto the
-            incumbent) and this script is forbidden to edit it. Both candidates
-            are therefore measured on the same reduced path, which keeps the
-            COMPARISON sound while making neither number a gateway measurement.
-            --gateway additionally runs the incumbent through the real path, to
-            price what the reduced path leaves out.
-
-Nothing else may import this: it stops and reloads models, so anything running
-beside it measures eviction.
+Measures decode tok/s with MTP acceptance, cold/warm prefill, resident memory and a
+tool loop, each candidate at its vendor sampling. The tool loop is [APPROX]: direct
+/api/chat, because the gateway routes only the incumbent. Stops and reloads models: run alone.
 """
 from __future__ import annotations
 
-import argparse
 import json
 import pathlib
 import re
@@ -60,426 +20,217 @@ import subprocess
 import sys
 import time
 import urllib.error
-import urllib.request
 from datetime import datetime, timezone
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
-# Reused wholesale rather than reimplemented: same host, same cold-load
-# discipline, same salted filler, same version probe.
 from measure_geometry import (  # noqa: E402
-    GIB, api, engine_of, fill, load_cold, versions, measurement_budget, release_model,
+    CHUNK, GIB, P, api, cli, engine_of, generate_cold, load_cold, measurement_budget,
+    parser, positive, release_model, resident, versions,
 )
-from ailocal import policy as P  # noqa: E402
 
-GATEWAY = "http://127.0.0.1:4000"
-
-
-def server_log():
-    """The log the RUNNING server writes to, resolved from the process itself.
-
-    Not a constant. `~/.ollama/logs/server.log` is where a bare `ollama serve`
-    lands, but ailocal starts Ollama from a launch agent that redirects stderr
-    to ~/Library/Logs/ailocal/, so the ~/.ollama copy goes stale the moment
-    ailocal is installed -- and reading it silently reports the speculation
-    behaviour of whatever ran months ago. lsof asks the process instead.
-
-    Returns None when the server's log target has been DELETED while the process
-    holds it open (lsof marks it `(deleted)`). That is unreadable, not empty, so
-    the speculation metric must report itself unavailable rather than absent.
-    """
-    pid = subprocess.run(["pgrep", "-f", "ollama serve"],
-                         capture_output=True, text=True).stdout.split()
-    if not pid:
-        return None
-    out = subprocess.run(["lsof", "-p", pid[0]],
-                         capture_output=True, text=True).stdout
-    for line in out.splitlines():
-        if ".log" not in line or " 2u " not in line:  # fd 2 = stderr = the INFO stream
-            continue
-        if "(deleted)" in line:
-            return None
-        path = pathlib.Path(line.split()[-1])
-        return path if path.is_file() else None
-    return None
-
-#: Vendor-recommended sampling, from each model's own `ollama show` Parameters
-#: block cross-checked against the publisher's model card. NOT the profile's
-#: values. `think` follows the model's documented mode for coding work.
+_NEUTRAL = {"min_p": 0.0, "presence_penalty": 0.0, "repeat_penalty": 1.0}
+#: Vendor-recommended sampling from each model card, not the profile's values.
 CANDIDATES = {
     "huihui_ai/gemma-4-abliterated:26b-qat": {
-        "label": "64/128 GB Cyber — author's abliterated QAT GGUF",
-        "options": {"temperature": 1.0, "top_k": 64, "top_p": 0.95,
-                    "min_p": 0.0, "presence_penalty": 0.0, "repeat_penalty": 1.0},
-        "think": True,
-        "num_ctx": 32768,
-    },
+        "label": "64/128 GB Cyber — author's abliterated QAT GGUF", "think": True, "num_ctx": 32768,
+        "options": {"temperature": 1.0, "top_k": 64, "top_p": 0.95, **_NEUTRAL}},
     "gemma4:26b-mlx": {
-        "label": "incumbent — architecture/implementation/review today",
-        "options": {"temperature": 1.0, "top_k": 64, "top_p": 0.95},
-        "think": True,
-    },
-    # The actively served models whose CLASSIFICATION rests on measurement.
-    # Each carries its own num_ctx: the shared default is the architecture
-    # role's window. The actual runner must be read after loading: recent
-    # Ollama builds may select MLX for supported GGUF architectures too.
+        "label": "incumbent — architecture/implementation/review today", "think": True,
+        "options": {"temperature": 1.0, "top_k": 64, "top_p": 0.95}},
     "qwen3.5:9b": {
-        "label": "fast-role challenger / 32 GB architecture model",
-        "options": {"temperature": 0.7, "top_k": 20, "top_p": 0.8,
-                    "min_p": 0.0, "presence_penalty": 1.5, "repeat_penalty": 1.0},
-        "think": False,
-        "num_ctx": 135168,       # the 64/128 GB fast role's live window
-    },
+        "label": "fast-role challenger / 32 GB architecture model", "think": False, "num_ctx": 135168,
+        "options": {"temperature": 0.7, "top_k": 20, "top_p": 0.8, **_NEUTRAL, "presence_penalty": 1.5}},
     "qwen3.5:4b": {
-        "label": "16 GB architecture/implementation/review/fast model",
-        "options": {"temperature": 0.7, "top_k": 20, "top_p": 0.8,
-                    "min_p": 0.0, "presence_penalty": 1.5, "repeat_penalty": 1.0},
-        "think": False,
-        "num_ctx": 135168,
-    },
-    "qwen3.5:2b": {
-        "label": "smaller fast-role challenger",
-        # The 2B card has a distinct non-thinking text preset.
-        "options": {"temperature": 1.0, "top_k": 20, "top_p": 1.0,
-                    "min_p": 0.0, "presence_penalty": 2.0, "repeat_penalty": 1.0},
-        "think": False,
-        "num_ctx": 135168,
-    },
-    "qwen3.8:27b-mlx": {
-        "label": "challenger — qwen3_5 arch, 27.8B, adds vision",
-        # Thinking mode: temp 1.0 / top_p 0.95 / top_k 20. The instruct-mode
-        # recommendation (0.7 / 0.80 / presence 1.5) applies with think off;
-        # this candidate measures medium thinking, not instruct mode.
-        "options": {"temperature": 1.0, "top_k": 20, "top_p": 0.95,
-                    "min_p": 0.0, "presence_penalty": 0.0, "repeat_penalty": 1.0},
-        "think": "medium",
-    },
+        "label": "16 GB architecture/implementation/review/fast model", "think": False, "num_ctx": 135168,
+        "options": {"temperature": 0.7, "top_k": 20, "top_p": 0.8, **_NEUTRAL, "presence_penalty": 1.5}},
+    "qwen3.5:2b": {  # the 2B card has a distinct non-thinking preset
+        "label": "smaller fast-role challenger", "think": False, "num_ctx": 135168,
+        "options": {"temperature": 1.0, "top_k": 20, "top_p": 1.0, **_NEUTRAL, "presence_penalty": 2.0}},
+    "qwen3.8:27b-mlx": {  # thinking-mode preset; instruct mode differs
+        "label": "challenger — qwen3_5 arch, 27.8B, adds vision", "think": "medium",
+        "options": {"temperature": 1.0, "top_k": 20, "top_p": 0.95, **_NEUTRAL}},
 }
-
-# Small-tier Cyber candidates use the shipped profile as their sampling source.
-# These are measurements on the host, not evidence about smaller hardware.
+# Small-tier Cyber candidates take the shipped profile's sampling; host-measured only.
 for _tier in ("16gb", "32gb"):
     _cfg = P.resolve_role(_tier, "cyber", P.data_root())
     CANDIDATES[_cfg["model"]] = {
         "label": f"{_tier} unrestricted GGUF candidate; target hardware unmeasured",
-        "options": {key: _cfg[key] for key in (
-            "temperature", "top_p", "top_k", "min_p", "presence_penalty", "repeat_penalty", "stop")},
-        "think": _cfg["reasoning"], "num_ctx": _cfg["total_context"],
-    }
+        "options": {k: _cfg[k] for k in ("temperature", "top_p", "top_k", "min_p",
+                                         "presence_penalty", "repeat_penalty", "stop")},
+        "think": _cfg["reasoning"], "num_ctx": _cfg["total_context"]}
 
 DEPTHS = (8192, 32768, 65536)
-
-#: One deterministic two-step scenario. The model must READ before it can answer,
-#: so a single-call reply is a failure of the loop, not a shortcut.
+#: Two steps: the model must read before it can answer.
 TOOLS = [
     {"type": "function", "function": {
-        "name": "read_file",
-        "description": "Read a UTF-8 text file and return its contents.",
-        "parameters": {"type": "object", "properties": {
-            "path": {"type": "string", "description": "Absolute path"}},
-            "required": ["path"]}}},
+        "name": "read_file", "description": "Read a UTF-8 text file and return its contents.",
+        "parameters": {"type": "object", "required": ["path"], "properties": {
+            "path": {"type": "string", "description": "Absolute path"}}}}},
     {"type": "function", "function": {
-        "name": "report",
-        "description": "Report the final answer once the file has been read.",
-        "parameters": {"type": "object", "properties": {
-            "value": {"type": "string", "description": "The token found"}},
-            "required": ["value"]}}},
+        "name": "report", "description": "Report the final answer once the file has been read.",
+        "parameters": {"type": "object", "required": ["value"], "properties": {
+            "value": {"type": "string", "description": "The token found"}}}}},
 ]
 FIXTURE_PATH = "/tmp/ailocal-bench/config.ini"
 FIXTURE_BODY = "[service]\nbind = 127.0.0.1\nretry_token = ZX-4417\n"
 EXPECT = "ZX-4417"
-TASK = (f"Read {FIXTURE_PATH} and report the value of retry_token. "
-        f"You must call read_file first; do not guess.")
+TASK = f"Read {FIXTURE_PATH} and report the value of retry_token. You must call read_file first; do not guess."
+
+_STATS = re.compile(r"acceptance=(?P<acc>[\d.]+).*?avg_draft=(?P<draft>[\d.]+).*?"
+                    r"max_draft=(?P<max>\d+).*?avg_accepted=(?P<acc_n>[\d.]+)")
 
 
-# ── speculation ─────────────────────────────────────────────────────────────
-
-_STATS = re.compile(
-    r"acceptance=(?P<acc>[\d.]+).*?avg_draft=(?P<draft>[\d.]+).*?"
-    r"max_draft=(?P<max>\d+).*?avg_accepted=(?P<acc_n>[\d.]+)")
+def server_log():
+    """The running server's stderr log, from lsof: the launch agent redirects it to
+    ~/Library/Logs/ailocal, so ~/.ollama/logs goes stale. None if deleted or absent."""
+    pid = subprocess.run(["pgrep", "-f", "ollama serve"], capture_output=True, text=True).stdout.split()
+    if not pid:
+        return None
+    for line in subprocess.run(["lsof", "-p", pid[0]], capture_output=True, text=True).stdout.splitlines():
+        if ".log" in line and " 2u " in line:
+            path = pathlib.Path(line.split()[-1])
+            return None if "(deleted)" in line or not path.is_file() else path
+    return None
 
 
 def log_offset():
-    """(path, byte offset) of the live server log, or None if unreadable.
-
-    Taken BEFORE a request so the stats can be attributed to that request
-    instead of scraped out of unrelated history -- the log holds months of runs.
-    """
+    """(log, size) taken before a request so its stats are not scraped from history."""
     log = server_log()
-    if log is None:
-        return None
     try:
-        return log, log.stat().st_size
+        return (log, log.stat().st_size) if log else None
     except OSError:
         return None
 
 
 def speculation_since(offset):
-    """Parse `speculate_stats` lines written after `offset`.
-
-    Returns None both when the runner emitted no stats AND when the log could
-    not be resolved at all. The CALLER distinguishes them by checking the offset
-    it passed in: a None offset means unreadable, and reporting that as "no
-    drafter" would invent a finding out of a missing file.
-    """
+    """speculate_stats written after offset; None for no stats AND for no log (the
+    caller tells them apart by the offset it passed)."""
     if offset is None:
         return None
-    log, offset = offset
+    log, start = offset
     try:
         with log.open("rb") as fh:
-            fh.seek(offset)
-            tail = fh.read().decode("utf-8", "replace")
+            fh.seek(start)
+            rows = [m.groupdict() for m in _STATS.finditer(fh.read().decode("utf-8", "replace"))]
     except OSError:
         return None
-    rows = [m.groupdict() for m in _STATS.finditer(tail)]
     if not rows:
         return None
-    drafted = sum(float(r["draft"]) for r in rows)
-    return {
-        "batches": len(rows),
-        "acceptance": sum(float(r["acc"]) for r in rows) / len(rows),
-        "avg_draft": drafted / len(rows),
-        "max_draft": max(int(r["max"]) for r in rows),
-        "avg_accepted": sum(float(r["acc_n"]) for r in rows) / len(rows),
-    }
+    mean = lambda key: sum(float(r[key]) for r in rows) / len(rows)  # noqa: E731
+    return {"batches": len(rows), "acceptance": mean("acc"), "avg_draft": mean("draft"),
+            "max_draft": max(int(r["max"]) for r in rows), "avg_accepted": mean("acc_n")}
 
-
-# ── probes ──────────────────────────────────────────────────────────────────
 
 def decode(model, opts, think, ctx, want=128, repeats=5):
-    """Sustained decode rate, REPEATED, with the speculation it used.
-
-    The prompt asks for bulk generation on purpose: acceptance on predictable
-    code text is the case the profiles actually care about, and it is also the
-    case the vendors quote their speedups from.
-
-    Repeated because a single sample is not a rate. Measured on this machine,
-    four identical runs at one fixed setting spread 68.7-100.8 tok/s with an
-    outlier at 2.9 -- other models stay resident (and OLLAMA_NUM_PARALLEL was
-    still 2 when that spread was recorded; it ships as 1 now),
-    so a probe can land beside someone else's work. That spread is wider than
-    the difference between any two sampling settings, which means a single-shot
-    number invites a conclusion the measurement cannot support. The MEDIAN
-    resists the outlier; the spread is reported beside it so nobody reads three
-    significant figures into it.
-
-    Acceptance is aggregated across the repeats for a second reason: the runner
-    does NOT emit one stats line per request. Observed 4/4 in one batch and 2/4
-    in the next at identical settings, so a missing line means "not reported
-    this run", never "did not draft". `reported` carries that denominator.
-    """
-    rates, accs, reason = [], [], "?"
-    log_ok = False
+    """Median decode rate over repeats (single runs spread 68.7-100.8 tok/s with a 2.9
+    outlier), with speculation aggregated: the runner does not log every request."""
+    rates, accs, reason, log_ok = [], [], "?", False
     for _ in range(repeats):
         off = log_offset()
-        # `off is None` is unreadable-log, which is NOT the same claim as
-        # "drafted nothing". Tracked separately so the caller can tell them
-        # apart rather than reporting a missing file as a model property.
         log_ok = log_ok or off is not None
         r = api("/api/chat", {
-            "model": model,
-            "messages": [{"role": "user", "content":
-                "Write a Python function that validates an IPv4 address, "
-                "with a docstring and three unit tests. Code only."}],
-            "stream": False, "think": think,
-            "options": {**opts, "num_ctx": ctx, "num_predict": want},
-            "keep_alive": "120s"}, timeout=120)
-        n = r.get("eval_count", 0)
-        secs = r.get("eval_duration", 0) / 1e9
-        reason = r.get("done_reason", "?")
+            "model": model, "stream": False, "think": think, "keep_alive": "120s",
+            "messages": [{"role": "user", "content": "Write a Python function that validates an "
+                          "IPv4 address, with a docstring and three unit tests. Code only."}],
+            "options": {**opts, "num_ctx": ctx, "num_predict": want}}, timeout=120)
+        n, secs, reason = r.get("eval_count", 0), r.get("eval_duration", 0) / 1e9, r.get("done_reason", "?")
         if n and secs:
             rates.append(n / secs)
-        st = speculation_since(off)
-        if st:
+        if st := speculation_since(off):
             accs.append(st)
     if not rates:
         return None, reason, None, log_ok
-    stat = {
-        "median": statistics.median(rates),
-        "lo": min(rates), "hi": max(rates), "runs": len(rates),
-    }
-    spec = None
-    if accs:
-        spec = {
-            "acceptance": statistics.median(a["acceptance"] for a in accs),
-            "avg_accepted": statistics.median(a["avg_accepted"] for a in accs),
-            "avg_draft": statistics.median(a["avg_draft"] for a in accs),
-            "max_draft": max(a["max_draft"] for a in accs),
-            "reported": len(accs), "of": repeats,
-        }
-    return stat, reason, spec, log_ok
+    spec = {key: statistics.median(a[key] for a in accs)
+            for key in ("acceptance", "avg_accepted", "avg_draft")} if accs else None
+    if spec:
+        spec.update(max_draft=max(a["max_draft"] for a in accs), reported=len(accs), of=repeats)
+    return ({"median": statistics.median(rates), "lo": min(rates), "hi": max(rates), "runs": len(rates)},
+            reason, spec, log_ok)
 
 
 def prefill_pair(model, depth, opts, ctx):
-    """Cold prefill, then the identical prompt again while the trie is warm."""
-    n, cold, res = fill(model, depth, ctx)
-    warm = None
-    if n:
-        prompt = (
-            "def process_record(record, index):\n    value = record.get('value')\n"
-            * max(1, depth // 18)).replace("record", f"rec_{depth}")
-        r = api("/api/generate", {
-            "model": model, "prompt": prompt, "stream": False,
-            "options": {**opts, "num_ctx": ctx, "num_predict": 8},
-            "keep_alive": "120s"})
-        warm = r.get("prompt_eval_duration", 0) / 1e9
-    return n, cold, warm, res
+    """Cold prefill, then the identical prompt again while the prefix trie is warm."""
+    prompt = f"# prefill probe {depth} {time.time_ns()}\n" + CHUNK * max(1, depth // 18)
+    cold = generate_cold(model, prompt, ctx, 8, opts)
+    n, res = cold.get("prompt_eval_count", 0), resident(model)
+    if not n:
+        return 0, 0, None, res
+    warm = api("/api/generate", {"model": model, "prompt": prompt, "stream": False, "keep_alive": "120s",
+                                 "options": {**opts, "num_ctx": ctx, "num_predict": 8}})
+    return n, cold.get("prompt_eval_duration", 0) / 1e9, warm.get("prompt_eval_duration", 0) / 1e9, res
 
 
 def tool_loop(model, opts, think, ctx, rounds):
-    """[APPROX] Multi-step tool calling against /api/chat. See module docstring.
-
-    Counts a run complete only when the model called read_file, then reported
-    the value that was actually in the file. A model that answers from thin air
-    is not fast, it is wrong.
-    """
+    """[APPROX] A round completes only if read_file ran and the file's value was reported.
+    Odd rounds inject one transient read failure the model must retry through."""
     fx = pathlib.Path(FIXTURE_PATH)
     fx.parent.mkdir(parents=True, exist_ok=True)
     fx.write_text(FIXTURE_BODY)
-
-    r = {"rounds": rounds, "done": 0, "bad_args": 0, "unknown_tool": 0,
-         "no_call": 0, "transport": 0, "thinking": 0, "calls": 0,
-         "fault_rounds": 0, "fault_recovered": 0, "turns": []}
-    # Half the rounds inject ONE transient failure on the first read_file, so
-    # the model receives a tool result it did not expect and must retry rather
-    # than give up or invent a value. A loop that only ever sees success does
-    # not distinguish "drives tools" from "replays a two-step script".
+    r = dict.fromkeys(("done", "bad_args", "unknown_tool", "no_call", "transport", "thinking",
+                       "calls", "fault_rounds", "fault_recovered"), 0)
+    r.update(rounds=rounds, turns=[])
     for round_no in range(rounds):
-        fault = round_no % 2 == 1
-        if fault:
-            r["fault_rounds"] += 1
-        fault_pending = fault
-        recovered = False
-        msgs = [{"role": "user", "content": TASK}]
-        read_ok = False
+        fault = fault_pending = round_no % 2 == 1
+        r["fault_rounds"] += fault
+        msgs, read_ok, finished = [{"role": "user", "content": TASK}], False, False
         for turn in range(1, 7):
             try:
                 resp = api("/api/chat", {
-                    "model": model, "messages": msgs, "tools": TOOLS,
-                    "stream": False, "think": think,
-                    "options": {**opts, "num_ctx": ctx, "num_predict": 1024},
-                    "keep_alive": "120s"}, timeout=120)
+                    "model": model, "messages": msgs, "tools": TOOLS, "stream": False, "think": think,
+                    "options": {**opts, "num_ctx": ctx, "num_predict": 1024}, "keep_alive": "120s"},
+                    timeout=120)
             except (urllib.error.URLError, OSError):
                 r["transport"] += 1
                 break
             m = resp.get("message", {})
             msgs.append(m)
-            if (m.get("thinking") or "").strip():
-                r["thinking"] += 1
+            r["thinking"] += bool((m.get("thinking") or "").strip())
             calls = m.get("tool_calls") or []
-            if not calls:
-                # No call and no prior read: it answered from nothing.
-                if read_ok and EXPECT in (m.get("content") or ""):
-                    r["done"] += 1
-                    r["turns"].append(turn)
-                    if fault:
-                        recovered = True
-                else:
-                    r["no_call"] += 1
+            if not calls:  # a reply with no prior read answered from nothing
+                finished = read_ok and EXPECT in (m.get("content") or "")
+                r["no_call"] += not finished
                 break
             for c in calls:
                 fn = c.get("function", {})
                 name, args = fn.get("name"), fn.get("arguments") or {}
                 r["calls"] += 1
-                if isinstance(args, str):
-                    # Ollama normally hands back a parsed object. A string here
-                    # is the model emitting JSON the runtime could not fold in,
-                    # which is exactly what tool_repair.py exists to rescue --
-                    # so it counts against NATIVE argument validity even when
-                    # json.loads below succeeds.
+                if isinstance(args, str):  # runtime could not fold the JSON in: not native-valid
                     r["bad_args"] += 1
                     try:
                         args = json.loads(args)
                     except ValueError:
                         args = {}
                 if name == "read_file":
-                    # A required argument that is absent or not a string is the
-                    # SAME defect class as gemma4 omitting `description` on
-                    # Agent (config.template.yaml). The old loop hid it: a
-                    # missing path just produced a read error indistinguishable
-                    # from a genuine one.
                     path = args.get("path")
                     if not isinstance(path, str) or not path:
                         r["bad_args"] += 1
                         out = "error: missing required argument 'path'"
                     elif fault_pending:
-                        fault_pending = False
-                        out = ("error: EAGAIN resource temporarily "
-                               "unavailable; retry the read")
+                        fault_pending, out = False, "error: EAGAIN resource temporarily unavailable; retry the read"
                     else:
                         try:
-                            out = pathlib.Path(path).read_text()
-                            read_ok = True
+                            out, read_ok = pathlib.Path(path).read_text(), True
                         except OSError as exc:
                             out = f"error: {exc}"
                     msgs.append({"role": "tool", "name": name, "content": out})
                 elif name == "report":
                     value = args.get("value")
-                    if not isinstance(value, str) or not value:
-                        r["bad_args"] += 1
-                    elif read_ok and value.strip() == EXPECT:
-                        r["done"] += 1
-                        r["turns"].append(turn)
-                        if fault:
-                            recovered = True
+                    r["bad_args"] += not isinstance(value, str) or not value
+                    finished = read_ok and isinstance(value, str) and value.strip() == EXPECT
                     calls = None
                     break
                 else:
                     r["unknown_tool"] += 1
-                    msgs.append({"role": "tool", "name": name or "?",
-                                 "content": "error: unknown tool"})
+                    msgs.append({"role": "tool", "name": name or "?", "content": "error: unknown tool"})
             if calls is None:
                 break
-        if recovered:
-            r["fault_recovered"] += 1
-    r["avg_turns"] = (sum(r["turns"]) / len(r["turns"])) if r["turns"] else None
+        if finished:
+            r["done"] += 1
+            r["turns"].append(turn)
+            r["fault_recovered"] += fault
+    r["avg_turns"] = sum(r["turns"]) / len(r["turns"]) if r["turns"] else None
     return r
 
-
-def gateway_probe():
-    """Price the real path for the INCUMBENT only, which is all it routes.
-
-    The key is generated, never checked in, and is read from wherever the
-    installation actually put it. It is used and never printed.
-    """
-    key = None
-    env = pathlib.Path.home() / ".config" / "ailocal" / ".env"
-    if env.is_file():
-        for line in env.read_text().splitlines():
-            if line.startswith("LITELLM_MASTER_KEY="):
-                key = line.split("=", 1)[1].strip()
-    if not key:
-        got = subprocess.run(
-            ["docker", "exec", "ailocal-litellm", "printenv",
-             "LITELLM_MASTER_KEY"], capture_output=True, text=True)
-        key = got.stdout.strip() or None
-    if not key:
-        return "no gateway key found; skipped"
-
-    body = json.dumps({
-        "model": "ailocal-architecture",
-        "messages": [{"role": "user", "content": TASK}],
-        "tools": [{"type": "function", "function": t["function"]} for t in TOOLS],
-        "max_tokens": 512}).encode()
-    req = urllib.request.Request(
-        GATEWAY + "/v1/chat/completions", data=body,
-        headers={"Content-Type": "application/json",
-                 "Authorization": f"Bearer {key}"})
-    t0 = time.time()
-    try:
-        with urllib.request.urlopen(req, timeout=600) as r:
-            payload = json.load(r)
-    except (urllib.error.URLError, OSError) as exc:
-        return f"gateway unreachable: {exc}"
-    took = time.time() - t0
-    ch = (payload.get("choices") or [{}])[0].get("message", {})
-    called = [c.get("function", {}).get("name")
-              for c in (ch.get("tool_calls") or [])]
-    return (f"{took:.1f}s first turn, tool_calls={called or 'none'} "
-            f"(profile sampling, NOT vendor — this is the shipped path)")
-
-
-# ── report ──────────────────────────────────────────────────────────────────
 
 def run(model, spec, depths, rounds, quick, repeats):
     try:
@@ -490,32 +241,22 @@ def run(model, spec, depths, rounds, quick, repeats):
 
 def _run(model, spec, depths, rounds, quick, repeats):
     ctx = spec.get("num_ctx") or P.effective_role("architecture")["num_ctx"]
-    print(f"\n{'='*72}\n{model}\n  {spec['label']}")
     opts, think = spec["options"], spec["think"]
-    print(f"  sampling     {opts}  think={think}   [candidate settings]")
-    print(f"  num_ctx      {ctx}")
-
+    print(f"\n{'=' * 72}\n{model}\n  {spec['label']}\n  sampling     {opts}  think={think}\n  num_ctx      {ctx}")
     base = load_cold(model, ctx)
     print(f"  runner       {engine_of(model)} (reported by Ollama)")
     if base:
-        print(f"  weights      {base/GIB:.2f} GiB resident, no KV yet")
+        print(f"  weights      {base / GIB:.2f} GiB resident, no KV yet")
 
-    rate, why, spec_stats, log_ok = decode(model, opts, think, ctx,
-                                          repeats=repeats)
-    if rate:
-        print(f"  decode       median {rate['median']:.1f} tok/s "
-              f"(spread {rate['lo']:.1f}-{rate['hi']:.1f} over {rate['runs']} "
-              f"runs, done_reason={why})")
-    else:
-        print(f"  decode       produced nothing (done_reason={why})")
-    if spec_stats:
-        print(f"  speculation  acceptance {spec_stats['acceptance']:.2f} median, "
-              f"avg_accepted {spec_stats['avg_accepted']:.2f} of avg_draft "
-              f"{spec_stats['avg_draft']:.1f} (max {spec_stats['max_draft']}) "
-              f"— reported by {spec_stats['reported']}/{spec_stats['of']} runs")
+    rate, why, st, log_ok = decode(model, opts, think, ctx, repeats=repeats)
+    print(f"  decode       median {rate['median']:.1f} tok/s (spread {rate['lo']:.1f}-{rate['hi']:.1f} "
+          f"over {rate['runs']} runs, done_reason={why})" if rate else
+          f"  decode       produced nothing (done_reason={why})")
+    if st:
+        print(f"  speculation  acceptance {st['acceptance']:.2f} median, avg_accepted {st['avg_accepted']:.2f} "
+              f"of avg_draft {st['avg_draft']:.1f} (max {st['max_draft']}) — reported by {st['reported']}/{st['of']} runs")
     elif not log_ok:
-        print("  speculation  UNAVAILABLE — the running server's log target is "
-              "gone (see ~/Library/Logs/ailocal). Not a claim about drafting.")
+        print("  speculation  UNAVAILABLE — the server's log target is gone (see ~/Library/Logs/ailocal)")
     else:
         print("  speculation  no speculate_stats emitted; drafting status UNVERIFIED")
 
@@ -524,105 +265,52 @@ def _run(model, spec, depths, rounds, quick, repeats):
         if not (n and cold):
             print(f"  prefill {depth:>6}  no measurement")
             continue
-        line = f"  prefill {depth:>6}  cold {n} tok in {cold:.1f}s ({n/cold:.0f} tok/s)"
-        if warm:
-            line += f", warm {warm:.1f}s ({n/warm:.0f} tok/s)"
-        print(line)
+        print(f"  prefill {depth:>6}  cold {n} tok in {cold:.1f}s ({n / cold:.0f} tok/s)"
+              + (f", warm {warm:.1f}s ({n / warm:.0f} tok/s)" if warm else ""))
         if res:
             kv = (res - base) / n / 1024 if base else None
-            print(f"                 resident {res/GIB:.2f} GiB"
-                  + (f", kv {kv:.1f} KB/token (lazy)" if kv else ""))
+            print(f"                 resident {res / GIB:.2f} GiB" + (f", kv {kv:.1f} KB/token (lazy)" if kv else ""))
 
     if not quick:
         t = tool_loop(model, opts, think, ctx, rounds)
         print(f"  tool loop    {t['done']}/{t['rounds']} completed correctly"
-              + (f", {t['avg_turns']:.1f} turns avg" if t["avg_turns"] else "")
-              + "   [APPROX — direct /api/chat, not the gateway]")
-        print(f"  tool args    {t['bad_args']} invalid of {t['calls']} calls "
-              f"(missing/unparsed required argument — what tool_repair.py "
-              f"would otherwise have to fix)")
-        print(f"  recovery     {t['fault_recovered']}/{t['fault_rounds']} "
-              f"rounds recovered from an injected transient tool failure")
-        print(f"  other        {t['unknown_tool']} unknown-tool, "
-              f"{t['no_call']} gave up without a correct answer, "
-              f"{t['transport']} transport errors, "
-              f"{t['thinking']} turns returned reasoning content")
+              + (f", {t['avg_turns']:.1f} turns avg" if t["avg_turns"] else "") + "   [APPROX]")
+        print(f"  tool args    {t['bad_args']} invalid of {t['calls']} calls (what tool_repair.py would fix)")
+        print(f"  recovery     {t['fault_recovered']}/{t['fault_rounds']} rounds recovered from an injected failure")
+        print(f"  other        {t['unknown_tool']} unknown-tool, {t['no_call']} gave up, "
+              f"{t['transport']} transport errors, {t['thinking']} turns with reasoning")
+
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n")[0])
-    ap.add_argument("--models", nargs="+",
-                    help="default: the active architecture model only")
-    ap.add_argument("--quick", action="store_true",
-                    help="skip the tool loop; with --prefill, probe 8K depth only")
-    prefill = ap.add_mutually_exclusive_group()
-    prefill.add_argument("--prefill", action="store_true", dest="prefill",
-                         help="opt into expensive cold/warm context measurements")
-    prefill.add_argument("--skip-prefill", action="store_false", dest="prefill")
-    ap.set_defaults(prefill=False)
-    ap.add_argument("--repeats", type=int, default=3,
-                    help="decode samples per model; a single one is not a rate")
-    ap.add_argument("--rounds", type=int, default=3,
-                    help="tool-loop repetitions per model (default 3)")
-    ap.add_argument("--gateway", action="store_true",
-                    help="also price the real LiteLLM path (incumbent only)")
-    ap.add_argument("--context", type=int, default=32768,
-                    help="override candidate contexts for a bounded pilot (e.g. 32768)")
-    ap.add_argument("--time-budget", type=int, default=900,
-                    help="whole-run wall-clock budget in seconds (default 900)")
+    ap = parser(__doc__)
+    ap.add_argument("--models", nargs="+", help="default: the active architecture model only")
+    ap.add_argument("--quick", action="store_true", help="skip the tool loop; with --prefill, 8K depth only")
+    ap.add_argument("--prefill", action="store_true", help="opt into cold/warm context measurements")
+    ap.add_argument("--repeats", type=positive, default=3, help="decode samples per model")
+    ap.add_argument("--rounds", type=positive, default=3, help="tool-loop rounds per model")
+    ap.add_argument("--context", type=int, default=32768, help="candidate context for a bounded pilot")
     args = ap.parse_args(argv)
-    if args.models is None:
-        args.models = [P.effective_role("architecture")["model"]]
-    unknown = sorted(set(args.models) - set(CANDIDATES))
-    if unknown:
+    args.models = args.models or [P.effective_role("architecture")["model"]]
+    if unknown := sorted(set(args.models) - set(CANDIDATES)):
         ap.error(f"unknown candidates: {', '.join(unknown)}")
-    if args.context is not None and args.context < 16384:
+    if args.context < 16384:
         ap.error("--context must be at least 16384 (8K prefill plus decode headroom)")
-    if args.repeats < 1 or args.rounds < 1 or args.time_budget < 1:
-        ap.error("--repeats, --rounds and --time-budget must be positive")
     with measurement_budget(args.time_budget):
         return measure(args)
 
 
 def measure(args):
-    # Minutes per probe with a human watching: block buffering is
-    # indistinguishable from hung.
-    sys.stdout.reconfigure(line_buffering=True)
-
     ollama, mlx = versions()
-    print(f"agentic candidate comparison   "
-          f"{datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC}")
-    print(f"ollama {ollama}   mlx {mlx}")
-    print(f"num_ctx {args.context} pilot override; "
-          f"active architecture window {P.effective_role('architecture')['num_ctx']}")
-    print("OLLAMA_KV_CACHE_TYPE / OLLAMA_FLASH_ATTENTION do NOT reach the MLX "
-          "runner; they are llama-server flags. KV below is unquantized.")
-
-    depths = () if not args.prefill else DEPTHS[:1] if args.quick else DEPTHS
-    if args.context is not None:
-        depths = tuple(depth for depth in depths if depth <= args.context // 2)
+    print(f"agentic candidate comparison   {datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC}\n"
+          f"ollama {ollama}   mlx {mlx}\nnum_ctx {args.context} pilot override; active architecture "
+          f"window {P.effective_role('architecture')['num_ctx']}\n"
+          "OLLAMA_KV_CACHE_TYPE / OLLAMA_FLASH_ATTENTION do not reach the MLX runner; MLX KV is unquantized.")
+    depths = tuple(d for d in (DEPTHS[:1] if args.quick else DEPTHS) if d <= args.context // 2) if args.prefill else ()
     for model in args.models:
-        spec = dict(CANDIDATES[model])
-        if args.context is not None:
-            spec["num_ctx"] = args.context
-        run(model, spec, depths, args.rounds, args.quick, args.repeats)
-
-    if args.gateway:
-        print(f"\n{'='*72}\ngateway (ailocal-architecture -> incumbent)")
-        try:
-            print(f"  {gateway_probe()}")
-        finally:
-            release_model(P.effective_role('architecture')['model'])
-
-    print("\nNothing here is asserted. Read the four columns together: decode "
-          "tok/s is meaningless if the tool loop does not complete, and prefill "
-          "dominates what an agent session actually feels.")
+        run(model, {**CANDIDATES[model], "num_ctx": args.context}, depths, args.rounds, args.quick, args.repeats)
+    print("\nRead the columns together: decode tok/s means nothing if the tool loop fails.")
     return 0
 
 
 if __name__ == "__main__":
-    try:
-        sys.exit(main())
-    except KeyboardInterrupt:
-        sys.exit(130)
-    except (urllib.error.URLError, OSError, RuntimeError) as exc:
-        sys.exit(f"measurement could not run: {exc}")
+    cli(main, (urllib.error.URLError, OSError, RuntimeError))

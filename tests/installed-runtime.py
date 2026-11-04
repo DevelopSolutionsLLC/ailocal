@@ -1,253 +1,165 @@
 #!/usr/bin/env python3
-"""installed-runtime.py — the decisive proof that ailocal needs no checkout.
+"""Prove the installed wheel needs no checkout: install from a copy, delete the copy, run.
 
-Passing the gate from inside a checkout cannot show this: the checkout is what
-supplies the assets. So this builds a real installation somewhere else and then
-DESTROYS the source it was built from, leaving a path that does not exist. Any
-command that still reaches for the checkout fails with ENOENT rather than
-quietly succeeding.
+    python3 tests/installed-runtime.py            # path proof only, no Docker
+    python3 tests/installed-runtime.py --stack    # also start/status/stop an isolated stack
 
-Isolation is total -- its own HOME, XDG roots, Compose project, container names
-and host ports -- so it never contends with a production stack. Images are the
-pinned production digests; nothing is pulled or upgraded.
-
-Opt-in: it installs a package and starts containers.
-    python3 tests/installed-runtime.py            # no Docker: path proof only
-    python3 tests/installed-runtime.py --stack    # also start/status/stop
+Out of the gate. Keeps the real HOME; every ailocal and client root, the Compose
+project, container names and ports are overridden into a temporary box.
 """
 from __future__ import annotations
 
-import os
+import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from harness import REPO, Suite  # noqa: E402
+from harness import REPO, Suite, run  # noqa: E402
 
-_suite = Suite()
-check = _suite.check
-
-PORT_LITELLM = "4111"
-PORT_SEARXNG = "8111"
 PROJECT = "ailocal-it"
+ROOTS = {"AILOCAL_CONFIG": "config", "AILOCAL_CLIENTS": "clients", "AILOCAL_STATE": "state",
+         "AILOCAL_RUNTIMES": "runtimes", "CLAUDE_CONFIG_DIR": "claude", "CODEX_HOME": "codex",
+         "COPILOT_HOME": "copilot", "ZDOTDIR": "zdotdir", "AILOCAL_VSCODE_USER": "vscode-user"}
+ISOLATED = ("AILOCAL_", "XDG_", "COMPOSE_", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "COPILOT_HOME", "ZDOTDIR",
+            "PYTHONPATH")  # PYTHONPATH from harness would import the checkout
 
 
-def run(argv, env, timeout=300):
-    return subprocess.run(argv, env=env, capture_output=True, text=True,
-                          timeout=timeout)
-
-
-def main() -> None:
-    want_stack = "--stack" in sys.argv
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--stack", action="store_true", help="also start/status/stop an isolated stack")
+    want_stack = ap.parse_args().stack
+    s = Suite()
     box = Path(tempfile.mkdtemp(prefix="ailocal-it-"))
-    source = box / "source"          # a throwaway copy, deleted before the proof
-    home = box / "home"
-    cfg, data, state = box / "config", box / "data", box / "state"
-    for p in (home, cfg, data, state):
-        p.mkdir(parents=True)
+    try:
+        return _prove(s, box, want_stack)
+    finally:
+        shutil.rmtree(box, ignore_errors=True)
 
-    # Copy the checkout, so the real one is never at risk when we delete.
+
+def _prove(s: Suite, box: Path, want_stack: bool) -> int:
+    source, venv = box / "source", box / "venv"
+    roots = {name: box / sub for name, sub in ROOTS.items()}
+    for path in roots.values():
+        path.mkdir(parents=True)
+    cfg, state = roots["AILOCAL_CONFIG"], roots["AILOCAL_STATE"]
     shutil.copytree(REPO, source, ignore=shutil.ignore_patterns(
         ".git", "__pycache__", "*.pyc", ".venv", "build", "dist", "*.egg-info"))
 
-    _suite.section("BUILD AN INSTALLATION, THEN DESTROY ITS SOURCE")
-    venv = box / "venv"
-    subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True,
-                   capture_output=True)
-    pip, ailocal = venv / "bin" / "pip", venv / "bin" / "ailocal"
-    r = run([str(pip), "install", "-q", str(source)], dict(os.environ))
-    check(r.returncode == 0, "the package installs", r.stderr[-400:])
-    check(ailocal.is_file(), "the console script is installed")
+    s.section("BUILD AN INSTALLATION, THEN DESTROY ITS SOURCE")
+    subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True, capture_output=True)
+    python, ailocal = str(venv / "bin/python3"), venv / "bin/ailocal"
+    r = run([str(venv / "bin/pip"), "install", "-q", str(source)], timeout=300)
+    s.check(r.returncode == 0, "the package installs", r.stderr[-400:])
+    s.check(ailocal.is_file(), "the console script is installed")
 
-    # PYTHONPATH goes too: importing harness put the CHECKOUT's src on it, and
-    # the real checkout outlives the copy this suite deletes. Leaving it in
-    # would let the "isolated" installation import the working tree and report
-    # success for the one thing this suite is here to disprove.
-    env = {k: v for k, v in os.environ.items()
-           if not k.startswith(("AILOCAL_", "XDG_", "COMPOSE_"))
-           and k != "PYTHONPATH"}
-    env.update({
-        "HOME": str(home), "PATH": f"{venv / 'bin'}:{env.get('PATH', '')}",
-        # docker compose is a CLI PLUGIN discovered under $HOME/.docker, so an
-        # isolated HOME hides it and `docker compose` degrades to plain
-        # `docker`. Keep pointing at the real config; nothing is written there.
-        "DOCKER_CONFIG": os.path.expanduser("~/.docker"),
-        "XDG_CONFIG_HOME": str(box / "xdg-config"),
-        "XDG_DATA_HOME": str(box / "xdg-data"),
-        "XDG_STATE_HOME": str(box / "xdg-state"),
-        # AILOCAL_DATA is deliberately NOT set. The data root must resolve to
-        # the INSTALLED package's own resources — that the assets travel inside
-        # the wheel is the property this suite exists to prove, and an override
-        # pointing at an empty directory would prove the opposite.
-        "AILOCAL_CONFIG": str(cfg),
-        "AILOCAL_STATE": str(state),
-        "COMPOSE_PROJECT_NAME": PROJECT,
-        "AILOCAL_LITELLM_CONTAINER": f"{PROJECT}-litellm",
-        "AILOCAL_SEARXNG_CONTAINER": f"{PROJECT}-searxng",
-        "AILOCAL_LITELLM_PORT": PORT_LITELLM,
-        "AILOCAL_SEARXNG_PORT": PORT_SEARXNG,
-    })
+    env = {k: v for k, v in os.environ.items() if not k.startswith(ISOLATED)}
+    env.update({name: str(path) for name, path in roots.items()})
+    # AILOCAL_DATA stays unset: the data root must be the installed package itself.
+    env.update(PATH=f"{venv / 'bin'}:{env.get('PATH', '')}", COMPOSE_PROJECT_NAME=PROJECT,
+               AILOCAL_LITELLM_CONTAINER=f"{PROJECT}-litellm", AILOCAL_SEARXNG_CONTAINER=f"{PROJECT}-searxng",
+               AILOCAL_LITELLM_PORT="4111", AILOCAL_SEARXNG_PORT="8111")
 
-    # Provisioning is a step of `ailocal install`, not a command of its own, so
-    # the installed package's API is what a bootstrap actually calls here. No
-    # source argument: the assets travel INSIDE the wheel, which is the property
-    # this suite exists to prove.
-    r = run([str(venv / "bin" / "python3"), "-c",
-             "from ailocal import install, policy;"
-             "install.provision(install.distribution_source(),"
-             " policy.config_root(), policy.state_root());"
-             "print(policy.data_root())"],
-            env)
-    check(r.returncode == 0, "assets provision into the managed roots",
-          r.stderr[-400:])
-    installed_data = Path(r.stdout.strip()) if r.returncode == 0 else data
-    check(str(venv) in str(installed_data),
-          "the data root IS the installed package, not a checkout")
-    check((cfg / "profiles" / "64gb.toml").is_file(),
-          "profiles ship in the wheel and land in the config root")
-    check((installed_data / "deploy" / "litellm" / "hooks"
-           / "tool_gateway.py").is_file(),
-          "the proxy hooks ship in the wheel and are read from it")
-    check((installed_data / 'integrations/local-research/server.py').is_file(),
-          'research MCP source ships in the wheel')
-    (state / "active-profile").write_text("64gb\n")
-    # Neither file is shipped, so both are synthesized here — with the SAME two
-    # owners the runtime uses, because `install` is what migrates a legacy
-    # combined `.env` and this suite deliberately never runs it. Writing the
-    # pre-split `$AILOCAL_CONFIG/.env` leaves the generated secrets where
-    # nothing reads them, and `start` then fails its pre-flight check.
-    #
-    # BRAVE_API is a placeholder: it proves the key reaches the research
-    # launcher, but this suite never issues a search and so spends no quota.
-    (state / "env").write_text("LITELLM_MASTER_KEY=sk-integration-test-only\n"
-                               "SEARXNG_SECRET=integration-test-only\n")
-    (state / "env").chmod(0o600)
-    (cfg / ".env.local").write_text(
-        "BRAVE_API=integration-test-placeholder\n"
-        "OLLAMA_URL=http://host.docker.internal:11434\n")
-    (cfg / ".env.local").chmod(0o600)
-
-    # THE POINT OF THIS SUITE. From here the source does not exist.
-    shutil.rmtree(source)
-    check(not source.exists(), "the source checkout is gone")
-    r = run([str(venv / 'bin/python3'), '-c',
-             'from ailocal import policy,model_sources; '
-             'assert all(policy.resolve_role(t,"cyber")["model"] in policy.required_models(t) '
-             'for t in policy.TIERS); print("profiles and importer ok")'], env)
-    check(r.returncode == 0 and 'profiles and importer ok' in r.stdout,
-          'profiles and the model importer ship in the wheel without a checkout', r.stderr[-300:])
-    r = run([str(venv / 'bin/python3'), '-c',
-             'import hashlib; from ailocal import policy,ollama_patch; '
-             's=policy.ollama_patch_spec(); '
-             'assert all(len(s[k])==64 for k in ("native_archive_sha256","native_cli_sha256")); '
-             'assert "/v"+s["base_version"]+"/" in s["native_archive_url"]; '
-             'assert all(hashlib.sha256(s[k].read_bytes()).hexdigest()==s[k.replace("_file","_sha256")] '
-             'for k in ("patch_file","security_patch_file","router_patch_file","stop_patch_file","qwen35_patch_file")); '
-             'print("native patch assets ok")'], env)
-    check(r.returncode == 0 and 'native patch assets ok' in r.stdout,
-          'native loader/security patches and their pins ship without the checkout', r.stderr[-300:])
-    r = run([str(venv / 'bin/python3'), '-c',
-             'from ailocal import policy; s=policy.documentation_servers(); '
-             'assert set(s)=={"claude-code-docs","openai-docs","microsoft-learn"}; '
-             'assert all(url.startswith("https://") for url in s.values()); '
-             'print("documentation endpoints ok")'], env)
-    check(r.returncode == 0 and 'documentation endpoints ok' in r.stdout,
-          'documentation endpoints resolve from the installed wheel without a checkout', r.stderr[-300:])
-    r = run([str(venv / 'bin/python3'), '-c',
-             'from ailocal import mcp; e=mcp.launch_environment(); '
-             'assert e["LOCAL_RESEARCH_MODEL"] == "ailocal-fast"; '
-             'assert e["LOCAL_RESEARCH_ENABLE_ANSWER"] == "0"; '
-             'assert e["LOCAL_RESEARCH_BRAVE_BUDGET"] == "1000"; '
-             'assert e["LOCAL_RESEARCH_BRAVE_KEY"] == "integration-test-placeholder"; '
-             'print("research launch config ok")'], env)
-    check(r.returncode == 0 and 'research launch config ok' in r.stdout,
-          'research launcher resolves installed policy without a checkout', r.stderr[-300:])
-
-    _suite.section("ORDINARY COMMANDS RUN WITH NO CHECKOUT")
-
-    def ran(name, *args, allow_nonzero=True, timeout=300):
-        r = run([str(ailocal), *args], env, timeout=timeout)
-        blob = r.stdout + r.stderr
-        check(str(source) not in blob,
-              f"`ailocal {name}` reads nothing from the checkout",
-              blob[-300:] if str(source) in blob else "")
-        check("Traceback" not in blob and "No such file or directory" not in blob,
-              f"`ailocal {name}` runs without a missing-file error", blob[-400:])
-        if not allow_nonzero:
-            check(r.returncode == 0, f"`ailocal {name}` exits 0", blob[-400:])
+    def py(code, label):
+        r = run([python, "-c", code], timeout=300, env=env)
+        s.check(r.returncode == 0 and "ok" in r.stdout, label, r.stderr[-400:])
         return r
 
-    r = ran("help", "help", allow_nonzero=False)
-    check("local model runtime" in r.stdout, "help renders from the installed parser")
-    r = ran("profile", "profile", "active-tier", allow_nonzero=False)
-    check(r.stdout.strip() == "64gb", "the active tier reads back from managed state")
-    r = ran("guide", "profile", "guide", "ailocal-cyber", "--tier", "16gb", "--json", allow_nonzero=False)
-    guide = json.loads(r.stdout)['models']['ailocal-cyber']
-    check(guide['model'] == 'qwen3.5:4b-unrestricted-mtp-q4_K_M'
-          and '[REAL]' in guide['evidence'] and '[APPROX]' in guide['evidence']
-          and '0fe4f588e328513e7b55158a699fa68bc55be226ca338714e633569d4d2e5007' in guide['evidence'],
-          'profile model knowledge ships and resolves without the checkout')
-    ran("check", "check")
+    r = py("from ailocal import install, policy; install.provision(install.distribution_source(), "
+           "policy.config_root(), policy.state_root()); print(policy.data_root()); print('ok')",
+           "assets provision into the managed roots from the wheel")
+    data = Path(r.stdout.splitlines()[0]) if r.returncode == 0 else box / "missing"
+    s.check(str(venv) in str(data), "the data root IS the installed package, not a checkout")
+    for rel, label in ((cfg / "profiles/64gb.toml", "profiles land in the config root"),
+                       (data / "deploy/litellm/hooks/tool_gateway.py", "proxy hooks are read from the wheel"),
+                       (data / "integrations/local-research/server.py", "research MCP source ships in the wheel")):
+        s.check(rel.is_file(), label)
+    # `install` would migrate and generate these; this suite never runs it. BRAVE_API is
+    # a placeholder: no search is issued, so no quota is spent.
+    (state / "active-profile").write_text("64gb\n")
+    for path, body in ((state / "env", "LITELLM_MASTER_KEY=sk-integration-test-only\nSEARXNG_SECRET=integration-test-only\n"),
+                       (cfg / ".env.local", "BRAVE_API=integration-test-placeholder\n"
+                                            "OLLAMA_URL=http://host.docker.internal:11434\n")):
+        path.write_text(body)
+        path.chmod(0o600)
+
+    shutil.rmtree(source)
+    s.check(not source.exists(), "the source checkout is gone")
+    py("from ailocal import policy, model_sources; assert all(policy.resolve_role(t, 'cyber')['model'] "
+       "in policy.required_models(t) for t in policy.TIERS); print('ok')",
+       "profiles and the model importer resolve without a checkout")
+    py("import hashlib; from ailocal import policy; s = policy.ollama_patch_spec(); "
+       "assert all(len(s[k]) == 64 for k in ('native_archive_sha256', 'native_cli_sha256')); "
+       "assert '/v' + s['base_version'] + '/' in s['native_archive_url']; "
+       "assert all(hashlib.sha256(s[k].read_bytes()).hexdigest() == s[k.replace('_file', '_sha256')] for k in "
+       "('patch_file', 'security_patch_file', 'router_patch_file', 'stop_patch_file', 'qwen35_patch_file')); "
+       "print('ok')", "native runtime patches and their pins ship without the checkout")
+    py("from ailocal import mcp; e = mcp.launch_environment(); "
+       "assert (e['LOCAL_RESEARCH_MODEL'], e['LOCAL_RESEARCH_ENABLE_ANSWER'], e['LOCAL_RESEARCH_BRAVE_BUDGET'], "
+       "e['LOCAL_RESEARCH_BRAVE_KEY']) == ('ailocal-fast', '0', '1000', 'integration-test-placeholder'); "
+       "print('ok')", "the research launcher resolves installed policy")
+
+    s.section("ORDINARY COMMANDS RUN WITH NO CHECKOUT")
+
+    def cli(*args, must_pass=True, timeout=300):
+        r = run([str(ailocal), *args], timeout=timeout, env=env)
+        blob, name = r.stdout + r.stderr, " ".join(args[:2])
+        s.check(str(source) not in blob and "Traceback" not in blob and "No such file or directory" not in blob,
+                f"`ailocal {name}` runs without the checkout or a missing-file error", blob[-400:])
+        if must_pass:
+            s.check(r.returncode == 0, f"`ailocal {name}` exits 0", blob[-400:])
+        return r
+
+    s.check("local model runtime" in cli("help").stdout, "help renders from the installed parser")
+    s.check(cli("profile", "active-tier").stdout.strip() == "64gb", "the active tier reads back from managed state")
+    r = cli("profile", "guide", "ailocal-cyber", "--tier", "16gb", "--json")
+    try:
+        guide = json.loads(r.stdout)["models"]["ailocal-cyber"]
+    except (ValueError, KeyError):
+        guide = {"model": None, "evidence": ""}
+    s.check(guide["model"] == "qwen3.5:4b-unrestricted-mtp-q4_K_M"
+            and all(t in guide["evidence"] for t in ("[REAL]", "[APPROX]",
+                    "0fe4f588e328513e7b55158a699fa68bc55be226ca338714e633569d4d2e5007")),
+            "profile model knowledge ships and resolves")
+    cli("check", must_pass=False)
 
     if want_stack:
-        _suite.section("THE STACK COMES UP FROM MANAGED ASSETS")
-        codex = Path(env["XDG_CONFIG_HOME"]) / "ailocal/codex"
-        codex.mkdir(parents=True, exist_ok=True)
+        s.section("THE STACK COMES UP FROM MANAGED ASSETS")
+        codex = roots["AILOCAL_CLIENTS"] / "codex"
+        codex.mkdir(exist_ok=True)
         for name in ("plan", "cyber"):
-            (codex / f"{name}.config.toml").write_text(
-                '# Generated by ailocal. Do not edit.\nmodel = "old"\n')
+            (codex / f"{name}.config.toml").write_text('# Generated by ailocal. Do not edit.\nmodel = "old"\n')
         authored = codex / "review.config.toml"
         authored.write_text('model = "operator-choice"\n')
-        # `start` is the only thing that regenerates, so this is the first point
-        # at which generated state exists at all.
-        ran("start", "start", timeout=600)
-        check(not (codex / "plan.config.toml").exists()
-              and not (codex / "cyber.config.toml").exists(),
-              "installed start retires generated launch presets")
-        check(authored.read_text() == 'model = "operator-choice"\n',
-              "installed start preserves an authored native profile")
-        check((state / "litellm" / "config.yaml").is_file(),
-              "start generates into the managed state root")
-        import time
-        ok = False
+        cli("start", must_pass=False, timeout=600)
+        s.check(not any((codex / f"{n}.config.toml").exists() for n in ("plan", "cyber")),
+                "start retires generated launch presets")
+        s.check(authored.read_text() == 'model = "operator-choice"\n', "start preserves an authored native profile")
+        s.check((state / "litellm/config.yaml").is_file(), "start generates into the managed state root")
+        container = f"{PROJECT}-litellm"
+        healthy, detail = False, ""
         for _ in range(40):
-            probe = subprocess.run(
-                ["docker", "inspect", f"{PROJECT}-litellm",
-                 "--format", "{{.State.Health.Status}}"],
-                capture_output=True, text=True)
-            if probe.stdout.strip() == "healthy":
-                ok = True
+            if run(["docker", "inspect", container, "--format", "{{.State.Health.Status}}"]).stdout.strip() == "healthy":
+                healthy = True
                 break
             time.sleep(3)
-        detail = ""
-        if not ok:
-            # A health failure is useless without the reason, and the container
-            # is removed moments later by `stop`.
-            # NOT `state` — that name is the state root, and rebinding it here
-            # destroys the path every later assertion needs.
-            inspected = subprocess.run(
-                ["docker", "inspect", f"{PROJECT}-litellm", "--format",
-                 "{{.State.Status}} {{.State.ExitCode}} "
-                 "{{range .State.Health.Log}}{{.Output}}{{end}}"],
-                capture_output=True, text=True).stdout
-            logs = subprocess.run(["docker", "logs", "--tail", "25",
-                                   f"{PROJECT}-litellm"],
-                                  capture_output=True, text=True)
-            detail = (inspected + "\n" + logs.stdout + logs.stderr)[-1200:]
-        check(ok, "the isolated proxy becomes healthy", detail)
-        ran("status", "status")
-        ran("stop", "stop", timeout=300)
-        gone = subprocess.run(["docker", "ps", "-a", "--format", "{{.Names}}"],
-                              capture_output=True, text=True).stdout
-        check(f"{PROJECT}-litellm" not in gone, "the isolated stack is removed")
-
-    shutil.rmtree(box, ignore_errors=True)
-    sys.exit(_suite.report())
+        if not healthy:  # capture the reason before stop removes the container
+            logs = run(["docker", "logs", "--tail", "25", container])
+            detail = (run(["docker", "inspect", container, "--format",
+                           "{{.State.Status}} {{range .State.Health.Log}}{{.Output}}{{end}}"]).stdout
+                      + logs.stdout + logs.stderr)[-1200:]
+        s.check(healthy, "the isolated proxy becomes healthy", detail)
+        cli("status", must_pass=False)
+        cli("stop", must_pass=False)
+        s.check(container not in run(["docker", "ps", "-a", "--format", "{{.Names}}"]).stdout,
+                "the isolated stack is removed")
+    return s.report()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

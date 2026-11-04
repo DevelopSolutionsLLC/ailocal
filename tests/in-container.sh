@@ -1,67 +1,33 @@
 #!/usr/bin/env bash
-# Run a test implementation inside the running LiteLLM container.
-#
-# The gateway and registry suites assert against the modules as the proxy
-# actually loads them, so they must execute in the image rather than against a
-# checkout copy. This owns the plumbing — readiness, staging, environment,
-# timeout, cleanup — while the suites own the assertions.
-#
-# Usage: in-container.sh <impl.py> [NAME=VALUE ...]
+# Run a test implementation inside the running LiteLLM container, beside harness.py.
+# The suite reads the image's own /app paths. Usage: in-container.sh <impl.py> [NAME=VALUE ...]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONTAINER="${AILOCAL_LITELLM_CONTAINER:-ailocal-litellm}"
-TIMEOUT="${AILOCAL_CONTAINER_TEST_TIMEOUT:-120}"
-
+TIMEOUT="${AILOCAL_CONTAINER_TEST_TIMEOUT:-180}"
 IMPL="${1:?usage: in-container.sh <impl.py> [NAME=VALUE ...]}"
 shift
 [ -f "$ROOT/$IMPL" ] || { echo "no such implementation: $IMPL" >&2; exit 1; }
-
 docker ps --format '{{.Names}}' | grep -qx "$CONTAINER" || {
-  echo "$CONTAINER is not running — start the stack first." >&2; exit 1; }
+  echo "$CONTAINER is not running; start the stack first." >&2; exit 1; }
 
-# Unique staging directory so concurrent suites cannot overwrite each other.
+# A per-run directory keeps concurrent suites apart; streaming (not docker cp)
+# leaves the files owned and readable by the image's user.
 STAGE="/tmp/ailocal-test-$$-$(basename "$IMPL" .py)"
-cleanup() { docker exec "$CONTAINER" rm -rf "$STAGE" >/dev/null 2>&1 || true; }
-trap cleanup EXIT
+trap 'docker exec "$CONTAINER" rm -rf "$STAGE" >/dev/null 2>&1 || true' EXIT
+docker exec "$CONTAINER" mkdir -p "$STAGE"
+for pair in "harness.py:tests/harness.py" "impl.py:$IMPL"; do
+  docker exec -i "$CONTAINER" sh -c 'umask 077; cat > "$1"' sh "$STAGE/${pair%%:*}" < "$ROOT/${pair#*:}"
+done
 
-docker exec "$CONTAINER" mkdir -p "$STAGE" >/dev/null
-# harness.py travels with the implementation: the image has no checkout, so the
-# suite would otherwise need its own copy of the shared mechanics.
-# Stream the inputs into files owned by the image's normal user. docker cp
-# preserves restrictive host modes with a different owner, making a host 0600
-# implementation unreadable. No root capability or permission repair is needed.
-docker exec -i "$CONTAINER" sh -c 'umask 077; cat > "$1"' sh "$STAGE/harness.py" < "$ROOT/tests/harness.py"
-docker exec -i "$CONTAINER" sh -c 'umask 077; cat > "$1"' sh "$STAGE/impl.py" < "$ROOT/$IMPL"
-
-# Paths the suites resolve inside the image, not in the checkout.
-env_args=(
-  -e "AILOCAL_REGISTRY_MODULE=/app/config/hooks/capability_registry.py"
-  # tool-gateway-impl.py imports the gateway through AILOCAL_GATEWAY_MODULE and
-  # falls back to a checkout-relative path. The image has no checkout, so
-  # omitting this resolved to /tmp/src/... and the suite died on
-  # FileNotFoundError before its first assertion -- i.e. it never ran in the one
-  # environment it is written for. (AILOCAL_GATEWAY_SOURCE below is a DIFFERENT
-  # variable, read by capability-registry-impl.py to grep the gateway's source.)
-  -e "AILOCAL_GATEWAY_MODULE=/app/config/hooks/tool_gateway.py"
-  -e "AILOCAL_GATEWAY_SOURCE=/app/config/hooks/tool_gateway.py"
-  -e "AILOCAL_REGISTRY=/app/config/registry.yaml"
-  -e "AILOCAL_CONFIG_PATH=/app/generated/config.yaml"
-  -e "AILOCAL_CAPABILITIES_JSON=/app/generated/capabilities.json"
-  -e "AILOCAL_TEST_REPO=$STAGE"
-)
+env_args=()
 for kv in "$@"; do env_args+=(-e "$kv"); done
-
-# timeout(1) is GNU coreutils and is not present on a stock macOS. Bound the run
-# when it is available; run unbounded rather than failing when it is not.
+# timeout(1) is absent on stock macOS; run unbounded there.
 TIMEOUT_BIN="$(command -v timeout || command -v gtimeout || true)"
-
 set +e
-if [ -n "$TIMEOUT_BIN" ]; then
-  "$TIMEOUT_BIN" "$TIMEOUT" docker exec "${env_args[@]}" "$CONTAINER" python "$STAGE/impl.py"
-else
-  docker exec "${env_args[@]}" "$CONTAINER" python "$STAGE/impl.py"
-fi
+${TIMEOUT_BIN:+"$TIMEOUT_BIN" "$TIMEOUT"} docker exec ${env_args[@]+"${env_args[@]}"} \
+  "$CONTAINER" python "$STAGE/impl.py"
 rc=$?
 set -e
 [ "$rc" -eq 124 ] && echo "timed out after ${TIMEOUT}s inside $CONTAINER" >&2

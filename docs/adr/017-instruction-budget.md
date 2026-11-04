@@ -15,13 +15,15 @@ In each failing run the model then replied "DONE". Claude Code reports a headles
 1. **Each product enforces its own side; neither requires the other.**
    - ailocal publishes `instructions.<client>.max_bytes` (contract schema 3) from `[claude]`/`[codex] instruction_max_bytes` in `clients.toml`, default 4096. It is a measured fact about its models, not a policy for anyone's content.
    - Cadence, when a root publishes a budget, composes a compact policy for it and refuses to write a file over budget (cadence#64). Without a budget, or without ailocal, it composes exactly as before.
-   - `ailocal check` warns about an instruction file over budget in its roots, whoever wrote it, naming the owner from the file's header. It never rewrites the file.
+   - `ailocal check` warns when the always-on instructions in its roots exceed the budget, whoever wrote them, naming the file's owner from its header. It never rewrites the file. In the Claude root that total includes the guide hook's SessionStart output for the launch-default model, because Claude Code adds it to the same context; the check also reports the larger output printed when the event names no model.
 2. **`claude-local` defaults `autoMemoryEnabled: false`** in its own settings root, as delegation already did; an explicit operator setting wins. Hosted `~/.claude` is untouched.
 3. **Delegated Claude runs with `--permission-prompts none`**, which tells the model that nobody can approve a denied call and not to retry it, and the result reports `permission_denials` (tool and clipped target). A reply claiming success beside refused writes is shown as such; ailocal still makes no task-success verdict.
 
 ## Consequences
 
 The full policy stays available to hosted clients; local models receive a compact form sized to what they handle. A Cadence without schema-3 support fails closed on the new contract, leaving its ailocal targets `BLOCKED` until upgraded; ailocal itself is unaffected. Codex denials remain invisible where its JSON stream omits them, so the Codex result reports none; that limit is upstream's.
+
+[REAL 2026-11-04, shipped profiles] The guide hook prints 2,092–3,087 bytes for a named model and 6,994–9,544 bytes when the event names none, so a CLAUDE.md that Cadence fits to 4,096 bytes still leaves the always-on total over budget. Cadence enforces the published budget on the file it composes; the hook payload is ailocal's to reduce or to measure a larger budget for.
 
 ## Alternatives
 

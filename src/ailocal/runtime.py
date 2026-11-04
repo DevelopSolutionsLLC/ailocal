@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import time
+import tomllib
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -576,11 +577,8 @@ def _dashboard() -> None:
         "Claude Code   configured, isolated from ~/.claude"
         if (client_root / "claude" / ".claude.json").is_file()
         else "Claude Code   not installed")
-    (ok if (client_root / "codex" / "config.toml").is_file() else bad)(
-        "Codex CLI     configured  (MCP registered, NOT reachable: "
-        "docs/troubleshooting.md)"
-        if (client_root / "codex" / "config.toml").is_file()
-        else "Codex CLI     not installed")
+    codex = codex_status(client_root / "codex" / "config.toml")
+    (ok if codex else bad)(codex or "Codex CLI     not installed")
     if _vscode_provider():
         ok("VS Code       native provider configured  (chat turn unverified — needs GUI)")
     else:
@@ -588,6 +586,23 @@ def _dashboard() -> None:
 
     hdr("Models")
     _verbose()
+
+
+def codex_status(config: Path) -> str:
+    """The Codex dashboard line, from what `config` registers; "" when absent.
+
+    Registration is read, not probed: a server that is listed may still fail
+    to start, so the line says so instead of claiming either outcome (#43).
+    """
+    if not config.is_file():
+        return ""
+    try:
+        servers = sorted(tomllib.loads(config.read_text(encoding="utf-8")).get("mcp_servers") or {})
+    except (OSError, ValueError):
+        return "Codex CLI     configured  (config.toml unreadable)"
+    if not servers:
+        return "Codex CLI     configured  (no MCP servers registered)"
+    return f"Codex CLI     configured  (MCP registered: {', '.join(servers)}; not probed)"
 
 
 def _table() -> None:

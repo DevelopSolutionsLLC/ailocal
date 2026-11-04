@@ -11,8 +11,8 @@ The three clients do not share a config format, so nothing here is generalised
 into a templating engine. What they do share — backups, the managed-directory
 contract, the shell sourcing, the key — lives once, at the top.
 
-Hosted roots receive only public documentation MCP registrations through the
-native CLIs. Their model, authentication and instruction settings remain theirs.
+Hosted Claude and Codex roots are never written. Public documentation MCPs are
+Cadence's to register (servers.yaml), in hosted and local roots alike.
 """
 from __future__ import annotations
 
@@ -79,66 +79,6 @@ def report_missing(names) -> None:
         label, how = CLIENTS[n]
         print(f"    {label:14} {how}")
     print("  Install any of them, then re-run: ailocal clients")
-
-
-def provision_documentation(names=("claude", "codex")) -> bool:
-    """Register public docs with native CLIs in hosted and isolated roots.
-
-    No config writer, relay, credentials or inference service. An existing
-    same-name server with a different transport/URL is preserved and reported.
-    """
-    success = True
-    endpoints = policy.documentation_servers()
-    for client in names:
-        if client not in ("claude", "codex") or not present(client):
-            continue
-        for local in (False, True):
-            label = client + ("-local" if local else "")
-            path = policy.client_mcp_path(client, local=local)
-            env = dict(os.environ)
-            if local:
-                env["CODEX_HOME" if client == "codex" else "CLAUDE_CONFIG_DIR"] = str(path.parent)
-            for name, url in endpoints.items():
-                try:
-                    def read_entry():
-                        if not path.exists():
-                            return None
-                        if client == "codex":
-                            data = tomllib.loads(path.read_text(encoding="utf-8"))
-                            return data.get("mcp_servers", {}).get(name)
-                        data = json.loads(path.read_text(encoding="utf-8"))
-                        return data.get("mcpServers", {}).get(name)
-
-                    def matches(entry):
-                        return (isinstance(entry, dict) and entry.get("url") == url
-                                and "command" not in entry
-                                and (client == "codex" or entry.get("type") == "http"))
-
-                    existing = read_entry()
-                    if existing is not None and not matches(existing):
-                        warn(f"{label}: {name} MCP collision; existing registration preserved")
-                        success = False
-                        continue
-                    if existing is not None:
-                        continue
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    if client == "codex":
-                        command = ["codex", "mcp", "add", name, "--url", url]
-                    else:
-                        command = ["claude", "mcp", "add-json", "--scope", "user", name,
-                                   json.dumps({"type": "http", "url": url})]
-                    result = subprocess.run(command, env=env, capture_output=True,
-                                            text=True, timeout=30)
-                    if result.returncode or not matches(read_entry()):
-                        raise ValueError("native registration did not persist")
-                except (OSError, ValueError, TypeError, AttributeError, subprocess.SubprocessError):
-                    # Native stderr and config can contain account details; keep
-                    # diagnostics scoped to the failed server and recovery command.
-                    warn(f"{label}: {name} documentation MCP registration failed; "
-                         f"run ailocal clients {client} after correcting the client config")
-                    success = False
-            info(f"{label}: documentation MCP registrations checked")
-    return success
 
 
 #: The registration name in the roots ailocal owns. NOT `local-agent`: that name
@@ -529,6 +469,9 @@ def _vscode_app() -> Path | None:
 
 
 def _vscode_user_dir() -> Path | None:
+    """AILOCAL_VSCODE_USER overrides the search, so tests isolate VS Code without changing HOME."""
+    if os.environ.get("AILOCAL_VSCODE_USER"):
+        return Path(os.environ["AILOCAL_VSCODE_USER"])
     for candidate in (Path.home() / "Library/Application Support/Code/User",
                       Path.home() / ".config/Code/User"):
         if candidate.is_dir():
@@ -1318,7 +1261,6 @@ def main(argv: list[str]) -> int:
         print("Dry run: would regenerate client configuration, update shell launchers,")
         print(f"and configure {', '.join(selected)} under {policy.deployed_client_root()}.")
         if any(name in ("claude", "codex") for name in selected):
-            print("Would also register public documentation MCPs in hosted and local Claude/Codex roots.")
             print("Would also register the agent MCP (delegate to ailocal-cyber) in the claude-local and codex-local roots only.")
         print("No files, extensions, plugins or MCP registrations were changed.")
         return 0
@@ -1335,8 +1277,6 @@ def main(argv: list[str]) -> int:
     for name in selected:
         _TARGETS[name]()
 
-    if not provision_documentation(selected):
-        return 1
     if not provision_local_agent([n for n in selected if n in ("claude", "codex")]):
         return 1
 

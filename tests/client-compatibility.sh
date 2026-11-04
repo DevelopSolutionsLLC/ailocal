@@ -1,182 +1,114 @@
 #!/usr/bin/env bash
-# test-client-compatibility.sh — Phase H. Prove the gateway is transparent to
-# every client dialect it sits behind, in every mode.
-#
-# The premise is that these clients do NOT behave identically, so nothing here is
-# generalised from one route to another: each dialect is exercised on its own
-# endpoint, with its own tool envelope, and asserted separately.
-#
-# The property under test is TRANSPARENCY, not reduction. A gateway that cuts the
-# payload but breaks a client is a regression. So every case asserts the request
-# still succeeds and still yields a usable response, in off / report / filter.
-#
-# HONEST SCOPE — read this before trusting a green run:
-#   Claude Code  /v1/messages          real captured payload shape, real route
-#   Codex        /v1/responses         real captured payload shape, real route
-#   VS Code      /v1/chat/completions  route + headers exercised with a
-#                                      SYNTHESISED payload. No real VS Code
-#                                      session has been captured, so the client
-#                                      profile drops nothing and this proves the
-#                                      route works, NOT that the profile is right.
-#
-# Usage: ./tests/client-compatibility.sh
+# The gateway is transparent to each client dialect in every AILOCAL_TOOL_GATEWAY mode
+# (off/report/filter): each request still succeeds with a usable response. Run by
+# `gate.py --full`; recreates the LiteLLM container named by AILOCAL_LITELLM_CONTAINER.
+# Claude Code and Codex payloads are real captured shapes; the VS Code payload is
+# SYNTHESISED, so it proves the route and headers, not the VS Code client profile.
 set -uo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/harness.sh"
-ROOT="$ROOT_DIR"
-cd "$ROOT" || exit 1
-# The composition has one owner; drive it through the command, not a
-# second definition of the Compose invocation.
-dc() { "$ROOT/ailocal" compose "$@"; }
+cd "$ROOT_DIR" || exit 1
+export PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
 
 PROXY="${AILOCAL_PROXY:-http://127.0.0.1:4000}"
-ENV_FILE="$(ailocal profile state-root)/env"
-KEY="$(grep -E '^LITELLM_MASTER_KEY=' "$ENV_FILE" 2>/dev/null | cut -d= -f2-)"
-[ -n "$KEY" ] || { echo "No LITELLM_MASTER_KEY in $ENV_FILE"; exit 1; }
+C="${AILOCAL_LITELLM_CONTAINER:-ailocal-litellm}"
+KEY="$(python3 -c 'from ailocal import environment; print(environment.value("LITELLM_MASTER_KEY"))')"
+[ -n "$KEY" ] || { echo "FAIL  no LITELLM_MASTER_KEY in the ailocal environment"; exit 1; }
+ORIGINAL_MODE="$(docker exec "$C" printenv AILOCAL_TOOL_GATEWAY 2>/dev/null || echo off)"
+TMP="$(mktemp -d)"
 
-ORIGINAL_MODE="$(docker exec ailocal-litellm printenv AILOCAL_TOOL_GATEWAY 2>/dev/null || echo off)"
-
+compose() { python3 -c 'import sys; from ailocal import runtime; runtime.compose(*sys.argv[1:])' "$@"; }
+wait_healthy() {
+  for _ in $(seq 1 40); do
+    [ "$(docker inspect "$C" --format '{{.State.Health.Status}}' 2>/dev/null)" = healthy ] && return 0
+    sleep 3
+  done
+  return 1
+}
 restore() {
   local rc=$?
-  echo
   echo "==> restoring AILOCAL_TOOL_GATEWAY=$ORIGINAL_MODE"
-  AILOCAL_TOOL_GATEWAY="$ORIGINAL_MODE" dc up -d >/dev/null 2>&1 || true
-  for _ in $(seq 1 40); do
-    [ "$(docker inspect ailocal-litellm --format '{{.State.Health.Status}}' \
-        2>/dev/null || echo none)" = healthy ] && break
-    sleep 3
-  done
+  AILOCAL_TOOL_GATEWAY="$ORIGINAL_MODE" compose up -d >/dev/null 2>&1; wait_healthy
   exit $rc
 }
-# Chain the harness cleanup: replacing its EXIT trap outright would silently
-# leak any temp_dir() this suite later adopts (see harness.sh).
-trap '_harness_cleanup; restore' EXIT INT TERM
+trap 'rm -rf "$TMP"; restore' EXIT INT TERM
 
 set_mode() {
-  AILOCAL_TOOL_GATEWAY="$1" dc up -d >/dev/null 2>&1
-  for _ in $(seq 1 40); do
-    [ "$(docker inspect ailocal-litellm --format '{{.State.Health.Status}}')" \
-      = healthy ] && break
-    sleep 3
-  done
-  local got
-  got="$(docker exec ailocal-litellm printenv AILOCAL_TOOL_GATEWAY)"
-  [ "$got" = "$1" ] || { echo "mode did not take effect: wanted $1 got $got"; exit 1; }
+  AILOCAL_TOOL_GATEWAY="$1" compose up -d >/dev/null 2>&1; wait_healthy
+  local got; got="$(docker exec "$C" printenv AILOCAL_TOOL_GATEWAY)"
+  [ "$got" = "$1" ] || { echo "FAIL  mode did not take effect: wanted $1 got $got"; exit 1; }
 }
 
-
-# ── the three dialects, as their real clients send them ─────────────────────
+OK_PROMPT='"Reply with the single word OK."'
 claude_code() {  # /v1/messages, Anthropic tool envelope
-  curl -s -m 180 "$PROXY/v1/messages" \
-    -H "x-api-key: $KEY" -H 'anthropic-version: 2023-06-01' \
+  curl -s -m 180 "$PROXY/v1/messages" -H "x-api-key: $KEY" -H 'anthropic-version: 2023-06-01' \
     -H 'content-type: application/json' -H 'user-agent: claude-cli/2.0.0 (cli)' \
-    -d '{"model":"ailocal-architecture","max_tokens":16,
-         "messages":[{"role":"user","content":"Reply with the single word OK."}],
+    -d '{"model":"ailocal-architecture","max_tokens":16,"messages":[{"role":"user","content":'"$OK_PROMPT"'}],
          "tools":[
            {"name":"Read","description":"Read a file","input_schema":{"type":"object","properties":{"path":{"type":"string"}},"$schema":"https://json-schema.org/draft/2020-12/schema"}},
            {"name":"Workflow","description":"Orchestrate a long multi-step workflow","input_schema":{"type":"object"}},
            {"name":"mcp__lsp__get_hover","description":"Hover","input_schema":{"type":"object"}},
            {"type":"web_search"}]}'
 }
-
 codex() {  # /v1/responses, function + namespace + custom envelopes
-  curl -s -m 180 "$PROXY/v1/responses" \
-    -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \
+  curl -s -m 180 "$PROXY/v1/responses" -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \
     -H 'originator: codex_cli_rs' \
     -d '{"model":"ailocal-architecture","max_output_tokens":16,
-         "input":[{"type":"message","role":"user","content":"Reply with the single word OK."}],
+         "input":[{"type":"message","role":"user","content":'"$OK_PROMPT"'}],
          "tools":[
            {"type":"function","name":"exec_command","description":"Run a command","parameters":{"type":"object","properties":{"cmd":{"type":"string"}}}},
            {"type":"custom","name":"apply_patch","description":"Apply a patch"},
            {"type":"namespace","name":"multi_agent_v1","description":"Spawn sub-agents","tools":[{"name":"spawn"}]},
            {"type":"web_search"}]}'
 }
-
 vscode() {  # /v1/chat/completions, OpenAI nested-function envelope
-  curl -s -m 180 "$PROXY/v1/chat/completions" \
-    -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \
+  curl -s -m 180 "$PROXY/v1/chat/completions" -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \
     -H 'user-agent: vscode-copilot-chat/1.0' \
-    -d '{"model":"ailocal-architecture","max_tokens":16,
-         "messages":[{"role":"user","content":"Reply with the single word OK."}],
+    -d '{"model":"ailocal-architecture","max_tokens":16,"messages":[{"role":"user","content":'"$OK_PROMPT"'}],
          "tools":[
            {"type":"function","function":{"name":"Read","description":"Read a file","parameters":{"type":"object","properties":{"path":{"type":"string"}}}}},
            {"type":"function","function":{"name":"Workflow","description":"Orchestrate","parameters":{"type":"object"}}}]}'
 }
 
-# A usable response, per dialect. Written to a FILE rather than run as a
-# heredoc: `python3 <<PY` makes the heredoc itself stdin, so sys.stdin.read()
-# saw nothing and every probe reported "unparseable" while the requests were in
-# fact succeeding. A checker that cannot read its input fails every case
-# identically, which looks like a broken system rather than a broken checker.
-cat > /tmp/ailocal-hascontent.py <<'PY'
+# A file, not `python3 <<PY`: a heredoc becomes stdin and the checker read nothing.
+cat > "$TMP/has_content.py" <<'PY'
 import json, sys
 raw = sys.stdin.read()
 try:
     d = json.loads(raw)
-except Exception:
-    print("unparseable: " + raw[:160]); raise SystemExit(1)
-if isinstance(d, dict) and d.get("error"):
-    print("error: " + str(d["error"])[:160]); raise SystemExit(1)
-if d.get("content"):                       # Anthropic /v1/messages
-    raise SystemExit(0)
-if d.get("choices"):                       # Chat Completions
-    raise SystemExit(0)
-if d.get("output") is not None or d.get("status"):   # Responses
-    raise SystemExit(0)
-print("no recognisable content: " + str(d)[:160])
-raise SystemExit(1)
+except ValueError:
+    sys.exit("unparseable: " + raw[:160])
+if not isinstance(d, dict) or d.get("error"):
+    sys.exit("error: " + str(d)[:160])
+if not (d.get("content") or d.get("choices") or d.get("output") is not None or d.get("status")):
+    sys.exit("no recognisable content: " + str(d)[:160])
 PY
-
-has_content() { python3 /tmp/ailocal-hascontent.py; }
-
-probe() { # $1=label $2=fn
-  local out why
-  out="$($2)"
-  if why="$(printf '%s' "$out" | has_content 2>&1)"; then
-    ok "$1"
-  else
-    bad "$1 — $why"
-  fi
+probe() {  # probe <label> <fn>
+  local why
+  if why="$($2 | python3 "$TMP/has_content.py" 2>&1)"; then ok "$1"; else bad "$1 — $why"; fi
 }
 
 for m in off report filter; do
-  echo
-  echo "=== AILOCAL_TOOL_GATEWAY=$m ==="
+  section "=== AILOCAL_TOOL_GATEWAY=$m ==="
   set_mode "$m"
   probe "Claude Code  /v1/messages          [REAL payload shape]" claude_code
   probe "Codex        /v1/responses         [REAL payload shape]" codex
   probe "VS Code      /v1/chat/completions  [SYNTHESISED payload]" vscode
 done
 
-# ── what the gateway decided, per dialect, in filter mode ───────────────────
-echo
-echo "=== negotiation decisions in filter mode ==="
-set_mode filter
+section "=== negotiation decisions in filter mode ==="
 SINCE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"; sleep 1
 claude_code >/dev/null; codex >/dev/null; vscode >/dev/null
-cat > /tmp/ailocal-decisions.py <<'PY'
-import sys, json
-seen = 0
-for line in sys.stdin:
-    if "tool_gateway_metric " not in line:
-        continue
-    d = json.loads(line.split("tool_gateway_metric ", 1)[1])
-    if d.get("event"):
-        continue
-    seen += 1
-    base = d["bytes_reachable"] or 1
-    got = d["bytes_kept_reachable"]
-    cut = 100 * (base - got) / base
-    print("  {:12} {:22} tools {}->{}  model got {}/{} B ({:.0f}% cut)  dropped={}".format(
-        d["client"], d["route"], d["tools_in"], d["tools_kept"], got, base, cut,
-        d["dropped_names"]))
-if seen != 3:
-    print("  WARNING: expected 3 metric records, saw {}".format(seen))
+cat > "$TMP/decisions.py" <<'PY'
+import json, sys
+rows = [json.loads(l.split("tool_gateway_metric ", 1)[1]) for l in sys.stdin if "tool_gateway_metric " in l]
+rows = [d for d in rows if not d.get("event")]
+for d in rows:
+    base, got = d["bytes_reachable"] or 1, d["bytes_kept_reachable"]
+    print(f"  {d['client']:12} {d['route']:22} tools {d['tools_in']}->{d['tools_kept']}  model got {got}/{base} B "
+          f"({100 * (base - got) / base:.0f}% cut)  dropped={d['dropped_names']}")
+if len(rows) != 3:
+    print(f"  WARNING: expected 3 metric records, saw {len(rows)}")
 PY
-docker logs --since "$SINCE" ailocal-litellm 2>&1 | python3 /tmp/ailocal-decisions.py
+docker logs --since "$SINCE" "$C" 2>&1 | python3 "$TMP/decisions.py"
 
-report "CLIENT COMPATIBILITY" || exit 1
-echo
-echo "SCOPE: the VS Code payload is SYNTHESISED. Its route and headers are"
-echo "proven; its client profile is not validated against a real session and"
-echo "therefore drops nothing. Capture a real VS Code payload before trusting"
-echo "any VS Code-specific filtering."
+report "CLIENT COMPATIBILITY"

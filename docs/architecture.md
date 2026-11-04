@@ -70,7 +70,6 @@ The complete on-disk footprint of `ailocal install` and the optional `ailocal cl
 | `litellm/config.yaml`, `litellm/capabilities.json` | `generation` | Bind-mounted into the proxy container. |
 | `litellm-config.sha` | `runtime` | Restart fingerprint. *(start path)* |
 | `searxng/settings.yml` | `runtime` | Rendered from the shipped template; may carry the GitHub search token, parent dir 0700. *(start path)* |
-| `agents/preload.sh` | `install` | Program for the preload LaunchAgent. Resolves the model tag at run time so it can never warm a stale one. *(launchd path)* |
 | `model-sources/imports.json` | `install` | Receipts binding each imported `name:tag` to its pinned source and the manifest Ollama created; a changed pin or replaced manifest means re-import. |
 | `local-agent/` | agent MCP | The owned empty working directory for `text` and `research` delegations, and private session bindings (identity and permissions only, no transcripts), 0700. |
 | `local-research/` | research MCP | Bounded SQLite caches of search responses and page text, and the Brave request ledger. |
@@ -93,7 +92,7 @@ Codex's `config.toml` is co-owned: regeneration preserves native trust records, 
 
 | Path | Written by | Notes |
 |---|---|---|
-| `~/Library/LaunchAgents/com.ailocal.{ollama,ollama-env,preload}.plist` | `install` | Bootstrapped into the GUI domain. `ailocal teardown` removes them. *(launchd path)* |
+| `~/Library/LaunchAgents/com.ailocal.{ollama,ollama-env}.plist` | `install` | Bootstrapped into the GUI domain. `ailocal teardown` removes them. The installer retires the former preload agent so no model warms at login. *(launchd path)* |
 | `~/Library/Logs/ailocal/*.log` | launchd | stdout/stderr of the agents above. *(launchd path)* |
 | `/Users/Shared/ollama/models` | `install` | Shared model store, group-writable + setgid. Existing `~/.ollama/models` is *moved* here (rename, one file at a time) before `OLLAMA_MODELS` is repointed. *(launchd path)* |
 | `~/.zshrc` | `clients` | Exactly two marker-commented lines (`# ailocal-configure` first, `# ailocal-finalize` last), inserted idempotently after a timestamped backup. |
@@ -104,7 +103,7 @@ Codex's `config.toml` is co-owned: regeneration preserves native trust records, 
 
 `~/.zshrc` is created if absent and backed up (`.zshrc.bak.<timestamp>`, newest 3 kept) before either line is inserted.
 
-Hosted roots receive only public documentation MCP registrations through the native Claude/Codex CLIs. The bundled delegation server is registered as `agent` in the isolated Claude/Codex roots and in VS Code's and Copilot's user MCP configuration; hosted delegation is Cadence's `local-agent` declaration, which carries an owner marker its uninstall can prove. The names differ because Cadence drops a declared name from every client it is not scoped to — the same split as `research` and `local-research`. The shipped endpoint list lives in `resources/clients/documentation.toml`, read by `policy.py`; install and client setup share the same idempotent provisioner. Foreign registrations and other client settings are preserved, and registration failures return a nonzero status. Hosted registrations remain after teardown. Isolated roots are reached through `CLAUDE_CONFIG_DIR` / `CODEX_HOME` in the wrappers. `lsp_baseline()` enables the official LSP plugin for each language server already present (Python, TypeScript, Go, C/C++) in the isolated root **only**. Plugin state is per config root.
+ailocal writes no hosted Claude or Codex root; public documentation MCPs are Cadence's to register, in hosted and local roots alike. The bundled delegation server is registered as `agent` in the isolated Claude/Codex roots and in VS Code's and Copilot's user MCP configuration; hosted delegation is Cadence's `local-agent` declaration, which carries an owner marker its uninstall can prove. The names differ because Cadence drops a declared name from every client it is not scoped to — the same split as `research` and `local-research`. Foreign registrations and other client settings are preserved, and registration failures return a nonzero status. Isolated roots are reached through `CLAUDE_CONFIG_DIR` / `CODEX_HOME` in the wrappers. `lsp_baseline()` enables the official LSP plugin for each language server already present (Python, TypeScript, Go, C/C++) in the isolated root **only**. Plugin state is per config root.
 
 **Uninstalling:** `ailocal teardown` (containers + LaunchAgents), delete the two roots, remove the two `~/.zshrc` lines, and optionally `/Users/Shared/ollama/models`. The LSP plugins live in the isolated root and go with it.
 

@@ -4,7 +4,7 @@ base_version = "0.40.8"
 # Why the base is held older than the ≈N-2 policy would pick: read by
 # `ailocal update`, which reports the base's N-position against upstream.
 hold = "the reviewed backport patches (18631, security, router, stop, qwen35-history) target this exact base; a newer base needs them re-applied and the native regression re-run before it can be selected"
-version = "0.40.8-ailocal.18631.4"
+version = "0.40.8-ailocal.18631.5"
 source_commit = "f580b5484a58c8370c35d669555bf887783a3f68"
 source_url = "https://codeload.github.com/ollama/ollama/tar.gz/f580b5484a58c8370c35d669555bf887783a3f68"
 source_sha256 = "3b78aa7e3c95682f41ada1dcbd106567796c9151dfc7758e1ae34a85fc58271a"
@@ -19,7 +19,7 @@ patch_file = "18631.patch"
 patch_sha256 = "aa49870955af7c7278592d1fcb83c48ae65b685f9d050c60daa7f257cc4e6a39"
 upstream_pr = "https://github.com/ollama/ollama/pull/18631"
 security_patch_file = "security.patch"
-security_patch_sha256 = "f0dd8ddb4a7d1ce826f5ddecab84e10da819a6883c59e11249e41b44d8ff7493"
+security_patch_sha256 = "547a73b244d60c3538eeb1bc1e4a5fb7eed23f9e4621ef25d718045d3716bded"
 router_patch_file = "router.patch"
 router_patch_sha256 = "9a2ea86d3c3901c4a0bd2c464d1e5ac0eeeef2e8a69999d0f5f1bd1e872fe881"
 stop_patch_file = "stop.patch"
@@ -36,21 +36,19 @@ qwen35_patch_sha256 = "0b02b79201da852a53111a1a099d49ccabf1fb0b74b4c80227cede80d
 # Preserve those explicit overrides rather than trusting imported global metadata.
 # https://huggingface.co/00cyre/Gemma-4-26B-A4B-it-Uncensored-MLX-4bit/blob/46ab84dbe20198a2ee5e66c3e69c039b8c60ad59/config.json
 
-# 2026-10-23: exact minimum compatible graph for reachable Go advisories.
-# https://pkg.go.dev/vuln/GO-2026-6617 (net); https://pkg.go.dev/vuln/GO-2026-6222 (image)
-# https://pkg.go.dev/vuln/GO-2026-5970 (text); https://pkg.go.dev/vuln/GO-2026-6355 (crypto)
-# net@v0.60.0 requires crypto@v0.57.0, text@v0.42.0, sys@v0.48.0, term@v0.46.0:
-# https://proxy.golang.org/golang.org/x/net/@v/v0.60.0.mod
-# text@v0.42.0 requires the mod/sync versions below through its tools dependency:
-# https://proxy.golang.org/golang.org/x/text/@v/v0.42.0.mod
-# Published .info metadata at proxy.golang.org identifies upstream VCS commits;
+# 2026-11-04: the golang.org/x graph of stock Ollama v0.40.14, except x/net,
+# raised to v0.62.0 (2026-10-27), the first release outside GO-2026-6860/6866;
+# the build links x/net/html through gabriel-vasile/mimetype. x/crypto v0.58.0
+# is the latest tag and stays inside GO-2026-5932 (x/crypto/openpgp), which the
+# build does not import. https://raw.githubusercontent.com/ollama/ollama/v0.40.14/go.mod
+# https://proxy.golang.org/golang.org/x/net/@v/v0.62.0.mod
 # go.sum in security.patch pins the authenticated module zip/mod checksums.
 [security_dependencies]
-"golang.org/x/net" = "v0.60.0"
-"golang.org/x/image" = "v0.45.0"
-"golang.org/x/text" = "v0.42.0"
-"golang.org/x/crypto" = "v0.57.0"
-"golang.org/x/sys" = "v0.48.0"
-"golang.org/x/term" = "v0.46.0"
-"golang.org/x/mod" = "v0.41.0"
-"golang.org/x/sync" = "v0.23.0"
+"golang.org/x/net" = "v0.62.0"
+"golang.org/x/image" = "v0.47.0"
+"golang.org/x/text" = "v0.43.0"
+"golang.org/x/crypto" = "v0.58.0"
+"golang.org/x/sys" = "v0.49.0"
+"golang.org/x/term" = "v0.47.0"
+"golang.org/x/mod" = "v0.42.0"
+"golang.org/x/sync" = "v0.24.0"

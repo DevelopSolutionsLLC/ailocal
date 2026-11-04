@@ -2,6 +2,31 @@
 
 Release policy and the meaning of each bump: [RELEASING.md](RELEASING.md).
 
+## Unreleased
+
+### Changed
+
+- ailocal no longer registers the public documentation MCPs (Claude Code, OpenAI, Microsoft Learn) and no longer writes hosted Claude or Codex roots. Cadence declares the same servers for hosted and local roots; they need no local runtime, so they are Cadence's under its ownership test, and two registrars wrote one entry. Without Cadence, the local roots carry no documentation MCPs; inference, routing and ailocal's bundled integrations are unaffected. Registrations already made are left in place.
+- `codex-local` runs in Codex's `workspace-write` sandbox instead of `danger-full-access`; `approval_policy` stays `never`. The full-access default cited the Docker socket and Ollama, but Codex reaches the proxy itself, outside the command sandbox, and no measurement required it. Pass `--sandbox danger-full-access` for a session that needs it. Delegated Codex runs are unchanged: they select a permission profile per mode.
+
+- The test suites are consolidated from 44 files and 13,300 lines into 12 gate suites, one per area, plus the out-of-gate measurement scripts: 25 files, 6,500 lines. Checks of wording, of the test harness and of removed features are gone; regression checks for fixed bugs are kept. The gate runs 17 checks instead of 43.
+- ShellCheck is required: the gate fails without it instead of skipping. The gate also parses `.zsh` with `zsh -n`, not `bash -n`.
+- `AILOCAL_VSCODE_USER` overrides the VS Code user directory, so tests isolate every client root without changing `HOME`.
+
+### Security
+
+- LiteLLM 1.106.2 → 1.106.5 (digest `sha256:7d6ae6c8…`), outside the critical GHSA-w4c7-34wj-hqm8. The advisory reaches only Enterprise-licensed proxies and this one has none; the upgrade removes the finding rather than relying on that. Restart the stack (`ailocal start`) after reinstalling.
+- The patched Ollama runtime (`0.40.8-ailocal.18631.5`) builds against the `golang.org/x` graph of stock Ollama 0.40.14, with x/net raised to v0.62.0, which fixes GO-2026-6860 and GO-2026-6866; the build links `x/net/html`. x/crypto v0.58.0 is the latest tag and remains inside GO-2026-5932 (`x/crypto/openpgp`, not imported). A test now requires `[security_dependencies]` to equal the go.mod lines `security.patch` applies.
+
+### Fixed
+- `ailocal install` fails when client configuration fails (an unrecognised answer at the prompt) instead of finishing with exit 0.
+- Regeneration keeps the `[marketplaces.*]` and `[plugins.*]` tables `codex plugin` writes into codex-local's `config.toml`; Cadence's plugin registration no longer reports as drift.
+
+- `ailocal check` counts the guide hook's SessionStart output toward the Claude root's instruction budget (ADR 017). A Cadence-composed 3.5 KB CLAUDE.md plus the 128 GB launch-default guide is 6.3 KB against 4,096 bytes; the check warns instead of reporting the file alone as within budget.
+- The generated Codex config disables the `.system` skills Codex 0.166.0 bundles: `review-agent` is added and the removed `plugin-creator` dropped. A check compares the list with the installed root's skills.
+- `ailocal status` names the MCP servers Codex's config registers and says they were not probed. It printed "MCP registered, NOT reachable" whenever the config existed, citing a document that no longer exists (#43).
+- The patched Ollama build keeps Go's module cache, build cache and GOPATH in its temporary build space, which is removed when the build ends. Before, it used Go's defaults, `~/go` and `~/Library/Caches/go-build`, which outlived the build and no receipt or teardown named.
+
 ## v0.15.1 (2026-10-30) — documentation
 
 ### Changed

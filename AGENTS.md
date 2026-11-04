@@ -40,9 +40,13 @@ python3 tests/gate.py          # the regression gate
 python3 tests/gate.py --full   # adds the client compatibility matrix; required before a release
 ```
 
+The gate runs one suite per area — `policy`, `clients`, `install`, `audit`, `ollama-patch`, `gateway`, `gateway-impl` (inside the proxy image), `guidance`, `research`, `artifacts`, `checks`, `measurement-contracts` — then the repository invariants. Each suite runs alone as `python3 tests/<name>.py`.
+
+To test against scratch roots, set `AILOCAL_CONFIG`, `AILOCAL_CLIENTS`, `AILOCAL_STATE`, `AILOCAL_RUNTIMES`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `AILOCAL_VSCODE_USER`. Never point `HOME` elsewhere: a real CLI then looks for a login keychain there and macOS shows a dialog.
+
 The gate refuses to run when the installed package or the generated files are stale, because the suites would then test code `ailocal start` never executes. Reinstall and start first.
 
-ShellCheck runs at `warning` severity and is skipped when absent (`brew install shellcheck`). `.zsh` is covered by `zsh -n` instead — ShellCheck does not implement zsh.
+ShellCheck is required and runs at `warning` severity; the gate fails without it (`brew install shellcheck`). `.zsh` is covered by `zsh -n` instead — ShellCheck does not implement zsh.
 
 These suites are deliberately OUT of the gate because they take minutes, not seconds:
 
@@ -94,12 +98,12 @@ Only `src/`, `tests/`, `docs/` and project metadata. No generated artifact is ev
 
 - Never hand-edit or commit a generated file. Edit the profile.
 - Chat backends follow the model-format rule in [docs/maintenance.md](docs/maintenance.md#model-format): originals or calibrated/QAT builds only, GGUF by default, MLX only with recorded same-model evidence.
-- Every model selection is a `name:tag` Ollama identity, never `:latest` and never a repository URL; a native import creates the alias from a hash-pinned pull and drops the pull's own manifest. `tests/profiles.py` enforces the form.
+- Every model selection is a `name:tag` Ollama identity, never `:latest` and never a repository URL; a native import creates the alias from a hash-pinned pull and drops the pull's own manifest. `tests/policy.py` enforces the form.
 - One capability is one `model_list` entry named `ailocal-<capability>`, never a raw model tag.
 - Geometry is derived, never restated: `num_ctx = context_input + max_output`, `num_predict = max_output`, `max_input_tokens = context_input`.
 - Claude Code's process-wide context and output variables are projected from the launch-default role. They cannot describe the smaller background slots; `settings.json` lists those limits rather than implying parity.
 - ailocal stores no conversation history and never summarises or rewrites a client's history. Delegation stores only session identity and permission bindings; native clients own transcripts. See [docs/architecture.md](docs/architecture.md).
-- ailocal provisions inference and bundled runtime integrations inside roots it owns, plus its explicitly configured VS Code/Copilot provider and bundled MCP entries. Public documentation MCP registration through native Claude/Codex CLIs is the hosted-root exception; never change hosted model, auth, instruction or plugin settings.
+- ailocal provisions inference and bundled runtime integrations inside roots it owns, plus its explicitly configured VS Code/Copilot provider and bundled MCP entries. It never writes hosted Claude or Codex roots. Public documentation MCPs are Cadence's, which registers them in hosted and local roots alike.
 - ailocal installs no language server. It enables the official plugin for a server already on PATH, in its own root only.
 - Codex research MCP dispatch is measured on Codex 0.163.0 through the local proxy. Other MCP servers require their own evidence before registration.
 - Python is standard library only.

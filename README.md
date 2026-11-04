@@ -33,6 +33,10 @@ brew install pipx
 
 Open Docker Desktop and Ollama once from your Applications folder. Both need one manual launch. `pipx` brings its own Python; you do not install Python or manage a virtual environment.
 
+ailocal keeps the Ollama server available, but models load when first requested rather than at login.
+
+The cross-tier Ollama parallel-request default is 1. On a host where two slots have been measured, set `AILOCAL_OLLAMA_NUM_PARALLEL=2` in `~/.config/ailocal/.env.local` and run `ailocal install --yes` to make the selected value durable in both Ollama launch agents.
+
 Language servers are optional and only matter for Claude Code. Install the ones for languages you work in and ailocal enables the matching plugin:
 
 ```bash
@@ -80,7 +84,7 @@ claude-local        # Claude Code, against your local models
 codex-local         # Codex CLI, against your local models
 ```
 
-In either client, `/model` lists exactly the enabled `ailocal-*` capabilities with the same labels. Each selection carries its own context window and reasoning default. Installed a client later? Run `ailocal clients`.
+In either client, `/model` lists exactly the enabled `ailocal-*` capabilities with the same labels. Each selection carries its own context window and reasoning default. `codex-local` runs commands in Codex's `workspace-write` sandbox without approval prompts: writes stay in the workspace and commands get no network; `codex-local --sandbox danger-full-access` lifts that for one session. Installed a client later? Run `ailocal clients`.
 
 ### VS Code: paste the key once
 
@@ -182,7 +186,7 @@ A thinking-mode Qwen turn can end with reasoning and no final reply. ailocal rep
 | Native Workflow (`claude-local`) | off | `AILOCAL_NATIVE_WORKFLOWS=1` |
 | Local artifacts | on, bundled | — |
 | Web search | ailocal's own SearXNG, keyless | `BRAVE_API` adds budgeted Brave to research |
-| Hosted Claude/Codex settings | public documentation MCPs only; kept after teardown | native client configuration |
+| Hosted Claude/Codex settings | never written; documentation MCPs come from Cadence | native client configuration |
 
 Every `claude-local` variable is process-scoped: set it inline for one session. The full table is in [docs/claude-local.md](docs/claude-local.md#configuration).
 

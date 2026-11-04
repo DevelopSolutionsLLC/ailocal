@@ -273,22 +273,19 @@ runtime_engines:
       window. The caller got HTTP 200 and no error: the front of the prompt is
       simply gone. This is why admission policy stays conservative and why
       LiteLLM's pre-call guard is the only layer that fails loudly.
-      NUM_PARALLEL, resolved 2026-08-21 after several wrong readings. Two
-      DIFFERENT effects were being confused, and both are real:
-      (1) SLOT SIZING. When the scheduler uses more than one slot it divides
-      the declared window between them. Read off the runner for
-      qwen2.5-coder:3b at num_ctx 4480: np=2 gives n_ctx_slot 2304, np=1 gives
-      n_ctx_slot 4608. Ollama decides per load and lowers parallelism itself at
-      working window sizes, which is why every qwen3.5 launch carried `-np 1`
-      with its full declared cells. ailocal now ships OLLAMA_NUM_PARALLEL=1 so
-      a declared window is the real one on every role (see install.py).
-      (2) TRUNCATION, the finding above. A prompt larger than the SLOT is
+      NUM_PARALLEL is version-sensitive. [REAL] Ollama 0.32.14 on 2026-08-21
+      split qwen2.5-coder:3b's 4,608-cell window between two slots, leaving
+      n_ctx_slot 2304. [REAL] Ollama 0.40.13 on a 128 GB M5 Max instead logged
+      n_slots 2 and n_ctx_slot 4608 for each completion slot, plus two full
+      262,144-token slots for Gemma. ailocal keeps 1 as the cross-tier default;
+      the operator can select 2 after measuring memory and behavior on the
+      installed runtime. Separately, a prompt larger than the SLOT is
       front-truncated by `--context-shift --keep 4` with HTTP 200. This is
-      independent of parallelism and np=1 does not cure it; it only makes the
-      slot as large as the profile declares. Confirmed after the change: a
+      independent of parallelism. Confirmed on 0.32.14: a
       4,670-token prompt into a 4,608-token slot still came back with
       prompt_eval_count 2242, while a 3,020-token prompt was evaluated whole.
-      An earlier note here blamed (2) on (1). It did not; they compound.
+      The 0.40.13 full-slot finding does not validate prompt admission or
+      memory fit on every tier.
     tested_ollama: "0.32.14"
     tested_on: "2026-08-21"
     confidence: VERIFIED
@@ -347,6 +344,7 @@ model_classes:
       - "hf.co/localslm/Qwen3.5-4B-MTP-Uncensored:model_q4_k_m.gguf"
       - "qwen3.5:4b-unrestricted-mtp-q4_K_M"
       - "qwen3.5:9b-unrestricted-mtp-q4_K_M"
+      - "gemma4:26b-unrestricted-qat-mtp"
       - "gemma4:26b-unrestricted-qat-mtp-q4_K_M"
     supports_tools: true
     supports_mcp: true
@@ -410,7 +408,7 @@ model_classes:
     # act as a parent agent. Heavy orchestration stays denied.
     denied_groups: [orchestration, scheduling, worktree, interactive]
     routing_hints:
-      warmup: true                 # keep_alive -1; worth pre-warming
+      warmup: true                 # routing hint; does not load at login
       notes: "Default target for agentic local work."
 
   # ── Local: weak at agentic loops ──────────────────────────────────────────

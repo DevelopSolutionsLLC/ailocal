@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import re
 import sys
@@ -145,3 +147,19 @@ def main(argv=None) -> int:
     except policy.ProfileError as error:
         print(error.code, file=sys.stderr)
         return 2
+
+
+def hook_bytes(event: dict, tier=None) -> int | None:
+    """Bytes the `--hook` command prints for `event`, or None when it fails.
+
+    Claude Code adds that output to the session's context beside the root's
+    CLAUDE.md, so the instruction budget check counts it (#39, ADR 017).
+    """
+    stdin, sys.stdin = sys.stdin, io.StringIO(json.dumps(event))
+    try:
+        with contextlib.redirect_stdout(io.StringIO()) as out, \
+                contextlib.redirect_stderr(io.StringIO()):
+            rc = main(["--hook", *(["--tier", tier] if tier else [])])
+    finally:
+        sys.stdin = stdin
+    return len(out.getvalue().encode("utf-8")) if rc == 0 else None

@@ -1,64 +1,54 @@
 #!/usr/bin/env python3
-"""[APPROX] Installer failure/ownership fixtures; no compilation or inference."""
-import io
-import json
-import os
-import plistlib
-import shutil
-import stat
+"""Patched Ollama: pinned build, ownership and failure handling.
+
+Fixtures only: build steps, downloads and signature checks are mocked; nothing compiles or infers.
+"""
+import io, json, os, plistlib, re, shutil, stat  # noqa: E401
+import tarfile, tempfile, tomllib, unittest, zipfile  # noqa: E401
 from pathlib import Path
-import tarfile
-import tempfile
-import unittest
-import zipfile
 from unittest.mock import patch
 
 from ailocal import ollama_patch as candidate
+from ailocal import policy
+
+QWEN_TWO = ("--- PASS: TestQwen35HistoryOmitsEmptyLoopThinkBlocks (0.00s)\n"
+            "--- PASS: TestQwen35HistoryKeepsReplayedReasoning (0.00s)\n")
+QWEN = QWEN_TWO + "--- PASS: TestQwen35HistoryKeepsNonThinkingAndPrefill (0.00s)\nPASS\n"
+REGRESSIONS = {"gemma4.test": "--- PASS: TestLoadStackedExpertsSwitchGLU (0.01s)\n"
+                              "--- PASS: TestMoERouterMixedPrecisionConfig (0.01s)\nPASS\n",
+               "stop.test": "--- PASS: TestStopBuffer (0.01s)\nPASS\n", "qwen35-history.test": QWEN}
+PATCHES = {"patch": "Bundled Ollama patch", "security_patch": "security patch", "router_patch": "router patch",
+           "stop_patch": "stop patch", "qwen35_patch": "Qwen3.5 history patch"}
+PLIST = plistlib.dumps({"CFBundleShortVersionString": "0.40.8"})
 
 
 class PatchInstall(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.runtimes, self.stores = self.root / "runtimes", []
         self.stock = self.root / "Ollama.app/Contents/Resources/ollama"
-        self.stock.parent.mkdir(parents=True)
-        (self.stock.parent.parent / "Info.plist").write_bytes(
-            plistlib.dumps({"CFBundleShortVersionString": "0.40.8"}))
-        self.stock.write_text("stock binary")
-        (self.stock.parent / "llama-server").write_text("native llama")
-        native = self.stock.parent / "mlx_metal_v4"
-        native.mkdir()
-        (native / "libmlxc.dylib").write_text("native mlx")
-        self.patchfile = self.root / "fix.patch"
-        self.patchfile.write_text("reviewed patch")
+        (self.stock.parent / "mlx_metal_v4").mkdir(parents=True)
+        (self.stock.parent.parent / "Info.plist").write_bytes(PLIST)
+        for name, text in (("ollama", "stock binary"), ("llama-server", "native llama"),
+                           ("mlx_metal_v4/libmlxc.dylib", "native mlx")):
+            (self.stock.parent / name).write_text(text)
+        (fix := self.root / "fix.patch").write_text("reviewed patch")
         self.spec = dict(version="0.40.8-ailocal.18631.3", base_version="0.40.8",
                          source_url="https://example.invalid/source", source_sha256="pinned",
                          native_archive_url="https://example.invalid/native.zip",
-                         native_archive_sha256="pinned-native",
-                         native_cli_sha256=candidate._sha(self.stock),
-                         patch_file=self.patchfile, patch_sha256=candidate._sha(self.patchfile),
-                         security_patch_file=self.patchfile,
-                         security_patch_sha256=candidate._sha(self.patchfile),
-                         router_patch_file=self.patchfile,
-                         router_patch_sha256=candidate._sha(self.patchfile),
-                         stop_patch_file=self.patchfile,
-                         stop_patch_sha256=candidate._sha(self.patchfile),
-                         qwen35_patch_file=self.patchfile,
-                         qwen35_patch_sha256=candidate._sha(self.patchfile))
-        tools = patch.object(candidate.shutil, "which", side_effect=lambda name: "/usr/bin/" + name)
-        tools.start()
-        self.addCleanup(tools.stop)
-        for name, value in (("ollama_patch_spec", self.spec),
-                            ("ollama_runtime_root", self.root / "runtimes"),
+                         native_archive_sha256="pinned-native", native_cli_sha256=candidate._sha(self.stock))
+        for name in PATCHES:
+            self.spec[f"{name}_file"], self.spec[f"{name}_sha256"] = fix, candidate._sha(fix)
+        mocks = [patch.object(candidate.shutil, "which", side_effect=lambda n: "/usr/bin/" + n),
+                 patch.object(candidate.platform, "system", return_value="Darwin"),
+                 patch.object(candidate.platform, "machine", return_value="arm64")]
+        for name, value in (("ollama_patch_spec", self.spec), ("ollama_runtime_root", self.runtimes),
                             ("stock_ollama_binary", str(self.stock))):
-            mock = patch.object(candidate.policy, name, return_value=value, create=True)
-            mock.start()
-            self.addCleanup(mock.stop)
-        for name, value in (("system", "Darwin"), ("machine", "arm64")):
-            mock = patch.object(candidate.platform, name, return_value=value)
-            mock.start()
-            self.addCleanup(mock.stop)
+            mocks.append(patch.object(candidate.policy, name, return_value=value, create=True))
+        self.addCleanup(patch.stopall)
+        [mock.start() for mock in mocks]
 
     def run_step(self, args, deadline, **kwargs):
         if args[-1] == "--version":
@@ -70,294 +60,190 @@ class PatchInstall(unittest.TestCase):
             output = Path(args[args.index("-o") + 1])
             output.write_text("fixture executable")
             output.chmod(0o755)
-        if args[0].endswith("gemma4.test"):
-            return "--- PASS: TestLoadStackedExpertsSwitchGLU (0.01s)\n--- PASS: TestMoERouterMixedPrecisionConfig (0.01s)\nPASS\n"
-        if args[0].endswith("stop.test"):
-            return "--- PASS: TestStopBuffer (0.01s)\nPASS\n"
-        if args[0].endswith("qwen35-history.test"):
-            return ("--- PASS: TestQwen35HistoryOmitsEmptyLoopThinkBlocks (0.00s)\n"
-                    "--- PASS: TestQwen35HistoryKeepsReplayedReasoning (0.00s)\n"
-                    "--- PASS: TestQwen35HistoryKeepsNonThinkingAndPrefill (0.00s)\nPASS\n")
-        return ""
+        if args[0].endswith(".test"):  # a vendor regression: record and exercise its model store
+            store = Path(kwargs["env"]["OLLAMA_MODELS"])
+            self.stores.append((store, kwargs["env"]["OLLAMA_HOST"]))
+            store.mkdir(parents=True, exist_ok=True)
+            (store / "regression-model").write_text("vendor fixture")
+        return next((out for name, out in REGRESSIONS.items() if args[0].endswith(name)), "")
+
+    def replacing(self, match, output):
+        def runner(args, deadline, **kw):
+            if not args[0].endswith(match):
+                return self.run_step(args, deadline, **kw)
+            if isinstance(output, Exception):
+                raise output
+            return output
+        return runner
 
     def build(self, runner=None):
-        with (patch.object(candidate, "_download"),
-              patch.object(candidate, "_extract", return_value=self.root),
+        with (patch.object(candidate, "_download"), patch.object(candidate, "_extract", return_value=self.root),
               patch.object(candidate, "_run", side_effect=runner or self.run_step)):
             return candidate.prepare()
 
-    def test_promote_reuse_and_detect_native_tampering(self):
-        binary = self.build()
-        self.assertTrue(candidate.verify(binary))
-        with patch.object(candidate, "_run", side_effect=AssertionError("must reuse")):
-            self.assertEqual(candidate.prepare(), binary)
-        (binary.parent / "mlx_metal_v4/libmlxc.dylib").write_text("tampered")
-        self.assertFalse(candidate.verify(binary))
-        with self.assertRaisesRegex(RuntimeError, "integrity"):
-            candidate.prepare()
-        self.assertEqual(self.stock.read_text(), "stock binary")
+    @staticmethod
+    def receipt(directory, **changes):
+        data = {**json.loads((directory / "receipt.json").read_text()), **changes}
+        if changes:
+            (directory / "receipt.json").write_text(json.dumps(data))
+        return data
 
-    def test_skipped_regression_never_promotes(self):
-        def skipped(args, deadline, **kwargs):
-            if args[0].endswith("gemma4.test"):
-                return "--- SKIP: TestLoadStackedExpertsSwitchGLU\nPASS\n"
-            return self.run_step(args, deadline, **kwargs)
-        with self.assertRaisesRegex(RuntimeError, "did not execute"):
-            self.build(skipped)
-        self.assertEqual(list((self.root / "runtimes").iterdir()), [])
-
-    def test_native_regressions_cannot_pollute_the_operator_model_store(self):
+    def test_promote_reuse_and_reject_tampering(self):
         operator = self.root / "operator-models"
         operator.mkdir()
         (operator / "existing").write_text("operator data")
-        stores, hosts = [], []
-
-        def vendor_test(args, deadline, **kwargs):
-            if args[0].endswith(".test"):
-                env = kwargs["env"]
-                store = Path(env["OLLAMA_MODELS"])
-                stores.append(store)
-                hosts.append(env["OLLAMA_HOST"])
-                store.mkdir(parents=True, exist_ok=True)
-                (store / "regression-model").write_text("vendor fixture")
-            return self.run_step(args, deadline, **kwargs)
-
         with patch.dict(os.environ, OLLAMA_MODELS=str(operator), OLLAMA_HOST="127.0.0.1:11434"):
-            self.build(vendor_test)
-        self.assertEqual((operator / "existing").read_text(), "operator data")
-        self.assertFalse((operator / "regression-model").exists())
-        self.assertEqual(len(stores), 3)
-        self.assertTrue(all(store != operator and not store.exists() for store in stores))
-        self.assertEqual(hosts, ["127.0.0.1:0"] * 3)
-
-    def test_symlink_or_invalid_receipt_is_rejected(self):
-        binary = self.build()
-        receipt = binary.parent / "receipt.json"
-        original = receipt.read_text()
-        for invalid in ("[]", "null", '{"files": []}'):
+            binary = self.build()
+        self.assertTrue(candidate.verify(binary))
+        # Vendor regressions run against a scratch model store and an unbound host, never the operator's.
+        self.assertEqual(sorted(operator.iterdir()), [operator / "existing"])
+        self.assertEqual(len(self.stores), 3)
+        self.assertTrue(all(s != operator and not s.exists() and h == "127.0.0.1:0" for s, h in self.stores))
+        with patch.object(candidate, "_run", side_effect=AssertionError("must reuse")):
+            self.assertEqual(candidate.prepare(), binary)
+        original = (receipt := binary.parent / "receipt.json").read_text()
+        foreign_origin = json.loads(original)
+        foreign_origin["native_origin"]["vendor_binary_sha256"] = "different vendor payload"
+        for invalid in ("[]", "null", '{"files": []}', json.dumps(foreign_origin)):
             receipt.write_text(invalid)
-            self.assertFalse(candidate.verify(binary))
+            self.assertFalse(candidate.verify(binary), invalid[:40])
         receipt.write_text(original)
         native = binary.parent / "mlx_metal_v4/libmlxc.dylib"
         native.unlink()
         native.symlink_to(self.stock.parent / "mlx_metal_v4/libmlxc.dylib")
         self.assertFalse(candidate.verify(binary))
-
-    def test_stop_regression_must_execute_before_promotion(self):
-        for output in ("PASS\n", "--- SKIP: TestStopBuffer\nPASS\n"):
-            with self.subTest(output=output):
-                def skipped(args, deadline, **kwargs):
-                    if args[0].endswith("stop.test"):
-                        return output
-                    return self.run_step(args, deadline, **kwargs)
-                with self.assertRaisesRegex(RuntimeError, "MLX stop regression"):
-                    self.build(skipped)
-                self.assertEqual(list((self.root / "runtimes").iterdir()), [])
-
-    def test_updated_vendor_app_reuses_only_the_intact_matching_native_base(self):
-        binary = self.build()
-        older = binary.parent.with_name("0.40.8-ailocal.18631.2")
-        candidate.shutil.copytree(binary.parent, older)
-        receipt = json.loads((older / "receipt.json").read_text())
-        receipt["version"] = older.name
-        (older / "receipt.json").write_text(json.dumps(receipt))
-        candidate.shutil.rmtree(binary.parent)
-
-        def rebuilt(args, deadline, **kwargs):
-            if args[0] == str(self.stock) or args[0] == "codesign":
-                raise AssertionError("must use the validated cache, not the updated app")
-            return self.run_step(args, deadline, **kwargs)
-
-        new = self.build(rebuilt)
-        self.assertTrue(candidate.verify(new))
-        origin = json.loads((new.parent / "receipt.json").read_text())["native_origin"]
-        self.assertEqual(origin["kind"], "validated-owned-runtime")
-        self.assertEqual(origin["vendor_binary_sha256"], receipt["stock_sha256"])
-        candidate.shutil.rmtree(new.parent)
-        (older / "mlx_metal_v4/libmlxc.dylib").write_text("modified")
-        with (patch.object(candidate, "_run", return_value="client version is 0.40.10"),
-              patch.object(candidate, "_release_native_payload",
-                           side_effect=RuntimeError("fixture archive unavailable")) as fetched,
-              self.assertRaisesRegex(RuntimeError, "archive unavailable")):
+        native.unlink()
+        native.write_text("tampered")
+        self.assertFalse(candidate.verify(binary))
+        with self.assertRaisesRegex(RuntimeError, "integrity"):  # refuses; never overwrites
             candidate.prepare()
-        fetched.assert_called_once()
-        self.assertTrue(older.exists())
+        self.assertEqual(native.read_text(), "tampered")
 
-    def test_stop_patch_pin_is_checked_before_download(self):
-        self.spec["stop_patch_sha256"] = "wrong"
-        with (patch.object(candidate, "_run", side_effect=self.run_step),
-              patch.object(candidate, "_download") as download,
-              self.assertRaisesRegex(RuntimeError, "stop patch checksum")):
-            candidate.prepare()
-        download.assert_not_called()
+    def test_required_regressions_and_build_must_succeed_before_promotion(self):
+        cases = {("gemma4.test", "did not execute"): ("--- SKIP: TestLoadStackedExpertsSwitchGLU\nPASS\n", "PASS\n"),
+                 ("stop.test", "MLX stop regression"): ("PASS\n", "--- SKIP: TestStopBuffer\nPASS\n"),
+                 ("qwen35-history.test", "Qwen3.5 history regression"): (
+                     "PASS\n", QWEN_TWO + "PASS\n", "--- SKIP: TestQwen35HistoryOmitsEmptyLoopThinkBlocks\nPASS\n"),
+                 ("go", "compiler failed"): (RuntimeError("compiler failed"),)}
+        for (test, error), outputs in cases.items():
+            for output in outputs:
+                with self.subTest(test=test, output=output), self.assertRaisesRegex(RuntimeError, error):
+                    self.build(self.replacing(test, output))
+                self.assertEqual(list(self.runtimes.iterdir()), [])
+        # An optional vendor parity skip is not a skipped required regression.
+        optional = QWEN + "--- SKIP: TestQwen38TokenizerMatchesReference (0.00s)\n"
+        self.assertTrue(candidate.verify(self.build(self.replacing("qwen35-history.test", optional))))
 
-    def test_qwen35_history_pin_and_native_regression_are_required(self):
-        self.spec["qwen35_patch_sha256"] = "wrong"
-        with (patch.object(candidate, "_run", side_effect=self.run_step),
-              patch.object(candidate, "_download") as download,
-              self.assertRaisesRegex(RuntimeError, "Qwen3.5 history patch checksum")):
-            candidate.prepare()
-        download.assert_not_called()
-        self.spec["qwen35_patch_sha256"] = candidate._sha(self.patchfile)
-        partial = ("--- PASS: TestQwen35HistoryOmitsEmptyLoopThinkBlocks (0.00s)\n"
-                   "--- PASS: TestQwen35HistoryKeepsReplayedReasoning (0.00s)\nPASS\n")
-        for output in ("PASS\n", partial, "--- SKIP: TestQwen35HistoryOmitsEmptyLoopThinkBlocks\nPASS\n"):
-            def skipped(args, deadline, **kwargs):
-                return output if args[0].endswith("qwen35-history.test") else self.run_step(args, deadline, **kwargs)
-            with self.assertRaisesRegex(RuntimeError, "Qwen3.5 history regression"):
-                self.build(skipped)
-
-    def test_optional_vendor_parity_skip_does_not_skip_required_regressions(self):
-        def optional_parity(args, deadline, **kwargs):
-            output = self.run_step(args, deadline, **kwargs)
-            if args[0].endswith("qwen35-history.test"):
-                output += "--- SKIP: TestQwen38TokenizerMatchesReference (0.00s)\n"
-            return output
-
-        self.assertTrue(candidate.verify(self.build(optional_parity)))
-
-    def test_failed_build_and_missing_regression_leave_no_runtime(self):
-        for failure in ("build", "missing regression"):
-            with self.subTest(failure=failure):
-                def failed(args, deadline, **kwargs):
-                    if failure == "build" and args[:2] == ["go", "build"]:
-                        raise RuntimeError("compiler failed")
-                    if args[0].endswith("gemma4.test"):
-                        return "PASS\n"
-                    return self.run_step(args, deadline, **kwargs)
-                with self.assertRaises(RuntimeError):
-                    self.build(failed)
-                self.assertEqual(list((self.root / "runtimes").iterdir()), [])
-
-    def test_newer_app_acquires_the_pinned_base_without_changing_the_app(self):
-        before = self.stock.read_bytes()
-        def acquire(spec, work, deadline):
-            app = work / "release/Ollama.app"
-            shutil.copytree(self.stock.parents[2], app)
-            return app / "Contents/Resources/ollama"
-        def newer(args, deadline, **kwargs):
-            if args[-1] == "--version":
-                return "client version is 0.40.9"
-            return self.run_step(args, deadline, **kwargs)
-        with patch.object(candidate, "_release_native_payload", side_effect=acquire) as fetched:
-            binary = self.build(newer)
-        fetched.assert_called_once()
-        receipt = json.loads((binary.parent / "receipt.json").read_text())
-        self.assertEqual(receipt["native_origin"]["kind"], "signed-release-archive")
-        self.assertEqual(receipt["native_origin"]["archive_sha256"], self.spec["native_archive_sha256"])
-        self.assertEqual(self.stock.read_bytes(), before)
-        self.assertTrue(candidate.verify(binary))
-
-    def test_unknown_version_never_stages_or_downloads(self):
+    def test_bad_pin_or_unknown_version_never_downloads(self):
         with (patch.object(candidate, "_run", return_value="unrecognized output"),
               patch.object(candidate, "_release_native_payload") as fetched,
               self.assertRaisesRegex(RuntimeError, "establish")):
             candidate.prepare()
         fetched.assert_not_called()
-        self.assertFalse((self.root / "runtimes").exists())
+        self.assertFalse(self.runtimes.exists())
+        for name, label in PATCHES.items():
+            with (self.subTest(pin=name), patch.dict(self.spec, {f"{name}_sha256": "wrong"}),
+                  patch.object(candidate, "_run", side_effect=self.run_step),
+                  patch.object(candidate, "_download") as download,
+                  self.assertRaisesRegex(RuntimeError, f"{label} checksum")):
+                candidate.prepare()
+            download.assert_not_called()
 
-    def test_native_archive_refuses_escaping_paths_and_symlinks(self):
-        for index, (name, link) in enumerate((("../outside", None), ("/tmp/outside", None),
-                ("Ollama.app/Contents/Resources/link", "../../../../../outside"))):
-            with self.subTest(name=name):
-                work = self.root / f"zip-{index}"
-                work.mkdir()
-                with zipfile.ZipFile(work / "native-base.zip", "w") as bundle:
-                    entry = zipfile.ZipInfo(name)
-                    if link:
-                        entry.external_attr = (stat.S_IFLNK | 0o777) << 16
-                    bundle.writestr(entry, link or "outside")
-                with patch.object(candidate, "_download"), patch.object(candidate, "_run") as run:
-                    with self.assertRaisesRegex(RuntimeError, "Unsafe"):
-                        candidate._release_native_payload(self.spec, work, candidate.time.monotonic() + 10)
-                run.assert_not_called()
+    def test_vendor_app_updates_reuse_an_intact_base_or_fetch_the_pinned_one(self):
+        binary = self.build()
+        shutil.copytree(binary.parent, older := binary.parent.with_name("0.40.8-ailocal.18631.2"))
+        stock_sha = self.receipt(older, version=older.name)["stock_sha256"]
+        shutil.rmtree(binary.parent)
+        new = self.build(self.replacing((str(self.stock), "codesign"), AssertionError("must use the cache")))
+        origin = self.receipt(new.parent)["native_origin"]
+        self.assertTrue(candidate.verify(new))
+        self.assertEqual((origin["kind"], origin["vendor_binary_sha256"]), ("validated-owned-runtime", stock_sha))
+        shutil.rmtree(new.parent)
+        (older / "mlx_metal_v4/libmlxc.dylib").write_text("modified")
+        before = self.stock.read_bytes()
+        acquire = lambda spec, work, deadline: Path(shutil.copytree(  # noqa: E731
+            self.stock.parents[2], work / "release/Ollama.app")) / "Contents/Resources/ollama"
+        # A newer app with a modified cache fetches the pinned signed base instead.
+        with patch.object(candidate, "_release_native_payload", side_effect=acquire) as fetched:
+            binary = self.build(self.replacing(str(self.stock), "client version is 0.40.9"))
+        fetched.assert_called_once()
+        origin = self.receipt(binary.parent)["native_origin"]
+        self.assertEqual((origin["kind"], origin["archive_sha256"]),
+                         ("signed-release-archive", self.spec["native_archive_sha256"]))
+        self.assertTrue(self.stock.read_bytes() == before and older.exists() and candidate.verify(binary))
 
-    def test_native_archive_requires_signature_and_exact_cli_hash(self):
-        work = self.root / "archive"
+    def native_zip(self, name, entries):
+        work = self.root / name
         work.mkdir()
         with zipfile.ZipFile(work / "native-base.zip", "w") as bundle:
-            bundle.writestr("Ollama.app/Contents/Info.plist", plistlib.dumps(
-                {"CFBundleShortVersionString": "0.40.8"}))
-            bundle.writestr("Ollama.app/Contents/Resources/ollama", "stock binary")
+            for entry, data in entries:
+                bundle.writestr(entry, data)
+        return work
+
+    def fetch(self, work, spec=None):
+        return candidate._release_native_payload(spec or self.spec, work, candidate.time.monotonic() + 10)
+
+    def test_archives_refuse_unsafe_members_and_unverified_native_bases(self):
+        with tarfile.open(self.root / "evil.tar", "w") as bundle:
+            member = tarfile.TarInfo("../escaped")
+            member.size = 1
+            bundle.addfile(member, io.BytesIO(b"x"))
+        (self.root / "unpack").mkdir()
+        with self.assertRaisesRegex(RuntimeError, "Unsafe"):
+            candidate._extract(self.root / "evil.tar", self.root / "unpack")
+        self.assertFalse((self.root / "escaped").exists())
+        link = zipfile.ZipInfo("Ollama.app/Contents/Resources/link")
+        link.external_attr = (stat.S_IFLNK | 0o777) << 16
+        for index, entry in enumerate(("../outside", "/tmp/outside", link)):
+            work = self.native_zip(f"zip-{index}", [(entry, "../../../../../outside")])
+            with (self.subTest(entry=index), patch.object(candidate, "_download"),
+                  patch.object(candidate, "_run") as run, self.assertRaisesRegex(RuntimeError, "Unsafe")):
+                self.fetch(work)
+            run.assert_not_called()
+        work = self.native_zip("archive", [("Ollama.app/Contents/Info.plist", PLIST),
+                                           ("Ollama.app/Contents/Resources/ollama", "stock binary")])
+        rejected = []
+
         def extract(args, deadline, **kwargs):
+            if args[0] == "codesign" and rejected:
+                raise RuntimeError("signature rejected")
             if args[0] == "ditto":
                 with zipfile.ZipFile(args[-2]) as bundle:
                     bundle.extractall(args[-1])
             return ""
-        with patch.object(candidate, "_download"), \
-                patch.object(candidate, "_run", side_effect=extract) as run:
-            binary = candidate._release_native_payload(self.spec, work, candidate.time.monotonic() + 10)
-            self.assertTrue(any(call.args[0][:2] == ["codesign", "--verify"] for call in run.call_args_list))
-            self.assertEqual(candidate._sha(binary), self.spec["native_cli_sha256"])
-            bad = dict(self.spec, native_cli_sha256="wrong")
+
+        with patch.object(candidate, "_download"), patch.object(candidate, "_run", side_effect=extract) as run:
+            self.assertEqual(candidate._sha(self.fetch(work)), self.spec["native_cli_sha256"])
+            self.assertTrue(any(c.args[0][:2] == ["codesign", "--verify"] for c in run.call_args_list))
             with self.assertRaisesRegex(RuntimeError, "checksum"):
-                candidate._release_native_payload(bad, work, candidate.time.monotonic() + 10)
-        def bad_signature(args, deadline, **kwargs):
-            if args[0] == "codesign":
-                raise RuntimeError("signature rejected")
-            return extract(args, deadline, **kwargs)
-        with patch.object(candidate, "_download"), \
-                patch.object(candidate, "_run", side_effect=bad_signature):
+                self.fetch(work, dict(self.spec, native_cli_sha256="wrong"))
+            rejected.append(True)
             with self.assertRaisesRegex(RuntimeError, "signature rejected"):
-                candidate._release_native_payload(self.spec, work, candidate.time.monotonic() + 10)
+                self.fetch(work)
 
-    def test_native_origin_must_match_the_approved_vendor_cli(self):
+    def test_remove_deletes_only_intact_owned_historical_versions(self):
         binary = self.build()
-        receipt_path = binary.parent / "receipt.json"
-        receipt = json.loads(receipt_path.read_text())
-        receipt["native_origin"]["vendor_binary_sha256"] = "different vendor payload"
-        receipt_path.write_text(json.dumps(receipt))
-        self.assertFalse(candidate.verify(binary))
-        with self.assertRaisesRegex(RuntimeError, "integrity"):
-            candidate.prepare()
-
-    def test_remove_only_intact_owned_historical_versions(self):
-        binary = self.build()
-        root = binary.parent.parent
-        old = root / "historical-version"
-        candidate.shutil.copytree(binary.parent, old)
-        receipt = old / "receipt.json"
-        data = json.loads(receipt.read_text())
-        data["version"] = "old-reviewed-version"
-        receipt.write_text(json.dumps(data))
+        old = self.runtimes / "historical-version"
+        shutil.copytree(binary.parent, old)
+        self.receipt(old, version="old-reviewed-version")
         (binary.parent / "ollama").write_text("modified by operator")
-        foreign = root / "foreign"
-        foreign.mkdir()
-        (foreign / "keep").write_text("operator data")
+        (self.runtimes / "foreign").mkdir()
+        (self.runtimes / "foreign/keep").write_text("operator data")
         removed, preserved = candidate.remove()
         self.assertEqual(removed, [str(old)])
-        self.assertEqual(set(preserved), {str(binary.parent), str(foreign)})
-        self.assertTrue(binary.exists())
-        self.assertEqual((foreign / "keep").read_text(), "operator data")
+        self.assertEqual(set(preserved), {str(binary.parent), str(self.runtimes / "foreign")})
+        self.assertTrue(binary.exists() and (self.runtimes / "foreign/keep").exists())
 
-    def test_unknown_destination_is_preserved(self):
-        target = self.root / "runtimes" / self.spec["version"]
-        target.mkdir(parents=True)
-        marker = target / "unrelated"
-        marker.write_text("preserve")
-        with self.assertRaisesRegex(RuntimeError, "integrity"):
-            candidate.prepare()
-        self.assertEqual(marker.read_text(), "preserve")
 
-    def test_bad_patch_never_downloads(self):
-        self.patchfile.write_text("changed")
-        with (patch.object(candidate, "_run", side_effect=self.run_step),
-              patch.object(candidate, "_download") as download,
-              self.assertRaisesRegex(RuntimeError, "patch checksum")):
-            candidate.prepare()
-        download.assert_not_called()
-
-    def test_archive_escape_is_refused(self):
-        archive = self.root / "evil.tar"
-        with tarfile.open(archive, "w") as bundle:
-            member = tarfile.TarInfo("../escaped")
-            member.size = 1
-            bundle.addfile(member, io.BytesIO(b"x"))
-        target = self.root / "unpack"
-        target.mkdir()
-        with self.assertRaisesRegex(RuntimeError, "Unsafe"):
-            candidate._extract(archive, target)
-        self.assertFalse((self.root / "escaped").exists())
+class ShippedManifest(unittest.TestCase):
+    def test_security_dependencies_match_the_shipped_go_mod_patch(self):
+        """The audit reads [security_dependencies]; the build applies security.patch: they must agree."""
+        root = policy.data_root() / "deploy" / "ollama"
+        spec = tomllib.loads((root / "patch.toml").read_text(encoding="utf-8"))
+        text = (root / spec["security_patch_file"]).read_text(encoding="utf-8")
+        added = dict(re.findall(r"(?m)^\+\t(\S+) (v\S+)", text.split("diff --git a/go.sum")[0]))
+        self.assertEqual(added, spec["security_dependencies"])
+        self.assertEqual(candidate._sha(root / spec["security_patch_file"]), spec["security_patch_sha256"])
 
 
 if __name__ == "__main__":
