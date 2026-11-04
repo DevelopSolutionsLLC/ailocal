@@ -407,7 +407,7 @@ def write_integration_contract(models):
                 # working | failing | blocked | blocked_namespace_dispatch.
                 # Any other string degrades to "configured but not verified".
                 "execution": "working",
-                "verified_by": "tests/lsp-baseline.py",
+                "verified_by": "tests/clients.py",
                 "scope": "python",
             },
             # ailocal provisions no Codex LSP bridge. Current research/grepai
@@ -418,7 +418,7 @@ def write_integration_contract(models):
                 "schema_preserved": False,
                 "execution": "not_configured",
                 "reason": "no_validated_lsp_bridge",
-                "verified_by": "tests/clients.sh codex",
+                "verified_by": "tests/clients.py",
             },
         },
     }
@@ -870,7 +870,7 @@ def flush_stage():
     through restores every destination already replaced, so the tree ends up
     entirely old or entirely new. There is no commit marker to consult: LiteLLM
     and the clients read their generated files directly, so a partial run leaves
-    mixed state that is servable (tests/generation-rollback.py proves it by
+    mixed state that is servable (tests/clients.py proves it by
     fault injection). Every temp file is written and validated before any
     destination is touched."""
     tmp, backups, replaced = {}, {}, []
