@@ -469,6 +469,9 @@ def _vscode_app() -> Path | None:
 
 
 def _vscode_user_dir() -> Path | None:
+    """AILOCAL_VSCODE_USER overrides the search, so tests isolate VS Code without changing HOME."""
+    if os.environ.get("AILOCAL_VSCODE_USER"):
+        return Path(os.environ["AILOCAL_VSCODE_USER"])
     for candidate in (Path.home() / "Library/Application Support/Code/User",
                       Path.home() / ".config/Code/User"):
         if candidate.is_dir():
