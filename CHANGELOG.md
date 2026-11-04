@@ -4,6 +4,9 @@ Release policy and the meaning of each bump: [RELEASING.md](RELEASING.md).
 
 ## Unreleased
 
+- `ailocal install` fails when client configuration fails (an unrecognised answer at the prompt) instead of finishing with exit 0.
+- Regeneration keeps the `[marketplaces.*]` and `[plugins.*]` tables `codex plugin` writes into codex-local's `config.toml`; Cadence's plugin registration no longer reports as drift.
+
 ### Changed
 
 - ailocal no longer registers the public documentation MCPs (Claude Code, OpenAI, Microsoft Learn) and no longer writes hosted Claude or Codex roots. Cadence declares the same servers for hosted and local roots; they need no local runtime, so they are Cadence's under its ownership test, and two registrars wrote one entry. Without Cadence, the local roots carry no documentation MCPs; inference, routing and ailocal's bundled integrations are unaffected. Registrations already made are left in place.
