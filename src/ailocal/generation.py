@@ -441,7 +441,7 @@ CATALOG_PREAMBLE = (
     "constraints, and ask one focused question when something essential is missing."
 )
 CATALOG_TOOLING = (
-    "Use `rg` / `rg --files` for search. Use `apply_patch` for edits — never write files with "
+    "Use `rg` / `rg --files` for exact text and file names. Use `apply_patch` for edits — never write files with "
     "`cat` or heredocs. Preserve the repository's configured git identity. Format in GitHub-flavored "
     "Markdown; no emojis or em dashes.\n\n"
     "Make file edits by calling the apply_patch tool. A patch printed in an assistant message "
@@ -636,7 +636,13 @@ def regen_claude_settings(models, clients):
     data.setdefault("disableBundledSkills", True)
     perms = data.setdefault("permissions", {})
     deny = perms.setdefault("deny", [])
-    for tool in ("ScheduleWakeup", "ReportFindings", "ListAgents"):
+    # grepai registers 14 tools; Cadence exposes six to codex-local and Copilot
+    # (enabled_tools / tools). Claude Code has no per-server filter, so the other
+    # eight are denied by name: 7.2 KB of the first request (#66).
+    unused_grepai = tuple("mcp__grepai__grepai_" + t for t in (
+        "refs_graph", "refs_readers", "refs_writers", "rpg_explore", "rpg_fetch",
+        "rpg_search", "stats", "trace_graph"))
+    for tool in ("ScheduleWakeup", "ReportFindings", "ListAgents") + unused_grepai:
         if tool not in deny:
             deny.append(tool)
     default = (clients.get("claude") or {}).get("launch_default", next(iter(models)))

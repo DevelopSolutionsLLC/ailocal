@@ -27,7 +27,7 @@ The full policy stays available to hosted clients; local models receive a compac
 
 [REAL 2026-11-04, shipped profiles] #60 moved the guide's reference data out of the hook: it now prints 1,368–1,742 bytes for a named model and 913–939 bytes when the event names none; the scratchpad hook adds 351 bytes in either root. With Cadence's 2,812-byte compact CLAUDE.md the Claude root totals 4,905 of 4,096 bytes on the 64/128gb tiers, down from 10,556 worst case.
 
-[REAL 2026-11-04, captured first request] The budget did not see a larger leak: with cwd under `$HOME`, Claude Code also loaded the hosted `~/.claude/CLAUDE.md` and `~/.claude/rules/` as ancestor project memory, 13,335 bytes. #62 excludes those two hosted paths by absolute path with `claudeMdExcludes`. That is not the alternative rejected below: the local root's own file still loads, and nothing a co-installed tool writes into this root is overridden.
+[REAL 2026-11-04, captured first request] The budget did not see a larger leak: with cwd under `$HOME`, Claude Code also loaded the hosted `~/.claude/CLAUDE.md` and `~/.claude/rules/` as ancestor project memory, 13,335 bytes. #62 excludes those two hosted paths by absolute path with `claudeMdExcludes`. That is not the alternative rejected below: the local root's own file still loads, and nothing a co-installed tool writes into this root is overridden. #66 applies the same mechanism to tool schemas: the eight grepai tools Cadence does not expose to codex-local or Copilot are denied by name in claude-local, 7.2 KB per request.
 
 The 4,096-byte budget was measured on the 32gb tier with Qwen3.5 9B. It is unmeasured for the 128gb tier, whose larger models may tolerate a longer always-on context; #47 tracks that measurement.
 
