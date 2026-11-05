@@ -228,6 +228,7 @@ def install_flow():
         out, order = io.StringIO(), []
         with contextlib.ExitStack() as st:
             persist = stack(st, verdict, required)
+            st.enter_context(po(I.policy, "ollama_patch_selection", return_value=""))
             st.enter_context(po(I, "pull_models", side_effect=lambda: order.append("models") or 0))
             st.enter_context(po(I, "_retire_model_warmup", side_effect=lambda: order.append("retire")))
             st.enter_context(contextlib.redirect_stdout(out))
@@ -235,6 +236,22 @@ def install_flow():
         check(order == ["retire", "models"] and persist.called == bool(required) and rc == verdict
               and ("proxy is ready" in out.getvalue()) == (verdict == 0),
               f"install (verdict {verdict}, patch {required}) retires warmup first, returns validation, claims readiness only on pass")
+    # #87: no shipped role needs the patch any more. A machine whose earlier install selected it
+    # returns to stock Ollama; an explicit --ollama-patch keeps it; a role that declares it keeps it.
+    for argv, required, want in ((["--yes"], None, "/stock/ollama"), (["--yes", "--ollama-patch", "gemma4-switch-glu"], None, "/fixture/ollama"),
+                                 (["--yes"], "gemma4-switch-glu", "/fixture/ollama")):
+        with contextlib.ExitStack() as st:
+            persist = stack(st, 0, required)
+            st.enter_context(po(I.policy, "ollama_patch_selection", return_value="gemma4-switch-glu"))
+            st.enter_context(po(I.policy, "stock_ollama_binary", return_value="/stock/ollama"))
+            st.enter_context(po(I, "pull_models", return_value=0))
+            st.enter_context(po(I, "_retire_model_warmup"))
+            st.enter_context(quiet())
+            rc = I.cmd_install(argv)
+            configured = I.configure_ollama_services.call_args.kwargs.get("binary")
+        check(rc == 0 and configured == want
+              and persist.call_args.args == ("" if want == "/stock/ollama" else "gemma4-switch-glu",),
+              f"install {argv} with the patch selected and {required or 'no'} requirement runs {want} and records it")
     with contextlib.ExitStack() as st:
         stack(st, present=True)
         st.enter_context(po(I, "pull_models", return_value=0))
