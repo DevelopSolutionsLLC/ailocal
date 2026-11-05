@@ -3,8 +3,8 @@
 
 Fixtures only: build steps, downloads and signature checks are mocked; nothing compiles or infers.
 """
-import io, json, os, plistlib, re, shutil, stat  # noqa: E401
-import tarfile, tempfile, tomllib, unittest, zipfile  # noqa: E401
+import io, json, os, re, shutil  # noqa: E401
+import tarfile, tempfile, tomllib, unittest  # noqa: E401
 from pathlib import Path
 from unittest.mock import patch
 
@@ -19,7 +19,7 @@ REGRESSIONS = {"gemma4.test": "--- PASS: TestLoadStackedExpertsSwitchGLU (0.01s)
                "stop.test": "--- PASS: TestStopBuffer (0.01s)\nPASS\n", "qwen35-history.test": QWEN}
 PATCHES = {"patch": "Bundled Ollama patch", "security_patch": "security patch", "router_patch": "router patch",
            "stop_patch": "stop patch", "qwen35_patch": "Qwen3.5 history patch"}
-PLIST = plistlib.dumps({"CFBundleShortVersionString": "0.40.8"})
+MACHO = b"\xcf\xfa\xed\xfe"  # the signature walk selects native files by this header
 
 
 class PatchInstall(unittest.TestCase):
@@ -28,16 +28,16 @@ class PatchInstall(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
         self.runtimes, self.stores = self.root / "runtimes", []
-        self.stock = self.root / "Ollama.app/Contents/Resources/ollama"
+        self.stock = self.root / "Caskroom/ollama-binary/0.40.14/ollama"
         (self.stock.parent / "mlx_metal_v4").mkdir(parents=True)
-        (self.stock.parent.parent / "Info.plist").write_bytes(PLIST)
         for name, text in (("ollama", "stock binary"), ("llama-server", "native llama"),
                            ("mlx_metal_v4/libmlxc.dylib", "native mlx")):
-            (self.stock.parent / name).write_text(text)
+            (self.stock.parent / name).write_bytes(MACHO + text.encode())
+        (self.stock.parent / "GO_LICENSE").write_text("license text")
         (fix := self.root / "fix.patch").write_text("reviewed patch")
-        self.spec = dict(version="0.40.8-ailocal.18631.3", base_version="0.40.8",
+        self.spec = dict(version="0.40.14-ailocal.18631.3", base_version="0.40.14",
                          source_url="https://example.invalid/source", source_sha256="pinned",
-                         native_archive_url="https://example.invalid/native.zip",
+                         native_archive_url="https://example.invalid/ollama-darwin.tgz",
                          native_archive_sha256="pinned-native", native_cli_sha256=candidate._sha(self.stock))
         for name in PATCHES:
             self.spec[f"{name}_file"], self.spec[f"{name}_sha256"] = fix, candidate._sha(fix)
@@ -149,13 +149,7 @@ class PatchInstall(unittest.TestCase):
         optional = QWEN + "--- SKIP: TestQwen38TokenizerMatchesReference (0.00s)\n"
         self.assertTrue(candidate.verify(self.build(self.replacing("qwen35-history.test", optional))))
 
-    def test_bad_pin_or_unknown_version_never_downloads(self):
-        with (patch.object(candidate, "_run", return_value="unrecognized output"),
-              patch.object(candidate, "_release_native_payload") as fetched,
-              self.assertRaisesRegex(RuntimeError, "establish")):
-            candidate.prepare()
-        fetched.assert_not_called()
-        self.assertFalse(self.runtimes.exists())
+    def test_bad_pin_never_downloads(self):
         for name, label in PATCHES.items():
             with (self.subTest(pin=name), patch.dict(self.spec, {f"{name}_sha256": "wrong"}),
                   patch.object(candidate, "_run", side_effect=self.run_step),
@@ -164,9 +158,10 @@ class PatchInstall(unittest.TestCase):
                 candidate.prepare()
             download.assert_not_called()
 
-    def test_vendor_app_updates_reuse_an_intact_base_or_fetch_the_pinned_one(self):
+    def test_cask_upgrades_reuse_an_intact_base_or_fetch_the_pinned_one(self):
         binary = self.build()
-        shutil.copytree(binary.parent, older := binary.parent.with_name("0.40.8-ailocal.18631.2"))
+        self.assertEqual(self.receipt(binary.parent)["native_origin"]["kind"], "signed-vendor-cask")
+        shutil.copytree(binary.parent, older := binary.parent.with_name("0.40.14-ailocal.18631.2"))
         stock_sha = self.receipt(older, version=older.name)["stock_sha256"]
         shutil.rmtree(binary.parent)
         new = self.build(self.replacing((str(self.stock), "codesign"), AssertionError("must use the cache")))
@@ -175,24 +170,31 @@ class PatchInstall(unittest.TestCase):
         self.assertEqual((origin["kind"], origin["vendor_binary_sha256"]), ("validated-owned-runtime", stock_sha))
         shutil.rmtree(new.parent)
         (older / "mlx_metal_v4/libmlxc.dylib").write_text("modified")
+        release = Path(shutil.copytree(self.stock.parent, self.root / "release"))
+        self.stock.write_bytes(MACHO + b"a newer cask's CLI")
         before = self.stock.read_bytes()
-        acquire = lambda spec, work, deadline: Path(shutil.copytree(  # noqa: E731
-            self.stock.parents[2], work / "release/Ollama.app")) / "Contents/Resources/ollama"
-        # A newer app with a modified cache fetches the pinned signed base instead.
+        acquire = lambda spec, work, deadline: Path(shutil.copytree(release, work / "r")) / "ollama"  # noqa: E731
+        # A newer cask with a modified cache fetches the pinned signed tarball instead.
         with patch.object(candidate, "_release_native_payload", side_effect=acquire) as fetched:
-            binary = self.build(self.replacing(str(self.stock), "client version is 0.40.9"))
+            binary = self.build()
         fetched.assert_called_once()
         origin = self.receipt(binary.parent)["native_origin"]
         self.assertEqual((origin["kind"], origin["archive_sha256"]),
                          ("signed-release-archive", self.spec["native_archive_sha256"]))
         self.assertTrue(self.stock.read_bytes() == before and older.exists() and candidate.verify(binary))
 
-    def native_zip(self, name, entries):
+    def native_tgz(self, name, entries):
         work = self.root / name
         work.mkdir()
-        with zipfile.ZipFile(work / "native-base.zip", "w") as bundle:
-            for entry, data in entries:
-                bundle.writestr(entry, data)
+        with tarfile.open(work / "native-base.tgz", "w:gz") as bundle:
+            for entry, data, link in entries:
+                member = tarfile.TarInfo(entry)
+                if link:
+                    member.type, member.linkname = tarfile.SYMTYPE, link
+                    bundle.addfile(member)
+                else:
+                    member.size = len(data)
+                    bundle.addfile(member, io.BytesIO(data))
         return work
 
     def fetch(self, work, spec=None):
@@ -207,34 +209,38 @@ class PatchInstall(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Unsafe"):
             candidate._extract(self.root / "evil.tar", self.root / "unpack")
         self.assertFalse((self.root / "escaped").exists())
-        link = zipfile.ZipInfo("Ollama.app/Contents/Resources/link")
-        link.external_attr = (stat.S_IFLNK | 0o777) << 16
-        for index, entry in enumerate(("../outside", "/tmp/outside", link)):
-            work = self.native_zip(f"zip-{index}", [(entry, "../../../../../outside")])
+        for index, entry in enumerate((("../outside", b"x", None), ("/tmp/outside", b"x", None),
+                                       ("link", b"", "../../../../../outside"))):
+            work = self.native_tgz(f"tgz-{index}", [entry])
             with (self.subTest(entry=index), patch.object(candidate, "_download"),
-                  patch.object(candidate, "_run") as run, self.assertRaisesRegex(RuntimeError, "Unsafe")):
+                  self.assertRaisesRegex(RuntimeError, "Unsafe")):
                 self.fetch(work)
-            run.assert_not_called()
-        work = self.native_zip("archive", [("Ollama.app/Contents/Info.plist", PLIST),
-                                           ("Ollama.app/Contents/Resources/ollama", "stock binary")])
-        rejected = []
+        stock = MACHO + b"stock binary"
+        work = self.native_tgz("archive", [("ollama", stock, None), ("libggml.0.dylib", b"", "libggml.0.28.0.dylib"),
+                                          ("libggml.0.28.0.dylib", MACHO + b"lib", None)])
+        with patch.object(candidate, "_download"):
+            fetched = self.fetch(work)
+            self.assertEqual(candidate._sha(fetched), self.spec["native_cli_sha256"])
+            self.assertTrue((fetched.parent / "libggml.0.dylib").is_symlink())  # internal links survive
+        work = self.native_tgz("wrong", [("ollama", MACHO + b"other", None)])
+        with patch.object(candidate, "_download"), self.assertRaisesRegex(RuntimeError, "checksum"):
+            self.fetch(work)
 
-        def extract(args, deadline, **kwargs):
-            if args[0] == "codesign" and rejected:
-                raise RuntimeError("signature rejected")
-            if args[0] == "ditto":
-                with zipfile.ZipFile(args[-2]) as bundle:
-                    bundle.extractall(args[-1])
-            return ""
+    def test_every_native_file_must_carry_ollamas_signature(self):
+        calls = []
 
-        with patch.object(candidate, "_download"), patch.object(candidate, "_run", side_effect=extract) as run:
-            self.assertEqual(candidate._sha(self.fetch(work)), self.spec["native_cli_sha256"])
-            self.assertTrue(any(c.args[0][:2] == ["codesign", "--verify"] for c in run.call_args_list))
-            with self.assertRaisesRegex(RuntimeError, "checksum"):
-                self.fetch(work, dict(self.spec, native_cli_sha256="wrong"))
-            rejected.append(True)
-            with self.assertRaisesRegex(RuntimeError, "signature rejected"):
-                self.fetch(work)
+        def runner(args, deadline, **kw):
+            if args[0] == "codesign":
+                calls.append(args)
+            return self.run_step(args, deadline, **kw)
+        self.build(runner)
+        verified = sorted(Path(a[-1]).name for a in calls)
+        self.assertEqual(verified, ["libmlxc.dylib", "llama-server"])  # the license is not Mach-O
+        self.assertTrue(all(a[3] == f"-R={candidate.OLLAMA_SIGNATURE}" for a in calls))
+        shutil.rmtree(self.runtimes)
+        with self.assertRaisesRegex(RuntimeError, "signature rejected"):
+            self.build(self.replacing("codesign", RuntimeError("signature rejected")))
+        self.assertEqual(list(self.runtimes.iterdir()), [])
 
     def test_remove_deletes_only_intact_owned_historical_versions(self):
         binary = self.build()
@@ -257,7 +263,9 @@ class ShippedManifest(unittest.TestCase):
         spec = tomllib.loads((root / "patch.toml").read_text(encoding="utf-8"))
         text = (root / spec["security_patch_file"]).read_text(encoding="utf-8")
         added = dict(re.findall(r"(?m)^\+\t(\S+) (v\S+)", text.split("diff --git a/go.sum")[0]))
-        self.assertEqual(added, spec["security_dependencies"])
+        # Every raised module is declared at its raised version; the table also
+        # lists the stock x/ modules so the audit covers the whole graph.
+        self.assertTrue(added and added.items() <= spec["security_dependencies"].items())
         self.assertEqual(candidate._sha(root / spec["security_patch_file"]), spec["security_patch_sha256"])
 
 

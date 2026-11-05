@@ -6,17 +6,13 @@ from datetime import datetime, timezone
 import json
 import os
 import platform
-import plistlib
-import re
 import shutil
 import signal
-import stat
 import subprocess
 import tarfile
 import tempfile
 import time
 import urllib.request
-import zipfile
 from pathlib import Path
 
 from . import policy
@@ -147,32 +143,42 @@ def _copy_payload(stock: Path, destination: Path) -> dict[str, str]:
     return _inventory(destination)
 
 
+#: Ollama's Developer ID team. The release tarball's CLI is pinned by hash;
+#: every Mach-O copied beside it must carry this signature (measured on
+#: v0.40.14: all 32 pass, a modified or other-team binary fails).
+OLLAMA_SIGNATURE = 'anchor apple generic and certificate leaf[subject.OU] = "3MU9H2V9Y9"'
+_MACHO = (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe")
+
+
+def _verify_native_signatures(payload: Path, deadline: float) -> None:
+    signed = []
+    for path in sorted(payload.rglob("*")):
+        if path.is_file() and not path.is_symlink():
+            with path.open("rb") as stream:
+                if stream.read(4) in _MACHO:
+                    _run(["codesign", "--verify", "--strict", f"-R={OLLAMA_SIGNATURE}", str(path)], deadline)
+                    signed.append(path.name)
+    if "llama-server" not in signed:
+        raise RuntimeError("Ollama native payload has no signed llama-server")
+
+
 def _release_native_payload(spec: dict, work: Path, deadline: float) -> Path:
-    """Acquire the exact signed base in build scratch space, never in Applications."""
-    print(f"  Fetching the pinned Ollama {spec['base_version']} native base; "
-          "the installed vendor app is preserved", flush=True)
-    archive = work / "native-base.zip"
+    """Acquire the exact release tarball the ollama-binary cask installs, in build space."""
+    print(f"  Fetching the pinned Ollama {spec['base_version']} native base", flush=True)
+    archive = work / "native-base.tgz"
     _download(spec["native_archive_url"], archive, spec["native_archive_sha256"], deadline)
-    destination = work / "native-base"
-    with zipfile.ZipFile(archive) as bundle:
-        for member in bundle.infolist():
-            target = (destination / member.filename).resolve()
-            if not target.is_relative_to(destination.resolve()):
-                raise RuntimeError("Unsafe path in pinned Ollama native archive")
-            if stat.S_ISLNK(member.external_attr >> 16):
-                link = (target.parent / bundle.read(member).decode("utf-8")).resolve()
-                if not link.is_relative_to(destination.resolve()):
-                    raise RuntimeError("Unsafe symlink in pinned Ollama native archive")
-    # ditto preserves the app's signed symlink/resource layout; ZipFile's
-    # extraction would turn symlinks into ordinary files and break signatures.
-    _run(["ditto", "-x", "-k", str(archive), str(destination)], deadline)
-    app = destination / "Ollama.app"
-    _run(["codesign", "--verify", "--deep", "--strict", str(app)], deadline)
-    with (app / "Contents/Info.plist").open("rb") as stream:
-        if plistlib.load(stream).get("CFBundleShortVersionString") != spec["base_version"]:
-            raise RuntimeError("Downloaded Ollama native base has the wrong version")
-    stock = app / "Contents/Resources/ollama"
-    if _sha(stock) != spec["native_cli_sha256"]:
+    destination = (work / "native-base").resolve()
+    destination.mkdir()
+    with tarfile.open(archive, "r:gz") as bundle:
+        for member in bundle.getmembers():
+            target = (destination / member.name).resolve()
+            link = (target.parent / member.linkname).resolve() if member.issym() else destination
+            if (not target.is_relative_to(destination) or not link.is_relative_to(destination)
+                    or not (member.isfile() or member.isdir() or member.issym())):
+                raise RuntimeError("Unsafe member in pinned Ollama native archive")
+        bundle.extractall(destination, filter="data")
+    stock = destination / "ollama"
+    if not stock.is_file() or _sha(stock) != spec["native_cli_sha256"]:
         raise RuntimeError("Downloaded Ollama native CLI checksum mismatch")
     return stock
 
@@ -209,7 +215,7 @@ def _cached_native_payload(root: Path, spec: dict) -> tuple[Path, dict] | None:
 
 
 def prepare() -> Path:
-    """Build/test atomically; never switch a service or change the vendor app."""
+    """Build/test atomically; never switch a service or change the installed cask."""
     spec = policy.ollama_patch_spec()
     root = policy.ollama_runtime_root()
     target = root / spec["version"]
@@ -220,7 +226,7 @@ def prepare() -> Path:
         raise RuntimeError(f"Existing owned Ollama runtime failed integrity checks: {target}")
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise RuntimeError("The reviewed Ollama patch supports macOS arm64 only")
-    missing = [name for name in ("go", "git", "codesign", "ditto") if not shutil.which(name)]
+    missing = [name for name in ("go", "git", "codesign") if not shutil.which(name)]
     if missing:
         raise RuntimeError("Ollama patch build prerequisites missing: " + ", ".join(missing))
     deadline = time.monotonic() + 1200
@@ -233,19 +239,13 @@ def prepare() -> Path:
                          "vendor_binary_sha256": (parent_receipt.get("native_origin") or {}).get(
                              "vendor_binary_sha256", parent_receipt.get("stock_sha256"))}
     else:
+        # The ollama-binary cask installs the pinned release tarball unmodified;
+        # its CLI hash proves which one, and the payload signatures are checked
+        # after copying. Any other installed Ollama fetches the pinned tarball.
         stock = Path(policy.stock_ollama_binary()).resolve()
-        output = _run([str(stock), "--version"], deadline,
-                      env=dict(os.environ, OLLAMA_HOST="127.0.0.1:0"))
-        versions = re.findall(r"(?:ollama version is|client version is)\s+(\S+)", output)
-        if not versions:
-            raise RuntimeError("Cannot establish the installed Ollama CLI version")
-        app = next((p for p in stock.parents if p.suffix == ".app"), None)
-        if app is not None and all(v == spec["base_version"] for v in versions):
-            _run(["codesign", "--verify", "--deep", "--strict", str(app)], deadline)
-            with (app / "Contents/Info.plist").open("rb") as stream:
-                if plistlib.load(stream).get("CFBundleShortVersionString") != spec["base_version"]:
-                    raise RuntimeError("Ollama app/native payload version does not match the patch base")
-            native_origin = {"kind": "signed-vendor-app", "path": str(app), "version": spec["base_version"]}
+        if stock.is_file() and _sha(stock) == spec["native_cli_sha256"]:
+            native_origin = {"kind": "signed-vendor-cask", "path": str(stock.parent),
+                             "version": spec["base_version"]}
         else:
             stock = None
             native_origin = {"kind": "signed-release-archive", "version": spec["base_version"],
@@ -281,6 +281,8 @@ def prepare() -> Path:
         payload = work / "payload"
         payload.mkdir()
         native = _copy_payload(stock, payload)
+        if not cached:  # a cached payload was verified when built and is pinned by its receipt
+            _verify_native_signatures(payload, deadline)
         if cached and native != parent_receipt["native_files"]:
             raise RuntimeError("Cached native payload does not match its validated receipt")
         if stock_hash != _sha(stock) or native != {
