@@ -329,9 +329,13 @@ def hardware() -> None:
         check(rr["completion"]["enabled"] and rr["completion"]["model"] == completion
               and {completion, cyber_model} <= set(P.required_models(tier, RESOURCES)), f"{tier}: installs {completion} and cyber")
         qwen = [c for r, c in rr.items() if str(caps[r]["active"]).startswith("qwen3.5:")]
-        check(qwen and all(c.get("runtime_patch") == patch_id for c in qwen)
-              and P.required_runtime_patch(tier, RESOURCES) == patch_id,
-              f"{tier}: every Qwen3.5 route requires the thinking-channel runtime")
+        if qwen:
+            check(all(c.get("runtime_patch") == patch_id for c in qwen)
+                  and P.required_runtime_patch(tier, RESOURCES) == patch_id,
+                  f"{tier}: every Qwen3.5 route requires the thinking-channel runtime")
+        else:  # #80: Gemma serves every chat role on stock Ollama
+            check(not P.required_runtime_patch(tier, RESOURCES),
+                  f"{tier}: no Qwen3.5 route, so stock Ollama installs it")
         if draft:
             check(all(rr[r].get("draft_num_predict") == draft
                       and f"draft_num_predict: {draft}" in G.gen_role_block(r, rr[r])

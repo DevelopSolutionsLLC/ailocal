@@ -151,8 +151,8 @@ ailocal measures your memory and chooses a profile. You do not need to think abo
 |---|---|---|---|
 | 16 GB | `qwen3.5:4b-mtp-q4_K_M` | 104K | ~10 GB |
 | 32 GB | `qwen3.5:9b-calibrated-mtp-q4_K_M` | 136K | ~21 GB |
-| 64 GB | `gemma4:26b-qat-mtp` | 192K | ~55 GB |
-| 128 GB | `gemma4:26b-qat-mtp` | 256K | ~55 GB |
+| 64 GB | `gemma4:26b-qat-mtp` | 192K | ~37 GB |
+| 128 GB | `gemma4:26b-qat-mtp` | 256K | ~37 GB |
 
 Windows are totals including each role's output reserve (K = 1,024 tokens). Roles that share the main model share its window; a long conversation compacts in the client before it reaches that window.
 
