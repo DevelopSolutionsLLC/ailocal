@@ -98,7 +98,8 @@ def resolver() -> None:
     src = 'source = { model="hf.co/a/b:t.gguf", sha256="' + "a" * 64 + '", renderer="r", parser="p", '
     for frag in ("temprature = 0.1", "topk = 20", '"repeat-penalty" = 1.0', "num_predict = 512",
                  "draft_num_predict = -1", "draft_num_predict = true", "draft_num_predict = 1.5",
-                 src + 'draft_model="hf.co/a/b:h.gguf" }', src + 'draft_sha256="' + "b" * 64 + '" }'):
+                 src + 'draft_model="hf.co/a/b:h.gguf" }', src + 'draft_sha256="' + "b" * 64 + '" }',
+                 src + 'projector_model="hf.co/a/b:p.gguf" }', src + 'projector_sha256="' + "c" * 64 + '" }'):
         load_cases.append((f"`{frag[:40]}`", GOOD + frag + "\n", P.PROFILE_SCHEMA_INVALID))
     load_cases.append(("unclosed list", GOOD + "preferred = [a, b\n", P.PROFILE_INVALID))
     for label, text, want in load_cases:

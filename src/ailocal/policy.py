@@ -582,18 +582,23 @@ def _validate_role(role: str, cfg) -> None:
                     and re.fullmatch(r"[0-9a-f]{40}", str(source.get("revision", ""))))
         native_keys = {"model", "sha256", "renderer", "parser"}
         draft_keys = {"draft_model", "draft_sha256"}
+        projector_keys = {"projector_model", "projector_sha256"}
         native_ref = r"(?:hf\.co/[\w.-]+/[\w.-]+|(?:[\w-]+/)?[\w.-]+):[\w.-]+"
+        # A draft head and a vision projector are each a pulled tag plus the
+        # SHA-256 of its weight blob: both keys or neither.
         native = (isinstance(source, dict)
-                  and set(source) in (native_keys, native_keys | draft_keys)
+                  and set(source) in (native_keys, native_keys | draft_keys,
+                                      native_keys | projector_keys,
+                                      native_keys | draft_keys | projector_keys)
                   and isinstance(source["model"], str)
                   and re.fullmatch(native_ref, source["model"])
                   and re.fullmatch(r"[0-9a-f]{64}", str(source["sha256"]))
                   and all(isinstance(source[k], str) and re.fullmatch(r"[\w.-]+", source[k])
                           for k in ("renderer", "parser"))
-                  and ("draft_model" not in source or (
-                      isinstance(source["draft_model"], str)
-                      and re.fullmatch(native_ref, source["draft_model"])
-                      and re.fullmatch(r"[0-9a-f]{64}", str(source["draft_sha256"])))))
+                  and all(isinstance(source[f"{kind}_model"], str)
+                          and re.fullmatch(native_ref, source[f"{kind}_model"])
+                          and re.fullmatch(r"[0-9a-f]{64}", str(source[f"{kind}_sha256"]))
+                          for kind in ("draft", "projector") if f"{kind}_model" in source))
         if not (snapshot or native):
             raise ProfileError(PROFILE_SCHEMA_INVALID,
                                f"{role}.source requires a pinned snapshot or native model/hash/renderer/parser")

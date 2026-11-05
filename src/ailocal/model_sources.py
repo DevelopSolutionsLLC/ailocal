@@ -2,7 +2,8 @@
 
 Ollama imports local Safetensors directories but cannot pull these unpublished
 MLX snapshots. Native GGUF recipes use Ollama's own pull/create, with a pinned
-weight hash and its built-in renderer/parser. No model weights are rewritten.
+weight hash and its built-in renderer/parser; a declared draft head or vision
+projector is pulled and pinned the same way. No model weights are rewritten.
 """
 from __future__ import annotations
 
@@ -159,7 +160,12 @@ def _native_matches(shown: dict, source: dict) -> bool:
     assets = _native_assets(shown)
     drafts = ([str(root / ("sha256-" + source["draft_sha256"]))]
               if "draft_sha256" in source else [])
-    return (assets["FROM"][:1] == [str(root / ("sha256-" + source["sha256"]))]
+    # A declared projector must be the second FROM. An undeclared one is the
+    # source tag's own and stays unpinned (docs/security.md, model artifacts).
+    froms = [str(root / ("sha256-" + source["sha256"]))]
+    if "projector_sha256" in source:
+        froms.append(str(root / ("sha256-" + source["projector_sha256"])))
+    return (assets["FROM"][:len(froms)] == froms
             and assets["DRAFT"] == drafts
             and shown.get("renderer") == source["renderer"]
             and shown.get("parser") == source["parser"])
@@ -226,22 +232,33 @@ def _native(model: str, source: dict) -> bool:
     expected = policy.ollama_model_store() / "blobs" / ("sha256-" + source["sha256"])
     if _native_assets(shown)["FROM"][:1] != [str(expected)]:
         raise ValueError("native source weight digest differs from the reviewed pin")
-    recipe = {"model": model, "from": source["model"],
-              "renderer": source["renderer"], "parser": source["parser"], "stream": False}
-    draft = None
-    if "draft_model" in source:
-        if subprocess.run([policy.ollama_binary(), "pull", source["draft_model"]],
+    recipe = {"model": model, "renderer": source["renderer"], "parser": source["parser"],
+              "stream": False}
+    attached = {}
+    for kind in ("draft", "projector"):
+        if f"{kind}_model" not in source:
+            continue
+        if subprocess.run([policy.ollama_binary(), "pull", source[f"{kind}_model"]],
                           timeout=3600).returncode:
             return False
-        head = call("/api/show", {"model": source["draft_model"]})
-        draft = policy.ollama_model_store() / "blobs" / ("sha256-" + source["draft_sha256"])
+        head = call("/api/show", {"model": source[f"{kind}_model"]})
+        blob = policy.ollama_model_store() / "blobs" / ("sha256-" + source[f"{kind}_sha256"])
         head_assets = _native_assets(head)
-        if (head_assets["FROM"][:1] != [str(draft)]
-                and head_assets["DRAFT"] != [str(draft)]):
-            raise ValueError("native draft weight digest differs from the reviewed pin")
+        if (head_assets["FROM"][:1] != [str(blob)]
+                and (kind != "draft" or head_assets["DRAFT"] != [str(blob)])):
+            raise ValueError(f"native {kind} weight digest differs from the reviewed pin")
+        attached[kind] = "sha256:" + source[f"{kind}_sha256"]
+    if "draft" in attached:
         # DRAFT/draft_files is Ollama's native GGUF attachment interface. It
         # reuses the pulled, digest-checked blob without rewriting its tensors.
-        recipe["draft_files"] = {"draft.gguf": "sha256:" + source["draft_sha256"]}
+        recipe["draft_files"] = {"draft.gguf": attached["draft"]}
+    if "projector" in attached:
+        # `from` would carry the source tag's own projector layer; `files` binds
+        # the target and the reviewed projector by digest from the same blobs.
+        recipe["files"] = {"model.gguf": "sha256:" + source["sha256"],
+                           "mmproj.gguf": attached["projector"]}
+    else:
+        recipe["from"] = source["model"]
     result = call("/api/create", recipe)
     if result.get("status") != "success":
         return False
@@ -253,7 +270,7 @@ def _native(model: str, source: dict) -> bool:
     # prunes only layers nothing references; a re-import re-reads the manifest
     # without re-downloading shared weights. Library tags stay: operators use
     # them directly, and `current()` rechecks the alias, never the pull.
-    for name in (source["model"], source.get("draft_model")):
+    for name in (source["model"], source.get("draft_model"), source.get("projector_model")):
         if not name or name == model or not name.startswith("hf.co/"):
             continue
         request = urllib.request.Request(base + "/api/delete", method="DELETE",

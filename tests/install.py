@@ -85,8 +85,9 @@ def native_gguf():
     S.section("native GGUF import and load check")
     native = {"model": "hf.co/fixture/model:weights.gguf", "sha256": "d" * 64, "renderer": "qwen3.5", "parser": "qwen3.5"}
     paired = {**native, "draft_model": "hf.co/fixture/model:head.gguf", "draft_sha256": "f" * 64}
+    visual = {**paired, "projector_model": "hf.co/fixture/model:mmproj.gguf", "projector_sha256": "c" * 64}
     blobs = M.policy.ollama_model_store() / "blobs"
-    target, head, wrong = (blobs / ("sha256-" + c * 64) for c in "dfe")
+    target, head, wrong, proj = (blobs / ("sha256-" + c * 64) for c in "dfec")
     calls = []
     show = lambda mf: io.BytesIO(json.dumps({"modelfile": mf, "renderer": "qwen3.5", "parser": "qwen3.5"}).encode())  # noqa: E731
     sent = lambda ep: [b for u, b in calls if u.endswith(ep)]  # noqa: E731
@@ -99,6 +100,14 @@ def native_gguf():
         return lambda: po(M.urllib.request, "urlopen", side_effect=answer)
     single = daemon(lambda m: f"FROM {target}\n")
     pair = daemon(lambda m: f"FROM {head}\n" if m == paired["draft_model"] else f"FROM {target}\nDRAFT {head}\n")
+    # #87: the publisher's pull carries its own projector (`wrong`); the reviewed one is pulled as its own
+    # tag, whose manifest lists it as model and projector, and the alias shows FROM, DRAFT, FROM.
+    trio = daemon(lambda m: f"FROM {proj}\nFROM {proj}\n" if m == visual["projector_model"]
+                  else f"FROM {head}\n" if m == visual["draft_model"]
+                  else f"FROM {target}\nFROM {wrong}\n" if m == visual["model"]
+                  else f"FROM {target}\nDRAFT {head}\nFROM {proj}\n")
+    unpinned = daemon(lambda m: f"FROM {proj}\n" if m == visual["projector_model"] else f"FROM {head}\n"
+                      if m == visual["draft_model"] else f"FROM {target}\nDRAFT {head}\nFROM {wrong}\n")
     with tempfile.TemporaryDirectory() as box, po(M.policy, "state_root", return_value=Path(box)), \
             po(M.policy, "ollama_binary", return_value="ollama"), po(M, "verify_load", return_value=True), \
             po(M.subprocess, "run", return_value=NS(returncode=0)) as pull, po(M, "_digest", return_value="sha256:n"):
@@ -136,6 +145,24 @@ def native_gguf():
             calls.clear()
             check(not M.install("fixture:bad", {**paired, "draft_sha256": "a" * 64}) and not sent("/api/create"),
                   "a mismatched draft digest fails before alias creation")
+        calls.clear()
+        with trio():
+            check(M.install("fixture:visual", visual), "a reviewed projector loads with its target and head")
+            created = sent("/api/create")[0]
+            check("from" not in created and created["files"] == {"model.gguf": "sha256:" + "d" * 64, "mmproj.gguf": "sha256:" + "c" * 64}
+                  and created["draft_files"] == {"draft.gguf": "sha256:" + "f" * 64}
+                  and [c.args[0] for c in pull.call_args_list[-3:]] == [["ollama", "pull", visual[k]] for k in ("model", "draft_model", "projector_model")]
+                  and sent("/api/delete") == [{"model": visual[k]} for k in ("model", "draft_model", "projector_model")],
+                  "files binds the target and projector blobs by digest, draft_files the head; all three pulls are dropped")
+            check(M.current("fixture:visual", visual) and not M.current("fixture:visual", {**visual, "projector_sha256": "e" * 64})
+                  and not M.current("fixture:visual", paired), "the receipt binds the projector pin, including its removal")
+            calls.clear()
+            check(not M.install("fixture:bad", {**visual, "projector_sha256": "a" * 64}) and not sent("/api/create"),
+                  "a mismatched projector digest fails before alias creation")
+        calls.clear()
+        with unpinned():
+            check(not M.install("fixture:unpinned", visual) and sent("/api/create") and not M.current("fixture:unpinned", visual),
+                  "an alias carrying the publisher's projector instead of the reviewed one is refused")
     fake = {"modelfile": f'FROM {target}\nTEMPLATE """\nDRAFT {head}\n"""\n', "renderer": "qwen3.5", "parser": "qwen3.5"}
     check(not M._native_matches(fake, paired) and not M._native_matches({**fake, "modelfile": f"FROM {target}\nDRAFT {head}\n"},
                                                                          native),
