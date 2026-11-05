@@ -224,6 +224,30 @@ class Guidance(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()) as printed:
             self.assertEqual(guidance.main(['--hook', '--tier', '64gb']), 0)
             self.assertEqual(guidance.hook_bytes(event, '64gb'), len(printed.getvalue().encode()))
+        # #78: the scratchpad is private, never under a pre-claimed base, and the id cannot escape it.
+        hook = RES / 'clients/scratchpad-hook.sh'
+        with tempfile.TemporaryDirectory() as box:
+            root = Path(box).resolve()
+
+            def run_hook(sid):
+                out = subprocess.run(['bash', str(hook), 'claude'], input=json.dumps({'session_id': sid}),
+                                     capture_output=True, text=True, timeout=10,
+                                     env=dict(os.environ, AILOCAL_SCRATCH_ROOT=str(root)))
+                self.assertEqual((out.returncode, out.stderr), (0, ''))
+                return Path(re.search(r'Session scratchpad: (\S+)', out.stdout)[1])
+
+            made = run_hook('../../escape/x')
+            base = root / f'ailocal-scratchpad-{os.getuid()}'
+            self.assertEqual(made.parent, base)
+            self.assertTrue(made.is_dir() and made.stat().st_mode & 0o777 == 0o700
+                            and base.stat().st_mode & 0o777 == 0o700)
+            self.assertFalse((root / 'escape').exists())
+            shutil.rmtree(base)
+            (elsewhere := root / 'attacker').mkdir()
+            base.symlink_to(elsewhere)
+            made = run_hook('s1')
+            self.assertNotEqual(made.parent, base)
+            self.assertTrue(made.parent.name.startswith('ailocal-scratchpad.') and not any(elsewhere.iterdir()))
         # #60: the shipped scratchpad hook is measured from its source, in both roots.
         self.assertTrue(all(isinstance(C._scratchpad_hook_bytes(t), int) and C._scratchpad_hook_bytes(t) > 200
                             for t in ('claude', 'codex')))

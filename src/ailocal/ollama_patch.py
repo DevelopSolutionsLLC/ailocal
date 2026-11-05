@@ -21,6 +21,11 @@ from pathlib import Path
 
 from . import policy
 
+#: Settings that exempt modules from the public checksum database; the build
+#: drops each and sets GOENV=off so a `go env -w` file cannot restore one (#78).
+GO_SUMDB_EXEMPTIONS = ("GOSUMDB", "GONOSUMDB", "GONOSUMCHECK", "GOPRIVATE",
+                       "GONOPROXY", "GOINSECURE", "GOFLAGS", "GOENV")
+
 
 def _sha(path: Path) -> str:
     with path.open("rb") as stream:
@@ -303,7 +308,11 @@ def prepare() -> Path:
         # Go's module and build caches default to ~/go and the user cache
         # directory, where they outlive the build and no receipt names them.
         # Keep them in this build's temporary space; -modcacherw lets it be removed.
-        env = dict(os.environ, CGO_ENABLED="1", GOOS="darwin", GOARCH="arm64",
+        # A user's go-env file or GONOSUMDB/GOPRIVATE/GOINSECURE would exempt
+        # modules from the public checksum database; this build allows none (#78).
+        env = {k: v for k, v in os.environ.items() if k not in GO_SUMDB_EXEMPTIONS}
+        env.update(CGO_ENABLED="1", GOOS="darwin", GOARCH="arm64", GOENV="off",
+                   GOSUMDB="sum.golang.org",
                    GOTOOLCHAIN="local", GOFLAGS="-mod=readonly -modcacherw", GOWORK="off",
                    GOPATH=str(work / "gopath"), GOMODCACHE=str(work / "gomodcache"),
                    GOCACHE=str(work / "gocache"),

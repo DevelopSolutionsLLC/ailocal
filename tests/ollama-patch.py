@@ -88,6 +88,21 @@ class PatchInstall(unittest.TestCase):
             (directory / "receipt.json").write_text(json.dumps(data))
         return data
 
+    def test_build_ignores_checksum_exemptions(self):
+        seen = []
+
+        def runner(args, deadline, **kw):
+            if args[:2] == ["go", "build"]:
+                seen.append(kw["env"])
+            return self.run_step(args, deadline, **kw)
+        hostile = {"GONOSUMDB": "*", "GOPRIVATE": "*", "GOINSECURE": "*", "GOSUMDB": "off",
+                   "GONOSUMCHECK": "1", "GOENV": "/tmp/hostile-go.env"}
+        with patch.dict(os.environ, hostile):
+            self.build(runner)
+        env = seen[0]
+        self.assertFalse({"GONOSUMDB", "GOPRIVATE", "GOINSECURE", "GONOSUMCHECK"} & env.keys())
+        self.assertEqual((env["GOSUMDB"], env["GOENV"]), ("sum.golang.org", "off"))
+
     def test_promote_reuse_and_reject_tampering(self):
         operator = self.root / "operator-models"
         operator.mkdir()
