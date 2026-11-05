@@ -35,7 +35,7 @@ Local models are told to search with `rg`; macOS ships no ripgrep, and the copie
 
 Recommended: `brew install cosign`. `ailocal check` uses it to look up the publisher signature of each pinned image; without it the digest pin still holds and the check reports one warning.
 
-`ollama-binary` is Ollama's official command-line release with no menu-bar app; ailocal runs its server under launchd. If you installed the `ollama-app` cask, switch with `brew uninstall --cask ollama-app && brew install --cask ollama-binary`, then re-run `ailocal install`; the two casks conflict, and your models stay in the shared store.
+`ollama-binary` is Ollama's official command-line release with no menu-bar app; ailocal runs its server under launchd. If you installed the `ollama-app` cask, switch with `brew uninstall --cask ollama-app && brew install --cask ollama-binary`, then re-run `ailocal install`, which restarts the managed server on the new binary; the two casks conflict, and your models stay in the shared store. Install refuses while `/Applications/Ollama.app` exists: the app runs its own server on `:11434`.
 
 Open Docker Desktop once from your Applications folder; it needs one manual launch. `pipx` brings its own Python; you do not install Python or manage a virtual environment.
 
@@ -129,7 +129,7 @@ brew pin --cask codex claude-code@latest ollama-binary   # what ailocal is measu
 brew pin pipx
 ```
 
-To move a pinned package: unpin, upgrade, run `ailocal check`, pin again. Docker Desktop, VS Code and the Ollama app (`ollama-app`) ignore cask pins and update themselves; turn off automatic updates in each app. ailocal pins its service images by digest, so Docker Desktop updates never change LiteLLM or SearXNG.
+To move a pinned package: unpin, upgrade, run `ailocal check`, pin again. Docker Desktop and VS Code ignore cask pins and update themselves; turn off automatic updates in each app. `brew upgrade --cask ollama-binary` replaces the files under the running server, so run `ailocal install` after any Ollama upgrade. ailocal pins its service images by digest, so Docker Desktop updates never change LiteLLM or SearXNG.
 
 ## Supported clients
 

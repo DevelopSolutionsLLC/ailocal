@@ -168,12 +168,9 @@ def versions():
     except Exception:
         ollama = "unreachable"
     mlx = "unavailable"
-    # The app keeps its runtime in Contents/Resources; the ollama-binary cask
-    # keeps the same files beside the binary its PATH symlink points to.
+    # The ollama-binary cask keeps its runtime beside the file its PATH symlink names.
     found_cli = shutil.which("ollama")
-    roots = [pathlib.Path("/Applications/Ollama.app/Contents/Resources")]
-    if found_cli:
-        roots.insert(0, pathlib.Path(found_cli).resolve().parent)
+    roots = [pathlib.Path(found_cli).resolve().parent] if found_cli else []
     for v, root in ((v, r) for v in ("mlx_metal_v4", "mlx_metal_v3") for r in roots):
         lib = root / v / "libmlx.dylib"
         if lib.is_file():

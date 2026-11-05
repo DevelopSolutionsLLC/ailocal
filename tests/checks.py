@@ -244,8 +244,40 @@ def docs() -> None:
     check(not broken, "every relative markdown link resolves", "; ".join(broken[:5]))
 
 
+def managed_ollama() -> None:
+    suite.section("managed Ollama runtime (#74)")
+    import plistlib
+    with tempfile.TemporaryDirectory() as box:
+        real = Path(box).resolve() / "Caskroom/ollama"  # lsof reports /private/var, not /var
+        real.parent.mkdir()
+        real.write_text("")
+        (link := Path(box) / "ollama").symlink_to(real)
+        plist = Path(box) / "com.ailocal.ollama.plist"
+        cases = ((None, [str(link), "serve"], str(real), FAIL, "an unreadable plist fails"),
+                 (str(link), ["/Applications/Ollama.app/Contents/Resources/ollama", "serve"], str(real), FAIL,
+                  "a plist naming another program fails"),
+                 (str(link), [str(link), "serve"], "/Applications/Ollama.app/Contents/Resources/ollama", FAIL,
+                  "a daemon running a different executable fails though the version matches"),
+                 (str(link), [str(link), "serve"], "", FAIL, "no listener fails"),
+                 (str(link), [str(link), "serve"], str(real), PASS, "the selected binary's realpath on 11434 passes"))
+        for selected, program, running, want, label in cases:
+            plist.unlink(missing_ok=True)
+            if selected:
+                plist.write_bytes(plistlib.dumps({"ProgramArguments": program}))
+            with patch.object(S, "MANAGED_OLLAMA", plist), \
+                    patch.object(P, "ollama_binary", return_value=selected or str(link)), \
+                    patch.object(S, "_listener_executable", return_value=running):
+                got = S.check_managed_ollama_runtime()
+            check(got.status is want and (want is PASS or got.remediation == "ailocal install"), label, got.summary)
+        real.unlink()
+        plist.write_bytes(plistlib.dumps({"ProgramArguments": [str(link), "serve"]}))
+        with patch.object(S, "MANAGED_OLLAMA", plist), patch.object(P, "ollama_binary", return_value=str(link)), \
+                patch.object(S, "_listener_executable", return_value=str(real)):
+            check(S.check_managed_ollama_runtime().status is FAIL, "a dangling cask symlink fails")
+
+
 if __name__ == "__main__":
-    for section in (deterministic, classification, bounded, commands, docs, exits):
+    for section in (deterministic, classification, bounded, managed_ollama, commands, docs, exits):
         try:
             section()
         except Exception as exc:  # noqa: BLE001 - one broken section must not hide the others

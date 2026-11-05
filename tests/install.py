@@ -247,48 +247,42 @@ def install_flow():
 
 def launchd():
     S.section("launchd services")
-    for initial, disabled in (("enabled", False), ("disabled", True), ("true", True), ("false", False), (None, False)):
+    # #74: the app's com.ollama.ollama override is cleared once, after every owned agent stops.
+    for receipt_present, enable_rc in ((True, 0), (True, 1), (False, 0)):
         with la() as box:
-            line = f'"com.ollama.ollama" => {initial}' if initial else ""
-            with po(I, "_run", return_value=NS(returncode=0, stdout=f"disabled services = {{\n{line}\n}}")) as r:
-                I._save_ollama_startup()
-                first = I._read_ollama_startup()["disabled"]
-                r.reset_mock()
-                I._save_ollama_startup()
             receipt = box / "com.ailocal.ollama.restore.json"
-            mode = receipt.stat().st_mode & 0o777
+            if receipt_present:
+                receipt.write_text(json.dumps({"owner": "ailocal", "schema": 1, "disabled": False}))
             calls = []
-            with po(I, "_run", side_effect=lambda *a, **k: calls.append(a) or NS(
-                    returncode=0, stdout='disabled services = {"com.ollama.ollama" => disabled}')), \
+            with po(I, "_run", side_effect=lambda *a, **k: calls.append(a) or NS(returncode=enable_rc, stdout="", stderr="")), \
                     po(I, "_bootout", side_effect=lambda label: calls.append(("stop", label))), \
                     patch("ailocal.ollama_patch.remove", return_value=([], [])), quiet():
                 I.remove_login_agents()
-            change = next(n for n, a in enumerate(calls) if a[:2] == ("launchctl", "disable" if disabled else "enable"))
-            check(first is disabled and not r.called and mode == 0o600 and not receipt.exists()
-                  and change > max(n for n, a in enumerate(calls) if a[0] == "stop"),
-                  f"startup '{initial}' is captured once, privately, and restored after every owned service stops")
-    with la() as box:
-        receipt = box / "com.ailocal.ollama.restore.json"
-        receipt.write_text(json.dumps({"owner": "ailocal", "schema": 1, "disabled": False}))
-        with po(I, "_stock_ollama_disabled", return_value=True), po(I, "_run", return_value=NS(returncode=1)), \
-                po(I, "_bootout"), patch("ailocal.ollama_patch.remove") as rm, quiet():
-            failed = raises(RuntimeError, I.remove_login_agents)
-        check(failed and receipt.exists() and not rm.called, "a failed restoration keeps its receipt and runtime for a retry")
-        for bad in ("{", "[]", '{"owner":"other","schema":1,"disabled":false}', '{"owner":"ailocal","schema":1,"disabled":"false"}'):
-            receipt.write_text(bad)
-            with po(I, "_bootout") as stop:
-                check(raises(RuntimeError, I.remove_login_agents) and not stop.called and receipt.read_text() == bad,
-                      f"invalid receipt {bad} is kept and rejected before stopping services")
-    for disable_ok in (True, False):
-        seen = []
-        native = lambda *a, **k: OK if a[:2] != ("launchctl", "disable") else (  # noqa: E731
-            seen.append(I._read_ollama_startup()["disabled"]) or NS(returncode=0 if disable_ok else 1))
-        with la(), po(I, "_prepare_model_store"), po(I, "_migrate_model_store"), po(I, "_write_ollama_setenv_agent"), \
-                po(I, "_stock_ollama_disabled", return_value=False), po(I, "_ollama_is_current", return_value=True), \
-                po(I, "_activate_ollama") as act, po(I, "_run", side_effect=native), quiet():
-            ok = not raises(RuntimeError, I.configure_ollama_services, False, binary="fixture-ollama")
-        check(ok == disable_ok and seen == [False] and not act.called,
-              f"stock startup disable {'succeeds' if disable_ok else 'fails explicitly'} after recording the preference")
+            enables = [n for n, a in enumerate(calls) if a[:2] == ("launchctl", "enable")]
+            stops = [n for n, a in enumerate(calls) if a[0] == "stop"]
+            if not receipt_present:
+                check(not enables, "teardown with no legacy receipt changes no stock startup setting")
+            else:
+                check(len(enables) == 1 and enables[0] > max(stops) and receipt.exists() == bool(enable_rc),
+                      f"a legacy receipt is cleared after every owned agent stops (enable rc={enable_rc})")
+    with la() as box, po(I, "_prepare_model_store"), po(I, "_migrate_model_store"), \
+            po(I, "_write_ollama_setenv_agent"), quiet():
+        for holder, agent, current in (("", "", False), ("7", "7", False), ("7", "-", False), ("", "", True)):
+            calls = []
+            with po(I, "_ollama_is_current", return_value=current), po(I, "_port_owner", return_value=(holder, agent)), \
+                    po(I, "_activate_ollama") as act, po(I, "_run", side_effect=lambda *a, **k: calls.append(a) or OK):
+                failed = raises(RuntimeError, I.configure_ollama_services, binary="fixture-ollama")
+            foreign = bool(holder) and holder != agent
+            check(failed == foreign and act.called == (not current and not foreign)
+                  and not any(a[0] in ("osascript", "pkill") or a[:2] == ("launchctl", "disable") for a in calls),
+                  f"holder={holder or 'none'} agent={agent or 'none'} current={current}: launchd only, "
+                  "no app quit or disable, a foreign listener refuses")
+    with tempfile.TemporaryDirectory() as box, po(I, "OLLAMA_APP", Path(box)), po(I, "_has", return_value=True), \
+            po(I, "_run", return_value=OK), quiet():
+        check(raises(SystemExit, I.require_prerequisites), "install refuses while Ollama.app exists")
+    with po(P.shutil, "which", return_value="/opt/homebrew/bin/ollama"):
+        check(P.stock_ollama_binary() == "/opt/homebrew/bin/ollama",
+              "the stock binary is the PATH entry, unresolved, so a cask upgrade cannot strand launchd")
     with la() as box, po(I, "_bootout") as bo, po(I.policy, "state_root", return_value=box):
         (legacy := box / "agents/preload.sh").parent.mkdir()
         legacy.write_text("#!/bin/sh\n# operator script\n")
@@ -320,13 +314,18 @@ def activation():
             I._write_agent("com.ailocal.ollama", ["/bin/true"], keep_alive=True)
         check(stopped_on == [b"old"] and any(a[:2] == ("launchctl", "kickstart") for a in calls),
               "the old agent stops before replacement; a persistent job is kickstarted")
-        want = {"ProgramArguments": ["fixture-ollama", "serve"], "EnvironmentVariables": I._ollama_env(), "KeepAlive": True}
+        (binary := box / "ollama").write_text("")
+        want = {"ProgramArguments": [str(binary), "serve"], "EnvironmentVariables": I._ollama_env(), "KeepAlive": True}
         target.write_bytes(plistlib.dumps(want))
         with po(I, "_run", return_value=NS(returncode=0, stdout="state = running\n")), \
                 po(I, "_ollama_binary_version", return_value="v"), po(services, "http_json", return_value={"version": "v"}):
-            intact = I._ollama_is_current("fixture-ollama")
+            intact = I._ollama_is_current(str(binary))
             target.write_bytes(plistlib.dumps({**want, "EnvironmentVariables": {**I._ollama_env(), "OLLAMA_MODELS": "/x"}}))
-            check(intact and not I._ollama_is_current("fixture-ollama"), "an intact runtime needs no restart; changed config does")
+            check(intact and not I._ollama_is_current(str(binary)), "an intact runtime needs no restart; changed config does")
+            target.write_bytes(plistlib.dumps(want))
+            binary.unlink()
+            check(not I._ollama_is_current(str(binary)),
+                  "a deleted binary needs a restart even when the running version matches (#74)")
         target.write_bytes(b"previous")
         job = "Warning: client version is fixture-patched\nstate = exited\nlast exit code = 78\nTOKEN = private-value\n"
         with po(I, "_write_agent", side_effect=lambda *a, **k: target.write_bytes(b"candidate")), \
@@ -355,7 +354,7 @@ def ollama_env():
             check(plistlib.loads(server.read_bytes())["EnvironmentVariables"] == env == shell
                   and env.get("OLLAMA_NUM_PARALLEL") == parallel, f"parallel={parallel}: server and shell agents agree")
         with patch("ailocal.environment.value", return_value="3"), po(I, "_prepare_model_store") as prep:
-            check(raises(ValueError, I._ollama_env) and raises(ValueError, I.configure_ollama_services, False, binary="x")
+            check(raises(ValueError, I._ollama_env) and raises(ValueError, I.configure_ollama_services, binary="x")
                   and not prep.called, "unsupported parallelism is rejected before service changes")
 
 

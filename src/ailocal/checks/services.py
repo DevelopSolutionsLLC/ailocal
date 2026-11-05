@@ -352,6 +352,54 @@ def check_models_present(required: list[str]) -> CheckResult:
                        remediation="ailocal install")
 
 
+MANAGED_OLLAMA = pathlib.Path.home() / "Library/LaunchAgents/com.ailocal.ollama.plist"
+
+
+def _listener_executable() -> str:
+    """The resolved executable of the process listening on :11434. lsof's txt
+    entry names the file the kernel mapped, so a symlinked CLI reports its
+    target and a daemon whose file was since deleted still reports the old path."""
+    try:
+        pid = subprocess.run(["lsof", "-nP", "-tiTCP:11434", "-sTCP:LISTEN"], capture_output=True,
+                             text=True, timeout=INSPECT_TIMEOUT).stdout.split()
+        if not pid:
+            return ""
+        out = subprocess.run(["lsof", "-p", pid[0], "-a", "-d", "txt", "-Fn"], capture_output=True,
+                             text=True, timeout=INSPECT_TIMEOUT).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return next((line[1:] for line in out.splitlines() if line.startswith("n")), "")
+
+
+def check_managed_ollama_runtime() -> CheckResult:
+    """The daemon on :11434 runs the selected binary through com.ailocal.ollama.
+
+    `Ollama responding` stays green after the binary under a running daemon is
+    deleted (an app removed for the cask): resident models answer, every new
+    load fails with `llama-server binary not found`."""
+    import plistlib
+    fix = "ailocal install"
+    try:
+        with MANAGED_OLLAMA.open("rb") as stream:
+            program = plistlib.load(stream).get("ProgramArguments") or []
+        binary = policy.ollama_binary()
+    except (OSError, ValueError, SystemExit) as error:
+        return CheckResult("ollama-service", FAIL, f"managed Ollama service unreadable ({error})",
+                           remediation=fix)
+    if program != [binary, "serve"]:
+        return CheckResult("ollama-service", FAIL,
+                           f"com.ailocal.ollama runs {program[:1] or 'nothing'}, not {binary}",
+                           remediation=fix)
+    if not pathlib.Path(binary).is_file():
+        return CheckResult("ollama-service", FAIL, f"{binary} does not exist", remediation=fix)
+    running, want = _listener_executable(), os.path.realpath(binary)
+    if running != want:
+        return CheckResult("ollama-service", FAIL,
+                           f"the daemon on 11434 runs {running or 'nothing'}, not {want}",
+                           remediation=fix)
+    return CheckResult("ollama-service", PASS, f"managed Ollama runs {binary} ({want})")
+
+
 def check_selected_ollama_runtime() -> CheckResult:
     """Check the explicit patched selection, including the actual daemon identity."""
     try:
