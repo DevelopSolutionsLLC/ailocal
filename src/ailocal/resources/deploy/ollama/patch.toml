@@ -44,11 +44,16 @@ qwen35_patch_sha256 = "0b02b79201da852a53111a1a099d49ccabf1fb0b74b4c80227cede80d
 
 # The golang.org/x graph of the build, read by `ailocal audit`. security.patch
 # raises x/net v0.61.0 -> v0.62.0 (2026-10-27), the first release outside
-# GO-2026-6860/6866; the build links x/net/html through gabriel-vasile/mimetype.
-# The rest are stock v0.40.14's (https://raw.githubusercontent.com/ollama/ollama/v0.40.14/go.mod),
+# GO-2026-6860/6866. Neither advisory reaches a 0.40.14 build, stock or patched
+# (#83, 2026-11-05): govulncheck v1.9.0 source mode on the pinned tree reports
+# them "required, not imported"; `go list -deps ./...` imports neither
+# golang.org/x/net/html nor gabriel-vasile/mimetype (v1.4.16 has no requirements);
+# and the stock binary contains no x/net/html symbol. The bump changes no linked
+# code, so it is no reason to keep the patched runtime. The rest are stock
+# v0.40.14's (https://raw.githubusercontent.com/ollama/ollama/v0.40.14/go.mod),
 # listed so the audit covers them. x/crypto v0.58.0 stays inside GO-2026-5932
-# (x/crypto/openpgp), which the build does not import. go.sum in security.patch
-# carries the sum.golang.org checksums for v0.62.0.
+# (x/crypto/openpgp), which no package imports. go.sum in security.patch carries
+# the sum.golang.org checksums for v0.62.0.
 [security_dependencies]
 "golang.org/x/net" = "v0.62.0"
 "golang.org/x/image" = "v0.47.0"
