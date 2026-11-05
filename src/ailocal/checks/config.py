@@ -364,15 +364,34 @@ def _guide_hook_bytes() -> tuple[int | None, int | None]:
     return guidance.launch_default_hook_bytes()
 
 
+def _scratchpad_hook_bytes(tool: str) -> int | None:
+    """Context the shared scratchpad hook adds in `tool`'s root, from its shipped source.
+
+    Computed, not run: running it creates a directory. The directory name holds the
+    client's session id, a 36-character UUID in both clients.
+    """
+    try:
+        source = (P.data_root() / "clients" / "scratchpad-hook.sh").read_text()
+    except OSError:
+        return None
+    m = re.search(r'^ctx="(.*)"$', source, re.M)
+    if not m:
+        return None
+    text = m.group(1).replace("${dir}", f"/tmp/scratchpad/{tool}-" + "0" * 36)
+    return len(text.encode("utf-8"))
+
+
 def check_instruction_budget() -> list[CheckResult]:
-    """Always-on instructions in ailocal's client roots fit the published budget.
+    """Always-on startup context in ailocal's client roots fits the published budget.
 
     ailocal writes no CLAUDE.md or AGENTS.md and needs none; another tool may.
     Whoever wrote one, a file past `instruction_max_bytes` degrades the local
-    models (#39), so it is reported here rather than trusted to its writer. In
-    the Claude root the guide hook's SessionStart output counts too: Claude
-    Code adds it to the same context. A warning, not a failure: the file is not
-    ailocal's to rewrite.
+    models (#39), so it is reported here rather than trusted to its writer. The
+    hooks ailocal registers count too, because each client adds their output to
+    the same context: the scratchpad hook in both roots and, in Claude's, the
+    guide hook, whose output depends on whether the event names a model. The
+    larger of those cases is compared with the budget (#60). A warning, not a
+    failure: the file is not ailocal's to rewrite.
     """
     out = []
     budgets = P.instruction_budgets()
@@ -382,9 +401,12 @@ def check_instruction_budget() -> list[CheckResult]:
         hook = worst = None
         if client == "claude":
             hook, worst = _guide_hook_bytes()
-        total = size + (hook or 0)
+        scratch = _scratchpad_hook_bytes(client)
+        guide = max(h for h in (hook, worst, 0) if h is not None)
+        total = size + guide + (scratch or 0)
         parts = (f"{name} {size}" if size else f"no {name}") + (
-            f" + guide hook {hook}" if hook is not None else "")
+            f" + guide hook {guide}" if hook is not None or worst is not None else "") + (
+            f" + scratchpad hook {scratch}" if scratch is not None else "")
         if total <= limit:
             out.append(CheckResult(f"{client}-instructions", PASS,
                                    f"{client}  {parts} bytes fit the instruction budget ({total}/{limit})"))
@@ -399,8 +421,9 @@ def check_instruction_budget() -> list[CheckResult]:
             fix = (f"the file fits alone; shorten the profile's model_guidance or raise "
                    f"{client}.instruction_max_bytes in profiles/clients.toml")
         detail = "Long always-on instructions made local models re-read them or treat their directory as the working directory."
-        if worst is not None:
-            detail += f" With no model in the SessionStart event the guide hook prints {worst} bytes."
+        if hook is not None and worst is not None:
+            detail += (f" The guide hook prints {hook} bytes for the launch-default model and {worst} "
+                       f"when the event names none; the larger is counted.")
         out.append(CheckResult(f"{client}-instructions", WARN,
                                f"{client}  {parts} bytes exceed the instruction budget "
                                f"({total}/{limit}, owner: {owner})",

@@ -55,22 +55,31 @@ def _decode_router(hex_id: str) -> str | None:
         return None
 
 
-def render(model: str, guide: dict) -> str:
+#: What the always-on hook says instead of the reference data it leaves out.
+REFERENCE_POINTER = ("Quantization, inference preset, MTP draft depth and evaluation evidence: "
+                     "the agent MCP's model_guide tool, or `ailocal profile guide <alias>`.")
+
+
+def render(model: str, guide: dict, brief: bool = False) -> str:
+    """The guide for one model. `brief` is the always-on hook form (#60): limits,
+    prompting advice and limitations only. The rest is reference data a task
+    rarely needs, and it cost more than half of the local root's instruction budget."""
     return "\n".join([
         f"Local model guide: {model} ({guide.get('model', model)})",
-        guide["summary"],
+        *([] if brief else [guide["summary"]]),
         *([f"Profile limits: {guide['context_input']} input tokens, "
            f"{guide['max_output']} maximum output tokens; native thinking={guide['reasoning']}."]
           if "context_input" in guide else []),
         *(["Configured inference preset: " + ", ".join(
             f"{key}={value}" for key, value in guide["sampling"].items()) +
             ". These are routing defaults, not instructions to alter the task."]
-          if guide.get("sampling") else []),
+          if guide.get("sampling") and not brief else []),
         *(["Current MTP draft tokens: " + str(guide['sampling']['draft_num_predict']) +
            ". Use this configured value when asked about draft depth; historical trial values below do not override it."]
-          if guide.get('sampling', {}).get('draft_num_predict') is not None else []),
+          if guide.get('sampling', {}).get('draft_num_predict') is not None and not brief else []),
         *[f"Prompting advice: {s}" for s in guide["prompting"]],
         *[f"Known limitation: {s}" for s in guide["limitations"]],
+        REFERENCE_POINTER if brief else
         "Historical evaluation evidence (not current routing settings): " + guide["evidence"],
         "Capability names describe routing, not permission to ignore the requested task. "
         "This guidance is not proof of correctness; report actual checks and failures.",
@@ -124,25 +133,20 @@ def main(argv=None) -> int:
                   'The client already loaded its instruction files; its configuration directory '
                   'is not the task directory.')
         if unspecified:
-            print("Active model was not supplied by the client. These are the active profile's "
-                  "guides; apply only the entry matching the selected alias. "
-                  "The agent MCP's model_guide tool also provides the current limits and sources.")
-            # No guessed default after resume, and no duplicate advice for weights
-            # shared by several roles. Each alias still names its own limits.
-            grouped = {}
-            for name, guide in result["models"].items():
-                grouped.setdefault(guide["model"], []).append((name, guide))
-            for entries in grouped.values():
-                label = "; ".join(f"{n} (input {g['context_input']}, output {g['max_output']}, "
-                                  f"thinking {g['reasoning']}, " + ", ".join(
-                                      f"{key}={value}" for key, value in g.get("sampling", {}).items()) + ")"
-                                  for n, g in entries)
-                guide = {k: v for k, v in entries[0][1].items()
-                         if k not in ("context_input", "max_output", "reasoning", "sampling")}
-                print("\n" + render(label, guide))
+            # Each alias's limits, one line apiece, and never a guessed default after
+            # resume. Not each alias's full guide (#60: ~7 KB of always-on context), and
+            # not a bare lookup instruction: [REAL] Claude 2.1.308 given only that left
+            # the chosen guide out of the request. PostModelSwitch adds the full brief
+            # guide once a model is named.
+            print("Active model was not supplied by the client; apply only the line matching the "
+                  "selected alias. Its prompting advice and limitations: the agent MCP's model_guide "
+                  "tool, or `ailocal profile guide <alias>`.")
+            for name, g in result["models"].items():
+                print(f"{name}: {g['model']}; input {g['context_input']}, output {g['max_output']}, "
+                      f"thinking {g['reasoning']}.")
         else:
             print(json.dumps(result, indent=2) if args.json else "\n\n".join(
-                render(name, guide) for name, guide in result["models"].items()))
+                render(name, guide, brief=args.hook) for name, guide in result["models"].items()))
         return 0
     except policy.ProfileError as error:
         print(error.code, file=sys.stderr)
