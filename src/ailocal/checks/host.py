@@ -62,7 +62,7 @@ def check_cli_tools() -> list[CheckResult]:
     # Claude Code's Bash `rg` falls back to the one on PATH when its own binary
     # path is stale (measured 2026-11-04 after an upgrade mid-session, #64).
     for tool, fix in (("docker", "brew install --cask docker-desktop"),
-                      ("ollama", "brew install --cask ollama-app"),
+                      ("ollama", "brew install --cask ollama-binary"),
                       ("rg", "brew install ripgrep")):
         found = shutil.which(tool)
         out.append(CheckResult(f"cli:{tool}", PASS if found else WARN,

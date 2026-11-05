@@ -65,7 +65,7 @@ curl -fsS "${OLLAMA_HOST:-http://127.0.0.1:11434}/api/tags" >/dev/null && echo u
 **Fix**
 
 ```sh
-ollama serve      # or open Ollama.app
+launchctl kickstart -k gui/$(id -u)/com.ailocal.ollama   # or: ollama serve
 ailocal check
 ```
 

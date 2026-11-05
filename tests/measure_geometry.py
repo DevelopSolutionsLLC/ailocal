@@ -13,6 +13,7 @@ from contextlib import contextmanager
 import json
 import pathlib
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -167,8 +168,14 @@ def versions():
     except Exception:
         ollama = "unreachable"
     mlx = "unavailable"
-    for v in ("mlx_metal_v4", "mlx_metal_v3"):
-        lib = pathlib.Path(f"/Applications/Ollama.app/Contents/Resources/{v}/libmlx.dylib")
+    # The app keeps its runtime in Contents/Resources; the ollama-binary cask
+    # keeps the same files beside the binary its PATH symlink points to.
+    found_cli = shutil.which("ollama")
+    roots = [pathlib.Path("/Applications/Ollama.app/Contents/Resources")]
+    if found_cli:
+        roots.insert(0, pathlib.Path(found_cli).resolve().parent)
+    for v, root in ((v, r) for v in ("mlx_metal_v4", "mlx_metal_v3") for r in roots):
+        lib = root / v / "libmlx.dylib"
         if lib.is_file():
             out = subprocess.run(["strings", str(lib)], capture_output=True, text=True).stdout
             found = sorted(set(re.findall(r"\b\d+\.\d+\.\d+(?:-\d+-g[0-9a-f]{7,})?\b", out)))
