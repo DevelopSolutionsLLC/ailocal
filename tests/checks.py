@@ -84,6 +84,11 @@ def classification() -> None:
         request.reset_mock()
         check(S.check_context_window("fixture-key", "ailocal-completion").status == FAIL and not request.called,
               "a disabled probe target fails without inference")
+    from ailocal.checks import host as Hst
+    with patch.object(Hst.shutil, "which", lambda tool: None if tool == "rg" else "/bin/" + tool):
+        rg = {r.name: r for r in Hst.check_cli_tools()}["cli:rg"]
+    check(rg.status is WARN and rg.remediation == "brew install ripgrep",
+          "a missing ripgrep warns with its install command (#64)")
     r = S.check_container("ailocal-definitely-not-a-container")
     check(r.status is FAIL and r.remediation, "an absent required container fails with remediation")
     # A reinstall leaves the container serving an empty bind mount while healthy; repair is `ailocal start`.
