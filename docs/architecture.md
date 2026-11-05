@@ -92,7 +92,7 @@ Codex's `config.toml` is co-owned: regeneration preserves native trust records, 
 
 | Path | Written by | Notes |
 |---|---|---|
-| `~/Library/LaunchAgents/com.ailocal.{ollama,ollama-env}.plist` | `install` | Bootstrapped into the GUI domain. The server runs the `ollama` on `PATH`, unresolved (the cask's `/opt/homebrew/bin` symlink), so an upgrade relinks it instead of stranding launchd on a deleted Caskroom directory. `ailocal teardown` removes them. The installer retires the former preload agent so no model warms at login. *(launchd path)* |
+| `~/Library/LaunchAgents/com.ailocal.{ollama,ollama-env,ollama-watch}.plist` | `install` | Bootstrapped into the GUI domain. The server runs the `ollama` on `PATH`, unresolved (the cask's `/opt/homebrew/bin` symlink), so an upgrade relinks it instead of stranding launchd on a deleted Caskroom directory. `ollama-watch` watches that Caskroom directory (and runs every five minutes, since launchd's `WatchPaths` can miss an event) and restarts the server when its executable is no longer the link's target. `ailocal teardown` removes them. The installer retires the former preload agent so no model warms at login. *(launchd path)* |
 | `~/Library/Logs/ailocal/*.log` | launchd | stdout/stderr of the agents above. *(launchd path)* |
 | `/Users/Shared/ollama/models` | `install` | Shared model store, group-writable + setgid. Existing `~/.ollama/models` is *moved* here (rename, one file at a time) before `OLLAMA_MODELS` is repointed. *(launchd path)* |
 | `~/.zshrc` | `clients` | Exactly two marker-commented lines (`# ailocal-configure` first, `# ailocal-finalize` last), inserted idempotently after a timestamped backup. |

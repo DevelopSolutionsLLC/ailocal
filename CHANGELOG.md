@@ -6,6 +6,7 @@ Release policy and the meaning of each bump: [RELEASING.md](RELEASING.md).
 
 ### Fixed
 
+- A cask upgrade of Ollama no longer strands the managed server on deleted files (#76). `com.ailocal.ollama-watch` watches the cask's Caskroom directory, with a five-minute backstop because launchd's `WatchPaths` can miss an event. It restarts `com.ailocal.ollama` once the new binary and `llama-server` exist, and only when the daemon's executable is not the link's target.
 - Ollama runs only from the `ollama-binary` cask (#74). After the app was removed, `ailocal install` answered "n" at the autostart prompt and took an env-only path that never rewrote `com.ailocal.ollama`. The service kept running the deleted app binary, and every new model load failed with `llama-server binary not found` while `ailocal check` stayed green. launchd is now the only mode, and the prompt is gone. The service is restarted when its program no longer exists, even at a matching version (the app and the cask were both 0.40.14). The stock binary is the `PATH` `ollama`, unresolved. Install refuses while `/Applications/Ollama.app` exists. The app quit, `pkill` and the `com.ollama.ollama` disable/restore receipt are removed; a one-release shim clears a legacy override. `ailocal check` adds `ollama-service`: the plist program must be the selected binary and the daemon on `:11434` must run its realpath.
 
 ### Changed
