@@ -406,6 +406,21 @@ class Registry:
         return (set(spec.get("definite") or []),
                 set(spec.get("ambiguous") or []))
 
+    def loop_guard_limit(self, model):
+        """Reasoning characters after which a looping /v1/responses turn is retried
+        without replayed reasoning, or None when the guard does not cover the model.
+
+        Keyed on the BACKEND (commitment 4): Gemma and Qwen share a model class,
+        and only Gemma was measured looping. Absent, malformed or unmatched -> None,
+        which changes nothing.
+        """
+        spec = self.doc.get("reasoning_loop_guard") or {}
+        limit = spec.get("reasoning_chars")
+        backend = self.backend_of(model)
+        if not backend or not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+            return None
+        return limit if self.matches(backend, spec.get("backends") or []) else None
+
     def describe(self):
         """Compact state summary for metrics and doctor output."""
         return {

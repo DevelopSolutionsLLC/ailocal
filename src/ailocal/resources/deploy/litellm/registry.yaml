@@ -316,6 +316,32 @@ model_capabilities:
     "qwen2.5-coder:3b":    [completion, tools, insert]
     "qwen2.5-coder:1.5b":  [completion, tools, insert]
 
+# ── Reasoning loop guard ────────────────────────────────────────────────────
+# Read by hooks/reasoning_loop_guard.py. In a tool-calling turn, a Gemma 4 backend
+# can stop converging and reason until num_predict ("Final answer. … Actually,
+# I'll check …"), and Codex fails the turn on max_output_tokens. The hook holds
+# a /v1/responses stream while it carries only reasoning; past `reasoning_chars`,
+# or on an incomplete reasoning-only end, it re-sends the request ONCE without
+# the replayed reasoning items. Replay itself is kept: it is Google's in-turn
+# rule, and #38 depends on it for Qwen.
+#
+# [REAL] 2026-11-05, gemma4:26b-qat-mtp, codex-local 0.166, ailocal #68:
+#   real sessions, one callers question   replayed: 2/13 looped (700-850 s, no answer)
+#   replay of a captured looping request   as captured 3/5 loop; think off 5/5
+#                                          incomplete; temperature 0.6 3/5;
+#                                          last 1 or 3 reasoning items kept 3/5 each;
+#                                          all dropped 0/5, correct answer 5/5
+#   dropping replayed reasoning on EVERY request: 0/8 loops but 3/8 correct, so
+#   the guard drops it only at a loop
+#   with this guard, deployed, real sessions: 8/8 correct, 3 loops caught and
+#   recovered (two captured-loop replays through the proxy also recovered)
+# Normal steps reasoned at most 41,466 characters; every loop exceeded 95,000.
+# Other gemma4 backends share the mechanism but were not measured.
+# RETIRE when a captured looping request no longer loops with the guard removed.
+reasoning_loop_guard:
+  backends: ["gemma4:*"]
+  reasoning_chars: 60000
+
 model_classes:
 
   # [REAL] Ollama 0.40.6 / M3 Max 64 GB, 2026-10-22: native MLX,
