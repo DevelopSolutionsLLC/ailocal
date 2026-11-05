@@ -1,4 +1,4 @@
-"""reasoning_loop_guard.py — retry a looping /v1/responses turn once, without replayed reasoning.
+"""reasoning_loop_guard.py — retry once a /v1/responses turn that loops or delivers nothing.
 
 DEFECT    In a tool-calling turn a Gemma 4 backend can stop converging: it holds the
           answer, then reasons "Final answer. … Actually, I'll check …" until
@@ -21,14 +21,29 @@ FIX       Hold the stream while it carries only reasoning. On the first answer o
           reasoning-only end, stop reading, re-send the same request once
           without reasoning items, and stream that instead. Nothing held has
           reached the client, so it sees exactly one response.
-SCOPE     /v1/responses requests that carry replayed reasoning, for backends the
-          registry's `reasoning_loop_guard` names. Everything else passes
+SCOPE     /v1/responses requests for backends the registry's
+          `reasoning_loop_guard` names; the reasoning threshold applies only to
+          requests that carry replayed reasoning. Everything else passes
           through untouched.
 COST      A normal step is delayed by its reasoning (it is released with the
           first answer event; Codex shows nothing during reasoning either way).
           A caught loop costs the threshold's tokens plus one retry, instead of
           num_predict and a failed turn.
 RETIRE    When a captured looping request no longer loops with this hook removed.
+
+DEFECT 2  A Gemma 4 turn can complete with only reasoning: Ollama's gemma4 parser
+          fails on the tool call, discards it, and logs only `gemma4 tool call
+          parsing failed` (the model wrote `content:*** Begin Patch…<|"|>}`,
+          missing the opening string delimiter). Codex then ends the turn
+          without the edit. Measured on gemma4:26b-qat-mtp, Ollama 0.40.14: 4 of 9
+          codex-local edit runs (#69). The text never leaves Ollama, so the
+          proxy cannot repair it.
+FIX 2     A guarded request whose stream completes while still reasoning-only is
+          re-sent once, unchanged; replays of a captured instance produced the
+          call or the patch 3/3. This applies with or without replayed
+          reasoning, since the first edit request of a turn carries none.
+RETIRE 2  When Ollama's gemma4 parser accepts a string value with no opening
+          delimiter, or reports the failure to the client.
 """
 import copy
 import logging
@@ -93,11 +108,13 @@ def _replayed_reasoning(data):
     return sum(1 for i in items if isinstance(i, dict) and i.get("type") == "reasoning")
 
 
-def without_reasoning(data):
-    """The request's Responses fields, with every replayed reasoning item removed."""
+def resend(data, drop_reasoning=True):
+    """The request's Responses fields, with every replayed reasoning item removed
+    when `drop_reasoning`."""
     retry = {k: copy.deepcopy(data[k]) for k in RESPONSES_FIELDS if k in data}
-    retry["input"] = [i for i in retry.get("input") or []
-                      if not (isinstance(i, dict) and i.get("type") == "reasoning")]
+    if drop_reasoning:
+        retry["input"] = [i for i in retry.get("input") or []
+                          if not (isinstance(i, dict) and i.get("type") == "reasoning")]
     retry["stream"] = True
     return retry
 
@@ -120,10 +137,12 @@ class ReasoningLoopGuard(CustomLogger):
         return self._registry
 
     def limit_for(self, request_data):
-        """The reasoning-character limit for this request, or None to pass through."""
-        if not _replayed_reasoning(request_data):
+        """None to pass through; otherwise the reasoning-character limit, or 0 when
+        the request replays no reasoning and only the empty-completion retry applies."""
+        limit = self.registry.loop_guard_limit((request_data or {}).get("model"))
+        if limit is None:
             return None
-        return self.registry.loop_guard_limit((request_data or {}).get("model"))
+        return limit if _replayed_reasoning(request_data) else 0
 
     async def async_post_call_streaming_iterator_hook(self, user_api_key_dict, response, request_data):
         limit = self.limit_for(request_data)
@@ -146,11 +165,14 @@ class ReasoningLoopGuard(CustomLogger):
                     yield h
                 held = None
                 continue
-            if chars > limit:
+            if limit and chars > limit:
                 why = "threshold"
                 break
-            if t == "response.incomplete":
+            if t == "response.incomplete" and limit:
                 why = "incomplete"
+                break
+            if t == "response.completed":
+                why = "empty"
                 break
 
         if why is None:
@@ -164,10 +186,15 @@ class ReasoningLoopGuard(CustomLogger):
                 await close()
             except Exception:  # noqa: BLE001 - the abandoned stream's cleanup is best effort
                 pass
-        retry = without_reasoning(request_data)
-        log.warning("reasoning_loop_guard: %s after %d reasoning chars; retrying once "
-                    "without %d replayed reasoning item(s)", why, chars,
-                    _replayed_reasoning(request_data))
+        if why == "empty":
+            retry = resend(request_data, drop_reasoning=False)
+            log.warning("reasoning_loop_guard: completed with no answer or tool call after "
+                        "%d reasoning chars; retrying once unchanged", chars)
+        else:
+            retry = resend(request_data)
+            log.warning("reasoning_loop_guard: %s after %d reasoning chars; retrying once "
+                        "without %d replayed reasoning item(s)", why, chars,
+                        _replayed_reasoning(request_data))
         async for chunk in await self._retry(retry):
             yield chunk
 
