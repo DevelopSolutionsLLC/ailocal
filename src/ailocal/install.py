@@ -413,7 +413,7 @@ def upgrade_model_defaults(source: Path, config: Path) -> dict:
 #: Apple Silicon, which reaches back to Big Sur — well before that bundling.
 PREREQUISITES = (
     ("docker", "Docker Desktop", "brew install --cask docker-desktop"),
-    ("ollama", "Ollama", "brew install --cask ollama-app"),
+    ("ollama", "Ollama", "brew install --cask ollama-binary"),
 )
 
 

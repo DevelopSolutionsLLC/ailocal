@@ -27,7 +27,7 @@ ailocal installs no software of its own. You install the prerequisites and which
 Install [Homebrew](https://brew.sh) if you do not have it, then:
 
 ```bash
-brew install --cask docker-desktop ollama-app
+brew install --cask docker-desktop ollama-binary
 brew install pipx ripgrep
 ```
 
@@ -35,7 +35,9 @@ Local models are told to search with `rg`; macOS ships no ripgrep, and the copie
 
 Recommended: `brew install cosign`. `ailocal check` uses it to look up the publisher signature of each pinned image; without it the digest pin still holds and the check reports one warning.
 
-Open Docker Desktop and Ollama once from your Applications folder. Both need one manual launch. `pipx` brings its own Python; you do not install Python or manage a virtual environment.
+`ollama-binary` is Ollama's official command-line release with no menu-bar app; ailocal runs its server under launchd. If you installed the `ollama-app` cask, switch with `brew uninstall --cask ollama-app && brew install --cask ollama-binary`, then re-run `ailocal install`; the two casks conflict, and your models stay in the shared store.
+
+Open Docker Desktop once from your Applications folder; it needs one manual launch. `pipx` brings its own Python; you do not install Python or manage a virtual environment.
 
 ailocal keeps the Ollama server available, but models load when first requested rather than at login.
 
@@ -123,11 +125,11 @@ To upgrade ailocal itself, install the new release tag with `pipx install --forc
 ailocal holds its dependencies at validated versions, roughly two releases behind the newest. Homebrew has no minimum-age setting, so hold a version with a pin; `brew upgrade` skips pinned packages.
 
 ```bash
-brew pin --cask codex claude-code@latest   # the clients ailocal is measured against
+brew pin --cask codex claude-code@latest ollama-binary   # what ailocal is measured against
 brew pin pipx
 ```
 
-To move a pinned package: unpin, upgrade, run `ailocal check`, pin again. Docker Desktop, the Ollama app and VS Code ignore cask pins and update themselves; turn off automatic updates in each app. ailocal pins its service images by digest, so Docker Desktop updates never change LiteLLM or SearXNG.
+To move a pinned package: unpin, upgrade, run `ailocal check`, pin again. Docker Desktop, VS Code and the Ollama app (`ollama-app`) ignore cask pins and update themselves; turn off automatic updates in each app. ailocal pins its service images by digest, so Docker Desktop updates never change LiteLLM or SearXNG.
 
 ## Supported clients
 
