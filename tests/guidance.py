@@ -225,17 +225,12 @@ class Guidance(unittest.TestCase):
                 self.assertIn('9000 bytes', claude.detail)
                 self.assertIn('fits alone', claude.remediation)
 
-    def test_contract_budget_leaves_room_for_the_guide_hook(self):
-        """#50: a composer that fills the published budget must not push the always-on total past it."""
-        def published(hook):
-            with patch.object(generation, 'launch_default_hook_bytes', return_value=(hook, 9000)), \
-                    patch.object(generation, 'stage') as stage, contextlib.redirect_stderr(io.StringIO()):
-                generation.write_integration_contract({'fast': {}})
-            return {c: e['max_bytes'] for c, e in json.loads(stage.call_args.args[1])['instructions'].items()}
-        budget = policy.instruction_budgets()
-        self.assertEqual(published(1000), {'claude': budget['claude'] - 1000, 'codex': budget['codex']})
-        self.assertEqual(published(None)['claude'], budget['claude'])   # unrenderable hook: check reports it
-        self.assertEqual(published(budget['claude'] + 1)['claude'], 1)  # schema 3 requires a positive integer
+    def test_contract_publishes_the_full_budget(self):
+        """#56: subtracting the hook left Claude less than Cadence's compact policy."""
+        with patch.object(generation, 'stage') as stage, contextlib.redirect_stderr(io.StringIO()):
+            generation.write_integration_contract({'fast': {}})
+        published = {c: e['max_bytes'] for c, e in json.loads(stage.call_args.args[1])['instructions'].items()}
+        self.assertEqual(published, policy.instruction_budgets())
 
 
 class Contract(unittest.TestCase):

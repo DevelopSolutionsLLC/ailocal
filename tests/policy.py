@@ -277,15 +277,11 @@ def generated() -> None:
               in (b / "state/litellm/capabilities.json").read_text(),
               f"{tier}: capabilities.json reflects the resolved model")
         budgets = P.instruction_budgets(b / "cfg")
-        # #50: Claude's published budget leaves room for the guide hook it adds to the same context.
-        hook = int(subprocess.run([sys.executable, "-c", "from ailocal.guidance import launch_default_hook_bytes as h; "
-                                   f"print(h({tier!r})[0])"], env=env, capture_output=True, text=True).stdout)
         check(contract.get("schema_version") == 3
               and contract.get("audit", {}).get("record", "").endswith("audit/local.json")
               and contract.get("audit", {}).get("command") == "ailocal audit"
-              and 0 < hook < budgets["claude"]
               and contract.get("instructions") == {
-                  "claude": {"max_bytes": budgets["claude"] - hook, "file": "CLAUDE.md"},
+                  "claude": {"max_bytes": budgets["claude"], "file": "CLAUDE.md"},
                   "codex": {"max_bytes": budgets["codex"], "file": "AGENTS.md"}},
               f"{tier}: contract is schema 3 with the audit record and instruction budgets")
     check("compaction" not in P.effective_summary(), "the profile summary publishes no compaction trigger")
