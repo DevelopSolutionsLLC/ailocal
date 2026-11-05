@@ -128,10 +128,24 @@ class Guidance(unittest.TestCase):
         self.assertEqual((rc, 'ailocal-architecture' in out), (0, True))   # falls back to requested_model
         rc, _, err = hook({'hook_event_name': 'PostModelSwitch', 'to_model': 'claude-router-' + 'not-served'.encode().hex()})
         self.assertEqual((rc, 'MODEL_GUIDANCE_UNKNOWN_MODEL' in err), (2, True))
-        rc, out, _ = hook({})   # no model named: every entry once, never a guessed default
+        # #60: no model named: every alias's limits on one line each, never a guessed
+        # default, and no full guide per alias.
+        rc, out, _ = hook({})
         guides = policy.model_guides('16gb', RES)['models']
-        self.assertTrue('not supplied' in out and guides['ailocal-cyber']['summary'] in out and guides['ailocal-cyber']['model'] in out)
-        self.assertEqual(out.count(guides['ailocal-implementation']['evidence']), 1)
+        self.assertTrue(rc == 0 and 'not supplied' in out and 'model_guide' in out)
+        for name, g in guides.items():
+            self.assertIn(f"{name}: {g['model']}; input {g['context_input']}, output {g['max_output']}", out)
+        self.assertNotIn(guides['ailocal-cyber']['summary'], out)
+        self.assertNotIn(guides['ailocal-cyber']['limitations'][0], out)
+        # #60: the always-on hook leaves reference data to model_guide; the on-demand guide keeps it.
+        cyber = guides['ailocal-cyber']
+        _, brief, _ = hook({'model': 'ailocal-cyber'})
+        self.assertTrue('Profile limits:' in brief and cyber['limitations'][0] in brief and guidance.REFERENCE_POINTER in brief)
+        for absent in (cyber['evidence'], cyber['summary'], 'Configured inference preset', 'Current MTP draft tokens'):
+            self.assertNotIn(absent, brief)
+        with patch.dict(os.environ, {'AILOCAL_CONFIG': str(RES)}), contextlib.redirect_stdout(io.StringIO()) as full:
+            self.assertEqual(guidance.main(['--tier', '16gb', 'ailocal-cyber']), 0)
+        self.assertTrue(cyber['evidence'] in full.getvalue() and 'Configured inference preset' in full.getvalue())
         for cwd, previous in (('/work/first', '/work/second'), ('/work/second', '/work/first')):
             rc, out, _ = hook({'model': 'ailocal-cyber', 'cwd': cwd})
             self.assertTrue(rc == 0 and json.dumps(cwd) in out and previous not in out)
@@ -210,19 +224,25 @@ class Guidance(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()) as printed:
             self.assertEqual(guidance.main(['--hook', '--tier', '64gb']), 0)
             self.assertEqual(guidance.hook_bytes(event, '64gb'), len(printed.getvalue().encode()))
+        # #60: the shipped scratchpad hook is measured from its source, in both roots.
+        self.assertTrue(all(isinstance(C._scratchpad_hook_bytes(t), int) and C._scratchpad_hook_bytes(t) > 200
+                            for t in ('claude', 'codex')))
         (tmp / 'claude').mkdir()
         (tmp / 'claude/CLAUDE.md').write_text('owner: cadence\n' + 'x' * 2985)
         with patch.object(policy, 'deployed_client_root', return_value=tmp), \
-                patch.dict(os.environ, {'AILOCAL_CONFIG': str(tmp)}):
-            with patch.object(C, '_guide_hook_bytes', return_value=(1000, 9000)):
-                claude = next(r for r in C.check_instruction_budget() if r.name == 'claude-instructions')
+                patch.dict(os.environ, {'AILOCAL_CONFIG': str(tmp)}), \
+                patch.object(C, '_scratchpad_hook_bytes', return_value=50):
+            budget = lambda: next(r for r in C.check_instruction_budget() if r.name == 'claude-instructions')
+            with patch.object(C, '_guide_hook_bytes', return_value=(1000, 300)):
+                claude = budget()
                 self.assertEqual(claude.status, C.PASS)
-                self.assertIn('CLAUDE.md 3000 + guide hook 1000', claude.summary)
-            with patch.object(C, '_guide_hook_bytes', return_value=(1200, 9000)):
-                claude = next(r for r in C.check_instruction_budget() if r.name == 'claude-instructions')
+                self.assertIn('CLAUDE.md 3000 + guide hook 1000 + scratchpad hook 50', claude.summary)
+            # The no-model case is counted when it is the larger: "fits" is never claimed for it.
+            with patch.object(C, '_guide_hook_bytes', return_value=(1000, 1200)):
+                claude = budget()
                 self.assertEqual(claude.status, C.WARN)
-                self.assertIn('4200/4096', claude.summary)
-                self.assertIn('9000 bytes', claude.detail)
+                self.assertIn('4250/4096', claude.summary)
+                self.assertIn('1200 when the event names none', claude.detail)
                 self.assertIn('fits alone', claude.remediation)
 
     def test_contract_publishes_the_full_budget(self):
