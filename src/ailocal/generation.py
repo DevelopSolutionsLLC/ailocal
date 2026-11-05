@@ -622,6 +622,23 @@ def regen_claude_settings(models, clients):
             if isinstance(data.get("env"), dict) or isinstance(live.get("env"), dict):
                 merged["env"] = {**(data.get("env") or {}), **(live.get("env") or {})}
             data = merged
+    # Always-on context a local session does not use (#62, measured 2026-11-04).
+    # Hosted ~/.claude/CLAUDE.md and rules/ load as ancestor project memory
+    # whenever cwd is under $HOME (13,335 B); absolute paths, so a repository's
+    # own .claude/CLAUDE.md still loads. A bare-name deny removes the tool from
+    # context. Values the user added are kept.
+    hosted = Path.home() / ".claude"
+    excludes = data.get("claudeMdExcludes") or []
+    for path in (str(hosted / "CLAUDE.md"), str(hosted / "rules") + "/**"):
+        if path not in excludes:
+            excludes.append(path)
+    data["claudeMdExcludes"] = excludes
+    data.setdefault("disableBundledSkills", True)
+    perms = data.setdefault("permissions", {})
+    deny = perms.setdefault("deny", [])
+    for tool in ("ScheduleWakeup", "ReportFindings", "ListAgents"):
+        if tool not in deny:
+            deny.append(tool)
     default = (clients.get("claude") or {}).get("launch_default", next(iter(models)))
     caps = " | ".join(mn(k) for k in models.keys())
     slots = (clients.get("claude") or {}).get("slots", {})

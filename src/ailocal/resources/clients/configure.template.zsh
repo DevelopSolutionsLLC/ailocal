@@ -195,7 +195,8 @@ codex-local() {
     return 1
   fi
   CODEX_HOME="$cfg/codex" OPENAI_API_KEY="$key" OPENAI_BASE_URL="$base/v1" \
-    command codex -c 'mcp_servers.agent.env.LOCAL_AGENT_CALLER="local"' "$@"
+    command codex -c 'mcp_servers.agent.env.LOCAL_AGENT_CALLER="local"' \
+      -c 'mcp_servers.agent.enabled_tools=["model_guide"]' "$@"
 }
 
 # The profile ailocal configures. `--profile ailocal` created an EMPTY profile:
