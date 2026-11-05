@@ -77,7 +77,7 @@ If Ollama listens elsewhere, export `OLLAMA_HOST` — it is the only variable th
 
 ## New model loads fail: `llama-server binary not found`
 
-**Likely cause** — the file the managed server was started from is gone: the Ollama app was removed for the `ollama-binary` cask, or a cask upgrade replaced the versioned Caskroom directory. Models already resident keep answering, so `Ollama responding` stays green.
+**Likely cause** — the file the managed server was started from is gone: the Ollama app was removed for the `ollama-binary` cask, or a cask upgrade replaced the versioned Caskroom directory and `com.ailocal.ollama-watch` has not restarted the server yet (it retries every five minutes; its log is `~/Library/Logs/ailocal/com.ailocal.ollama-watch.log`). Models already resident keep answering, so `Ollama responding` stays green.
 
 **Verify**
 

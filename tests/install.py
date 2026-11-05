@@ -283,6 +283,47 @@ def launchd():
     with po(P.shutil, "which", return_value="/opt/homebrew/bin/ollama"):
         check(P.stock_ollama_binary() == "/opt/homebrew/bin/ollama",
               "the stock binary is the PATH entry, unresolved, so a cask upgrade cannot strand launchd")
+    # #76: a cask upgrade deletes the files under the running daemon; the watcher restarts it.
+    with la() as box:
+        cask = box.resolve() / "Caskroom/ollama-binary"
+        (real := cask / "0.40.14/ollama").parent.mkdir(parents=True)
+        for exe in (real, real.parent / "llama-server"):
+            exe.write_text("#!/bin/sh\n")
+            exe.chmod(0o755)
+        (link := box / "bin/ollama").parent.mkdir()
+        link.symlink_to(real)
+        with po(I, "_run", return_value=OK), po(I, "_bootout"), quiet():
+            I._write_ollama_watch_agent(str(link))
+        plist = plistlib.loads((box / "com.ailocal.ollama-watch.plist").read_bytes())
+        check(plist["WatchPaths"] == [str(cask)] and plist["StartInterval"] == 300
+              and plist["ProgramArguments"][-1] == str(link) and "KeepAlive" not in plist,
+              "a cask binary gets a watcher on its Caskroom directory with a periodic backstop")
+        script = box / "watch.sh"
+        script.write_text("#!/bin/sh\n" + I.OLLAMA_WATCH)
+        if shutil.which("shellcheck"):
+            lint = I._run("shellcheck", "-S", "warning", "-s", "sh", script, capture=True)
+            check(lint.returncode == 0, "the watcher script is shellcheck-clean", lint.stdout[-300:])
+        log = box / "launchctl.log"
+        (fake_launchctl := box / "launchctl").write_text(f'#!/bin/sh\necho "$@" >> "{log}"\n')
+        fake_launchctl.chmod(0o755)
+        for running, restart in ((str(real), False), ("/Applications/Ollama.app/Contents/Resources/ollama", True)):
+            (fake_lsof := box / "lsof").write_text(
+                '#!/bin/sh\ncase "$*" in *-p*) printf "p7\\nftxt\\nn%s\\n" "$RUNNING" ;; *) echo 7 ;; esac\n')
+            fake_lsof.chmod(0o755)
+            log.unlink(missing_ok=True)
+            done = I._run("/bin/sh", "-c", I.OLLAMA_WATCH, "ollama-watch", link, capture=True, timeout=20,
+                          env=dict(os.environ, AILOCAL_LSOF=str(fake_lsof), AILOCAL_LAUNCHCTL=str(fake_launchctl),
+                                   RUNNING=running))
+            kicked = log.read_text() if log.exists() else ""
+            check(done.returncode == 0 and ("kickstart -k" in kicked and "com.ailocal.ollama" in kicked) == restart,
+                  f"the watcher {'restarts a daemon on a replaced binary' if restart else 'leaves a current daemon alone'}",
+                  done.stdout + done.stderr + kicked)
+        link.unlink()
+        link.symlink_to(box / "runtimes/ollama")
+        with po(I, "_run", return_value=OK), po(I, "_bootout") as bo, quiet():
+            I._write_ollama_watch_agent(str(link))
+        check(not (box / "com.ailocal.ollama-watch.plist").exists() and bo.called,
+              "a binary outside a Caskroom has no watcher")
     with la() as box, po(I, "_bootout") as bo, po(I.policy, "state_root", return_value=box):
         (legacy := box / "agents/preload.sh").parent.mkdir()
         legacy.write_text("#!/bin/sh\n# operator script\n")

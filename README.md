@@ -129,7 +129,7 @@ brew pin --cask codex claude-code@latest ollama-binary   # what ailocal is measu
 brew pin pipx
 ```
 
-To move a pinned package: unpin, upgrade, run `ailocal check`, pin again. Docker Desktop and VS Code ignore cask pins and update themselves; turn off automatic updates in each app. `brew upgrade --cask ollama-binary` replaces the files under the running server, so run `ailocal install` after any Ollama upgrade. ailocal pins its service images by digest, so Docker Desktop updates never change LiteLLM or SearXNG.
+To move a pinned package: unpin, upgrade, run `ailocal check`, pin again. Docker Desktop and VS Code ignore cask pins and update themselves; turn off automatic updates in each app. `brew upgrade --cask ollama-binary` replaces the files under the running server; the `com.ailocal.ollama-watch` agent restarts it on the new version, within five minutes at worst. ailocal pins its service images by digest, so Docker Desktop updates never change LiteLLM or SearXNG.
 
 ## Supported clients
 

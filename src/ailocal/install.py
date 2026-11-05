@@ -31,7 +31,7 @@ LA_DIR = Path.home() / "Library" / "LaunchAgents"
 LOG_DIR = Path.home() / "Library" / "Logs" / "ailocal"
 MODEL_STORE = str(policy.ollama_model_store())
 AGENTS = ("com.ailocal.ollama", "com.ailocal.preload", "com.ailocal.litellm",
-          "com.ailocal.ollama-env")
+          "com.ailocal.ollama-env", "com.ailocal.ollama-watch")
 
 #: Ollama's runtime environment, in one place. KEEP_ALIVE is the GLOBAL DEFAULT
 #: and governs only direct callers that send no per-request keep_alive — in
@@ -468,7 +468,8 @@ def _write_ollama_setenv_agent() -> None:
 
 
 def _write_agent(label: str, program: list[str], *, keep_alive: bool = False,
-                 env: dict | None = None, calendar: dict | None = None) -> Path:
+                 env: dict | None = None, calendar: dict | None = None,
+                 watch: list[str] | None = None, interval: int | None = None) -> Path:
     LA_DIR.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     plist = {"Label": label, "ProgramArguments": program, "RunAtLoad": True,
@@ -478,6 +479,10 @@ def _write_agent(label: str, program: list[str], *, keep_alive: bool = False,
         plist["EnvironmentVariables"] = env
     if keep_alive:
         plist.update(KeepAlive=True, ThrottleInterval=10, ProcessType="Interactive")
+    if watch:
+        plist["WatchPaths"] = watch
+    if interval:
+        plist["StartInterval"] = interval
     if calendar:
         plist["StartCalendarInterval"] = calendar
         plist["RunAtLoad"] = False
@@ -497,6 +502,44 @@ def _write_agent(label: str, program: list[str], *, keep_alive: bool = False,
             detail = (started.stderr or started.stdout or "start pending").strip()[:300]
             warn(f"launchd start request for {label}: {detail}; verifying readiness")
     return path
+
+
+#: Restarts com.ailocal.ollama after a cask upgrade (#76). launchd.plist(5)
+#: calls WatchPaths race-prone: an event can be missed or arrive while Homebrew
+#: is still writing. So the script waits until the new binary and its
+#: llama-server exist, restarts only when the daemon's executable differs from
+#: the symlink's target, and also runs every five minutes as a backstop.
+#: AILOCAL_LSOF and AILOCAL_LAUNCHCTL exist for the test suite; launchd sets neither.
+OLLAMA_WATCH = """\
+bin=$1 lsof=${AILOCAL_LSOF:-/usr/sbin/lsof} launchctl=${AILOCAL_LAUNCHCTL:-/bin/launchctl}
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  want=$(readlink "$bin") || exit 0
+  case $want in /*) ;; *) want=$(dirname "$bin")/$want ;; esac
+  [ -x "$want" ] && [ -x "$(dirname "$want")/llama-server" ] && break
+  sleep 5
+done
+[ -x "$want" ] || exit 0
+pid=$("$lsof" -nP -tiTCP:11434 -sTCP:LISTEN | head -n 1)
+[ -n "$pid" ] || exit 0
+running=$("$lsof" -p "$pid" -a -d txt -Fn | sed -n 's/^n//p' | head -n 1)
+[ "$running" = "$want" ] && exit 0
+echo "restarting com.ailocal.ollama: $running -> $want"
+exec "$launchctl" kickstart -k "gui/$(id -u)/com.ailocal.ollama"
+"""
+
+
+def _write_ollama_watch_agent(binary: str) -> None:
+    """Watch the cask's Caskroom directory; any other binary has no upgrade
+    path that deletes files under the daemon, so its watcher is removed."""
+    real = Path(os.path.realpath(binary))
+    if len(real.parents) > 2 and real.parents[2].name == "Caskroom" and Path(binary).is_symlink():
+        _write_agent("com.ailocal.ollama-watch", ["/bin/sh", "-c", OLLAMA_WATCH, "ollama-watch", binary],
+                     watch=[str(real.parents[1])], interval=300)
+        ok(f"com.ailocal.ollama-watch restarts the server after an upgrade of {real.parents[1]}")
+    elif (path := LA_DIR / "com.ailocal.ollama-watch.plist").exists():
+        _bootout("com.ailocal.ollama-watch")
+        path.unlink()
+        ok("removed com.ailocal.ollama-watch; the selected binary is not a cask link")
 
 
 def _bootout(label: str) -> None:
@@ -734,6 +777,7 @@ def configure_ollama_services(*, binary: str | None = None) -> int:
     for k, v in _ollama_env().items():
         _run("launchctl", "setenv", k, v)
     ok("session env matches the server's (com.ailocal.ollama-env refreshed)")
+    _write_ollama_watch_agent(binary)
     return 0
 
 
@@ -1130,12 +1174,12 @@ def audit() -> list:
     else:
         flag("DUPLICATE", "claude-local may share the cloud config root", configure,
              "re-run ailocal clients claude")
-    for label in ("com.ailocal.ollama", "com.ailocal.ollama-env"):
+    for label in ("com.ailocal.ollama", "com.ailocal.ollama-env", "com.ailocal.ollama-watch"):
         plist = LA_DIR / f"{label}.plist"
         if not plist.is_file():
             note(f"{label} not installed")
-        elif label.endswith("-env"):
-            fine(f"{label} installed (one-shot: not-running is correct)")
+        elif label.endswith(("-env", "-watch")):
+            fine(f"{label} installed (on demand: not-running is correct)")
         elif "state = running" in _out("launchctl", "print", f"gui/{os.getuid()}/{label}"):
             fine(f"{label} running")
         else:
