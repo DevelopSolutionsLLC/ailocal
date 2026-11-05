@@ -221,6 +221,20 @@ def install_flow():
     check(targets["claude"].called and targets["codex"].called and not targets["vscode"].called and not shell.called
           and sorted(agent.call_args.args[0]) == ["claude", "codex"],
           "--yes provisions and registers the agent MCP in the claude/codex local roots only")
+    # e6a9167: an unrecognised answer at the client prompt finished install with exit 0.
+    with contextlib.ExitStack() as st:
+        stack(st, present=True)
+        st.enter_context(po(I, "pull_models", return_value=0))
+        st.enter_context(po(I, "_retire_model_warmup"))
+        st.enter_context(po(I, "_ask", side_effect=lambda q, d="": "bogus" if q.startswith("Configure which") else "y"))
+        validate = checks_run.main
+        out = io.StringIO()
+        st.enter_context(contextlib.redirect_stdout(out))
+        st.enter_context(contextlib.redirect_stderr(io.StringIO()))
+        rc = I.cmd_install([])
+    check(rc == 1 and not validate.called and "proxy is ready" not in out.getvalue()
+          and "Client configuration failed" in out.getvalue(),
+          "an unrecognised client answer fails install before validation and claims no readiness")
     with po(I.policy, "ollama_patch_selection", return_value="unknown"), po(I, "require_prerequisites") as prereq:
         check(raises(SystemExit, I.cmd_install, ["--yes"]) and not prereq.called,
               "an unknown runtime selection is rejected before any mutation")
