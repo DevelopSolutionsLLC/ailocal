@@ -290,10 +290,12 @@ def generated() -> None:
 
 
 # Tier design: primary (shared by the four chat roles), cyber, completion, total window, draft depth.
+# 16/32 (#87): one Nemotron 3.5 Bolt E4B library tag for every chat role and a hash-pinned
+# unrestricted E4B for cyber, both at the model's 65536-token native window; the DFlash draft
+# is built into each model, so no draft depth is configured.
 DESIGN = {
-    "16gb": ("qwen3.5:4b-mtp-q4_K_M", "qwen3.5:4b-unrestricted-mtp-q4_K_M", "qwen2.5-coder:1.5b-base", 106496, 1),
-    "32gb": ("qwen3.5:9b-calibrated-mtp-q4_K_M", "qwen3.5:9b-unrestricted-mtp-q4_K_M",
-             "qwen2.5-coder:1.5b-base", 139264, 3),
+    "16gb": ("nemotron-3.5-bolt:e4b", "nemotron-3.5-bolt:e4b-unrestricted", "qwen2.5-coder:1.5b-base", 65536, None),
+    "32gb": ("nemotron-3.5-bolt:e4b", "nemotron-3.5-bolt:e4b-unrestricted", "qwen2.5-coder:1.5b-base", 65536, None),
     "64gb": (None, "gemma4:26b-unrestricted-qat-mtp-q4_K_M", "qwen2.5-coder:3b-base", 196608, None),
     "128gb": (None, "gemma4:26b-unrestricted-qat-mtp-q4_K_M", "qwen2.5-coder:3b-base", 262144, None),
 }
@@ -321,22 +323,15 @@ def hardware() -> None:
                  (arch["context_input"], arch["max_output"], arch["reasoning"])
         check((cy["context_input"], cy["max_output"], cy["reasoning"]) == mirror,
               f"{tier}: cyber mirrors {'implementation' if primary else 'architecture'}'s geometry")
-        if primary:
-            check('stop: ["<|im_end|>", "<|im_start|>"]' in G.gen_role_block("cyber", cy),
-                  f"{tier}: cyber's chat boundaries reach the provider")
-        else:
-            check(not cy.get("runtime_patch") and cy["top_k"] == 64,
-                  f"{tier}: QAT/MTP cyber needs no runtime patch")
+        # Every shipped chat backend is Gemma-family on stock Ollama (#80, #87): vendor top_k 64,
+        # no Qwen stop list, no runtime patch. A Qwen3.5 selection must declare the patch (ADR 016).
+        check(not cy.get("runtime_patch") and not cy.get("stop") and cy["top_k"] == 64,
+              f"{tier}: cyber ends turns on its EOS and needs no runtime patch")
         check(rr["completion"]["enabled"] and rr["completion"]["model"] == completion
               and {completion, cyber_model} <= set(P.required_models(tier, RESOURCES)), f"{tier}: installs {completion} and cyber")
-        qwen = [c for r, c in rr.items() if str(caps[r]["active"]).startswith("qwen3.5:")]
-        if qwen:
-            check(all(c.get("runtime_patch") == patch_id for c in qwen)
-                  and P.required_runtime_patch(tier, RESOURCES) == patch_id,
-                  f"{tier}: every Qwen3.5 route requires the thinking-channel runtime")
-        else:  # #80: Gemma serves every chat role on stock Ollama
-            check(not P.required_runtime_patch(tier, RESOURCES),
-                  f"{tier}: no Qwen3.5 route, so stock Ollama installs it")
+        check(not P.required_runtime_patch(tier, RESOURCES)
+              and not any(c.get("runtime_patch") or c.get("reasoning") for r, c in rr.items() if r != "completion" and tier in ("16gb", "32gb")),
+              f"{tier}: stock Ollama installs it; 16/32 chat roles run with thinking off")
         if draft:
             check(all(rr[r].get("draft_num_predict") == draft
                       and f"draft_num_predict: {draft}" in G.gen_role_block(r, rr[r])

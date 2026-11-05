@@ -59,7 +59,7 @@ check(d["contexts_from_generated"] >= 5, "context windows come from the generate
 check(d["aliases"] > 0, "model_group_alias loaded")
 
 suite.section("MODEL CLASSIFICATION")
-for backend in ("qwen3.5:4b-unrestricted-mtp-q4_K_M",
+for backend in ("nemotron-3.5-bolt:e4b-unrestricted",
                 "gemma4:26b-unrestricted-qat-mtp-q4_K_M",
                 "ailocal-qwen3.5-9b-coder-uncensored:mlx-7fed86c",
                 "hf.co/localslm/Qwen3.5-4B-MTP-Uncensored:model_q4_k_m.gguf",

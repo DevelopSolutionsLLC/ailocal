@@ -185,8 +185,11 @@ class Guidance(unittest.TestCase):
                 replacement['guidance'] = policy.guidance_for({'architecture': replacement}, 'architecture')
                 self.assertEqual(catalog({'architecture': replacement})['ailocal-architecture']['input_modalities'], ['text'])
             entries = catalog(models)
+            entries64 = catalog(policy.profile_summary('64gb', RES)['roles'])
         self.assertIn(models['cyber']['guidance']['evidence'], entries['ailocal-cyber']['base_instructions'])
-        self.assertIn('Current MTP draft tokens: 1.', entries['ailocal-cyber']['base_instructions'])
+        # #87: 16gb's Nemotron carries its DFlash draft inside the model, so no depth is configured or claimed.
+        self.assertNotIn('Current MTP draft tokens', entries['ailocal-cyber']['base_instructions'])
+        self.assertIn('Current MTP draft tokens: 3.', entries64['ailocal-cyber']['base_instructions'])
         self.assertFalse(entries['ailocal-cyber']['supports_parallel_tool_calls'] or entries['ailocal-completion']['supports_parallel_tool_calls'])
         self.assertIn('supports_function_calling: false', generation.gen_role_block('completion', models['completion']))
 

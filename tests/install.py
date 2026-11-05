@@ -523,10 +523,13 @@ def model_upgrade():
         config = Path(box) / "config"
         shutil.copytree(RESOURCES / "profiles", config / "profiles")
         prof = lambda t: config / f"profiles/{t}.toml"  # noqa: E731
-        path, ctx = prof("32gb"), P.resolve_role("32gb", "architecture", RESOURCES)["context_input"]
+        path, shipped = prof("32gb"), P.load_profile("32gb", RESOURCES)
+        ctx, temp, disk = shipped["architecture"]["context_input"], shipped["implementation"]["temperature"], shipped["disk_gb"]
         text = path.read_text()
-        for old, new in ((f"context_input = {ctx}", "context_input = 65536"), ("[completion]\n", "[completion]\nenabled = false\n"),
-                         ("temperature = 0.7", "temperature = 0.2"), ("disk_gb = 21", "disk_gb = 16")):
+        # The first context_input row is architecture's; the other substitutions touch every matching row.
+        text = text.replace(f"context_input = {ctx}", f"context_input = {ctx + 8192}", 1)
+        for old, new in (("[completion]\n", "[completion]\nenabled = false\n"),
+                         (f"temperature = {temp}", "temperature = 0.2"), (f"disk_gb = {disk}", f"disk_gb = {disk - 5}")):
             text = text.replace(old, new)
         path.write_text("# operator comment\n" + text)
         before, routing = path.read_bytes(), prof("clients").read_bytes()
@@ -534,18 +537,19 @@ def model_upgrade():
         total = max(c["context_input"] + c["max_output"] for r, c in authored.items()
                     if r in P.ROLES and c["active"] == authored["architecture"]["active"])
         res = I.upgrade_model_defaults(RESOURCES, config)
-        after, shipped = P.load_profile("32gb", config), P.load_profile("32gb", RESOURCES)
+        after = P.load_profile("32gb", config)
         arch = after["architecture"]
         check("32gb" in res["updated"] and (res["backup"] / "32gb.toml").read_bytes() == before, "the original policy is backed up")
         check(arch["max_output"] == 16384 and arch["context_input"] + arch["max_output"] == total
-              and after["implementation"]["temperature"] == 0.7 and after["completion"].get("enabled", True)
+              and after["implementation"]["temperature"] == temp and after["completion"].get("enabled", True)
               and after["disk_gb"] == shipped["disk_gb"],
               "the shared runner keeps the largest authored window; shipped sampling, FIM and footprint are adopted")
         check(path.read_text().startswith("# operator comment\n") and prof("clients").read_bytes() == routing
               and not I.upgrade_model_defaults(RESOURCES, config)["updated"],
               "comments and client routing are preserved; a repeat is a no-op")
         for t in ("16gb", "32gb"):
-            prof(t).write_text(prof(t).read_text().replace("temperature = 0.7", "temperature = 0.3"))
+            prof(t).write_text(prof(t).read_text().replace(
+                f"temperature = {P.load_profile(t, RESOURCES)['implementation']['temperature']}", "temperature = 0.3"))
         originals, real, calls = {t: prof(t).read_bytes() for t in ("16gb", "32gb")}, I.os.replace, []
 
         def flaky(a, b):

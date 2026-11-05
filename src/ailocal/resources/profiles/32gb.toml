@@ -1,108 +1,125 @@
-# 32gb — native GGUF MTP backends; measured on the 64 GB M3 Max.
-# Architecture retains its pre-reset authored window; Cyber matches its total.
-# Physical 32/128 GB fit and full-window quality are unverified.
-# GGUF uses eager context allocation and q8_0 KV; historical MLX geometry evidence does not transfer.
-# Exact sources, native trials and limitations: docs/model-audit.md.
-status = "configuration-verified"  # schema, selection and size are tested; not measured on 32 GB hardware
-disk_gb = 21
+# profile: 32gb
+# Declarative capability registry for 32 GB unified memory (Apple Silicon).
+# Architecture, implementation, review and fast share Ollama's library tag
+# nemotron-3.5-bolt:e4b, which Ollama serves on Apple Silicon as MLX NVFP4
+# safetensors with NVIDIA's built-in DFlash draft. Cyber is a hash-pinned native
+# GGUF import of the Heretic (abliterated) E4B with the same DFlash draft and
+# its f16 projector. Completion is unchanged. Thinking is off in every chat role:
+# measured 2026-11-05, it cost time and no accuracy. Identities and evidence:
+# docs/model-audit.md, "16/32 GB: Nemotron 3.5 Bolt E4B replaces Qwen3.5".
+#
+# Geometry follows the one rule in docs/architecture.md#geometry: admission is
+# bounded by memory up to the backend's native window, and compaction is the
+# client's latency budget, never a geometry input.
+#
+# The backend's native window is 65536 tokens (gemma4.context_length), so every
+# chat role totals 65536 and roles differ only in output reserve; the earlier
+# 139264-token total cannot be admitted by this model. The same model set as
+# 16 GB: the extra memory buys residency headroom (the primary ~7.2 GB and Cyber
+# ~7.1 GB on disk, before KV), not a larger window. Physical 32 GB fit and
+# simultaneous residency are unmeasured. No role needs the patched Ollama runtime.
+status = "configuration-verified"  # schema, selection and size are tested; 32 GB fit and full-window latency are not measured
+disk_gb = 16
 
+# Sampling is NVIDIA's generation_config.json: temperature 1.0, top_p 0.95,
+# top_k 64; min_p, presence and repeat penalties neutral. The measured suite ran
+# at these values, so no role keeps the former fast-agent temperature exception.
+# https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-BF16/raw/main/generation_config.json
 [architecture]
 role = "Lead architect (shared primary)"
-active = "qwen3.5:9b-calibrated-mtp-q4_K_M"
-preferred = ["qwen3.5:9b-calibrated-mtp-q4_K_M"]
-runtime_patch = "gemma4-switch-glu"
-draft_num_predict = 3
-source = {"model" = "hf.co/unsloth/Qwen3.5-9B-MTP-GGUF:Qwen3.5-9B-Q4_K_M.gguf", "sha256" = "e8dd94817e95d6c0939102049d068418269978377b13616c4726235e232841fe", "renderer" = "qwen3.5", "parser" = "qwen3.5"}
-stop = ["<|im_end|>", "<|im_start|>"]
-reasoning = true
-context_input = 122880
+active = "nemotron-3.5-bolt:e4b"
+preferred = ["nemotron-3.5-bolt:e4b"]
+reasoning = false
+context_input = 49152
 max_output = 16384
-temperature = 0.6
+temperature = 1.0
 keep_alive = "6h"
 purpose = ["architecture", "refactoring", "multi-step debugging", "design"]
-strengths = ["native MTP", "imatrix calibration", "native Ollama GGUF", "native tool calling"]
-weaknesses = ["smaller than the 64 GB tier's specialised models", "one backend serves four roles"]
+strengths = ["shared resident primary - no load/evict churn", "built-in DFlash draft", "native tool calling"]
+weaknesses = ["64K native window", "no thinking", "one backend serves four roles"]
 top_p = 0.95
-top_k = 20
+top_k = 64
 repeat_penalty = 1.0
 min_p = 0.0
 presence_penalty = 0.0
 
 [implementation]
 role = "Daily coding (shared primary)"
-active = "qwen3.5:9b-calibrated-mtp-q4_K_M"
-preferred = ["qwen3.5:9b-calibrated-mtp-q4_K_M"]
-runtime_patch = "gemma4-switch-glu"
-draft_num_predict = 3
-source = {"model" = "hf.co/unsloth/Qwen3.5-9B-MTP-GGUF:Qwen3.5-9B-Q4_K_M.gguf", "sha256" = "e8dd94817e95d6c0939102049d068418269978377b13616c4726235e232841fe", "renderer" = "qwen3.5", "parser" = "qwen3.5"}
-stop = ["<|im_end|>", "<|im_start|>"]
+active = "nemotron-3.5-bolt:e4b"
+preferred = ["nemotron-3.5-bolt:e4b"]
 reasoning = false
-context_input = 131072
+context_input = 57344
 max_output = 8192
-temperature = 0.7
+temperature = 1.0
 keep_alive = "6h"
 purpose = ["everyday coding", "features", "tests"]
-strengths = ["native MTP", "imatrix calibration", "native Ollama GGUF", "native tool calling"]
+strengths = ["same resident backend as architecture - no reload between roles"]
 weaknesses = ["shares its budget with every other chat capability"]
-top_p = 0.8
-top_k = 20
+top_p = 0.95
+top_k = 64
 repeat_penalty = 1.0
 min_p = 0.0
-presence_penalty = 1.5
+presence_penalty = 0.0
 
 [review]
 role = "Code review (shared primary)"
-active = "qwen3.5:9b-calibrated-mtp-q4_K_M"
-preferred = ["qwen3.5:9b-calibrated-mtp-q4_K_M"]
-runtime_patch = "gemma4-switch-glu"
-draft_num_predict = 3
-source = {"model" = "hf.co/unsloth/Qwen3.5-9B-MTP-GGUF:Qwen3.5-9B-Q4_K_M.gguf", "sha256" = "e8dd94817e95d6c0939102049d068418269978377b13616c4726235e232841fe", "renderer" = "qwen3.5", "parser" = "qwen3.5"}
-stop = ["<|im_end|>", "<|im_start|>"]
-reasoning = true
-context_input = 122880
+active = "nemotron-3.5-bolt:e4b"
+preferred = ["nemotron-3.5-bolt:e4b"]
+reasoning = false
+context_input = 49152
 max_output = 16384
-temperature = 0.6
+temperature = 1.0
 keep_alive = "6h"
 purpose = ["code review", "bug detection", "security review"]
-strengths = ["native MTP", "imatrix calibration", "native Ollama GGUF", "native tool calling"]
+strengths = ["larger output reserve for findings", "no separate model to load"]
 weaknesses = ["not a dedicated review model as on the 64 GB tier"]
 top_p = 0.95
-top_k = 20
+top_k = 64
 repeat_penalty = 1.0
 min_p = 0.0
 presence_penalty = 0.0
 
 [fast]
 role = "Fast agent (shared primary)"
-active = "qwen3.5:9b-calibrated-mtp-q4_K_M"
-preferred = ["qwen3.5:9b-calibrated-mtp-q4_K_M"]
-runtime_patch = "gemma4-switch-glu"
-draft_num_predict = 3
-source = {"model" = "hf.co/unsloth/Qwen3.5-9B-MTP-GGUF:Qwen3.5-9B-Q4_K_M.gguf", "sha256" = "e8dd94817e95d6c0939102049d068418269978377b13616c4726235e232841fe", "renderer" = "qwen3.5", "parser" = "qwen3.5"}
-stop = ["<|im_end|>", "<|im_start|>"]
+active = "nemotron-3.5-bolt:e4b"
+preferred = ["nemotron-3.5-bolt:e4b"]
 reasoning = false
-context_input = 131072
+context_input = 57344
 max_output = 8192
-temperature = 0.0
+temperature = 1.0
 keep_alive = "6h"
 purpose = ["task classification", "summarisation", "quick edits", "tool-driven lookups"]
-strengths = ["native MTP", "imatrix calibration", "native Ollama GGUF", "native tool calling"]
+strengths = ["no extra model resident - shares the primary"]
 weaknesses = ["larger than a dedicated 2b would be", "so marginally slower per token"]
-top_p = 0.9
-top_k = 20
+top_p = 0.95
+top_k = 64
 repeat_penalty = 1.0
 min_p = 0.0
-presence_penalty = 1.5
+presence_penalty = 0.0
 
 [completion]
 role = "Autocomplete (FIM)"
+  # SEPARATE MODEL ON PURPOSE. The primary is an instruct model without FIM/insert
+  # tokens, so it cannot do inline completion at all, and IDE completion needs
+  # latency the primary cannot meet. qwen2.5-coder carries native FIM tokens.
 active = "qwen2.5-coder:1.5b-base"
+  # The official BASE tag, not the instruct one. Proxy clients reach Ollama
+  # through LiteLLM, which drops `suffix` (BerriAI/litellm#6900) and sends the
+  # client's FIM-formatted prompt as a chat message. The base template passes
+  # it through; the instruct template wraps it in a user turn and infill fails.
+  # GGUF, not MLX: Ollama's MLX runner has no Qwen2 loader, and the GGUF decodes
+  # faster with the same fidelity (docs/maintenance.md#inline-completion).
 stop = ["<|endoftext|>", "<|fim_pad|>", "<|file_sep|>", "<|repo_name|>", "<|fim_prefix|>", "<|fim_suffix|>", "<|fim_middle|>"]
 preferred = ["qwen2.5-coder:1.5b-base"]
 reasoning = false
 context_input = 3968
+  # max_output 512, raised from 128. A FIM suggestion is a few lines, not a
+  # paragraph, but 128 truncated multi-line completions mid-block. 512 is
+  # still far too small to be used as a chat role, which is the point.
 max_output = 512
 temperature = 0.1
+  # Rotating, not pinned: self-unloads after 2h idle rather than staying resident
+  # beside the primary indefinitely. ~1 GB footprint keeps this cheap to reload.
 keep_alive = "2h"
 purpose = ["inline completion", "FIM", "quick syntax fixes"]
 strengths = ["native FIM tokens", "very fast", "~1 GB footprint"]
@@ -111,46 +128,46 @@ top_p = 0.9
 top_k = 20
 repeat_penalty = 1.0
 
+
+# ── cyber — unrestricted coding on a separate model ─────────────────────────
+# A separate model on purpose: abliterated weights are the capability, so it
+# cannot share the primary's resident copy the way the four roles above do.
+# Same E4B architecture and 65536 native window, so it follows implementation's
+# shape (non-thinking, 8192 output) and NVIDIA's sampling. The recipe binds three
+# reviewed blobs by digest: the Heretic Q4_K_M weights, the f16 projector from the
+# same publisher revision, and NVIDIA's DFlash draft, byte-identical to the draft
+# layer of Ollama's own nemotron-3.5-bolt:e4b-q4_K_M. `files` rather than `from`,
+# because the publisher's pull attaches a different (Q8) projector.
 [cyber]
 role = "Unrestricted coding (separate model)"
-active = "qwen3.5:9b-unrestricted-mtp-q4_K_M"
-preferred = ["qwen3.5:9b-unrestricted-mtp-q4_K_M"]
-runtime_patch = "gemma4-switch-glu"
-draft_num_predict = 3
-source = {"model" = "hf.co/localslm/Qwen3.5-9B-MTP-Uncensored:model_q4_k_m.gguf", "sha256" = "2d1019622dd398ba68d17cd78651ec24ed39e4e7e3a5ad563d1060f66a5ab06f", "renderer" = "qwen3.5", "parser" = "qwen3.5"}
-stop = ["<|im_end|>", "<|im_start|>"]
+active = "nemotron-3.5-bolt:e4b-unrestricted"
+source = {model = "hf.co/mradermacher/Nemotron-3.5-Bolt-E4B-Heretic-GGUF:Q4_K_M", sha256 = "85c31197ff1d89b92a0e1c27cc033466b7f02dc916adba011414b7a7b80e44b6", renderer = "gemma4-nemotron", parser = "gemma4", draft_model = "hf.co/nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-4GB-DFlash:BF16", draft_sha256 = "8103aa42fd31fb661c3fbe8701d04d698ea2c5d09351dc3e8c9da639958de989", projector_model = "hf.co/mradermacher/Nemotron-3.5-Bolt-E4B-Heretic-GGUF:Nemotron-3.5-Bolt-E4B-Heretic.mmproj-f16.gguf", projector_sha256 = "8886bb621f720cd02c72dd185f9db77971d3a6d8dc7e546c7153f3bfdf00f860"}
+preferred = ["nemotron-3.5-bolt:e4b-unrestricted"]
 reasoning = false
-context_input = 131072
+context_input = 57344
 max_output = 8192
-temperature = 0.7
-top_p = 0.8
-top_k = 20
+temperature = 1.0
+top_p = 0.95
+top_k = 64
 min_p = 0.0
-presence_penalty = 1.5
+presence_penalty = 0.0
 repeat_penalty = 1.0
+  # 5m, not the primary's 6h: a second resident model and its KV are memory the
+  # primary and clients cannot use, so it is released soon after it goes idle.
 keep_alive = "5m"
 purpose = ["refusal-sensitive coding", "security research", "tool-driven edits"]
-strengths = ["native MTP", "native Ollama GGUF", "native tool calling"]
-weaknesses = ["a second model beside the primary - a cold load on first use", "coding evidence is limited to small native-client fixtures"]
+strengths = ["unrestricted weights", "NVIDIA DFlash draft attached", "native tool calling", "same window as implementation"]
+weaknesses = ["a second model beside the primary - a cold load on first use", "GGUF decode is ~3x slower than the MLX primary", "third-party abliterated weights"]
 
-
-[model_guidance."qwen3.5:9b-calibrated-mtp-q4_K_M"]
+# One guide per exact backend, shared by all capability aliases using it.
+[model_guidance."nemotron-3.5-bolt:e4b"]
 input_modalities = ["text", "image"]
-name = "Qwen3.5 9B calibrated MTP (GGUF)"
-summary = "Unsloth imatrix-calibrated Q4_K_M with an embedded native MTP layer and image input; verify generated code with real tests."
-prompting = ["Give one bounded coding change, exact input/output requirements and acceptance examples; include only relevant files.", "Use native tools to inspect, edit and run unchanged tests. Return exact failures for at most two repair attempts, then report the unresolved issue.", "Request the needed output format explicitly. Use ailocal-fast for simple work and keep the selected role's thinking mode for difficult reasoning.", "Treat output-limit truncation as incomplete; do not repeat full repository context or claim tests passed without running them."]
-limitations = ["Small fixtures do not establish repository-scale accuracy or full-window retrieval quality.", "Calibration and MTP optimize inference; they do not add training-data knowledge or establish universal accuracy parity.", "Physical 32/128 GB full-window fit is unverified on the 64 GB measurement host."]
-evidence = "[REAL] 2026-10-28: the native HF pull matched target SHA-256 e8dd94817e95d6c0939102049d068418269978377b13616c4726235e232841fe. Ollama reports 77 calibration chunks, 248 imatrix entries, one nextn layer and vision capability. [APPROX] On the 64 GB M3 Max, ten coding tasks at three seeds passed 22/30 attempts and 3/3 tool rounds at both draft depth 2 and the selected depth 3; the former standard passed 21/30 and Cyber 22/30. A separate matched 256-token decode comparison reached 77.92 tokens/s versus former standard 69.24 and Cyber 77.23. The depth sweep selected depth 3 at 85.49 tokens/s versus Cyber 85.85; these are bounded synthetic workloads. Selected-depth, installed-client and geometry follow-through are recorded in docs/model-audit.md."
-sources = ["https://huggingface.co/unsloth/Qwen3.5-9B-MTP-GGUF/tree/9716a636ee4bddc3fed678220b7a33dd2a4160ae", "https://huggingface.co/Qwen/Qwen3.5-9B#best-practices"]
-
-[model_guidance."qwen3.5:9b-unrestricted-mtp-q4_K_M"]
-input_modalities = ["text", "image"]
-name = "Qwen3.5 9B unrestricted MTP (GGUF)"
-summary = "Publisher-labeled uncensored GGUF with Unsloth imatrix metadata and an embedded MTP layer; native Qwen rendering preserves client compatibility."
-prompting = ["Give one bounded coding change, exact input/output requirements and acceptance examples; include only relevant files.", "Use native tools to inspect, edit and run unchanged tests. Return exact failures for at most two repair attempts, then report the unresolved issue.", "Request the needed output format explicitly. Use ailocal-fast for simple work and keep the selected role's thinking mode for difficult reasoning.", "Treat output-limit truncation as incomplete; do not repeat full repository context or claim tests passed without running them.", "Unrestricted behavior is not evidence of coding or factual accuracy; verify edits and claims with actual tools."]
-limitations = ["Short fixtures do not establish repository-scale accuracy or full-window retrieval quality.", "MTP accelerates decoding; calibration and QAT do not establish additional training-data knowledge.", "This replaces the earlier Opus-distilled weights; their training and quality evidence do not transfer.", "The publisher label does not independently establish the uncensoring method or universal non-refusal."]
-evidence = "[REAL] The reviewed native target SHA-256 2d1019622dd398ba68d17cd78651ec24ed39e4e7e3a5ad563d1060f66a5ab06f has Unsloth imatrix metadata and an embedded nextn layer. [APPROX] 2026-10-28 on the 64 GB M3 Max: ten coding tasks at three seeds passed 22/30 attempts and 3/3 tool rounds at both draft depth 2 and the selected depth 3. The calibrated standard also passed 22/30. The depth sweep selected depth 3 at 85.85 tokens/s versus calibrated standard 85.49 on a 256-token synthetic workload. Native-client, selected-depth and geometry follow-through are scoped in docs/model-audit.md. [UNVERIFIED] Universal non-refusal, repository-scale accuracy and physical 32 GB/full-window fit."
-sources = ["https://huggingface.co/localslm/Qwen3.5-9B-MTP-Uncensored/tree/2d76f180895809e97ea55c524bca2236de7a0e26", "https://huggingface.co/Qwen/Qwen3.5-9B#best-practices"]
+name = "Nemotron 3.5 Bolt E4B (MLX NVFP4, DFlash)"
+summary = "NVIDIA Nemotron 3.5 Bolt E4B as Ollama serves it on Apple Silicon: MLX NVFP4 with its built-in DFlash draft, thinking off; verify edits with real tests."
+prompting = ["One bounded task per request: exact inputs, outputs, acceptance checks, only the files it needs.", "Call the tool first, preface at most one line; retry a transient tool error once, then report it.", "Run the unchanged tests to verify an edit; truncated output is not a pass."]
+limitations = ["64K window; tool_choice and stop strings are ignored, so ask for the call or format in words.", "Evidence is short suites, not repository-scale work; 32 GB fit unmeasured."]
+evidence = "[REAL] 2026-11-05, 128 GB M-series host, stock Ollama 0.40.14, thinking off, vendor sampling, direct Ollama: a 5-task suite x5 passed 20/25 at ~221 tokens/s (DFlash acceptance 0.57) against Qwen3.5 4B 16/25 and Qwen3.5 9B 20/25; a tool loop with an injected EAGAIN passed 3/3 and recovered 1/1 at 261 tokens/s decode; EvalPlus HumanEval+ passed 81/93 (87.1%; published base 91.4%) of the first 93 of 164 problems at 159 tokens/s with no length cut-offs. Thinking on scored -1/25 and cost time. Benign over-refusal probe 0/8 refusal-like (keyword heuristic, not manual labels). Ollama manifest digest fe4af3f5907b9275322dfea4fc3e4208c64469d0a47e3c05030c10cd27b49b38, context_length 65536. [APPROX] The same-model GGUF comparison is bounded: the Heretic Q4_K_M GGUF of the same architecture with the same DFlash draft passed 19/25 at ~65 tokens/s; the official Q4_K_M of the unmodified weights was not run. [UNVERIFIED] Physical 32 GB fit, full-window latency, repository-scale accuracy; the library tag is mutable and not hash-pinned."
+sources = ["https://ollama.com/library/nemotron-3.5-bolt:e4b", "https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-BF16", "https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-BF16/raw/main/generation_config.json", "https://github.com/ollama/ollama/issues/19552", "https://github.com/ollama/ollama/issues/15539"]
 
 [model_guidance."qwen2.5-coder:1.5b-base"]
 name = "Qwen2.5-Coder 1.5B base"
@@ -159,3 +176,12 @@ prompting = ["Format the request as <|fim_prefix|>prefix<|fim_suffix|>suffix<|fi
 limitations = ["A base model: it follows no instructions and has no system prompt, so pre-prompting does not improve it.","Apache-2.0.","Exact-match fidelity on single-line infill is low at this size; treat suggestions as drafts."]
 evidence = "[REAL] 2026-10-26, MacBook Air M4 16 GB under memory pressure (11 GB swap in use), Ollama 0.40.8-ailocal.18631.3: on 80 held-out single-line infills from this repository plus 10 executable FIM cases, sent as a FIM-formatted chat message the way the proxy forwards it, qwen2.5-coder:1.5b-base scored 10/80 exact, 0.549 similarity, 10/10 executable, 1.8 s p50, 68 tok/s. The instruct tag qwen2.5-coder:1.5b scored 0/80 and 0/10 on the same path because its chat template wraps the prompt. [APPROX] Native suffix requests: base 9/80, instruct 7/80, MLX mxfp8 import 10/80; differences are within noise."
 sources = ["https://ollama.com/library/qwen2.5-coder:1.5b-base","https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B","https://github.com/BerriAI/litellm/issues/6900"]
+
+[model_guidance."nemotron-3.5-bolt:e4b-unrestricted"]
+input_modalities = ["text", "image"]
+name = "Nemotron 3.5 Bolt E4B unrestricted (Heretic GGUF, DFlash)"
+summary = "Third-party abliterated Nemotron 3.5 Bolt E4B, Q4_K_M GGUF with NVIDIA's DFlash draft and the f16 projector, thinking off; unrestricted output is not evidence of accuracy."
+prompting = ["One bounded task per request: exact inputs, outputs, acceptance checks, only the files it needs.", "Call the tool first, preface at most one line; retry a transient tool error once, then report it.", "Run the unchanged tests to verify an edit; truncated output is not a pass.", "Unrestricted output is not evidence of accuracy; verify edits and claims with real tools."]
+limitations = ["64K window; tool_choice is ignored, so ask for the call or format in words.", "Third-party abliterated weights; the DFlash draft was trained on the original weights, so acceptance is lower and decode ~3x slower than the primary.", "A cold load after 5 minutes idle; simultaneous residency with the primary on 32 GB is unmeasured."]
+evidence = "[REAL] 2026-11-05, 128 GB M-series host, stock Ollama 0.40.14, thinking off, vendor sampling, direct Ollama: the 5-task suite x5 passed 19/25 at ~65 tokens/s; a tool loop with an injected EAGAIN passed 3/3 and recovered 1/1 at 75 tokens/s decode. Created by hand through /api/create with files {model, mmproj} and draft_files {draft}: capabilities completion/vision/audio/tools/thinking, and Ollama's log showed draft-dflash speculation active at ~30% token acceptance, mean accepted length 2.2. Benign over-refusal probe 0/8 refusal-like (keyword heuristic). Weights SHA-256 85c31197ff1d89b92a0e1c27cc033466b7f02dc916adba011414b7a7b80e44b6 (mradermacher static quant of grumd0/Nemotron-3.5-Bolt-E4B-Heretic), projector 8886bb621f720cd02c72dd185f9db77971d3a6d8dc7e546c7153f3bfdf00f860 at revision 17e1d92dd208791ecd7101b5da5b99d8aa4a7ff5, draft 8103aa42fd31fb661c3fbe8701d04d698ea2c5d09351dc3e8c9da639958de989 at revision 0949a2eb7152ec6fda1a91ff9302aecbcd464fbf, byte-identical to the draft layer of Ollama's nemotron-3.5-bolt:e4b-q4_K_M. [APPROX] The publisher reports KL 0.0859 against the base on harmless prompts; not reproduced here. [UNVERIFIED] Universal non-refusal, repository-scale accuracy, vision through the proxy, physical 32 GB fit."
+sources = ["https://huggingface.co/mradermacher/Nemotron-3.5-Bolt-E4B-Heretic-GGUF/tree/17e1d92dd208791ecd7101b5da5b99d8aa4a7ff5", "https://huggingface.co/grumd0/Nemotron-3.5-Bolt-E4B-Heretic", "https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-4GB-DFlash/tree/0949a2eb7152ec6fda1a91ff9302aecbcd464fbf", "https://huggingface.co/docs/hub/en/ollama", "https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-BF16/raw/main/generation_config.json"]
