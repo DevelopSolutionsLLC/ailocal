@@ -163,3 +163,15 @@ def hook_bytes(event: dict, tier=None) -> int | None:
     finally:
         sys.stdin = stdin
     return len(out.getvalue().encode("utf-8")) if rc == 0 else None
+
+
+def launch_default_hook_bytes(tier=None) -> tuple[int | None, int | None]:
+    """(launch-default payload, model-unspecified payload) of Claude's guide hook.
+
+    The integration contract subtracts the first from the instruction budget, and
+    `ailocal check` counts it beside CLAUDE.md, so both measure the same event.
+    """
+    default = (policy.load_client_policy().get("claude") or {}).get("launch_default")
+    event = {"hook_event_name": "SessionStart", "cwd": "/"}
+    named = hook_bytes({**event, "model": f"ailocal-{default}"}, tier) if default else None
+    return named, hook_bytes(event, tier)

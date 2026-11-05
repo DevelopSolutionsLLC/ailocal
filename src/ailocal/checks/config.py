@@ -361,10 +361,7 @@ def check_generated_in_sync() -> CheckResult:
 def _guide_hook_bytes() -> tuple[int | None, int | None]:
     """(launch-default payload, model-unspecified payload) of Claude's guide hook."""
     from ailocal import guidance
-    default = (P.load_client_policy().get("claude") or {}).get("launch_default")
-    event = {"hook_event_name": "SessionStart", "cwd": "/"}
-    named = guidance.hook_bytes({**event, "model": f"ailocal-{default}"}) if default else None
-    return named, guidance.hook_bytes(event)
+    return guidance.launch_default_hook_bytes()
 
 
 def check_instruction_budget() -> list[CheckResult]:
