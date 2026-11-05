@@ -1,30 +1,31 @@
 # Reviewed Go-only backport; never apply to another upstream base.
 id = "gemma4-switch-glu"
-base_version = "0.40.8"
+base_version = "0.40.14"
 # Why the base is held older than the ≈N-2 policy would pick: read by
 # `ailocal update`, which reports the base's N-position against upstream.
 hold = "the reviewed backport patches (18631, security, router, stop, qwen35-history) target this exact base; a newer base needs them re-applied and the native regression re-run before it can be selected"
-# [UNVERIFIED] 2026-11-04: .5 raised [security_dependencies] and security.patch
-# without a build. Nothing has built this version or run its native regressions;
-# the last built and validated runtime is 0.40.8-ailocal.18631.4. Replace this
-# note with the build evidence once `ailocal install --ollama-patch
-# gemma4-switch-glu` builds .5 and its regressions pass (#51).
-version = "0.40.8-ailocal.18631.5"
-source_commit = "f580b5484a58c8370c35d669555bf887783a3f68"
-source_url = "https://codeload.github.com/ollama/ollama/tar.gz/f580b5484a58c8370c35d669555bf887783a3f68"
-source_sha256 = "3b78aa7e3c95682f41ada1dcbd106567796c9151dfc7758e1ae34a85fc58271a"
-# First builds can acquire the exact signed native base without downgrading
-# an updated vendor app. GitHub release asset digest, independently checked
-# against the approved app's CLI and all 56 native payload files.
-native_archive_url = "https://github.com/ollama/ollama/releases/download/v0.40.8/Ollama-darwin.zip"
-native_archive_sha256 = "fe930d0a8567fde70dc4a88b329b693efc15c8845795f5f6c2f7c4d3881b104d"
-native_cli_sha256 = "e5c7c0ffa50d23d0f0e59cbf325f689b0010ee5563be89b73b05f08844e19e6b"
+# [REAL] 2026-11-05: built by ollama_patch.prepare() in 52 s with go1.27.3
+# darwin/arm64 from this source and the installed ollama-binary 0.40.14 cask
+# (native origin signed-vendor-cask). All five patches applied, and the
+# required SwitchGLU, mixed-precision router, stop and three Qwen3.5 history
+# regressions passed with no failures; 11 optional vendor tests skipped.
+version = "0.40.14-ailocal.18631.1"
+source_commit = "9a3e8177767245acc62b735eba7d5d8a553606d0"
+source_url = "https://codeload.github.com/ollama/ollama/tar.gz/9a3e8177767245acc62b735eba7d5d8a553606d0"
+source_sha256 = "a107b77057e4c31b82f4462b932edc042342a99e0e50f0dc014ece99b36beb75"
+# The release tarball the ollama-binary cask installs. A build reuses the
+# installed cask when its CLI matches native_cli_sha256 and otherwise fetches
+# this asset (GitHub release digest); every Mach-O in the copied payload must
+# pass `codesign --verify --strict` against Ollama's Developer ID team.
+native_archive_url = "https://github.com/ollama/ollama/releases/download/v0.40.14/ollama-darwin.tgz"
+native_archive_sha256 = "f3bf9a528e908da0da5a2b3a4ad3252a369d62186501dc4880261e8d9023bff5"
+native_cli_sha256 = "1e293ef2336e6f6be84e005ed539c6d2f3176d66b6c13350126f14fe0182024c"
 patch_commit = "6282f784940f9dfca1967dadf006070cfc1c5611"
 patch_file = "18631.patch"
 patch_sha256 = "aa49870955af7c7278592d1fcb83c48ae65b685f9d050c60daa7f257cc4e6a39"
 upstream_pr = "https://github.com/ollama/ollama/pull/18631"
 security_patch_file = "security.patch"
-security_patch_sha256 = "547a73b244d60c3538eeb1bc1e4a5fb7eed23f9e4621ef25d718045d3716bded"
+security_patch_sha256 = "a250a96cfdd2fa703ed60b408041c51e31d5ad1725e18d779e85ed4a5d29b655"
 router_patch_file = "router.patch"
 router_patch_sha256 = "9a2ea86d3c3901c4a0bd2c464d1e5ac0eeeef2e8a69999d0f5f1bd1e872fe881"
 stop_patch_file = "stop.patch"
@@ -41,14 +42,13 @@ qwen35_patch_sha256 = "0b02b79201da852a53111a1a099d49ccabf1fb0b74b4c80227cede80d
 # Preserve those explicit overrides rather than trusting imported global metadata.
 # https://huggingface.co/00cyre/Gemma-4-26B-A4B-it-Uncensored-MLX-4bit/blob/46ab84dbe20198a2ee5e66c3e69c039b8c60ad59/config.json
 
-# 2026-11-04: the golang.org/x graph of stock Ollama v0.40.14, except x/net,
-# raised to v0.62.0 (2026-10-27), the first release outside GO-2026-6860/6866;
-# the build links x/net/html through gabriel-vasile/mimetype. x/crypto v0.58.0
-# is the latest tag and stays inside GO-2026-5932 (x/crypto/openpgp), which the
-# build does not import. https://raw.githubusercontent.com/ollama/ollama/v0.40.14/go.mod
-# https://proxy.golang.org/golang.org/x/net/@v/v0.62.0.mod
-# go.sum in security.patch pins the authenticated module zip/mod checksums.
-# [UNVERIFIED] These pins have not been compiled; see the note above `version`.
+# The golang.org/x graph of the build, read by `ailocal audit`. security.patch
+# raises x/net v0.61.0 -> v0.62.0 (2026-10-27), the first release outside
+# GO-2026-6860/6866; the build links x/net/html through gabriel-vasile/mimetype.
+# The rest are stock v0.40.14's (https://raw.githubusercontent.com/ollama/ollama/v0.40.14/go.mod),
+# listed so the audit covers them. x/crypto v0.58.0 stays inside GO-2026-5932
+# (x/crypto/openpgp), which the build does not import. go.sum in security.patch
+# carries the sum.golang.org checksums for v0.62.0.
 [security_dependencies]
 "golang.org/x/net" = "v0.62.0"
 "golang.org/x/image" = "v0.47.0"

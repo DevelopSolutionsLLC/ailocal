@@ -46,7 +46,7 @@ MERMAID = audit.Pin("mermaid", "npm", "11.17.2", "VERSIONS.txt")
 DECLARED = next(l.split("image:")[1].strip() for l in (DEPLOY / "litellm/compose.yaml").read_text().splitlines() if "image:" in l)
 
 
-def live(ollama="0.40.8-ailocal.18631.3", litellm=("ailocal-litellm", DECLARED.split("@", 1)[1])):
+def live(ollama="0.40.14-ailocal.18631.1", litellm=("ailocal-litellm", DECLARED.split("@", 1)[1])):
     """What is running: a stub, never the machine."""
     return lambda: {"ollama": ollama, "images": {"ghcr.io/berriai/litellm": litellm, "searxng/searxng": ("", "")}}
 
@@ -67,7 +67,7 @@ check(all(l.split()[0] in found for l in vendored.read_text().splitlines() if l.
 
 S.section("running state beside declared")
 same = ollama_pins()
-check(len(same) == 1 and same[0].notes == ["running: /api/version 0.40.8-ailocal.18631.3"],
+check(len(same) == 1 and same[0].notes == ["running: /api/version 0.40.14-ailocal.18631.1"],
       "a daemon on the declared base annotates the pin")
 drift = ollama_pins(ollama="0.41.0")
 check(len(drift) == 2 and drift[1].version == "0.41.0" and any("not this base" in n for n in drift[0].notes),
@@ -175,9 +175,9 @@ check(all(c["state"] != update.CURRENT and any("not queried" in n or "no upstrea
       "nothing never checked is reported CURRENT", [(c["name"], c["state"]) for c in unchecked])
 
 pos, C = update.position, update.Component
-tags = ["v0.40.11", "v0.40.10", "v0.40.9-rc1", "v0.40.9", "v0.40.8", "v0.40.7"]
-check(pos("0.40.8", tags) == (3, "0.40.9") and pos("0.40.11", tags)[0] == 0 and pos("0.40.12", tags)[0] is None
-      and pos("0.40.7", tags)[1] == "0.40.9" and pos("1.0.0", ["v1.0.0", "v0.9.0"]) == (0, ""),
+tags = ["v0.40.17", "v0.40.16", "v0.40.15-rc1", "v0.40.15", "v0.40.14", "v0.40.13"]
+check(pos("0.40.14", tags) == (3, "0.40.15") and pos("0.40.17", tags)[0] == 0 and pos("0.40.18", tags)[0] is None
+      and pos("0.40.13", tags)[1] == "0.40.15" and pos("1.0.0", ["v1.0.0", "v0.9.0"]) == (0, ""),
       "release position skips pre-releases; the candidate is the third-newest stable")
 notes = update.position_notes
 check("too new" in notes(C(name="x", position=1, candidate="a"))[0] and notes(C(name="x", position=2))[0].startswith("N-2: at")
@@ -187,12 +187,12 @@ check("too new" in notes(C(name="x", position=1, candidate="a"))[0] and notes(C(
 RELEASES = [{"tag_name": t, "prerelease": "rc" in t, "draft": False} for t in tags]
 with mock.patch("ailocal.checks.services.http_json", lambda url, **kw: RELEASES):
     o = update._ollama(update.UPSTREAM)
-check(o.declared == "0.40.8" and o.position == 3 and o.candidate == "0.40.9" and o.state == update.AVAILABLE
-      and o.available == "0.40.11" and o.installed is None and o.hold
+check(o.declared == "0.40.14" and o.position == 3 and o.candidate == "0.40.15" and o.state == update.AVAILABLE
+      and o.available == "0.40.17" and o.installed is None and o.hold
       and any("held: the reviewed backport patches" in n for n in o.notes), "the Ollama base is placed upstream; its hold is stated", o)
 with mock.patch("ailocal.checks.services.http_json",
-                lambda url, **kw: {"version": "0.40.8-ailocal.18631.3"} if "api/version" in url else RELEASES):
-    check(update._ollama(update.LOCAL).installed == "0.40.8-ailocal.18631.3", "local mode reads the running daemon")
+                lambda url, **kw: {"version": "0.40.14-ailocal.18631.1"} if "api/version" in url else RELEASES):
+    check(update._ollama(update.LOCAL).installed == "0.40.14-ailocal.18631.1", "local mode reads the running daemon")
 from ailocal.checks import services as sv  # noqa: E402
 with mock.patch("ailocal.checks.services.http_json", mock.Mock(side_effect=sv.Unreachable("offline"))):
     o = update._ollama(update.LOCAL)
