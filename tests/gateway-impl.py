@@ -474,6 +474,43 @@ try:
     stop = ["<|im_end|>", "<|im_start|>"]
     check(send({"stop": stop, "think": False}).get("options", {}).get("stop") == stop,
           "chat stop boundaries reach Ollama")
+
+    # #84: Ollama's Gemma4Renderer names a tool result from tool_name, else by the
+    # call id; LiteLLM 1.106.5 sends neither, so the model read "response:unknown".
+    st = load_module("startup", f"{HOOKS}/startup.py")
+    check(st.TOOL_IDENTITY.startswith("patched") and st.apply_ollama_tool_identity() == "already patched",
+          f"tool identity installed once ({st.TOOL_IDENTITY})")
+    api = f"http://127.0.0.1:{server.server_port}"
+    loop = [{"role": "user", "content": "read both"},
+            {"role": "assistant", "content": "", "tool_calls": [
+                {"id": "call_a", "type": "function", "function": {"name": "Read", "arguments": '{"path": "a"}'}},
+                {"id": "call_b", "type": "function", "function": {"name": "Grep", "arguments": '{"q": "b"}'}}]},
+            {"role": "tool", "tool_call_id": "call_b", "content": "B"},
+            {"role": "tool", "tool_call_id": "call_a", "content": "A"},
+            {"role": "tool", "tool_call_id": "call_orphan", "content": "orphan"}]
+    before = len(captured)
+    litellm.completion(model="ollama_chat/fixture-model", api_base=api, messages=loop)
+    sent = captured[-1]["messages"] if len(captured) == before + 1 else []
+    check([m.get("tool_name") for m in sent[2:]] == ["Grep", "Read", None],
+          f"tool results named by call id, reordered; an unmatched id stays unnamed "
+          f"({[m.get('tool_name') for m in sent[2:]]})")
+    check(sent and [c.get("id") for c in sent[1]["tool_calls"]] == ["call_a", "call_b"],
+          "assistant tool-call ids reach Ollama")
+    check([m.get("content") for m in sent] == ["read both", "", "B", "A", "orphan"]
+          and [c["function"] for c in sent[1]["tool_calls"]] == [
+              {"name": "Read", "arguments": {"path": "a"}}, {"name": "Grep", "arguments": {"q": "b"}}],
+          "content and call arguments unchanged")
+    before = len(captured)
+    litellm.responses(model="ollama_chat/fixture-model", api_base=api,
+                      tools=[{"type": "function", "name": "exec",
+                              "parameters": {"type": "object", "properties": {}}}],
+                      input=[{"type": "message", "role": "user", "content": "run it"},
+                             {"type": "function_call", "call_id": "call_r", "name": "exec", "arguments": "{}"},
+                             {"type": "function_call_output", "call_id": "call_r", "output": "done"}])
+    sent = captured[-1]["messages"] if len(captured) == before + 1 else []
+    tool_msgs = [m for m in sent if m.get("role") == "tool"]
+    check(len(tool_msgs) == 1 and tool_msgs[0].get("tool_name") == "exec",
+          f"Responses function_call_output is named ({[m.get('tool_name') for m in tool_msgs]})")
 finally:
     server.shutdown()
     server.server_close()

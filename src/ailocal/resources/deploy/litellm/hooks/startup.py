@@ -1,14 +1,15 @@
 """startup.py — proxy patches applied at import, before the first request.
 
-Three corrections that share one lifecycle: they run when LiteLLM imports this
+Four corrections that share one lifecycle: they run when LiteLLM imports this
 module during config load, mutate proxy state once, and observe no request. None
 implements a request callback. `proxy_handler_instance` is a no-op CustomLogger
 that exists only because a `litellm_settings.callbacks` entry is what makes
 LiteLLM import the file.
 
-  model_registrar   restore context-window validation for local deployments
-  compat_routes     serve the client compatibility probes LiteLLM lacks
-  stream_log_guard  backport a missing type guard in Anthropic success logging
+  model_registrar       restore context-window validation for local deployments
+  compat_routes         serve the client compatibility probes LiteLLM lacks
+  stream_log_guard      backport a missing type guard in Anthropic success logging
+  ollama_tool_identity  keep tool-result names and tool-call ids on ollama_chat
 
 Each reports its status on one boot line via print(), not log.info(): the proxy
 filters third-party loggers, so print is what survives to `docker logs` and tells
@@ -328,6 +329,123 @@ def apply_stream_log_guard():
     return "patched"
 
 
+# ── Ollama tool-result identity ─────────────────────────────────────────────
+# UPSTREAM GAP, LiteLLM 1.106.5: OllamaChatConfig.transform_request rebuilds each
+# message from a fixed key set. A tool result keeps `tool_call_id` but gets no
+# `tool_name`, and an assistant tool call loses its `id`. Ollama 0.40.14's
+# Gemma4Renderer (gemma4, gemma4-small, gemma4-large, gemma4-nemotron) names a
+# result from `tool_name`, else from the call whose `id` equals `tool_call_id`,
+# else "unknown" — so every Gemma-family tool result reached the model as
+# `response:unknown{…}` (#84). Every route converges here: /v1/messages and
+# /v1/responses are translated to chat messages before this transform runs.
+# BerriAI/litellm#49278 forwards the id (only in 1.109.0-rc.1 as of 2026-11-05);
+# nothing upstream sets `tool_name`.
+#
+# REPRO, no model: litellm.completion(model="ollama_chat/x", messages=[user,
+#   assistant tool_calls=[{id:"c1", function:{name:"Read"}}], tool tool_call_id
+#   "c1"]) against a capture server -> the tool message has no tool_name and the
+#   assistant call has no id.
+#
+# Adds only those two provider fields, copied from the request's own assistant
+# calls. Never invents a name, never changes content; a result whose id matches
+# no call is left as LiteLLM built it. SELF-RETIRING per half: the boot check
+# reports what upstream already forwards. DELETE when it reports both.
+
+TOOL_IDENTITY_MARKER = "_ailocal_tool_identity"
+_IDENTITY_FIXTURE = [
+    {"role": "user", "content": "fixture"},
+    {"role": "assistant", "content": "", "tool_calls": [
+        {"id": "call_fixture", "type": "function",
+         "function": {"name": "fixture_tool", "arguments": "{}"}}]},
+    {"role": "tool", "tool_call_id": "call_fixture", "content": "ok"},
+]
+
+
+def _plain(value):
+    """A message or tool call as a dict, the way the transform itself reads it."""
+    if hasattr(value, "model_dump"):
+        return value.model_dump(exclude_none=True)
+    return value if isinstance(value, dict) else {}
+
+
+def add_tool_identity(messages, request):
+    """Set `tool_name` and tool-call `id` on a transformed Ollama request, in place.
+
+    The transform emits one message per input message, in order, and one call per
+    function-typed input call; anything else means the shape changed upstream,
+    and the request is left exactly as built.
+    """
+    sent = request.get("messages") if isinstance(request, dict) else None
+    if not isinstance(sent, list) or len(sent) != len(messages):
+        return
+    plain = [_plain(m) for m in messages]
+    names = {}
+    for message in plain:
+        for call in message.get("tool_calls") or []:
+            call = _plain(call)
+            name = (call.get("function") or {}).get("name")
+            if call.get("id") and name:
+                names[call["id"]] = name
+    for source, out in zip(plain, sent):
+        if not isinstance(out, dict):
+            continue
+        if out.get("role") == "tool" and not out.get("tool_name"):
+            name = names.get(source.get("tool_call_id"))
+            if name:
+                out["tool_name"] = name
+        calls = [c for c in map(_plain, source.get("tool_calls") or []) if c.get("type") == "function"]
+        built = out.get("tool_calls") or []
+        if len(calls) != len(built):
+            continue
+        for call, emitted in zip(calls, built):
+            if call.get("id") and isinstance(emitted, dict) and not emitted.get("id"):
+                emitted["id"] = call["id"]
+
+
+def _upstream_forwards(target, config_cls):
+    """(tool_name, id) that the unpatched transform already emits, or None."""
+    try:
+        out = target(config_cls(), "fixture", [dict(m) for m in _IDENTITY_FIXTURE], {}, {}, {})
+        sent = out["messages"]
+        return bool(sent[2].get("tool_name")), bool(sent[1]["tool_calls"][0].get("id"))
+    except Exception as exc:  # noqa: BLE001
+        log.debug("tool identity self-check failed (%s)", exc)
+        return None
+
+
+def apply_ollama_tool_identity():
+    """Install the correction. Idempotent; returns a short status string for tests."""
+    try:
+        from litellm.llms.ollama.chat.transformation import OllamaChatConfig
+    except Exception as exc:  # noqa: BLE001
+        return f"skipped: cannot import OllamaChatConfig ({exc})"
+
+    target = getattr(OllamaChatConfig, "transform_request", None)
+    if target is None:
+        return "skipped: transform_request absent (upstream refactor?)"
+    if getattr(target, TOOL_IDENTITY_MARKER, False):
+        return "already patched"
+    forwarded = _upstream_forwards(target, OllamaChatConfig)
+    if forwarded is None:
+        return "skipped: self-check could not run the transform"
+    if all(forwarded):
+        return "not needed: upstream forwards tool_name and id"
+
+    def patched(self, model, messages, *args, **kwargs):
+        request = target(self, model, messages, *args, **kwargs)
+        try:
+            add_tool_identity(messages, request)
+        except Exception as exc:  # noqa: BLE001 — never fail a request over a label
+            log.debug("tool identity not applied (%s)", exc)
+        return request
+
+    setattr(patched, TOOL_IDENTITY_MARKER, True)
+    patched.__doc__ = (target.__doc__ or "") + "\n\n[ailocal] keeps tool_name and tool-call ids."
+    OllamaChatConfig.transform_request = patched
+    missing = [f for f, have in zip(("tool_name", "id"), forwarded) if not have]
+    return "patched: adds " + ", ".join(missing)
+
+
 class ProxyStartup(CustomLogger):
     """Registration vehicle only. The corrections above are applied at import;
     listing this in litellm_settings.callbacks is what triggers that import, and
@@ -345,5 +463,7 @@ if COMPAT_REGISTERED:
         f"{p} [{'/'.join(COMPAT_ROUTES[p])}]" for p in COMPAT_REGISTERED))
 STREAM_LOG_GUARD = apply_stream_log_guard()
 _say(f"anthropic_stream_logging_fix: {STREAM_LOG_GUARD}")
+TOOL_IDENTITY = apply_ollama_tool_identity()
+_say(f"ollama_tool_identity: {TOOL_IDENTITY}")
 
 proxy_handler_instance = ProxyStartup()
