@@ -4,6 +4,11 @@ base_version = "0.40.8"
 # Why the base is held older than the ≈N-2 policy would pick: read by
 # `ailocal update`, which reports the base's N-position against upstream.
 hold = "the reviewed backport patches (18631, security, router, stop, qwen35-history) target this exact base; a newer base needs them re-applied and the native regression re-run before it can be selected"
+# [UNVERIFIED] 2026-11-04: .5 raised [security_dependencies] and security.patch
+# without a build. Nothing has built this version or run its native regressions;
+# the last built and validated runtime is 0.40.8-ailocal.18631.4. Replace this
+# note with the build evidence once `ailocal install --ollama-patch
+# gemma4-switch-glu` builds .5 and its regressions pass (#51).
 version = "0.40.8-ailocal.18631.5"
 source_commit = "f580b5484a58c8370c35d669555bf887783a3f68"
 source_url = "https://codeload.github.com/ollama/ollama/tar.gz/f580b5484a58c8370c35d669555bf887783a3f68"
@@ -43,6 +48,7 @@ qwen35_patch_sha256 = "0b02b79201da852a53111a1a099d49ccabf1fb0b74b4c80227cede80d
 # build does not import. https://raw.githubusercontent.com/ollama/ollama/v0.40.14/go.mod
 # https://proxy.golang.org/golang.org/x/net/@v/v0.62.0.mod
 # go.sum in security.patch pins the authenticated module zip/mod checksums.
+# [UNVERIFIED] These pins have not been compiled; see the note above `version`.
 [security_dependencies]
 "golang.org/x/net" = "v0.62.0"
 "golang.org/x/image" = "v0.47.0"
