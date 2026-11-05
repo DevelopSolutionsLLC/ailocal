@@ -155,6 +155,10 @@ class Guidance(unittest.TestCase):
             self.assertIs(data['autoMemoryEnabled'], False)
             target.write_text(json.dumps(dict(data, autoMemoryEnabled=True)))
             self.assertIs(regen()['autoMemoryEnabled'], True)
+            # #48: no assistant trailer, PR footer or session link by default; an explicit choice wins.
+            self.assertEqual(data['attribution'], {'commit': '', 'pr': '', 'sessionUrl': False})
+            target.write_text(json.dumps(dict(data, attribution={'commit': 'x'})))
+            self.assertEqual(regen()['attribution'], {'commit': 'x'})
         catalog = lambda roles: (generation.regen_catalog(roles), {e['slug']: e for e in json.loads(stage.call_args.args[1])['models']})[1]
         with patch.object(generation, 'stage') as stage:
             for tier in policy.TIERS:
