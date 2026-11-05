@@ -338,6 +338,12 @@ model_capabilities:
 # Normal steps reasoned at most 41,466 characters; every loop exceeded 95,000.
 # Other gemma4 backends share the mechanism but were not measured.
 # RETIRE when a captured looping request no longer loops with the guard removed.
+#
+# The same guard re-sends once, unchanged, a request whose stream completes with
+# reasoning only. [REAL] 2026-11-05, Ollama 0.40.14, #69: the gemma4 parser drops a
+# tool call whose string argument lacks its opening <|"|> and returns an empty
+# success; 4 of 9 edit runs. With the retry: 8/8 edits passed, 1 drop recovered.
+# RETIRE that part when Ollama repairs or reports the malformed call.
 reasoning_loop_guard:
   backends: ["gemma4:*"]
   reasoning_chars: 60000

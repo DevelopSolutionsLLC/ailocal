@@ -479,7 +479,7 @@ finally:
     server.server_close()
 
 # ── reasoning loop guard (#68) ──────────────────────────────────────────
-suite.section("REASONING LOOP GUARD (retry once without replayed reasoning)")
+suite.section("REASONING LOOP GUARD (retry once: a loop without replayed reasoning, an empty completion as sent)")
 guard_mod = load_module("reasoning_loop_guard", f"{HOOKS}/reasoning_loop_guard.py")
 gemma, qwen = cr.Registry(), cr.Registry()
 gemma.backends["implementation"] = "gemma4:26b-qat-mtp"
@@ -547,8 +547,25 @@ check(not sent and out[-1] == {"type": "response.incomplete"},
       "after the first answer event the stream is never retried")
 fresh = dict(REQ, input=[i for i in REQ["input"] if i["type"] != "reasoning"])
 out, sent = run_guard(gemma, fresh, looping)
-check(out == looping and not sent, "a request with no replayed reasoning is not guarded")
+check(out == looping and not sent, "with no replayed reasoning the threshold does not apply")
+out, sent = run_guard(gemma, fresh, START + [think(100), {"type": "response.incomplete"}])
+check(not sent and out[-1] == {"type": "response.incomplete"},
+      "with no replayed reasoning an incomplete end passes through")
 out, sent = run_guard(qwen, REQ, looping)
 check(out == looping and not sent, "an unguarded backend passes through")
+
+# ── dropped tool call (#69): completed with reasoning only ──
+EMPTY = START + [think(100), {"type": "response.completed"}]
+out, sent = run_guard(gemma, fresh, EMPTY)
+check(out == RETRY_EVENTS and len(sent) == 1,
+      "a reasoning-only completion is retried once; only the retry reaches the client")
+out, sent = run_guard(gemma, REQ, EMPTY)
+check(len(sent) == 1 and [i["type"] for i in sent[0].get("input", [])] == [i["type"] for i in REQ["input"]]
+      and "litellm_logging_obj" not in sent[0],
+      "the empty-completion retry keeps replayed reasoning and drops proxy bookkeeping")
+out, sent = run_guard(gemma, fresh, START + [think(100)] + ANSWER)
+check(not sent and out[-1] == {"type": "response.completed"}, "a completion with an answer is not retried")
+out, sent = run_guard(qwen, fresh, EMPTY)
+check(out == EMPTY and not sent, "an unguarded backend's empty completion passes through")
 
 sys.exit(suite.report())
