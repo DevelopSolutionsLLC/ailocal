@@ -51,10 +51,9 @@ OLLAMA_ENV = {
     # process that wants a model pinned can still ask for -1 explicitly.
     "OLLAMA_KEEP_ALIVE": "6h",
     # 4, not 5, and not 3. The tier needs THREE distinct models, not five: the
-    # architecture, implementation and review roles all point at ONE
-    # gemma4:26b-mlx and share a single resident copy, so three roles cost one
-    # model. The other two are qwen3.5:9b (fast) and qwen2.5-coder:3b
-    # (completion). The fourth slot is nomic-embed-text, which is NOT in any
+    # architecture, implementation, review and fast roles all point at ONE
+    # primary model and share a single resident copy, so four roles cost one
+    # model. The other two are cyber and the completion model. The fourth slot is nomic-embed-text, which is NOT in any
     # profile -- it is served by this same Ollama for indexing outside ailocal,
     # and it still occupies a slot.
     #

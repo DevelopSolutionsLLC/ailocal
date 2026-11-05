@@ -4,7 +4,7 @@
 # Exact sources, native trials and limitations: docs/model-audit.md.
 status = "model-limit-sized"  # ceilings from real model limits; not measured on 128 GB hardware
 
-disk_gb = 55
+disk_gb = 37
 
 [architecture]
 role = "Lead architect"
@@ -59,25 +59,28 @@ top_k = 64
 repeat_penalty = 1.0
 [fast]
 role = "Fast agent"
-active = "qwen3.5:9b-calibrated-mtp-q4_K_M"
-preferred = ["qwen3.5:9b-calibrated-mtp-q4_K_M"]
-runtime_patch = "gemma4-switch-glu"
-draft_num_predict = 3
-source = {"model" = "hf.co/unsloth/Qwen3.5-9B-MTP-GGUF:Qwen3.5-9B-Q4_K_M.gguf", "sha256" = "e8dd94817e95d6c0939102049d068418269978377b13616c4726235e232841fe", "renderer" = "qwen3.5", "parser" = "qwen3.5"}
-stop = ["<|im_end|>", "<|im_start|>"]
+# The primary model with thinking off: same weights, window and keep-alive as
+# the roles above, so it adds no model and no reload. [REAL] 2026-11-02, 128 GB
+# host, stock Ollama 0.40.13: against the former Qwen3.5 9B fast model, the
+# same 10 quick tasks x3 (classification, strict formats, JSON, an edit, a
+# summary, two tool calls) both passed 30/30; Gemma decoded ~185 vs ~124
+# tokens/s at the proxy's settings, with no reload switching between thinking
+# and non-thinking requests and no thinking leaked.
+active = "gemma4:26b-qat-mtp"
+preferred = ["gemma4:26b-qat-mtp"]
+draft_num_predict = 2
+source = {"model" = "gemma4:26b-a4b-it-qat", "sha256" = "4c856523d61d77922dbc0b26753a6bf6208e5d69d80db0c04dcd776832d054c5", "renderer" = "gemma4-large", "parser" = "gemma4", "draft_model" = "hf.co/HauhauCS/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-MTP:mtp-gemma-4-26B-A4B-it.gguf", "draft_sha256" = "62bd3af7f66c9308de9a5454233852f8c7324c93767e8dfb824ed45b9179864a"}
 reasoning = false
 context_input = 253952
 max_output = 8192
-temperature = 0.0
-keep_alive = "20m"
+temperature = 1.0
+keep_alive = "6h"
 purpose = ["task classification", "doc summarisation", "quick edits", "tool-driven lookups"]
-strengths = ["native MTP", "imatrix calibration", "native Ollama GGUF", "native tool calling"]
-weaknesses = ["no FIM/insert - cannot do inline autocomplete", "weaker on large refactors"]
-top_p = 0.9
-top_k = 20
+strengths = ["native MTP", "already resident with the primary roles", "native tool calling"]
+weaknesses = ["no thinking - use architecture or review for difficult reasoning"]
+top_p = 0.95
+top_k = 64
 repeat_penalty = 1.0
-min_p = 0.0
-presence_penalty = 1.5
 [completion]
 role = "Autocomplete (FIM)"
 active = "qwen2.5-coder:3b-base"
@@ -124,15 +127,6 @@ prompting = ["Retrieve the relevant subsystem before requesting a change; a larg
 limitations = ["Short fixtures do not establish repository-scale accuracy or full-window retrieval quality.", "MTP accelerates decoding; calibration and QAT do not establish additional training-data knowledge.", "GGUF allocates context eagerly; older MLX memory and prefill measurements do not transfer.", "Reasoning can consume the output ceiling without a final answer; treat truncation as incomplete."]
 evidence = "[REAL] On the 64 GB M3 Max, native Ollama 0.40.8-ailocal.18631.3 loaded the official QAT GGUF plus the published 251937728-byte MTP head through native draft_files and completed three tool rounds including recovery. [APPROX] At 16K context, non-thinking vendor sampling, draft length 3 and three 256-token samples, median decode was 123.89 tokens/s versus calibrated MLX 121.65 and the installed legacy MLX 74.91. Ten small coding cases passed 9/10; both MLX arms passed 10/10, so accuracy parity is not established. Native-client and geometry follow-through are recorded in docs/model-audit.md. [UNVERIFIED] Full-window task accuracy and physical 128 GB simultaneous-residency limits."
 sources = ["https://ollama.com/library/gemma4:26b-a4b-it-qat", "https://huggingface.co/HauhauCS/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-MTP/tree/f9093662a2e7ae0503f637088bc96f77a1a70c83", "https://huggingface.co/google/gemma-4-26B-A4B-it"]
-
-[model_guidance."qwen3.5:9b-calibrated-mtp-q4_K_M"]
-input_modalities = ["text", "image"]
-name = "Qwen3.5 9B calibrated MTP (GGUF)"
-summary = "Unsloth imatrix-calibrated Q4_K_M with an embedded native MTP layer and image input; verify generated code with real tests."
-prompting = ["Give one bounded coding change, exact input/output requirements and acceptance examples; include only relevant files.", "Use native tools to inspect, edit and run unchanged tests. Return exact failures for at most two repair attempts, then report the unresolved issue.", "Request the needed output format explicitly. Use ailocal-fast for simple work and keep the selected role's thinking mode for difficult reasoning.", "Treat output-limit truncation as incomplete; do not repeat full repository context or claim tests passed without running them."]
-limitations = ["Small fixtures do not establish repository-scale accuracy or full-window retrieval quality.", "Calibration and MTP optimize inference; they do not add training-data knowledge or establish universal accuracy parity.", "Physical 32/128 GB full-window fit is unverified on the 64 GB measurement host."]
-evidence = "[REAL] 2026-10-28: the native HF pull matched target SHA-256 e8dd94817e95d6c0939102049d068418269978377b13616c4726235e232841fe. Ollama reports 77 calibration chunks, 248 imatrix entries, one nextn layer and vision capability. [APPROX] On the 64 GB M3 Max, ten coding tasks at three seeds passed 22/30 attempts and 3/3 tool rounds at both draft depth 2 and the selected depth 3; the former standard passed 21/30 and Cyber 22/30. A separate matched 256-token decode comparison reached 77.92 tokens/s versus former standard 69.24 and Cyber 77.23. The depth sweep selected depth 3 at 85.49 tokens/s versus Cyber 85.85; these are bounded synthetic workloads. Selected-depth, installed-client and geometry follow-through are recorded in docs/model-audit.md."
-sources = ["https://huggingface.co/unsloth/Qwen3.5-9B-MTP-GGUF/tree/9716a636ee4bddc3fed678220b7a33dd2a4160ae", "https://huggingface.co/Qwen/Qwen3.5-9B#best-practices"]
 
 [model_guidance."gemma4:26b-unrestricted-qat-mtp-q4_K_M"]
 input_modalities = ["text", "image"]
