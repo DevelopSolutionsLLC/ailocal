@@ -57,9 +57,13 @@ def check_cli_tools() -> list[CheckResult]:
     out = []
     # Only tools ailocal cannot work without. jq is deliberately absent: every
     # use of it is guarded and falls back, so warning about it trained people to
-    # install something nothing needs.
+    # install something nothing needs. ripgrep is needed: the generated
+    # instructions tell local models to search with `rg`, macOS ships none, and
+    # Claude Code's Bash `rg` falls back to the one on PATH when its own binary
+    # path is stale (measured 2026-11-04 after an upgrade mid-session, #64).
     for tool, fix in (("docker", "brew install --cask docker-desktop"),
-                      ("ollama", "brew install --cask ollama-app")):
+                      ("ollama", "brew install --cask ollama-app"),
+                      ("rg", "brew install ripgrep")):
         found = shutil.which(tool)
         out.append(CheckResult(f"cli:{tool}", PASS if found else WARN,
                                f"{tool} present" if found else f"{tool} CLI not found",

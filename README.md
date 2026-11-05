@@ -18,7 +18,7 @@ ailocal serves models through Ollama, fronts them with an OpenAI- and Anthropic-
 
 ailocal installs no software of its own. You install the prerequisites and whichever clients you want; every client is optional, and one you do not have is left alone.
 
-**Requirements:** macOS on Apple Silicon, 16 GB unified memory minimum, Docker Desktop and Ollama.
+**Requirements:** macOS on Apple Silicon, 16 GB unified memory minimum, Docker Desktop, Ollama and ripgrep.
 
 ## Install
 
@@ -28,8 +28,10 @@ Install [Homebrew](https://brew.sh) if you do not have it, then:
 
 ```bash
 brew install --cask docker-desktop ollama-app
-brew install pipx
+brew install pipx ripgrep
 ```
+
+Local models are told to search with `rg`; macOS ships no ripgrep, and the copies Claude Code and Codex bundle are not on your `PATH`, so install it.
 
 Recommended: `brew install cosign`. `ailocal check` uses it to look up the publisher signature of each pinned image; without it the digest pin still holds and the check reports one warning.
 
