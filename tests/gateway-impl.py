@@ -33,8 +33,8 @@ for name in sys.argv[2:]:
     sys.modules[name] = mod
     spec.loader.exec_module(mod)
 """
-for hook in ("reasoning_router", "startup", "tool_repair", "tool_gateway",
-             "capability_registry"):
+for hook in ("reasoning_router", "reasoning_loop_guard", "startup", "tool_repair",
+             "tool_gateway", "capability_registry"):
     r = subprocess.run([sys.executable, "-I", "-c", _LOADER, HOOKS, hook],
                        capture_output=True, text=True, timeout=60, cwd="/")
     check(r.returncode == 0, f"{hook} imports", (r.stderr.strip().splitlines() or [""])[-1])
@@ -477,5 +477,78 @@ try:
 finally:
     server.shutdown()
     server.server_close()
+
+# ── reasoning loop guard (#68) ──────────────────────────────────────────
+suite.section("REASONING LOOP GUARD (retry once without replayed reasoning)")
+guard_mod = load_module("reasoning_loop_guard", f"{HOOKS}/reasoning_loop_guard.py")
+gemma, qwen = cr.Registry(), cr.Registry()
+gemma.backends["implementation"] = "gemma4:26b-qat-mtp"
+qwen.backends["implementation"] = "qwen3.5:9b-mtp"
+LIMIT = gemma.loop_guard_limit("ailocal-implementation")
+check(isinstance(LIMIT, int) and LIMIT > 0, f"gemma4 backend is guarded ({LIMIT})")
+check(qwen.loop_guard_limit("ailocal-implementation") is None, "qwen backend is not guarded (#38 replay kept)")
+check(gemma.loop_guard_limit("nobody-registered") is None, "unknown model is not guarded")
+
+REQ = {"model": "ailocal-implementation", "stream": True, "tools": [{"type": "function", "name": "exec"}],
+       "reasoning": {"effort": "medium"}, "litellm_logging_obj": object(), "litellm_call_id": "x",
+       "input": [{"type": "message", "role": "user", "content": "q"},
+                 {"type": "reasoning", "summary": [{"type": "summary_text", "text": "t"}]},
+                 {"type": "function_call", "name": "exec", "arguments": "{}", "call_id": "c"},
+                 {"type": "function_call_output", "call_id": "c", "output": "o"}]}
+
+
+def think(n):
+    return {"type": "response.reasoning_summary_text.delta", "delta": "x" * n}
+
+
+START = [{"type": "response.created"},
+         {"type": "response.output_item.added", "item": {"type": "reasoning"}}]
+ANSWER = [{"type": "response.output_item.added", "item": {"type": "message"}},
+          {"type": "response.output_text.delta", "delta": "done"}, {"type": "response.completed"}]
+RETRY_EVENTS = [{"type": "response.created", "retry": True}, {"type": "response.completed", "retry": True}]
+
+
+async def _aiter(items):
+    for i in items:
+        yield i
+
+
+def run_guard(registry, request, events):
+    sent = []
+
+    async def retry(data):
+        sent.append(data)
+        return _aiter(RETRY_EVENTS)
+
+    guard = guard_mod.ReasoningLoopGuard(registry=registry, retry=retry)
+
+    async def collect():
+        return [e async for e in guard.async_post_call_streaming_iterator_hook(None, _aiter(events), request)]
+    return asyncio.run(collect()), sent
+
+
+normal = START + [think(500)] + ANSWER
+out, sent = run_guard(gemma, REQ, normal)
+check(out == normal and not sent, "a step that answers passes through unchanged, no retry")
+looping = START + [think(LIMIT // 2), think(LIMIT // 2), think(10)] + ANSWER
+out, sent = run_guard(gemma, REQ, looping)
+check(out == RETRY_EVENTS and len(sent) == 1, "reasoning past the limit: one retry, only its events reach the client")
+r = sent[0] if sent else {}
+check(r.get("stream") is True and [i["type"] for i in r.get("input", [])]
+      == ["message", "function_call", "function_call_output"]
+      and r.get("tools") == REQ["tools"] and r.get("reasoning") == REQ["reasoning"]
+      and "litellm_logging_obj" not in r and "litellm_call_id" not in r
+      and len(REQ["input"]) == 4,
+      "the retry drops only reasoning items and proxy bookkeeping; the original request is untouched")
+out, sent = run_guard(gemma, REQ, START + [think(100), {"type": "response.incomplete"}])
+check(out == RETRY_EVENTS and len(sent) == 1, "an incomplete reasoning-only end is retried")
+out, sent = run_guard(gemma, REQ, START + [think(100)] + ANSWER[:1] + [think(LIMIT * 2), {"type": "response.incomplete"}])
+check(not sent and out[-1] == {"type": "response.incomplete"},
+      "after the first answer event the stream is never retried")
+fresh = dict(REQ, input=[i for i in REQ["input"] if i["type"] != "reasoning"])
+out, sent = run_guard(gemma, fresh, looping)
+check(out == looping and not sent, "a request with no replayed reasoning is not guarded")
+out, sent = run_guard(qwen, REQ, looping)
+check(out == looping and not sent, "an unguarded backend passes through")
 
 sys.exit(suite.report())

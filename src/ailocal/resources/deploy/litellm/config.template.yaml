@@ -113,6 +113,12 @@ litellm_settings:
     # module docstring holds the table and the retirement condition. An explicit
     # `think` in the request still wins.
     - /app/config/hooks/reasoning_router.proxy_handler_instance
+    # Retries a /v1/responses turn ONCE without replayed reasoning when a Gemma 4
+    # backend's reasoning loops past the registry's `reasoning_loop_guard` limit
+    # (#68; evidence in registry.yaml and the module docstring). Registered BEFORE
+    # tool_repair: LiteLLM wraps iterator hooks in list order, so a retried stream
+    # still passes through tool-call repair.
+    - /app/config/hooks/reasoning_loop_guard.proxy_handler_instance
     # HISTORICAL: a `system_transport` hook used to sit here. LiteLLM's
     # Anthropic /v1/messages -> OpenAI adapter branched only on role
     # user/assistant, so a role:"system" entry inside the messages array fell
