@@ -15,6 +15,7 @@ ailocal; everything below lives in ailocal's own config root.
 | Context | model's full window | the launch default's `context_input` (`CLAUDE_CODE_MAX_CONTEXT_TOKENS`; 1M-context beta disabled) |
 | Tool discovery | eager | **MCP tool search on** |
 | Auto-memory | on | **off** by default (`autoMemoryEnabled: false`; an explicit setting wins) |
+| Commit and PR attribution | `Co-Authored-By` trailer, PR footer, session link | **off** by default (`attribution` with empty `commit`/`pr`, `sessionUrl: false`; an explicit setting wins) |
 | Native Workflow | on | **off**, with an escape hatch |
 | Artifacts | hosted `Artifact` → claude.ai | **bundled local artifact MCP** → `127.0.0.1` |
 | Web search | Anthropic | ailocal's own SearXNG |

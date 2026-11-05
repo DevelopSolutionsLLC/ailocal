@@ -34,6 +34,12 @@ model_provider = "ailocal"
 # than a hardcoded ~/.codex path (Codex itself does not expand env vars here).
 model_catalog_json = "${CODEX_HOME}/model_catalog.json"
 
+# No `commit_attribution` key: Codex removed it after 0.120 (it is absent from
+# the 0.140-0.166 config schema, and 0.166 ignores it). Attribution now follows
+# the ChatGPT account's `commit_attribution_enabled`, which Codex fetches only
+# for ChatGPT-backend auth. [REAL] a codex-local 0.166.0 rollout records
+# `"git_attribution": false`, so no trailer or PR footer is requested.
+
 # ── Approval & Sandbox ──────────────────────────────────────────────────────
 
 # Never prompt; a command the sandbox refuses fails back to the model.
