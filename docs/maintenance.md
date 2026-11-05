@@ -138,11 +138,9 @@ The runtime prefix is install-owned `~/.local/share/ailocal/runtimes` (`AILOCAL_
 
 Retire the backport after a signed upstream build supports the exact checkpoints and passes native load, inference, client/tool transport, geometry and cache measurements. Remove the patch, build adapter, option and associated tests together, with a migration to the supported runtime. A source build and passing tests do not establish model quality or a vulnerability-free native stack.
 
-## Restoring Ollama startup on teardown
+## Legacy app startup override
 
-The installer records stock Ollama's original startup-disable preference in an ailocal-owned, private `~/Library/LaunchAgents/com.ailocal.ollama.restore.json` receipt before disabling the stock startup service. The receipt is retained across reinstalls and deletion of disposable generated state. Teardown stops all ailocal launch agents, restores the recorded preference through native `launchctl enable`/`disable`, then removes intact owned runtime payloads. It does not launch the stock GUI. A startup preference changed outside ailocal is preserved; malformed or foreign receipts fail before services stop, and a failed restoration retains its receipt and runtime for retry.
-
-Older installations have no trustworthy original preference. The installer records that historical value as unknown, and teardown reports the explicit `launchctl enable gui/$(id -u)/com.ollama.ollama` recovery command without guessing. This restores startup availability when invoked, not the complete pre-install machine state: model files stay in the shared store, and operator configuration is retained. The native `launchctl(1)` manual on this host documents persistent enable/disable state and `print-disabled`; the receipt supplies installation provenance that launchctl does not retain.
+Ollama runs only from the `ollama-binary` cask, under `com.ailocal.ollama`; install refuses while `/Applications/Ollama.app` exists (#74). Installs before #74 disabled the app's `com.ollama.ollama` login agent and kept a receipt, `~/Library/LaunchAgents/com.ailocal.ollama.restore.json`. Install and teardown now clear that override with `launchctl enable gui/$(id -u)/com.ollama.ollama` and delete the receipt; the cask has no such agent, so clearing is correct whatever the receipt recorded. A failed `enable` keeps the receipt for the next run. This shim is removed in the release after the one that ships it.
 
 ## Promote and deliver
 

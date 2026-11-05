@@ -74,9 +74,9 @@ def check_cli_tools() -> list[CheckResult]:
 def _models_dir() -> str:
     """Where the running daemon actually stores models.
 
-    The autostart agent bakes OLLAMA_MODELS into its own environment; the
-    env-only path uses `launchctl setenv`. Asking the running process is correct
-    under both, with setenv as the no-daemon fallback."""
+    The managed agent bakes OLLAMA_MODELS into its own environment, and
+    com.ailocal.ollama-env publishes it with `launchctl setenv`. Asking the
+    running process is authoritative, with setenv as the no-daemon fallback."""
     pid = _run(["lsof", "-ti", ":11434"]).split("\n")[0]
     if pid:
         for tok in _run(["ps", "eww", "-p", pid]).split():

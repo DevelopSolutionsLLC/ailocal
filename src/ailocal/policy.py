@@ -50,11 +50,12 @@ def ollama_patch_selection() -> str:
 
 
 def stock_ollama_binary() -> str:
-    candidates = ("/Applications/Ollama.app/Contents/Resources/ollama",
-                  "/usr/local/bin/ollama", shutil.which("ollama"))
-    binary = next((c for c in candidates if c and Path(c).is_file()), None)
+    """The `ollama` on PATH, unresolved. The `ollama-binary` cask links
+    /opt/homebrew/bin/ollama into a versioned Caskroom directory that an upgrade
+    replaces; launchd given the realpath would keep a deleted executable."""
+    binary = shutil.which("ollama")
     if not binary:
-        raise SystemExit("Ollama binary not found; install Ollama first.")
+        raise SystemExit("Ollama CLI not found on PATH; brew install --cask ollama-binary")
     return binary
 
 

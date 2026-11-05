@@ -415,6 +415,9 @@ PREREQUISITES = (
     ("docker", "Docker Desktop", "brew install --cask docker-desktop"),
     ("ollama", "Ollama", "brew install --cask ollama-binary"),
 )
+#: The menu-bar app runs its own server and watchdog on :11434 and updates
+#: itself past the measured version; ailocal no longer stops it at runtime (#74).
+OLLAMA_APP = Path("/Applications/Ollama.app")
 
 
 def require_prerequisites() -> None:
@@ -426,6 +429,10 @@ def require_prerequisites() -> None:
         for label, how in missing:
             print(f"    - {label:16} {how}")
         raise SystemExit("\n  Install those, then re-run ailocal install.")
+    if OLLAMA_APP.exists():
+        raise SystemExit(f"  {OLLAMA_APP} competes with the managed server for :11434.\n"
+                         "    brew uninstall --cask ollama-app   # or move it to the Trash; "
+                         "then re-run ailocal install")
     if _run("docker", "ps", capture=True).returncode:
         raise SystemExit("  Docker is installed but the daemon is not responding.\n"
                          "    open -a Docker      # then re-run ailocal install")
@@ -523,11 +530,12 @@ def _migrate_model_store() -> None:
     if entries and all((dst / entry.relative_to(src)).exists() for entry in entries):
         return  # no migration work: do not kill a healthy managed daemon
     step("Migrating existing models to the shared store")
-    if _out("pgrep", "-x", "ollama") or _out("pgrep", "-f", "Ollama.app"):
-        _run("osascript", "-e", 'if application "Ollama" is running then quit application "Ollama"',
-             capture=True, timeout=10)
-        _run("pkill", "-x", "ollama", capture=True)
-        _wait(lambda: not _out("pgrep", "-x", "ollama"), 6, 0.5)
+    if _out("pgrep", "-x", "ollama"):
+        # Stop the managed daemon by its label; an ad-hoc `ollama serve` is the operator's.
+        _bootout("com.ailocal.ollama")
+        if not _wait(lambda: not _out("pgrep", "-x", "ollama"), 12, 0.5):
+            raise RuntimeError("an unmanaged ollama process is running; stop it, then re-run "
+                               "ailocal install so the model store can move")
     moved = kept = 0
     for entry in entries:
         dest = dst / entry.relative_to(src)
@@ -577,13 +585,12 @@ def retire_generated_clients() -> None:
 
 def remove_login_agents() -> None:
     """The uninstall half, reached from `ailocal teardown`."""
-    previous = _read_ollama_startup()
     step("Removing ailocal startup LaunchAgents")
     for label in AGENTS:
         _bootout(label)
         (LA_DIR / f"{label}.plist").unlink(missing_ok=True)
         ok(f"removed {label}")
-    _restore_ollama_startup(previous)
+    _clear_legacy_app_override()
     from .ollama_patch import remove
     removed, preserved = remove()
     for path in removed:
@@ -592,70 +599,21 @@ def remove_login_agents() -> None:
         warn(f"preserved modified or unrecognized runtime {path}")
 
 
-def _read_ollama_startup() -> dict | None:
-    """The install receipt outlives disposable generated state and re-installs."""
-    path = LA_DIR / "com.ailocal.ollama.restore.json"
-    if path.is_symlink():
-        raise RuntimeError("Ollama startup receipt is a symlink; refusing to follow it")
-    if not path.exists():
-        return None
-    try:
-        record = json.loads(path.read_text())
-    except ValueError:
-        raise RuntimeError("Invalid Ollama startup receipt; no service was changed") from None
-    if (not isinstance(record, dict) or record.get("owner") != "ailocal"
-            or record.get("schema") != 1 or "disabled" not in record
-            or (record["disabled"] is not None and type(record["disabled"]) is not bool)):
-        raise RuntimeError("Invalid Ollama startup receipt; prior startup state was preserved")
-    return record
-
-
-def _stock_ollama_disabled() -> bool:
-    result = _run("launchctl", "print-disabled", f"gui/{os.getuid()}",
+def _clear_legacy_app_override() -> None:
+    """One-release shim (#74); remove with the next release. Earlier installs
+    disabled the app's com.ollama.ollama agent and kept a restore receipt. The
+    cask has no such agent, so clearing the override is correct whatever the
+    receipt recorded."""
+    receipt = LA_DIR / "com.ailocal.ollama.restore.json"
+    if not (receipt.exists() or receipt.is_symlink()):
+        return
+    result = _run("launchctl", "enable", f"gui/{os.getuid()}/com.ollama.ollama",
                   capture=True, timeout=5)
     if result.returncode:
-        raise RuntimeError("Could not read stock Ollama startup state; no startup setting was changed")
-    match = re.search(r'"com\.ollama\.ollama"\s*=>\s*(disabled|enabled|true|false)\b',
-                      result.stdout)
-    if (not re.search(r'disabled services\s*=\s*\{.*\}', result.stdout, re.S)
-            or ('"com.ollama.ollama"' in result.stdout and not match)):
-        raise RuntimeError("Unrecognized stock Ollama startup state; no startup setting was changed")
-    return bool(match and match[1] in ("disabled", "true"))
-
-
-def _save_ollama_startup() -> None:
-    """launchctl retains the current override, not who changed its prior value."""
-    if _read_ollama_startup() is not None:
+        warn("could not clear the legacy com.ollama.ollama override; receipt kept for a retry")
         return
-    # Old installations already changed this setting. Never adopt that value
-    # as the operator's original preference.
-    disabled = (None if (LA_DIR / "com.ailocal.ollama.plist").exists()
-                else _stock_ollama_disabled())
-    LA_DIR.mkdir(parents=True, exist_ok=True)
-    path = LA_DIR / "com.ailocal.ollama.restore.json"
-    # Exclusive creation preserves the first installation's preference.
-    with path.open("x") as stream:
-        os.fchmod(stream.fileno(), 0o600)
-        json.dump({"owner": "ailocal", "schema": 1, "disabled": disabled}, stream)
-        stream.flush()
-        os.fsync(stream.fileno())
-
-
-def _restore_ollama_startup(record: dict | None) -> None:
-    """Restore availability only after our server stops; never launch a GUI."""
-    if record is None or record["disabled"] is None:
-        warn("Prior stock Ollama startup state is unavailable for this older installation. "
-             f"To enable it after teardown: launchctl enable gui/{os.getuid()}/com.ollama.ollama")
-    elif not _stock_ollama_disabled():
-        ok("preserved stock Ollama startup setting changed outside ailocal")
-    else:
-        action = "disable" if record["disabled"] else "enable"
-        result = _run("launchctl", action, f"gui/{os.getuid()}/com.ollama.ollama",
-                      capture=True, timeout=5)
-        if result.returncode:
-            raise RuntimeError("Could not restore stock Ollama startup state; restore receipt retained")
-        ok("restored stock Ollama startup preference")
-    (LA_DIR / "com.ailocal.ollama.restore.json").unlink(missing_ok=True)
+    receipt.unlink()
+    ok("cleared the legacy com.ollama.ollama startup override")
 
 
 def _restore_ollama_agent(previous: bytes | None) -> None:
@@ -685,7 +643,10 @@ def _ollama_is_current(binary: str) -> bool:
     try:
         with path.open("rb") as stream:
             actual = plistlib.load(stream)
-        if (actual.get("ProgramArguments") != [binary, "serve"]
+        # A matching version does not prove the daemon's file still exists: the
+        # app and the cask both shipped 0.40.14 when the app was removed (#74).
+        if (not Path(binary).is_file()
+                or actual.get("ProgramArguments") != [binary, "serve"]
                 or actual.get("EnvironmentVariables") != _ollama_env()
                 or actual.get("KeepAlive") is not True):
             return False
@@ -734,51 +695,40 @@ def _activate_ollama(binary: str) -> None:
     ok(f"Ollama {expected} is responding through the selected native runtime")
 
 
-def configure_ollama_services(env_only: bool, *, binary: str | None = None) -> int:
-    """Login agents for Ollama — a step of `ailocal install`.
+def _port_owner() -> tuple[str, str]:
+    """(pid listening on :11434, pid of com.ailocal.ollama); either may be empty,
+    and launchctl reports an unstarted job as "-"."""
+    holder = next((line.split()[1] for line in
+                   _out("lsof", "-nP", "-iTCP:11434", "-sTCP:LISTEN").splitlines()[1:]), "")
+    agent = next((line.split()[0] for line in _out("launchctl", "list").splitlines()
+                  if line.endswith("\tcom.ailocal.ollama")), "")
+    return holder, agent
 
-    Two servers must not fight over :11434, so the Ollama.app GUI, its embedded
-    watchdog agent and its login item are all stopped before launchd takes the
-    port.
+
+def configure_ollama_services(*, binary: str | None = None) -> int:
+    """The launchd-managed Ollama server — a step of `ailocal install`.
+
+    launchd is the only mode: the `ollama-binary` cask has no app to read a
+    `launchctl setenv` environment, so an env-only install left no server (#74).
     """
     _ollama_env()  # Reject an invalid operator override before changing a service.
     _prepare_model_store()
     _migrate_model_store()
 
-    if env_only:
-        # Ollama.app is a launchd process and never reads a shell rc file, so
-        # its environment has to be set where it actually looks.
-        step("Setting Ollama env for this login session and every future one")
-        for k, v in _ollama_env().items():
-            _run("launchctl", "setenv", k, v)
-            ok(f"{k}={v}")
-        _write_ollama_setenv_agent()
-        print("\n  ▶ Quit Ollama (menubar → Quit) and reopen it; the server reads "
-              "these only at startup.")
-        return 0
-
     binary = binary or policy.ollama_binary()
-    _save_ollama_startup()
-    disabled = _run("launchctl", "disable", f"gui/{os.getuid()}/com.ollama.ollama",
-                    capture=True, timeout=5)
-    if disabled.returncode:
-        raise RuntimeError("Could not disable stock Ollama startup; managed service was not changed")
+    _clear_legacy_app_override()
     if _ollama_is_current(binary):
         ok("managed Ollama already matches the selected binary and environment")
     else:
-        # Sending quit to a stopped app can launch it. Do not start the vendor
-        # watchdog while handing the port to the managed service.
-        _run("osascript", "-e", 'if application "Ollama" is running then quit application "Ollama"',
-             capture=True, timeout=10)
-        for pattern in ("/Applications/Ollama.app/Contents/MacOS/Ollama",
-                        "Ollama.app/Contents/Resources/ollama serve"):
-            _run("pkill", "-9", "-f", pattern, capture=True)
-        _wait(lambda: not _out("lsof", "-i", ":11434"), 20, 0.5)
+        holder, agent = _port_owner()
+        if holder and holder != agent:
+            raise RuntimeError(f"port 11434 is held by pid {holder}, which com.ailocal.ollama "
+                               "does not run; stop it, then re-run ailocal install")
         step("Installing com.ailocal.ollama")
         _activate_ollama(binary)
     ok(f"ollama serve managed by launchd (env baked in, logs in {LOG_DIR})")
 
-    # Same dict, second consumer. Written HERE as well as in --env-only, so the
+    # Same dict, second consumer, so the
     # daemon's environment and the one published to user shells cannot disagree.
     _write_ollama_setenv_agent()
     for k, v in _ollama_env().items():
@@ -1192,21 +1142,18 @@ def audit() -> list:
             flag("STALE", f"{label} is installed but not running", plist,
                  f"launchctl bootstrap gui/{os.getuid()} '{plist}'")
 
-    # A process count does not prove ownership of the port: the GUI app can
-    # hold :11434 while the agent is unloaded.
-    holder = next((l.split()[1] for l in
-                   _out("lsof", "-nP", "-iTCP:11434", "-sTCP:LISTEN").splitlines()[1:]), "")
-    agent = next((l.split()[0] for l in _out("launchctl", "list").splitlines()
-                  if l.endswith("com.ailocal.ollama")), "")
+    # A process count does not prove ownership of the port: an ad-hoc
+    # `ollama serve` can hold :11434 while the agent is unloaded.
+    holder, agent = _port_owner()
     if not holder:
         flag("MISSING", "nothing is listening on 11434", "launchd",
              f"launchctl kickstart -k gui/{os.getuid()}/com.ailocal.ollama")
     elif agent in ("", "-"):
         flag("UNMANAGED", f"port 11434 held by pid {holder}, com.ailocal.ollama not loaded",
-             "Ollama.app or an ad-hoc serve", "bootstrap the LaunchAgent")
+             "an ad-hoc ollama serve", f"kill {holder}, then ailocal install")
     elif agent != holder:
         flag("UNMANAGED", f"port 11434 held by pid {holder}, not agent pid {agent}",
-             "a competing Ollama instance", "quit the Ollama menu-bar app")
+             "a competing Ollama instance", f"kill {holder}, then ailocal install")
     else:
         fine(f"port 11434 owned by the managed LaunchAgent (pid {holder})")
 
@@ -1246,11 +1193,12 @@ prepare the shared model store, write the master key, pick the tier, fetch the
 pinned images and pull the model set. Everything after that is `ailocal start`.
 Idempotent.
 
-  --yes              unattended; also enables production autostart
+  --yes              unattended: accept every default
   --profile <tier>   override the tier detected from installed memory
   --ollama-patch     select the reviewed Gemma MLX loader patch, or none to
-                     restore stock Ollama. Requires Go and the matching signed
-                     Ollama app; builds once and preserves the selection.
+                     restore stock Ollama. Requires Go; the signed native files
+                     come from the pinned release archive. Builds once and
+                     preserves the selection.
   --reset-config     take the shipped policy defaults even for files you have
                      edited. Your versions are copied to a timestamped backup
                      directory first, and the path is printed. Use this after a
@@ -1340,13 +1288,11 @@ def cmd_install(argv: list[str]) -> int:
         candidate_binary = policy.stock_ollama_binary()
 
     step("Configuring Ollama")
-    managed = (assume_yes or requested_patch is not None or bool(policy.ollama_patch_selection())
-               or _yes("Set up production autostart (launchd runs ollama serve at login)?"))
     agent = LA_DIR / "com.ailocal.ollama.plist"
     previous_agent = None
     try:
         previous_agent = agent.read_bytes() if agent.is_file() else None
-        configure_ollama_services(env_only=not managed, binary=candidate_binary)
+        configure_ollama_services(binary=candidate_binary)
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
         detail = str(error) if isinstance(error, (OSError, RuntimeError, ValueError)) else type(error).__name__
         warn(f"Ollama activation failed ({detail}); "
