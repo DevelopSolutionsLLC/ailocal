@@ -31,6 +31,8 @@ brew install --cask docker-desktop ollama-app
 brew install pipx
 ```
 
+Recommended: `brew install cosign`. `ailocal check` uses it to look up the publisher signature of each pinned image; without it the digest pin still holds and the check reports one warning.
+
 Open Docker Desktop and Ollama once from your Applications folder. Both need one manual launch. `pipx` brings its own Python; you do not install Python or manage a virtual environment.
 
 ailocal keeps the Ollama server available, but models load when first requested rather than at login.
