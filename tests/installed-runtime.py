@@ -122,9 +122,9 @@ def _prove(s: Suite, box: Path, want_stack: bool) -> int:
         guide = json.loads(r.stdout)["models"]["ailocal-cyber"]
     except (ValueError, KeyError):
         guide = {"model": None, "evidence": ""}
-    s.check(guide["model"] == "qwen3.5:4b-unrestricted-mtp-q4_K_M"
+    s.check(guide["model"] == "nemotron-3.5-bolt:e4b-unrestricted"
             and all(t in guide["evidence"] for t in ("[REAL]", "[APPROX]",
-                    "0fe4f588e328513e7b55158a699fa68bc55be226ca338714e633569d4d2e5007")),
+                    "85c31197ff1d89b92a0e1c27cc033466b7f02dc916adba011414b7a7b80e44b6")),
             "profile model knowledge ships and resolves")
     cli("check", must_pass=False)
 

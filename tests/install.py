@@ -85,8 +85,9 @@ def native_gguf():
     S.section("native GGUF import and load check")
     native = {"model": "hf.co/fixture/model:weights.gguf", "sha256": "d" * 64, "renderer": "qwen3.5", "parser": "qwen3.5"}
     paired = {**native, "draft_model": "hf.co/fixture/model:head.gguf", "draft_sha256": "f" * 64}
+    visual = {**paired, "projector_model": "hf.co/fixture/model:mmproj.gguf", "projector_sha256": "c" * 64}
     blobs = M.policy.ollama_model_store() / "blobs"
-    target, head, wrong = (blobs / ("sha256-" + c * 64) for c in "dfe")
+    target, head, wrong, proj = (blobs / ("sha256-" + c * 64) for c in "dfec")
     calls = []
     show = lambda mf: io.BytesIO(json.dumps({"modelfile": mf, "renderer": "qwen3.5", "parser": "qwen3.5"}).encode())  # noqa: E731
     sent = lambda ep: [b for u, b in calls if u.endswith(ep)]  # noqa: E731
@@ -99,6 +100,14 @@ def native_gguf():
         return lambda: po(M.urllib.request, "urlopen", side_effect=answer)
     single = daemon(lambda m: f"FROM {target}\n")
     pair = daemon(lambda m: f"FROM {head}\n" if m == paired["draft_model"] else f"FROM {target}\nDRAFT {head}\n")
+    # #87: the publisher's pull carries its own projector (`wrong`); the reviewed one is pulled as its own
+    # tag, whose manifest lists it as model and projector, and the alias shows FROM, DRAFT, FROM.
+    trio = daemon(lambda m: f"FROM {proj}\nFROM {proj}\n" if m == visual["projector_model"]
+                  else f"FROM {head}\n" if m == visual["draft_model"]
+                  else f"FROM {target}\nFROM {wrong}\n" if m == visual["model"]
+                  else f"FROM {target}\nDRAFT {head}\nFROM {proj}\n")
+    unpinned = daemon(lambda m: f"FROM {proj}\n" if m == visual["projector_model"] else f"FROM {head}\n"
+                      if m == visual["draft_model"] else f"FROM {target}\nDRAFT {head}\nFROM {wrong}\n")
     with tempfile.TemporaryDirectory() as box, po(M.policy, "state_root", return_value=Path(box)), \
             po(M.policy, "ollama_binary", return_value="ollama"), po(M, "verify_load", return_value=True), \
             po(M.subprocess, "run", return_value=NS(returncode=0)) as pull, po(M, "_digest", return_value="sha256:n"):
@@ -136,6 +145,24 @@ def native_gguf():
             calls.clear()
             check(not M.install("fixture:bad", {**paired, "draft_sha256": "a" * 64}) and not sent("/api/create"),
                   "a mismatched draft digest fails before alias creation")
+        calls.clear()
+        with trio():
+            check(M.install("fixture:visual", visual), "a reviewed projector loads with its target and head")
+            created = sent("/api/create")[0]
+            check("from" not in created and created["files"] == {"model.gguf": "sha256:" + "d" * 64, "mmproj.gguf": "sha256:" + "c" * 64}
+                  and created["draft_files"] == {"draft.gguf": "sha256:" + "f" * 64}
+                  and [c.args[0] for c in pull.call_args_list[-3:]] == [["ollama", "pull", visual[k]] for k in ("model", "draft_model", "projector_model")]
+                  and sent("/api/delete") == [{"model": visual[k]} for k in ("model", "draft_model", "projector_model")],
+                  "files binds the target and projector blobs by digest, draft_files the head; all three pulls are dropped")
+            check(M.current("fixture:visual", visual) and not M.current("fixture:visual", {**visual, "projector_sha256": "e" * 64})
+                  and not M.current("fixture:visual", paired), "the receipt binds the projector pin, including its removal")
+            calls.clear()
+            check(not M.install("fixture:bad", {**visual, "projector_sha256": "a" * 64}) and not sent("/api/create"),
+                  "a mismatched projector digest fails before alias creation")
+        calls.clear()
+        with unpinned():
+            check(not M.install("fixture:unpinned", visual) and sent("/api/create") and not M.current("fixture:unpinned", visual),
+                  "an alias carrying the publisher's projector instead of the reviewed one is refused")
     fake = {"modelfile": f'FROM {target}\nTEMPLATE """\nDRAFT {head}\n"""\n', "renderer": "qwen3.5", "parser": "qwen3.5"}
     check(not M._native_matches(fake, paired) and not M._native_matches({**fake, "modelfile": f"FROM {target}\nDRAFT {head}\n"},
                                                                          native),
@@ -201,6 +228,7 @@ def install_flow():
         out, order = io.StringIO(), []
         with contextlib.ExitStack() as st:
             persist = stack(st, verdict, required)
+            st.enter_context(po(I.policy, "ollama_patch_selection", return_value=""))
             st.enter_context(po(I, "pull_models", side_effect=lambda: order.append("models") or 0))
             st.enter_context(po(I, "_retire_model_warmup", side_effect=lambda: order.append("retire")))
             st.enter_context(contextlib.redirect_stdout(out))
@@ -208,6 +236,22 @@ def install_flow():
         check(order == ["retire", "models"] and persist.called == bool(required) and rc == verdict
               and ("proxy is ready" in out.getvalue()) == (verdict == 0),
               f"install (verdict {verdict}, patch {required}) retires warmup first, returns validation, claims readiness only on pass")
+    # #87: no shipped role needs the patch any more. A machine whose earlier install selected it
+    # returns to stock Ollama; an explicit --ollama-patch keeps it; a role that declares it keeps it.
+    for argv, required, want in ((["--yes"], None, "/stock/ollama"), (["--yes", "--ollama-patch", "gemma4-switch-glu"], None, "/fixture/ollama"),
+                                 (["--yes"], "gemma4-switch-glu", "/fixture/ollama")):
+        with contextlib.ExitStack() as st:
+            persist = stack(st, 0, required)
+            st.enter_context(po(I.policy, "ollama_patch_selection", return_value="gemma4-switch-glu"))
+            st.enter_context(po(I.policy, "stock_ollama_binary", return_value="/stock/ollama"))
+            st.enter_context(po(I, "pull_models", return_value=0))
+            st.enter_context(po(I, "_retire_model_warmup"))
+            st.enter_context(quiet())
+            rc = I.cmd_install(argv)
+            configured = I.configure_ollama_services.call_args.kwargs.get("binary")
+        check(rc == 0 and configured == want
+              and persist.call_args.args == ("" if want == "/stock/ollama" else "gemma4-switch-glu",),
+              f"install {argv} with the patch selected and {required or 'no'} requirement runs {want} and records it")
     with contextlib.ExitStack() as st:
         stack(st, present=True)
         st.enter_context(po(I, "pull_models", return_value=0))
@@ -479,10 +523,13 @@ def model_upgrade():
         config = Path(box) / "config"
         shutil.copytree(RESOURCES / "profiles", config / "profiles")
         prof = lambda t: config / f"profiles/{t}.toml"  # noqa: E731
-        path, ctx = prof("32gb"), P.resolve_role("32gb", "architecture", RESOURCES)["context_input"]
+        path, shipped = prof("32gb"), P.load_profile("32gb", RESOURCES)
+        ctx, temp, disk = shipped["architecture"]["context_input"], shipped["implementation"]["temperature"], shipped["disk_gb"]
         text = path.read_text()
-        for old, new in ((f"context_input = {ctx}", "context_input = 65536"), ("[completion]\n", "[completion]\nenabled = false\n"),
-                         ("temperature = 0.7", "temperature = 0.2"), ("disk_gb = 21", "disk_gb = 16")):
+        # The first context_input row is architecture's; the other substitutions touch every matching row.
+        text = text.replace(f"context_input = {ctx}", f"context_input = {ctx + 8192}", 1)
+        for old, new in (("[completion]\n", "[completion]\nenabled = false\n"),
+                         (f"temperature = {temp}", "temperature = 0.2"), (f"disk_gb = {disk}", f"disk_gb = {disk - 5}")):
             text = text.replace(old, new)
         path.write_text("# operator comment\n" + text)
         before, routing = path.read_bytes(), prof("clients").read_bytes()
@@ -490,18 +537,19 @@ def model_upgrade():
         total = max(c["context_input"] + c["max_output"] for r, c in authored.items()
                     if r in P.ROLES and c["active"] == authored["architecture"]["active"])
         res = I.upgrade_model_defaults(RESOURCES, config)
-        after, shipped = P.load_profile("32gb", config), P.load_profile("32gb", RESOURCES)
+        after = P.load_profile("32gb", config)
         arch = after["architecture"]
         check("32gb" in res["updated"] and (res["backup"] / "32gb.toml").read_bytes() == before, "the original policy is backed up")
         check(arch["max_output"] == 16384 and arch["context_input"] + arch["max_output"] == total
-              and after["implementation"]["temperature"] == 0.7 and after["completion"].get("enabled", True)
+              and after["implementation"]["temperature"] == temp and after["completion"].get("enabled", True)
               and after["disk_gb"] == shipped["disk_gb"],
               "the shared runner keeps the largest authored window; shipped sampling, FIM and footprint are adopted")
         check(path.read_text().startswith("# operator comment\n") and prof("clients").read_bytes() == routing
               and not I.upgrade_model_defaults(RESOURCES, config)["updated"],
               "comments and client routing are preserved; a repeat is a no-op")
         for t in ("16gb", "32gb"):
-            prof(t).write_text(prof(t).read_text().replace("temperature = 0.7", "temperature = 0.3"))
+            prof(t).write_text(prof(t).read_text().replace(
+                f"temperature = {P.load_profile(t, RESOURCES)['implementation']['temperature']}", "temperature = 0.3"))
         originals, real, calls = {t: prof(t).read_bytes() for t in ("16gb", "32gb")}, I.os.replace, []
 
         def flaky(a, b):

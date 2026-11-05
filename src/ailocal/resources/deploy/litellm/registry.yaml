@@ -378,6 +378,8 @@ model_classes:
       - "qwen3.5:9b-unrestricted-mtp-q4_K_M"
       - "gemma4:26b-unrestricted-qat-mtp"
       - "gemma4:26b-unrestricted-qat-mtp-q4_K_M"
+      # #87: 16/32 GB Cyber, a Heretic Nemotron 3.5 Bolt E4B GGUF with NVIDIA's DFlash draft.
+      - "nemotron-3.5-bolt:e4b-unrestricted"
     supports_tools: true
     supports_mcp: true
     supports_parallel_tools: false
@@ -416,7 +418,10 @@ model_classes:
   # qwen3-coder.
   local_agentic:
     match_capabilities: [architecture, implementation, review]
-    match_models: ["*qwen3-coder*", "*gemma4:*", "*qwen3.5:9b*", "*qwen3.5:4b*"]
+    # "*nemotron-3.5-bolt:*" (#87): the 16/32 GB primary, a Gemma 4 architecture that
+    # passed 3/3 injected-EAGAIN tool loops with 1/1 recovery on 2026-11-05 (docs/model-audit.md).
+    # Its unrestricted Cyber alias is listed under local_cyber above, which is matched first.
+    match_models: ["*qwen3-coder*", "*gemma4:*", "*qwen3.5:9b*", "*qwen3.5:4b*", "*nemotron-3.5-bolt:*"]
     supports_tools: true
     # MCP tools arrive as ordinary function tools under an `mcp__server__tool`
     # name (namespace_expansion is disabled), so "supports MCP" asks nothing of
@@ -491,7 +496,7 @@ model_classes:
   # its window describing tools it cannot drive.
   # `match_capabilities: [fast]` was REMOVED. The narrow group list below is
   # justified by the 2B model's window arithmetic, and that argument does not
-  # transfer to the `fast` ROLE: on 16/32 GB `fast` is qwen3.5:4b / :9b, the
+  # transfer to the `fast` ROLE: on 16/32 GB `fast` is the Nemotron primary, the
   # very same model serving architecture on those tiers. Slot-matching declared
   # it unable to edit a file in one alias and fully agentic in another. Those
   # tiers now fall through to local_agentic, which is what they were already

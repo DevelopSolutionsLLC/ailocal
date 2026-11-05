@@ -38,10 +38,10 @@ CANDIDATES = {
         "label": "incumbent — architecture/implementation/review today", "think": True,
         "options": {"temperature": 1.0, "top_k": 64, "top_p": 0.95}},
     "qwen3.5:9b": {
-        "label": "fast-role challenger / 32 GB architecture model", "think": False, "num_ctx": 135168,
+        "label": "former 32 GB primary (replaced by Nemotron 3.5 Bolt E4B, #87)", "think": False, "num_ctx": 135168,
         "options": {"temperature": 0.7, "top_k": 20, "top_p": 0.8, **_NEUTRAL, "presence_penalty": 1.5}},
     "qwen3.5:4b": {
-        "label": "16 GB architecture/implementation/review/fast model", "think": False, "num_ctx": 135168,
+        "label": "former 16 GB primary (replaced by Nemotron 3.5 Bolt E4B, #87)", "think": False, "num_ctx": 135168,
         "options": {"temperature": 0.7, "top_k": 20, "top_p": 0.8, **_NEUTRAL, "presence_penalty": 1.5}},
     "qwen3.5:2b": {  # the 2B card has a distinct non-thinking preset
         "label": "smaller fast-role challenger", "think": False, "num_ctx": 135168,

@@ -1240,8 +1240,9 @@ Idempotent.
   --profile <tier>   override the tier detected from installed memory
   --ollama-patch     select the reviewed Gemma MLX loader patch, or none to
                      restore stock Ollama. Requires Go; the signed native files
-                     come from the pinned release archive. Builds once and
-                     preserves the selection.
+                     come from the pinned release archive. Builds once. Without
+                     the flag, the profile decides: a role that declares the
+                     patch keeps it, and a profile with none returns to stock.
   --reset-config     take the shipped policy defaults even for files you have
                      edited. Your versions are copied to a timestamped backup
                      directory first, and the path is printed. Use this after a
@@ -1305,8 +1306,15 @@ def cmd_install(argv: list[str]) -> int:
     if required_patch and requested_patch == "none":
         raise SystemExit("The selected profile requires the patched Ollama runtime. "
                          "Choose a compatible model/profile before returning to stock Ollama.")
-    if requested_patch is None and required_patch:
-        requested_patch = required_patch
+    if requested_patch is None:
+        if required_patch:
+            requested_patch = required_patch
+        elif policy.ollama_patch_selection():
+            # An earlier install selected the patch for a role that needed it.
+            # Nothing enabled needs it now, so without an explicit --ollama-patch
+            # the service returns to stock Ollama instead of rebuilding the patch.
+            requested_patch = "none"
+            ok("no enabled role needs the patched Ollama runtime; returning to stock Ollama")
 
     step("Configuring environment")
     _write_env(assume_yes)
@@ -1314,8 +1322,7 @@ def cmd_install(argv: list[str]) -> int:
     # Build/test before changing either the authored selection or launch agent.
     # A failed candidate never stops the currently running native runtime.
     candidate_binary = None
-    if requested_patch not in (None, "none") or (
-            requested_patch is None and policy.ollama_patch_selection()):
+    if requested_patch not in (None, "none"):
         step("Preparing the reviewed Ollama loader patch")
         from . import ollama_patch
         try:
