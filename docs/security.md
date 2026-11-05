@@ -45,6 +45,7 @@ No secret appears in the generation manifest, in generated artifacts, in logs, o
 | `$AILOCAL_STATE/searxng/settings.yml` | `0600` | may carry the GitHub search token |
 | `$AILOCAL_STATE/env` | `0600` expected | the generated secrets |
 | `.env.local` | `0600` expected | your provider keys |
+| `/tmp/ailocal-scratchpad-<uid>/` | `0700` | local sessions' working notes; the hook refuses a symlinked or foreign-owned base and uses a fresh `mktemp` directory instead |
 
 Verify with `ailocal check`, which reports either file readable by other users.
 
@@ -79,6 +80,8 @@ Profiles, client templates and the repository itself are not mounted. SearXNG re
 Both images are pinned **by digest**, not by tag, so a moving tag cannot change what runs without a commit. The authoritative references are in the [LiteLLM Compose declaration](../src/ailocal/resources/deploy/litellm/compose.yaml) and [SearXNG Compose declaration](../src/ailocal/resources/deploy/searxng/compose.yaml); do not duplicate their digests in prose.
 
 `ailocal check` gates the running build against the validated version, and the regression gate fails if they diverge.
+
+The patched-Ollama build drops every setting that exempts a Go module from the public checksum database (`GONOSUMDB`, `GOPRIVATE`, `GOINSECURE`, `GOFLAGS` and the rest) and sets `GOENV=off`, so a `go env -w` file cannot restore one.
 
 `ailocal check` includes the supply chain: every image pinned by digest, the running image identical to the declared one, loopback-only binding, and provenance where a publisher signs. `ailocal check --updates` additionally asks upstream what exists; it never pulls over a running service and never rewrites a pin. A check that could not complete reports as such — an absent scanner is not a pass.
 

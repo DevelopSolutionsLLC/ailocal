@@ -79,7 +79,7 @@ multi_agent = false
 goals = false
 
 # ── SessionStart hook — per-session scratchpad ──────────────────────────────
-# Creates an isolated /tmp/scratchpad/codex-<session_id>/ on session start and
+# Creates a private /tmp/ailocal-scratchpad-<uid>/codex-<session_id>/ on session start and
 # injects the path as context (same shared script Claude Code uses). Keeps each
 # session's working notes separate. See clients/scratchpad-hook.sh.
 [[hooks.SessionStart]]

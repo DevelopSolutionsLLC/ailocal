@@ -377,7 +377,7 @@ def _scratchpad_hook_bytes(tool: str) -> int | None:
     m = re.search(r'^ctx="(.*)"$', source, re.M)
     if not m:
         return None
-    text = m.group(1).replace("${dir}", f"/tmp/scratchpad/{tool}-" + "0" * 36)
+    text = m.group(1).replace("${dir}", f"/tmp/ailocal-scratchpad-{os.getuid()}/{tool}-" + "0" * 36)
     return len(text.encode("utf-8"))
 
 
