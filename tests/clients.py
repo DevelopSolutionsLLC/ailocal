@@ -372,7 +372,9 @@ def drift() -> None:
     hosted = str(Path.home() / ".claude")
     check({hosted + "/CLAUDE.md", hosted + "/rules/**"} <= set(doc.get("claudeMdExcludes", []))
           and doc.get("disableBundledSkills") is True
-          and {"ScheduleWakeup", "ReportFindings", "ListAgents"} <= set(doc["permissions"]["deny"]),
+          and {"ScheduleWakeup", "ReportFindings", "ListAgents", "mcp__grepai__grepai_rpg_search",
+               "mcp__grepai__grepai_trace_graph"} <= set(doc["permissions"]["deny"])
+          and "mcp__grepai__grepai_search" not in doc["permissions"]["deny"],
           "claude-local excludes hosted memory and unused always-on tools (#62)")
     tpl = tomllib.loads((CLIENTS_RES / "codex/config.template.toml").read_text(encoding="utf-8"))
     wrapper = (CLIENTS_RES / "configure.template.zsh").read_text(encoding="utf-8")
