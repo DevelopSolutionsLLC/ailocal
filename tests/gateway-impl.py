@@ -55,7 +55,9 @@ d = reg.describe()
 check(reg.loaded, f"registry.yaml loads ({reg.state})", reg.error or "")
 check(d["groups"] >= 8 and d["model_classes"] >= 5 and d["routes"] == 3,
       f"groups, classes and three routes present ({d})")
-check(d["contexts_from_generated"] >= 5, "context windows come from the generated file")
+# One window per generated capability: primary, cyber, completion, and fast where the tier declares it (#89).
+check({"primary", "cyber", "completion"} <= set(reg.contexts) and set(reg.contexts) == set(reg.backends),
+      f"context windows come from the generated file, one per capability ({sorted(reg.contexts)})")
 check(d["aliases"] > 0, "model_group_alias loaded")
 
 suite.section("MODEL CLASSIFICATION")
