@@ -1,11 +1,8 @@
 # claude-local
 
-`claude-local` is Claude Code, unchanged, pointed at your machine. It is a shell function
-that sets `CLAUDE_CONFIG_DIR` and a handful of environment variables for **that process
-only**, then runs the same `claude` binary.
+`claude-local` is Claude Code, unchanged, pointed at your machine. It is a shell function that sets `CLAUDE_CONFIG_DIR` and a handful of environment variables for **that process only**, then runs the same `claude` binary.
 
-Your hosted `claude` is untouched. `~/.claude` is never read for this and never written by
-ailocal; everything below lives in ailocal's own config root.
+Your hosted `claude` is untouched. `~/.claude` is never read for this and never written by ailocal; everything below lives in ailocal's own config root.
 
 ## How it differs from hosted `claude`
 
@@ -22,41 +19,25 @@ ailocal; everything below lives in ailocal's own config root.
 
 ## Tool search
 
-`ENABLE_TOOL_SEARCH=true` is the supported configuration and the default. `true` defers
-tools that declare themselves deferrable and keeps the rest eager.
+`ENABLE_TOOL_SEARCH=true` is the supported configuration and the default. `true` defers tools that declare themselves deferrable and keeps the rest eager.
 
-[REAL] measured on the wire through this stack: **70 tools / 144,893 schema bytes → 24 /
-53,044** (−63%, roughly 21K fewer tokens per request); latency median/p90/max **41/729/941 s
-→ 24/40/62 s**.
+[REAL] measured on the wire through this stack: **70 tools / 144,893 schema bytes → 24 / 53,044** (−63%, roughly 21K fewer tokens per request); latency median/p90/max **41/729/941 s → 24/40/62 s**.
 
-**Eager** — always present: the built-in file and shell tools, `ToolSearch` itself, the
-bundled artifact tool (it declares `alwaysLoad`), and anything the client refuses to defer.
+**Eager** — always present: the built-in file and shell tools, `ToolSearch` itself, the bundled artifact tool (it declares `alwaysLoad`), and anything the client refuses to defer.
 
-**Deferred** — acquired on demand by name: GitHub MCP, LSP, and other MCP tools. Ask for
-them with `ToolSearch("select:LSP")`, batching several names into one call.
+**Deferred** — acquired on demand by name: GitHub MCP, LSP, and other MCP tools. Ask for them with `ToolSearch("select:LSP")`, batching several names into one call.
 
-[REAL] deferred GitHub discovery succeeded 5/5. grepai, Cadence skills, Cadence agents and
-multi-turn reminders were unaffected — 16/16 tasks completed with no capability lost.
+[REAL] deferred GitHub discovery succeeded 5/5. grepai, Cadence skills, Cadence agents and multi-turn reminders were unaffected — 16/16 tasks completed with no capability lost.
 
-**Requires LiteLLM ≥ 1.98.** The deferred-tool listing travels in mid-array `role: "system"`
-messages; the previous pin, LiteLLM 1.93, discarded those, which made deferred tools
-undiscoverable. This is
-why the pin matters, and why `ailocal check` reports the running version.
+**Requires LiteLLM ≥ 1.98.** The deferred-tool listing travels in mid-array `role: "system"` messages; the previous pin, LiteLLM 1.93, discarded those, which made deferred tools undiscoverable. This is why the pin matters, and why `ailocal check` reports the running version.
 
 `Grep` and `Glob` are a separate matter, unrelated to tool search; see [Known subagent limitations](#known-subagent-limitations).
 
 ## Native Workflow is off by default
 
-Claude Code's built-in `Workflow` tool ships a 21,822-byte schema that **cannot be
-deferred**: `non_deferrable_builtins` only ever grows, and the request to opt built-ins into
-deferral ([anthropics/claude-code#54716](https://github.com/anthropics/claude-code/issues/54716))
-is closed as not planned. So the choice is on or off, not lazy.
+Claude Code's built-in `Workflow` tool ships a 21,822-byte schema that **cannot be deferred**: `non_deferrable_builtins` only ever grows, and the request to opt built-ins into deferral ([anthropics/claude-code#54716](https://github.com/anthropics/claude-code/issues/54716)) is closed as not planned. So the choice is on or off, not lazy.
 
-[REAL] on this stack it is pure overhead: **0 invocations across 148 real claude-local
-sessions**. Disabling it took the model-visible tool schema from **53,044 → 31,221 bytes**
-and the fixed prompt from **21,789 → 16,695 input tokens**, with capability preserved 10/10
-(ordinary coding, Cadence skills, Cadence agents, GitHub and LSP discovery, grepai, artifacts
-and a negative control all unaffected).
+[REAL] on this stack it is pure overhead: **0 invocations across 148 real claude-local sessions**. Disabling it took the model-visible tool schema from **53,044 → 31,221 bytes** and the fixed prompt from **21,789 → 16,695 input tokens**, with capability preserved 10/10 (ordinary coding, Cadence skills, Cadence agents, GitHub and LSP discovery, grepai, artifacts and a negative control all unaffected).
 
 Restore it for one command:
 
@@ -64,40 +45,25 @@ Restore it for one command:
 AILOCAL_NATIVE_WORKFLOWS=1 claude-local
 ```
 
-The override is **process-scoped**. It affects that invocation only; nothing is written to
-disk, and hosted `claude` keeps Anthropic's native Workflow either way.
+The override is **process-scoped**. It affects that invocation only; nothing is written to disk, and hosted `claude` keeps Anthropic's native Workflow either way.
 
 ## Artifacts
 
-`claude-local` publishes artifacts locally through a bundled MCP server — see
-[the README](../README.md#what-a-local-session-gets) and
-[ADR 011](adr/011-bundled-artifacts.md). Nothing to clone or install separately.
+`claude-local` publishes artifacts locally through a bundled MCP server — see [the README](../README.md#what-a-local-session-gets) and [ADR 011](adr/011-bundled-artifacts.md). Nothing to clone or install separately.
 
 ## How the artifact tool is routed
 
 Worth separating three different kinds of claim, because they are often run together:
 
-**What the protocol guarantees.** MCP's `InitializeResult.instructions` is a hint a client
-**MAY** add to the model's prompt. The specification does not require delivery, so a client
-that omits it is behaving correctly.
+**What the protocol guarantees.** MCP's `InitializeResult.instructions` is a hint a client **MAY** add to the model's prompt. The specification does not require delivery, so a client that omits it is behaving correctly.
 
-**What we measured.** [REAL CURRENT] on Claude Code 2.1.231, captured at the Claude Code →
-LiteLLM request boundary: the system prompt contains no MCP or artifact text at all, with
-tool search on **and** off. So on this path the server's `instructions` do not reach the
-model.
+**What we measured.** [REAL CURRENT] on Claude Code 2.1.231, captured at the Claude Code → LiteLLM request boundary: the system prompt contains no MCP or artifact text at all, with tool search on **and** off. So on this path the server's `instructions` do not reach the model.
 
-**What follows.** The tool description is the routing contract, because it is the part
-proven to arrive. `SERVER_INSTRUCTIONS` is kept to one line as optional guidance for clients
-that do honour it, and nothing depends on it for correctness. The format guidance lives in
-the skill, which is delivered. Three copies of one policy is how they drift apart.
+**What follows.** The tool description is the routing contract, because it is the part proven to arrive. `SERVER_INSTRUCTIONS` is kept to one line as optional guidance for clients that do honour it, and nothing depends on it for correctness. The format guidance lives in the skill, which is delivered. Three copies of one policy is how they drift apart.
 
-This is why a wording change to the tool description moved artifact invocation from 6/15 to
-13/15 (p = 0.008) while the same words in the server instructions had done nothing.
+This is why a wording change to the tool description moved artifact invocation from 6/15 to 13/15 (p = 0.008) while the same words in the server instructions had done nothing.
 
-**Transport is unchanged and stays that way.** The bundled server is stdio, which Claude
-Code's documentation describes as appropriate for local processes; SSE is deprecated in
-favour of Streamable HTTP for *remote* servers, which this is not. MCP transport and
-LiteLLM's response streaming are separate layers and neither implies the other.
+**Transport is unchanged and stays that way.** The bundled server is stdio, which Claude Code's documentation describes as appropriate for local processes; SSE is deprecated in favour of Streamable HTTP for *remote* servers, which this is not. MCP transport and LiteLLM's response streaming are separate layers and neither implies the other.
 
 ## Repository intelligence
 
@@ -107,17 +73,12 @@ LiteLLM's response streaming are separate layers and neither implies the other.
 
 ## Cadence is optional
 
-[Cadence](https://github.com/DevelopSolutionsLLC/cadence) composes engineering instructions,
-skills and agents. It is **separately owned and entirely optional**; ailocal does not depend
-on it and does not install it.
+[Cadence](https://github.com/DevelopSolutionsLLC/cadence) composes engineering instructions, skills and agents. It is **separately owned and entirely optional**; ailocal does not depend on it and does not install it.
 
 - **Without Cadence:** `claude-local` works with its bundled artifact and research integrations and their routing skills. No Cadence agents or composed policy file is required.
-- **With Cadence installed later:** it writes into its own instruction and skill roots, which
-  `claude-local` already reads. Nothing in ailocal needs to change.
+- **With Cadence installed later:** it writes into its own instruction and skill roots, which `claude-local` already reads. Nothing in ailocal needs to change.
 
-Cadence has a `/workflow` capability under design. It does **not** exist today, and it is
-not what `AILOCAL_NATIVE_WORKFLOWS` controls — that flag is only about Anthropic's built-in
-tool.
+Cadence has a `/workflow` capability under design. It does **not** exist today, and it is not what `AILOCAL_NATIVE_WORKFLOWS` controls — that flag is only about Anthropic's built-in tool.
 
 ## Known subagent limitations
 
@@ -133,23 +94,15 @@ A subagent receives exactly the tools its definition declares, **minus `Grep` an
 | Same agent, delegated in the background | 2 | 4,529 |
 | Custom agent declaring `Read, Bash` + 5 grepai tools | 7 (all of them) | 8,469 |
 
-So MCP tools survive delegation and `Grep`/`Glob` do not. The cause is upstream of delegation:
-those two are absent from the **parent's** surface as well, and are not offered as deferred
-tools, so `ToolSearch` cannot acquire them anywhere — and the built-in `Explore` agent does
-not have them either. Tool search is not the cause; the same runs with it disabled behave
-identically.
+So MCP tools survive delegation and `Grep`/`Glob` do not. The cause is upstream of delegation: those two are absent from the **parent's** surface as well, and are not offered as deferred tools, so `ToolSearch` cannot acquire them anywhere — and the built-in `Explore` agent does not have them either. Tool search is not the cause; the same runs with it disabled behave identically.
 
 The research integration adds an eager search tool. Exact current tool and schema-byte counts have not been remeasured.
 
-Write agent definitions that declare only what arrives, and search with `grep`/`rg` and
-`find` through `Bash`. A subagent also gets `ToolSearch` only if it declares it, so an
-undeclared deferred tool is unreachable from inside one.
+Write agent definitions that declare only what arrives, and search with `grep`/`rg` and `find` through `Bash`. A subagent also gets `ToolSearch` only if it declares it, so an undeclared deferred tool is unreachable from inside one.
 
 ## Configuration
 
-Every variable below is read by the `claude-local` wrapper and applies to **that process
-only** unless stated otherwise. Set it inline (`VAR=1 claude-local`) or export it in your
-shell. None of them are written to disk, and none affect hosted `claude`.
+Every variable below is read by the `claude-local` wrapper and applies to **that process only** unless stated otherwise. Set it inline (`VAR=1 claude-local`) or export it in your shell. None of them are written to disk, and none affect hosted `claude`.
 
 | Variable | Default | Accepted | Effect |
 |---|---|---|---|
@@ -167,12 +120,9 @@ AILOCAL_NATIVE_WORKFLOWS=1 claude-local         # one session, Workflow back
 AILOCAL_PRIMARY_ALIAS_OVERRIDE=bench-gemma4-26b-mlx-off-32k claude-local
 ```
 
-`ENABLE_TOOL_SEARCH=force` is **not** a supported value. It was tried during investigation
-and is not accepted by the client; use `true`.
+`ENABLE_TOOL_SEARCH=force` is **not** a supported value. It was tried during investigation and is not accepted by the client; use `true`.
 
-Changes take effect on the **next invocation** — these are per-process environment
-variables, so no restart of anything is required. Changing a *profile* (which model a role
-uses) is different: edit the file in `~/.config/ailocal/profiles/` and run `ailocal start`.
+Changes take effect on the **next invocation** — these are per-process environment variables, so no restart of anything is required. Changing a *profile* (which model a role uses) is different: edit the file in `~/.config/ailocal/profiles/` and run `ailocal start`.
 
 ## See also
 

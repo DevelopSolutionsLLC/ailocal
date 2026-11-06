@@ -75,13 +75,13 @@ OLLAMA_ENV = {
     # unmeasured, so an operator can select 2 without changing those defaults.
     "OLLAMA_NUM_PARALLEL": "1",
     # These last two reach the llama_cpp runner ONLY, where they become
-    # `--flash-attn on --cache-type-k q8_0 --cache-type-v q8_0`. The MLX runner
-    # accepts neither: it uses MLX's own fused attention and an unquantized KV
-    # cache, with no knob to quantize it. So every MLX-served role -- which is
-    # every large role in the 64 GB and 128 GB profiles -- pays full fp16 KV no
-    # matter what is set here, and a profile that cites a KB/token figure for an
-    # MLX model is citing an UNQUANTIZED one. Measured 2026-08-21: gemma4:26b-mlx
-    # 46.2 KB/token at 64K depth, which matches the 45.4 the profiles claim.
+    # `--flash-attn on --cache-type-k q8_0 --cache-type-v q8_0`. Every shipped
+    # chat role is a GGUF (QAT/MTP) on every tier since #93, so the q8_0 KV
+    # applies to all of them. The MLX runner accepts neither: it uses MLX's own
+    # fused attention and an unquantized KV cache, so an MLX selection pays full
+    # fp16 KV whatever is set here, and a KB/token figure cited for an MLX model
+    # is an unquantized one (measured 2026-08-21: gemma4:26b-mlx 46.2 KB/token
+    # at 64K depth).
     # Keep them: they are correct and load-bearing for the llama_cpp roles.
     "OLLAMA_FLASH_ATTENTION": "1",
     "OLLAMA_KV_CACHE_TYPE": "q8_0",

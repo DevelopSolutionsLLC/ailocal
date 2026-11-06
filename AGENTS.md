@@ -23,7 +23,7 @@ Cadence's shared policy (principal-engineer voice, evidence labels, version safe
 
 Before changing dependencies, install behaviour, skills or MCP integration, read [AI development maintenance](docs/maintenance.md); weekly maintenance starts there with `cadence doctor`. An old workaround is a hypothesis to revalidate against current upstream releases and issues, not a permanent limitation.
 
-Every image and model source is pinned by digest or hash, and the gate fails on drift. The audit each component needs, and the incident that justifies the lag, are in [docs/security.md](docs/security.md#supply-chain).
+Every image is pinned by digest and every model source by the SHA-256 of its weight blob, and the gate fails on drift; a native recipe's unpinned projector and metadata layers are the limit that remains ([docs/security.md](docs/security.md#model-artifacts)). The audit each component needs, and the incident that justifies the lag, are in [docs/security.md](docs/security.md#supply-chain).
 
 ```sh
 python3 -m venv .venv && . .venv/bin/activate

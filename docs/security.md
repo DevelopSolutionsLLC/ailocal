@@ -53,11 +53,7 @@ Verify with `ailocal check`, which reports either file readable by other users.
 
 ## Authored versus generated
 
-Ownership of the four roots — who writes each, and what a delete recovers — is
-stated once, in [AGENTS.md](../AGENTS.md#generated-state). The security-relevant
-consequence: a tracked file is authored source or a template, never a runtime
-artifact that generation rewrites, so generation cannot dirty the working tree
-or introduce a secret into a commit.
+Ownership of the four roots — who writes each, and what a delete recovers — is stated once, in [AGENTS.md](../AGENTS.md#generated-state). The security-relevant consequence: a tracked file is authored source or a template, never a runtime artifact that generation rewrites, so generation cannot dirty the working tree or introduce a secret into a commit.
 
 ---
 
@@ -111,11 +107,7 @@ Hashes establish byte identity, not absence of poisoned behavior, backdoors or u
 
 ## Commit attribution
 
-The rule and its rationale live in
-[AGENTS.md](../AGENTS.md#change-discipline). Note that enforcement is by
-convention: the repository ships no commit hook, deliberately — installing Git
-policy was removed from the product installer, because a user installing local
-inference did not ask for their Git configuration to change.
+The rule and its rationale live in [AGENTS.md](../AGENTS.md#change-discipline). Note that enforcement is by convention: the repository ships no commit hook, deliberately — installing Git policy was removed from the product installer, because a user installing local inference did not ask for their Git configuration to change.
 
 ---
 
