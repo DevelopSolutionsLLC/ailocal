@@ -495,7 +495,7 @@ def cmd_teardown(argv: list[str]) -> int:
     from . import install
     try:
         install.remove_login_agents()
-    except (OSError, RuntimeError):
+    except (OSError, RuntimeError, subprocess.SubprocessError):
         bad("Teardown incomplete: a launch agent could not be removed. "
             "Runtime payloads were preserved; resolve the launchd error above and retry.")
         return 1

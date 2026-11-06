@@ -11,6 +11,7 @@ import os
 import plistlib
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import tomllib
@@ -719,6 +720,25 @@ def role_migration():
               and P.load_profile("16gb", config)["primary"]["reasoning"] is False,
               "0.15.1's own non-thinking sampling in [implementation] and [fast] is not an operator edit",
               repr({k: v for k, v in res.items() if k != "backup"}))
+        # #101: the literal 0.15.1 64gb profile, edited by the operator, names cyber with a
+        # quantization token the structured names reject; install renames it before anything
+        # loads the file, then the role migration and load_profile succeed.
+        legacy = subprocess.run(["git", "show", "83acf10:src/ailocal/resources/profiles/64gb.toml"],
+                                cwd=REPO, capture_output=True, text=True, check=True).stdout
+        prof("64gb").write_text("# operator comment\n" + legacy.replace('keep_alive = "20m"', 'keep_alive = "6h"', 1))
+        check(raises(P.ProfileError, P.load_profile, "64gb", config), "the 0.15.1 cyber name fails closed as shipped")
+        I.migrate_profile_roles(RESOURCES, config)
+        names = I.migrate_selection_names(config)
+        loaded = P.load_profile("64gb", config)
+        check(names["renamed"] == {"64gb": [("gemma4:26b-unrestricted-qat-mtp-q4_K_M", "gemma4:26b-unrestricted-qat-mtp")]}
+              and loaded["cyber"]["active"] == loaded["cyber"]["preferred"][0] == "gemma4:26b-unrestricted-qat-mtp"
+              and "gemma4:26b-unrestricted-qat-mtp" in loaded["model_guidance"]
+              and "gemma4:26b-unrestricted-qat-mtp-q4_K_M" not in loaded["model_guidance"]
+              and loaded["cyber"]["keep_alive"] == "6h" and (names["backup"] / "64gb.toml").is_file()
+              and I.migrate_selection_names(config) == {"renamed": {}, "backup": None},
+              "the 0.15.1 64gb profile loads after the quantization token is dropped from active, preferred and the "
+              "guide key; the operator's edit survives, the original is backed up, a repeat is a no-op (#101)",
+              repr(names))
         link = config / "profiles/128gb.toml"
         link.unlink(), link.symlink_to(RESOURCES / "profiles/128gb.toml")
         check(raises(ValueError, I.migrate_profile_roles, RESOURCES, config), "a profile symlink is refused")

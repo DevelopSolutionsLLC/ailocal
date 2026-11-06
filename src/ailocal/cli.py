@@ -195,7 +195,13 @@ def main(argv: list[str] | None = None) -> int:
     with (_lifecycle_lock() if cmd in ("install", "start", "stop", "teardown")
           and not {"-h", "--help"}.intersection(argv)
           else contextlib.nullcontext()):
-        return importlib.import_module(module).main([str(a) for a in [*fixed, *argv]])
+        try:
+            return importlib.import_module(module).main([str(a) for a in [*fixed, *argv]])
+        except P.ProfileError as e:
+            # A profile that fails closed is reported with its code and the
+            # fix it names, never as a traceback (#101).
+            print(f"  ✗ {e.code}: {e.detail}", file=sys.stderr)
+            return 2
 
 
 if __name__ == "__main__":
