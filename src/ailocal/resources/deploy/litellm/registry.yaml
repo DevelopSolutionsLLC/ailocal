@@ -390,11 +390,11 @@ model_classes:
 
   # ── Local: agentic ────────────────────────────────────────────────────────
   # The default class for a general-purpose local model. A model is described
-  # by what it can do, not by the ROLE it happens to be filling: architecture,
-  # implementation and review are all gemma4:26b-mlx on 64/128 GB, and all four
-  # non-FIM roles are one qwen3.5 on 16/32 GB. Declaring the same weights
-  # agentic under one alias and non-agentic under another was a bug, not a
-  # policy — see commitment 4 in capability_registry.py.
+  # by what it can do, not by the ROLE it happens to be filling: `fast` is the
+  # primary with thinking off, and the three roles 0.16 collapsed into `primary`
+  # were one backend on every tier. Declaring the same weights agentic under
+  # one alias and non-agentic under another was a bug, not a policy — see
+  # commitment 4 in capability_registry.py.
   #
   # REAL: qwen3-coder:30b-a3b-q4_K_M drove multi-step tool loops reliably
   # (16/16 agentic runs, 148 tool executions, and a clean Read->Edit repair of
@@ -417,7 +417,7 @@ model_classes:
   # is the evidence this class asserts; it is no longer inherited from
   # qwen3-coder.
   local_agentic:
-    match_capabilities: [architecture, implementation, review]
+    match_capabilities: [primary]
     # "*nemotron-3.5-bolt:*" (#87): the 16/32 GB primary, a Gemma 4 architecture that
     # passed 3/3 injected-EAGAIN tool loops with 1/1 recovery on 2026-11-05 (docs/model-audit.md).
     # Its unrestricted Cyber alias is listed under local_cyber above, which is matched first.
@@ -456,9 +456,9 @@ model_classes:
   # `match_capabilities` was REMOVED here. It read [implementation, review],
   # which meant the finding above — measured on a 14B coder this deployment no
   # longer pulls — was being applied to whatever model happened to occupy those
-  # two roles. On every current profile that is the SAME model serving
-  # `architecture` right beside it. The class now matches only the models it
-  # was actually measured on, and is dormant until one of them is served.
+  # two roles, the same model that served the role beside them (all three are
+  # `primary` since 0.16). The class now matches only the models it was
+  # actually measured on, and is dormant until one of them is served.
   local_nonagentic:
     match_models: ["*qwen2.5-coder:14b*", "*deepseek-coder-v2*"]
     supports_tools: true
@@ -496,11 +496,11 @@ model_classes:
   # its window describing tools it cannot drive.
   # `match_capabilities: [fast]` was REMOVED. The narrow group list below is
   # justified by the 2B model's window arithmetic, and that argument does not
-  # transfer to the `fast` ROLE: on 16/32 GB `fast` is the Nemotron primary, the
-  # very same model serving architecture on those tiers. Slot-matching declared
-  # it unable to edit a file in one alias and fully agentic in another. Those
-  # tiers now fall through to local_agentic, which is what they were already
-  # being treated as everywhere else.
+  # transfer to the `fast` ROLE: `fast` is the primary with thinking off (and
+  # on 16/32 GB, which declare no fast, `ailocal-fast` is the primary itself).
+  # Slot-matching declared it unable to edit a file in one alias and fully
+  # agentic in another. Those requests fall through to local_agentic, which is
+  # what they were already being treated as everywhere else.
   #
   # REAL, 2026-08-21, same harness and 24 total rounds across two sampling
   # settings (vendor temp 1.0 and the profile's temp 0.0 — identical results,

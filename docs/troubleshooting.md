@@ -126,13 +126,13 @@ ailocal check     # advertised geometry matches the profile, and an
                   # oversized prompt is rejected rather than truncated
 ```
 
-**Fix** — use a larger capability (`ailocal-architecture`), or raise `context_input` in the profile and `ailocal start`. Do not raise it past what the machine can hold.
+**Fix** — use the capability with the larger admission (`ailocal-fast` on 64/128 GB, whose output reserve is smaller), or raise `context_input` in the profile and `ailocal start`. Do not raise it past what the machine can hold.
 
 **Status** — expected behaviour. A rejection is correct; silent truncation would not be.
 
 ---
 
-## An architecture request appears hung
+## A long-context request appears hung
 
 **Likely cause** — cold prefill, not a hang. Long-context evaluation on the large tier can take minutes while everything remains healthy, and it degrades super-linearly with prompt size: a session that was fast can stall once a turn misses the KV cache.
 
@@ -154,7 +154,7 @@ python3 tests/measure_cache.py --quick     # active: a cold then a warm turn, wi
                                            # plain ACTIVE/INACTIVE verdict
 ```
 
-A healthy warm turn re-prefills only a few dozen tokens ([REAL] ~99.8% reuse on `qwen3.5:4b`, 16 GB). A warm turn that re-prefills the whole prompt is a genuine cache miss — look for an engine upgrade, a newly introduced hybrid/recurrent model, or interleaving background requests (fast/haiku) evicting the single resident slot on the 16 GB tier, where `architecture` and `fast` share one `qwen3.5:4b-mtp-q4_K_M` backend (the figure was measured on `qwen3.5:4b`) (`OLLAMA_NUM_PARALLEL=1`). That last case is a memory limit, not a bug: more memory would give each role its own slot.
+A healthy warm turn re-prefills only a few dozen tokens ([REAL] ~99.8% reuse on `qwen3.5:4b`, 16 GB). A warm turn that re-prefills the whole prompt is a genuine cache miss — look for an engine upgrade, a newly introduced hybrid/recurrent model, or interleaving background requests (the haiku slot) evicting the single resident slot on the 16 GB tier, where every chat role is one backend (the figure was measured on `qwen3.5:4b`, which then served it) (`OLLAMA_NUM_PARALLEL=1`). That last case is a memory limit, not a bug: more memory would give each role its own slot.
 
 **Fix** — wait; client and proxy share a 900 s timeout and give up together. To avoid the stall, keep sessions shorter or use a smaller capability for routine work.
 
@@ -489,7 +489,7 @@ SearXNG logs a bot-detection line during boot. It is expected on a single-user l
 
 **Verify** — `ollama --version` reports `0.40.14-ailocal.18631.1` or later; `ailocal check` compares the running version with the one `patch.toml` declares. The fix was measured with Qwen3.5 on `0.40.8-ailocal.18631.4`. On the 0.40.14 base the renderer is unchanged and the three Qwen3.5 history regressions pass (2026-11-05). A live Qwen3.5 tool loop on 0.40.14 is [UNVERIFIED]: no Qwen3.5 model was installed on the build host.
 
-**Fix** — if the runtime is stock, `ailocal install` builds and selects the patched one. If a turn still ends empty, request an explicit follow-up (`resume=<id>` for a delegation) or choose a non-thinking role such as Codex's `implementation` default. ailocal never switches model or mode on its own, and an empty final reply is a failure even when a file changed.
+**Fix** — if the runtime is stock, `ailocal install` builds and selects the patched one. If a turn still ends empty, request an explicit follow-up (`resume=<id>` for a delegation) or choose a non-thinking role: `ailocal-fast` on 64/128 GB, or the 16/32 GB primary, which does not think. ailocal never switches model or mode on its own, and an empty final reply is a failure even when a file changed.
 
 **Status** — fixed in the patched runtime; residual cases are reported, not retried.
 

@@ -22,12 +22,12 @@ DESIGN COMMITMENTS
    after a profile change. The registry's own max_context is a fallback for
    classes with no generated entry (cloud models).
 4. **Classification follows the BACKING MODEL, then the slot.** A capability
-   (architecture, implementation, review, fast) is a ROLE, not a model. Several
-   roles routinely share one set of weights — on the 64/128 GB profiles all
-   three of architecture, implementation and review are gemma4:26b-mlx, and on
-   16/32 GB a single qwen3.5 serves all four. Matching the role first therefore
-   handed one model two or three contradictory capability declarations
-   depending only on which alias the request arrived under. So the order is:
+   (primary, fast, cyber) is a ROLE, not a model. Roles share weights: `fast`
+   is the primary with thinking off, and before 0.16 the three roles that
+   collapsed into `primary` were one backend too. Matching the role first
+   therefore handed one model two or three contradictory capability
+   declarations depending only on which alias the request arrived under. So
+   the order is:
 
      1. the resolved BACKEND model (from the generated model_list) by pattern
      2. the capability/role, as a policy fallback for a backend we do not name

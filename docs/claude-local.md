@@ -159,12 +159,12 @@ shell. None of them are written to disk, and none affect hosted `claude`.
 | `AILOCAL_LITELLM_PORT` | `4000` | port | Port the wrapper points the client at. |
 | `AILOCAL_PROXY` | `http://127.0.0.1:4000` | URL | Full base URL override. |
 | `AILOCAL_STATE` | `~/.local/state/ailocal` | path | State root (env file, runtimes). |
-| `AILOCAL_<ROLE>_ALIAS_OVERRIDE` | unset | a LiteLLM alias | Points one role (`ARCHITECTURE`, `IMPLEMENTATION`, `FAST`, `REVIEW`) at an existing alias. **Fails closed** if LiteLLM does not serve it. |
+| `AILOCAL_<ROLE>_ALIAS_OVERRIDE` | unset | a LiteLLM alias | Points one role (`PRIMARY`, or `FAST` on a tier that declares it) at an existing alias, for every slot that routes to that role; the primary override also passes `--model`. **Fails closed** if LiteLLM does not serve it. |
 
 ```sh
 AILOCAL_TOOL_SEARCH=false claude-local          # one session, everything eager
 AILOCAL_NATIVE_WORKFLOWS=1 claude-local         # one session, Workflow back
-AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE=bench-gemma4-26b-mlx-off-32k claude-local
+AILOCAL_PRIMARY_ALIAS_OVERRIDE=bench-gemma4-26b-mlx-off-32k claude-local
 ```
 
 `ENABLE_TOOL_SEARCH=force` is **not** a supported value. It was tried during investigation

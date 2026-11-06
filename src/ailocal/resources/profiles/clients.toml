@@ -1,30 +1,19 @@
-# clients.yaml — the semantic map generation can't infer.
+# clients.toml — the semantic map generation can't infer.
 #
-# profiles/<tier>.yaml says WHAT each capability is. This says WHICH capability each client
-# surface uses. Together they are the single source of truth: sync-models.py reads both and
+# profiles/<tier>.toml says WHAT each capability is. This says WHICH capability each client
+# surface uses. Together they are the single source of truth: generation reads both and
 # regenerates every client config + the LiteLLM alias block, so a future capability change never
 # requires hand-editing a client file.
 #
-# Values on the right are capability names from the active profile. Flow-style lists.
+# Values on the right are capability names from the active profile: `primary`, `fast`, `cyber`,
+# `completion` (policy.ROLES). `fast` is the primary with thinking off, and only a tier whose
+# primary thinks declares it (64gb, 128gb). Where a tier omits it, every entry below that names
+# `fast` resolves to `primary` — one rule, policy.resolve_capability(), no per-tier mapping here.
 
 # Claude Code
 [claude]
-  # architecture, NOT implementation. Claude Code is an agentic client: its whole
-  # loop is read -> tool -> observe -> edit. Measured on this stack with the same
-  # task (add a zero-division guard to calc.py, "use the Edit tool"):
-  #   ailocal-implementation (qwen2.5-coder:14b) -- 2 turns, file UNCHANGED. It
-  #     described the edit and emitted the call as a fenced JSON block in prose,
-  #     which is not a tool_use block, so the client never executed it. It is
-  #     still a fine single-shot coder.
-  #   ailocal-architecture (qwen3-coder:30b-a3b) -- 3 turns, file ACTUALLY EDITED.
-  # Launching on the non-agentic tier meant claude-local could not do agentic work
-  # out of the box. Sonnet still maps to implementation for those who want it.
-  #
-  # HISTORICAL: both models above have left the deployment, and the two roles now
-  # resolve to the same weights on every profile, so the comparison no longer
-  # describes a live difference. `architecture` remains the default because it
-  # carries the largest window, not because implementation is weaker.
-launch_default = "architecture"
+  # The chat role with the largest output reserve and the tier's thinking mode.
+launch_default = "primary"
   # built-in slot -> capability. Also emitted into model_group_alias so `model: opus`
   # in a subagent (or a background Opus/Sonnet/Haiku call) routes to the right tier.
   # haiku is deliberately NOT `completion`. Claude Code uses its haiku slot for real
@@ -32,15 +21,10 @@ launch_default = "architecture"
   # requests routinely carry the full conversation. Pointing it at the 4096-token FIM
   # model made every such call a hard 400: measured ContextWindowExceededError,
   # Max Input Tokens=4096, Got=12023. `completion` is FIM only; never a chat tier.
-  # haiku -> fast, NOT implementation and emphatically NOT completion.
-  #   completion (4096, FIM) is a hard 400 on any real turn — measured Got=12023.
-  #   implementation works, but pointing two slots at one capability listed
-  #   `ailocal-implementation` twice in the /model picker, and tied up the 14B on
-  #   background summarisation.
-  #   fast is built for exactly this traffic and had no consumer at all until
-  #   now. (It was qwen3.5:2b when this note was written; 64/128 GB now serve
-  #   the role with the primary Gemma, thinking off -- see those profiles.)
-slots = {opus = "architecture", sonnet = "implementation", haiku = "fast", fable = "review"}
+  # haiku -> fast: thinking off for background traffic where the tier offers it,
+  # and the non-thinking primary where it does not. Three slots on `primary` is by
+  # design: /model is the generated modelPicker, one row per capability.
+slots = {opus = "primary", sonnet = "primary", haiku = "fast", fable = "primary"}
   # The strongest mode the agent MCP's `delegate` may grant a delegated claude-local
   # worker, weakest first. "text": no tools, in an empty directory. "research": reads
   # inside its working directory and web search through ailocal's research server, no
@@ -58,7 +42,7 @@ instruction_max_bytes = 4096
 
 # Codex CLI
 [codex]
-default = "implementation"
+default = "primary"
   # As claude.delegate_max_mode, for a delegated codex-local worker. Codex offers no
   # "research" mode (its read-only sandbox still runs code), so "research" here
   # permits text only. "edit" is a workspace permission profile with ailocal's key
@@ -69,20 +53,21 @@ instruction_max_bytes = 4096
 
 # External client compatibility names -> capability. These are NOT ailocal roles — they are model
 # IDs that Claude Code and the OpenAI SDK hard-code and cannot be told to stop sending (e.g.
-# claude-local background calls send claude-haiku-4-5). Without them those clients 404. The old
-# ailocal role names (coder-main/coder-fast/coder-agent/deep-think*/supervisor/embed) are gone:
-# agents and configs use capability names now.
+# claude-local background calls send claude-haiku-4-5). Without them those clients 404. The
+# retired ailocal role names (architecture/implementation/review, and before them
+# coder-main/coder-fast/deep-think*/supervisor/embed) are not listed here: generation serves
+# the 0.15 names as deprecated aliases from policy.RETIRED_ROLES for one release.
 [compat]
-"claude-opus-4-8" = "architecture"
-"claude-opus-4-8-20251101" = "architecture"
-"claude-fable-5" = "review"
-"claude-sonnet-4-6" = "implementation"
-"claude-sonnet-4-6-20250219" = "implementation"
-"gpt-5.5" = "implementation"
+"claude-opus-4-8" = "primary"
+"claude-opus-4-8-20251101" = "primary"
+"claude-fable-5" = "primary"
+"claude-sonnet-4-6" = "primary"
+"claude-sonnet-4-6-20250219" = "primary"
+"gpt-5.5" = "primary"
   # See the note on claude.slots above: these are conversational model IDs, so they
   # must not resolve to the 4096-token FIM tier.
 "claude-haiku-4-5" = "fast"
 "claude-haiku-4-5-20251001" = "fast"
-"gpt-4o" = "implementation"
-"gpt-4o-mini" = "implementation"
-"gpt-3.5-turbo" = "implementation"
+"gpt-4o" = "primary"
+"gpt-4o-mini" = "primary"
+"gpt-3.5-turbo" = "primary"

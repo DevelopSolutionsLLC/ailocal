@@ -8,10 +8,8 @@ When the selected model ID begins with `ailocal-`, inference runs locally throug
 
 | Capability | Use it for |
 |---|---|
-| `architecture` | design, complex refactoring, multi-step debugging |
-| `implementation` | everyday coding, features, tests |
-| `review` | code review, bug and security detection |
-| `fast` | quick answers where latency matters more than depth |
+| `primary` | design, coding, review and debugging; the tier's thinking mode |
+| `fast` | the primary with thinking off, where the tier declares it; otherwise it resolves to `primary` |
 | `cyber` | unrestricted coding and security research; verify every result |
 | `completion` | inline completion (FIM) |
 

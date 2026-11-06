@@ -68,7 +68,7 @@ def _check(argv: list[str]) -> int:
 
     try:
         tier = P.resolve_active_tier()
-        arch = P.resolve_role(tier, "architecture")
+        primary = P.resolve_role(tier, "primary")
     except Exception as exc:  # noqa: BLE001
         print("  \033[31m✗\033[0m cannot resolve the active profile — refusing to "
               "report on an assumed tier", file=sys.stderr)
@@ -95,7 +95,8 @@ def _check(argv: list[str]) -> int:
         runtime.append(S.check_selected_ollama_runtime())
     runtime += S.check_aliases(token, aliases)
     runtime += S.check_geometry(token, geometry)
-    runtime += [S.check_generation(token), S.check_context_window(token),
+    runtime += [S.check_generation(token, "ailocal-" + P.effective_capability("fast")),
+                S.check_context_window(token),
                 S.check_searxng(),
                 S.check_searxng_query(), S.check_brave_key_configured(),
                 S.check_search_tool_registered()]
@@ -107,7 +108,7 @@ def _check(argv: list[str]) -> int:
     from ailocal.checks.research import check_research
     section("Clients", [*install.client_audit(), check_research()])
     section("Installation", install.audit())
-    section("Host", H.doctor_only_checks(arch["active"], arch["context_input"]))
+    section("Host", H.doctor_only_checks(primary["active"], primary["context_input"]))
 
     failures = [r for r in results if r.status is FAIL]
     warnings = [r for r in results if r.status is WARN]

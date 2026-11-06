@@ -13,6 +13,7 @@ import re
 import shutil
 import sys
 import tempfile
+import tomllib
 import urllib.error
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -191,7 +192,7 @@ def model_pulls():
     for want, have, pull in (("v/m:mlx-4bit", "v/m:mlx-4bit-custom", True), ("v/m:mlx-4bit", "v/m:latest", True),
                              ("v/m:mlx-4bit", "v/m:mlx-4bit", False), ("v/m", "v/m:latest", False), ("v/m:latest", "v/m", False)):
         with contextlib.ExitStack() as st:
-            pulls(st, {have: 16.0}, {"implementation": {"model": want, "enabled": True}})
+            pulls(st, {have: 16.0}, {"primary": {"model": want, "enabled": True}})
             r = st.enter_context(po(I, "_run", return_value=OK))
             load = st.enter_context(po(M, "verify_load", return_value=True))
             rc = I.pull_models()
@@ -220,7 +221,8 @@ def install_flow():
         for obj, n, v in ((I.policy, "required_runtime_patch", required), (I, "_memory_gb", 64), (I, "select_tier", "64gb"),
                           (generation, "main", 0), (runtime, "cmd_start", 0), (clients, "present", present),
                           (checks_run, "main", verdict), (runtime, "compose", None), (clients, "report_missing", None),
-                          (I, "provision", {"installed": [], "preserved": [], "absent": [], "retired": []})):
+                          (I, "provision", {"installed": [], "preserved": [], "absent": [], "retired": []}),
+                          (I, "migrate_profile_roles", {"migrated": [], "backup": None, "conflicts": {}, "dropped": {}, "kept_fast": [], "thinking_off": []})):
             st.enter_context(po(obj, n, return_value=v))
         st.enter_context(patch("ailocal.ollama_patch.prepare", return_value=Path("/fixture/ollama")))
         return st.enter_context(patch("ailocal.environment.set_ollama_patch"))
@@ -524,9 +526,9 @@ def model_upgrade():
         shutil.copytree(RESOURCES / "profiles", config / "profiles")
         prof = lambda t: config / f"profiles/{t}.toml"  # noqa: E731
         path, shipped = prof("32gb"), P.load_profile("32gb", RESOURCES)
-        ctx, temp, disk = shipped["architecture"]["context_input"], shipped["implementation"]["temperature"], shipped["disk_gb"]
+        ctx, temp, disk = shipped["primary"]["context_input"], shipped["primary"]["temperature"], shipped["disk_gb"]
         text = path.read_text()
-        # The first context_input row is architecture's; the other substitutions touch every matching row.
+        # The first context_input row is primary's; the other substitutions touch every matching row.
         text = text.replace(f"context_input = {ctx}", f"context_input = {ctx + 8192}", 1)
         for old, new in (("[completion]\n", "[completion]\nenabled = false\n"),
                          (f"temperature = {temp}", "temperature = 0.2"), (f"disk_gb = {disk}", f"disk_gb = {disk - 5}")):
@@ -535,13 +537,13 @@ def model_upgrade():
         before, routing = path.read_bytes(), prof("clients").read_bytes()
         authored = P.load_profile("32gb", config)
         total = max(c["context_input"] + c["max_output"] for r, c in authored.items()
-                    if r in P.ROLES and c["active"] == authored["architecture"]["active"])
+                    if r in P.ROLES and c["active"] == authored["primary"]["active"])
         res = I.upgrade_model_defaults(RESOURCES, config)
         after = P.load_profile("32gb", config)
-        arch = after["architecture"]
+        arch = after["primary"]
         check("32gb" in res["updated"] and (res["backup"] / "32gb.toml").read_bytes() == before, "the original policy is backed up")
         check(arch["max_output"] == 16384 and arch["context_input"] + arch["max_output"] == total
-              and after["implementation"]["temperature"] == temp and after["completion"].get("enabled", True)
+              and after["cyber"]["temperature"] == temp and after["completion"].get("enabled", True)
               and after["disk_gb"] == shipped["disk_gb"],
               "the shared runner keeps the largest authored window; shipped sampling, FIM and footprint are adopted")
         check(path.read_text().startswith("# operator comment\n") and prof("clients").read_bytes() == routing
@@ -549,7 +551,7 @@ def model_upgrade():
               "comments and client routing are preserved; a repeat is a no-op")
         for t in ("16gb", "32gb"):
             prof(t).write_text(prof(t).read_text().replace(
-                f"temperature = {P.load_profile(t, RESOURCES)['implementation']['temperature']}", "temperature = 0.3"))
+                f"temperature = {P.load_profile(t, RESOURCES)['primary']['temperature']}", "temperature = 0.3"))
         originals, real, calls = {t: prof(t).read_bytes() for t in ("16gb", "32gb")}, I.os.replace, []
 
         def flaky(a, b):
@@ -563,6 +565,135 @@ def model_upgrade():
               and not list((config / "profiles").glob("*.upgrade-tmp")), "a failed write restores every replaced profile")
     for gb, want in ((8, None), (16, "16gb"), (31, "16gb"), (32, "32gb"), (63, "32gb"), (127, "64gb"), (128, "128gb")):
         check(I.tier_for_memory(gb) == want, f"{gb} GB selects {want}", f"got {I.tier_for_memory(gb)}")
+
+
+OLD_ROLES = ("architecture", "implementation", "review")
+
+
+def old_profile(tier: str) -> str:
+    """A 0.15-format profile built from the shipped one: [primary] becomes the three retired
+    roles with their old windows, plus a [fast] section on every tier."""
+    text = (RESOURCES / f"profiles/{tier}.toml").read_text()
+    has_fast = re.search(r"(?m)^\[fast\]$", text) is not None
+    start = text.index("\n[primary]") + 1
+    end = min(i for i in (text.find("\n[fast]\n", start), text.find("\n[completion]", start)) if i > 0)
+    primary = text[start:end]
+    fast = primary.replace("[primary]", "[fast]").replace("context_input = 49152\nmax_output = 16384",
+                                                         "context_input = 57344\nmax_output = 8192")
+    impl = primary.replace("[primary]", "[implementation]").replace("context_input = 49152\nmax_output = 16384",
+                                                                  "context_input = 57344\nmax_output = 8192")
+    arch = primary.replace("[primary]", "[architecture]").replace("reasoning = false", "reasoning = true", 1)
+    old = text[:start] + arch + "\n" + impl + "\n" + primary.replace("[primary]", "[review]") + "\n" + text[end:]
+    if not has_fast:
+        old = old.replace("\n[completion]", "\n" + fast + "\n[completion]", 1)
+    return old
+
+
+def role_migration():
+    S.section("profile role migration (#89)")
+    with tempfile.TemporaryDirectory() as box:
+        config = Path(box) / "config"
+        (config / "profiles").mkdir(parents=True)
+        shutil.copy(RESOURCES / "profiles/clients.toml", config / "profiles/clients.toml")
+        prof = lambda t: config / f"profiles/{t}.toml"  # noqa: E731
+        for t in P.TIERS:
+            prof(t).write_text(old_profile(t))
+        check(all(set(OLD_ROLES) <= set(tomllib.loads(prof(t).read_text())) for t in P.TIERS)
+              and all(raises(P.ProfileError, P.load_profile, t, config) for t in P.TIERS),
+              "an un-migrated 0.15 profile fails closed until the installer migrates it")
+        # 16gb: the operator edited architecture (an edit the primary must keep) and nothing else.
+        prof("16gb").write_text("# operator comment\n" + prof("16gb").read_text().replace(
+            "context_input = 49152\nmax_output = 16384\ntemperature = 1.0", "context_input = 40960\nmax_output = 16384\ntemperature = 0.7", 1))
+        # 32gb: the operator edited [fast] on a tier the shipped profile serves without one.
+        text = prof("32gb").read_text()
+        i, j = text.index("\n[fast]\n"), text.index("\n[completion]")
+        prof("32gb").write_text(text[:i] + text[i:j].replace("temperature = 1.0", "temperature = 0.5", 1) + text[j:])
+        # 64gb: the operator edited [review] alone -- two operator values, no rule to choose.
+        text = prof("64gb").read_text()
+        i, j = text.index("\n[review]\n"), text.index("\n[fast]\n")
+        prof("64gb").write_text(text[:i] + text[i:j].replace("temperature = 1.0", "temperature = 0.3", 1) + text[j:])
+        originals = {t: prof(t).read_bytes() for t in P.TIERS}
+        res = I.migrate_profile_roles(RESOURCES, config)
+        report = I.role_conflict_report(res["conflicts"])
+        check(res["migrated"] == [] and res["backup"] is None and list(res["conflicts"]) == ["64gb"]
+              and res["conflicts"]["64gb"] == [("temperature", {"architecture": 1.0, "review": 0.3})]
+              and all(prof(t).read_bytes() == b for t, b in originals.items())
+              and "64gb.toml  temperature: [architecture] = 1.0, [review] = 0.3" in report and "--reset-config" in report,
+              "a retired section carrying its own edit is reported, nothing is written for any tier", report)
+        prof("64gb").write_text(prof("64gb").read_text().replace("temperature = 0.3", "temperature = 1.0"))
+        originals["64gb"] = prof("64gb").read_bytes()
+        res = I.migrate_profile_roles(RESOURCES, config)
+        check(res["migrated"] == list(P.TIERS) and res["conflicts"] == {} and res["kept_fast"] == ["32gb"]
+              and res["thinking_off"] == ["16gb", "32gb"]
+              and res["dropped"] == {"16gb": ["implementation", "review", "fast"], "32gb": ["implementation", "review"],
+                                     "64gb": ["implementation", "review"], "128gb": ["implementation", "review"]}
+              and all((res["backup"] / f"{t}.toml").read_bytes() == b for t, b in originals.items()),
+              "every tier migrates; a [fast] that is the shipped default is dropped, an edited one kept; originals backed up",
+              repr({k: v for k, v in res.items() if k != "backup"}))
+        after = {t: P.load_profile(t, config) for t in P.TIERS}
+        p16, p32 = after["16gb"]["primary"], after["32gb"]
+        check((p16["context_input"], p16["max_output"], p16["temperature"]) == (40960, 16384, 0.7)
+              and p16["role"] == P.load_profile("16gb", RESOURCES)["primary"]["role"]
+              and prof("16gb").read_text().startswith("# operator comment\n")
+              and set(after["16gb"]) == set(P.load_profile("16gb", RESOURCES)),
+              "primary takes [architecture] verbatim: the operator's window and sampling survive, comments too")
+        check(p32["fast"]["temperature"] == 0.5 and p32["primary"]["temperature"] == 1.0
+              and not any(r in d for d in after.values() for r in OLD_ROLES),
+              "the operator's edited [fast] stays as their own fast role; no retired section remains")
+        check(p16["reasoning"] is False and p32["primary"]["reasoning"] is False
+              and after["64gb"]["primary"]["reasoning"] is True and after["128gb"]["primary"]["reasoning"] is True,
+              "a tier the shipped profile serves without fast gets a non-thinking primary; the others keep theirs")
+        check({t: {r: (c["context_input"], c["max_output"]) for r, c in d.items() if r in ("primary", "fast", "cyber")}
+               for t, d in after.items() if t != "16gb"}
+              == {t: {r: (c["context_input"], c["max_output"]) for r, c in P.load_profile(t, RESOURCES).items()
+                      if r in ("primary", "fast", "cyber")} | ({"fast": (57344, 8192)} if t == "32gb" else {})
+                  for t in P.TIERS if t != "16gb"},
+              "primary keeps the former architecture window on every tier; fast and cyber are unchanged")
+        before = {t: prof(t).read_bytes() for t in P.TIERS}
+        again = I.migrate_profile_roles(RESOURCES, config)
+        check(again == {"migrated": [], "backup": None, "conflicts": {}, "dropped": {}, "kept_fast": [], "thinking_off": []}
+              and all(prof(t).read_bytes() == b for t, b in before.items()),
+              "a repeat is a no-op, a kept [fast] included")
+        up = I.upgrade_model_defaults(RESOURCES, config)
+        check(up["updated"] == ["16gb"] and P.load_profile("16gb", config)["primary"]["temperature"] == 1.0
+              and P.load_profile("16gb", config)["primary"]["context_input"] == 40960,
+              "--upgrade-models then adopts the shipped sampling where it was edited and keeps the operator's window")
+        for t in ("16gb", "32gb"):
+            prof(t).write_text(old_profile(t))
+        originals, real, calls = {t: prof(t).read_bytes() for t in ("16gb", "32gb")}, I.os.replace, []
+
+        def flaky(a, b):
+            calls.append(b)
+            if len(calls) == 2:
+                raise OSError(28, "No space left on device")
+            real(a, b)
+        with po(I.os, "replace", side_effect=flaky):
+            failed = raises(OSError, I.migrate_profile_roles, RESOURCES, config)
+        check(failed and all(prof(t).read_bytes() == b for t, b in originals.items())
+              and not list((config / "profiles").glob("*.upgrade-tmp")), "a failed write restores every replaced profile")
+        shutil.copy(RESOURCES / "profiles/16gb.toml", prof("16gb"))
+        check(I.migrate_profile_roles(RESOURCES, config)["migrated"] == ["32gb"],
+              "a profile already in the new format is not touched")
+        # 16gb as v0.15.1 shipped it: [implementation] and [fast] carried Qwen's non-thinking
+        # sampling, which matches neither [architecture] nor the 0.16 (Nemotron) default.
+        text = old_profile("16gb")
+        for section, values in I.RETIRED_ROLE_DEFAULTS_015["16gb"].items():
+            i = text.index(f"\n[{section}]\n") + 1
+            j = text.index("\n[", i)
+            body = re.sub(r"(?m)^(" + "|".join(values) + r") = .*\n", "", text[i:j])
+            text = text[:i] + body.rstrip("\n") + "\n" + "".join(
+                f"{k} = {json.dumps(v)}\n" for k, v in values.items()) + text[j:]
+        prof("16gb").write_text(text)
+        res = I.migrate_profile_roles(RESOURCES, config)
+        check(res["migrated"] == ["16gb"] and res["conflicts"] == {} and res["kept_fast"] == []
+              and res["thinking_off"] == ["16gb"] and res["dropped"] == {"16gb": ["implementation", "review", "fast"]}
+              and P.load_profile("16gb", config)["primary"]["temperature"] == 1.0
+              and P.load_profile("16gb", config)["primary"]["reasoning"] is False,
+              "0.15.1's own non-thinking sampling in [implementation] and [fast] is not an operator edit",
+              repr({k: v for k, v in res.items() if k != "backup"}))
+        link = config / "profiles/128gb.toml"
+        link.unlink(), link.symlink_to(RESOURCES / "profiles/128gb.toml")
+        check(raises(ValueError, I.migrate_profile_roles, RESOURCES, config), "a profile symlink is refused")
 
 
 def parity():
@@ -614,7 +745,7 @@ def idempotence():
 
 def main() -> int:
     for section in (model_sources, native_gguf, model_pulls, install_flow, launchd, activation, ollama_env,
-                    teardown, provenance, model_upgrade, parity, idempotence):
+                    teardown, provenance, model_upgrade, role_migration, parity, idempotence):
         try:
             section()
         except Exception as exc:  # noqa: BLE001

@@ -271,14 +271,28 @@ def gen_model_list(models):
     return ML_BEGIN + "\n\n" + "\n".join(blocks) + "\n" + ML_END + "\n"
 
 
-def gen_alias_block(clients):
+def resolve(cap, models):
+    """A client target as the enabled capability it names, through policy's one rule."""
+    return _pc.resolve_capability(cap, models)
+
+
+def gen_alias_block(models, clients):
     """model_group_alias entries from clients.toml: the external client-compat names (claude-*/gpt-*)
     that Claude Code and the OpenAI SDK hard-code, each pointing at its `ailocal-<cap>` model group.
     No `local/*` namespace — the single canonical `ailocal-<cap>` model_list entry is the only name.
-    Compat names inherit the target group's persona/settings."""
+    Compat names inherit the target group's persona/settings.
+
+    The deprecated block serves the role names 0.16 retired (policy.RETIRED_ROLES)
+    and, on a tier without `fast`, `ailocal-fast`, for one release: a client still
+    configured against 0.15 keeps routing instead of 404ing."""
     lines = [AL_BEGIN, "  model_group_alias:"]
     for name, cap in clients.get("compat", {}).items():
-        lines.append(f"    {name}: {mn(cap)}")
+        lines.append(f"    {name}: {mn(resolve(cap, models))}")
+    deprecated = _pc.deprecated_aliases(models)
+    if deprecated:
+        lines.append("    # DEPRECATED since 0.16 (#89), removed in 0.17: retired role names.")
+        for old, cap in deprecated.items():
+            lines.append(f"    {mn(old)}: {mn(cap)}")
     lines.append(AL_END)
     return "\n".join(lines) + "\n"
 
@@ -302,7 +316,7 @@ def regen_litellm(models, clients):
     # template exists to prevent.
     text = LITELLM_TEMPLATE.read_text()
     text = splice(text, ML_BEGIN, ML_END, gen_model_list(models), "model_list")
-    text = splice(text, AL_BEGIN, AL_END, gen_alias_block(clients),
+    text = splice(text, AL_BEGIN, AL_END, gen_alias_block(models, clients),
                   "model_group_alias")
     stage(LITELLM_CONFIG, text)
     return True
@@ -555,24 +569,24 @@ SLOT_ENV = {
 
 
 
-def gen_slot_block(clients):
+def gen_slot_block(models, clients):
     lines = [CS_BEGIN, "  slots=("]
     for slot, cap in (clients.get("claude") or {}).get("slots", {}).items():
         var = SLOT_ENV.get(slot)
         if not var:
             warn(f"unknown claude slot '{slot}' — no ANTHROPIC_DEFAULT_* var; skipping")
             continue
-        lines.append(f'    {var}="{mn(cap)}"')
+        lines.append(f'    {var}="{mn(resolve(cap, models))}"')
     lines += ["  )", CS_END]
     return "\n".join(lines) + "\n"
 
 
 
-def regen_configure_zsh(clients):
+def regen_configure_zsh(models, clients):
     if not CONFIGURE_ZSH_TPL.exists():
         return False
     text = CONFIGURE_ZSH_TPL.read_text()
-    stage(CONFIGURE_ZSH, splice(text, CS_BEGIN, CS_END, gen_slot_block(clients),
+    stage(CONFIGURE_ZSH, splice(text, CS_BEGIN, CS_END, gen_slot_block(models, clients),
                                 "claude slots"))
     return True
 
@@ -645,9 +659,10 @@ def regen_claude_settings(models, clients):
     for tool in ("ScheduleWakeup", "ReportFindings", "ListAgents") + unused_grepai:
         if tool not in deny:
             deny.append(tool)
-    default = (clients.get("claude") or {}).get("launch_default", next(iter(models)))
+    default = resolve((clients.get("claude") or {}).get("launch_default", next(iter(models))), models)
     caps = " | ".join(mn(k) for k in models.keys())
-    slots = (clients.get("claude") or {}).get("slots", {})
+    slots = {slot: resolve(cap, models)
+             for slot, cap in (clients.get("claude") or {}).get("slots", {}).items()}
     slot_txt = ", ".join(f"{k.title()}->{mn(v)}" for k, v in slots.items())
     data["model"] = mn(default)
     # Model selection is client-owned. Native hooks deliver the corresponding
@@ -844,7 +859,7 @@ def _keep_codex_projects(text: str) -> str:
 
 def regen_codex(models, clients):
     cx = clients.get("codex", {})
-    default = cx.get("default", next(iter(models)))
+    default = resolve(cx.get("default", next(iter(models))), models)
     done = False
     if CODEX_TPL.exists():
         text = (MARKER_TOML + CODEX_TPL.read_text()
@@ -1027,7 +1042,7 @@ def main(argv=None):
     if vscode is not None:
         ok("VS Code native models + guidance" if vscode else "VS Code provider not configured")
     ok("claude/settings.json") if regen_claude_settings(models, clients) else warn("claude settings skipped")
-    ok("configure.zsh (claude slots)") if regen_configure_zsh(clients) else warn("configure.zsh slots skipped")
+    ok("configure.zsh (claude slots)") if regen_configure_zsh(models, clients) else warn("configure.zsh slots skipped")
     ok("integration-contract.json (for Cadence)") if write_integration_contract(models) else warn("contract skipped")
     ok("codex config + profiles") if regen_codex(models, clients) else warn("codex skipped")
     if check_only:

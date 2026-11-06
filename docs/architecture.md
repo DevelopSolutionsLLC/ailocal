@@ -4,7 +4,7 @@
 
 AGENTS.md owns the repository map, the ownership rules and the engineering invariants; `ailocal help` owns the command list. This document answers only what none of those can: how a request moves through the running system.
 
-ailocal runs AI coding clients against local models on Apple Silicon. Ollama serves the models on the host GPU; LiteLLM fronts them on `127.0.0.1:4000` as an OpenAI- and Anthropic-compatible proxy that exposes **capabilities** (`architecture`, `implementation`, `review`, `fast`, `cyber`, `completion`) rather than model tags. A hardware profile decides which model answers each capability, and every client configuration is generated from that one decision.
+ailocal runs AI coding clients against local models on Apple Silicon. Ollama serves the models on the host GPU; LiteLLM fronts them on `127.0.0.1:4000` as an OpenAI- and Anthropic-compatible proxy that exposes **capabilities** (`primary`, `fast`, `cyber`, `completion`) rather than model tags. `fast` is the primary with thinking off, declared only where the primary thinks; a client surface that names it on another tier resolves to `primary` through one rule, `policy.resolve_capability()` ([ADR 018](adr/018-collapsed-roles.md)). A hardware profile decides which model answers each capability, and every client configuration is generated from that one decision.
 
 ---
 
@@ -141,8 +141,8 @@ Ollama runs on the host, not in a container, and is reached at `OLLAMA_HOST`.
 The one rule every profile follows: **admission is bounded by memory, up to the backend's native window; compaction is the client's latency budget, never a geometry input.** Each profile carries its budgets and links the evidence and remaining hardware limits.
 
 - The native window caps everything. The 64/128 GB Gemma 4 26B backends report 262144 tokens (`max_position_embeddings`, `ollama show`); the 16/32 GB Nemotron 3.5 Bolt E4B backends report 65536 (`gemma4.context_length`). No role totals more than its backend reports.
-- The operator chooses the admitted window within the native limit and available memory. Architecture totals 65536 / 65536 / 196608 / 262144 tokens for 16/32/64/128 GB: the 64/128 GB totals are the operator's original live windows, and the 16/32 GB totals are Nemotron's native window, which is below the 106496 / 139264 the operator kept for Qwen (#87). Cyber uses the same total per tier, with its own output reserve. Aliases sharing one primary backend use the same total. Shipped chat defaults use GGUF MTP with eager context allocation and q8_0 KV; targets, draft heads, projectors, runtime buffers, macOS and Docker all consume memory. Historical MLX figures do not establish this working set. Earlier native-maximum probes loaded individually on the 64 GB host; physical 16/32/128 GB fit and simultaneous filled-window residency remain unverified. See the [native model audit](model-audit.md#installed-clients-cache-and-memory).
-- Roles that share a backend share its window and differ only in output reserve: `context_input = total − max_output`.
+- The operator chooses the admitted window within the native limit and available memory. Primary totals 65536 / 65536 / 196608 / 262144 tokens for 16/32/64/128 GB: the 64/128 GB totals are the operator's original live windows, and the 16/32 GB totals are Nemotron's native window, which is below the 106496 / 139264 the operator kept for Qwen (#87). Cyber uses the same total per tier, with its own output reserve. Aliases sharing one primary backend use the same total. Shipped chat defaults use GGUF MTP with eager context allocation and q8_0 KV; targets, draft heads, projectors, runtime buffers, macOS and Docker all consume memory. Historical MLX figures do not establish this working set. Earlier native-maximum probes loaded individually on the 64 GB host; physical 16/32/128 GB fit and simultaneous filled-window residency remain unverified. See the [native model audit](model-audit.md#installed-clients-cache-and-memory).
+- Roles that share a backend share its window and differ only in output reserve: `context_input = total − max_output`. Primary keeps the split the former architecture role carried (49152+16384 on 16/32 GB, 163840+32768 on 64 GB, 229376+32768 on 128 GB); fast keeps its 8192 reserve.
 - Shipped Cyber budgets follow the primary's window; edited operator budgets can differ. Cyber is a separate model, so residency must include both backends rather than assuming two full windows fit. Ollama can evict an idle model when another loads, and Cyber's shorter `keep_alive` releases it sooner. The current 64 GB native trial observed automatic fast-model eviction and zero swap.
 - Cold prefill grows with depth. The historical 64 GB measurement of 231,390 tokens in 561 seconds was on MLX and does not transfer to the new GGUF targets. Clients bound conversation latency through their own compaction; the declared window remains an admission budget, not a cold-prefill performance guarantee.
 
@@ -245,8 +245,9 @@ Invalid Mermaid can no longer be published: `publish()` parses every diagram wit
 
 Durable decisions are in [adr/](adr/): the tool gateway and task classification
 (004, partially superseded at LiteLLM 1.98), local and hosted models side by
-side (008), host policy as TOML read by `tomllib` (010), and the bundled
-artifact capability (011). Numbers are never reused; a gap is a decision
+side (008), host policy as TOML read by `tomllib` (010), the bundled
+artifact capability (011), and the collapse of the chat roles to `primary` and an
+optional `fast` (018). Numbers are never reused; a gap is a decision
 recorded elsewhere or never taken.
 
 ---

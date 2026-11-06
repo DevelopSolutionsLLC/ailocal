@@ -108,12 +108,12 @@ class Guidance(unittest.TestCase):
         guide = policy.guidance_for(data, 'cyber')
         self.assertEqual(('No model-specific guidance' in guide['summary'], guide['sources']), (True, []))
         data = policy.load_profile('16gb', RES)
-        data['model_guidance'][data['implementation']['active']]['prompting'] = 'wrong shape'
+        data['model_guidance'][data['primary']['active']]['prompting'] = 'wrong shape'
         self.assertRaises(policy.ProfileError, policy._validate_guidance, data)
 
     def test_native_hook_follows_the_selected_model(self):
         rc, out, _ = hook({'hook_event_name': 'PostModelSwitch', 'to_model': 'ailocal-cyber'})
-        self.assertTrue(policy.resolve_role('16gb', 'cyber', RES)['model'] in out and 'Lead architect' not in out)
+        self.assertTrue(policy.resolve_role('16gb', 'cyber', RES)['model'] in out and 'ailocal-primary' not in out)
         # [REAL] Claude Code 2.1.310 named a gateway-picked model `claude-router-<hex alias>`; the hook exited 2.
         router = 'claude-router-' + 'ailocal-cyber'.encode().hex()
         for tier in policy.TIERS:
@@ -125,7 +125,12 @@ class Guidance(unittest.TestCase):
                 self.assertIn(f'Local model guide: ailocal-cyber ({cyber["model"]})', out)
                 self.assertIn(f'Profile limits: {cyber["context_input"]} input tokens, {cyber["max_output"]} maximum output tokens', out)
         rc, out, _ = hook({'hook_event_name': 'PostModelSwitch', 'to_model': 'claude-router-zz', 'requested_model': 'opus'})
-        self.assertEqual((rc, 'ailocal-architecture' in out), (0, True))   # falls back to requested_model
+        self.assertEqual((rc, 'ailocal-primary' in out), (0, True))   # falls back to requested_model
+        # #89: a slot naming a role the tier omits resolves through policy's one rule (16gb has no fast).
+        rc, out, _ = hook({'hook_event_name': 'PostModelSwitch', 'requested_model': 'haiku'})
+        self.assertEqual((rc, 'ailocal-primary' in out, 'ailocal-fast' in out), (0, True, False))
+        rc, out, _ = hook({'hook_event_name': 'PostModelSwitch', 'requested_model': 'haiku'}, '64gb')
+        self.assertEqual((rc, 'ailocal-fast' in out), (0, True))
         rc, _, err = hook({'hook_event_name': 'PostModelSwitch', 'to_model': 'claude-router-' + 'not-served'.encode().hex()})
         self.assertEqual((rc, 'MODEL_GUIDANCE_UNKNOWN_MODEL' in err), (2, True))
         # #60: no model named: every alias's limits on one line each, never a guessed
@@ -181,9 +186,9 @@ class Guidance(unittest.TestCase):
                     role = slug.removeprefix('ailocal-')
                     expected = ['text'] if role == 'completion' else roles[role]['guidance'].get('input_modalities', ['text'])
                     self.assertEqual(entry['input_modalities'], expected, (tier, slug))
-                replacement = {**roles['architecture'], 'active': 'replacement'}
-                replacement['guidance'] = policy.guidance_for({'architecture': replacement}, 'architecture')
-                self.assertEqual(catalog({'architecture': replacement})['ailocal-architecture']['input_modalities'], ['text'])
+                replacement = {**roles['primary'], 'active': 'replacement'}
+                replacement['guidance'] = policy.guidance_for({'primary': replacement}, 'primary')
+                self.assertEqual(catalog({'primary': replacement})['ailocal-primary']['input_modalities'], ['text'])
             entries = catalog(models)
             entries64 = catalog(policy.profile_summary('64gb', RES)['roles'])
         self.assertIn(models['cyber']['guidance']['evidence'], entries['ailocal-cyber']['base_instructions'])
@@ -623,7 +628,7 @@ time.sleep(300)
             pass
         try:
             async with agent_session(self.env) as (session, _):
-                work = asyncio.create_task(session.call_tool('delegate', {'prompt': 'x', 'model': 'ailocal-fast'}))
+                work = asyncio.create_task(session.call_tool('delegate', {'prompt': 'x', 'model': 'ailocal-primary'}))
                 while not (pids.exists() and pids.read_text()):
                     await asyncio.sleep(0.05)
                 child, server = map(int, pids.read_text().split())
@@ -657,20 +662,22 @@ print(json.dumps({'type': 'result', 'result': json.dumps({'env': env, 'images': 
             error(await session.call_tool('model_guide', {'model': 'not-a-model'}), 'MODEL_GUIDANCE_UNKNOWN_MODEL')
             for args, code in (({'tools': True}, 'INVALID_CWD'), ({'model': 'ailocal-completion'}, 'MODEL_NOT_DELEGABLE'),
                                ({'model': 'ailocal-coder'}, 'UNKNOWN_MODEL'), ({'resume': 'my-thread'}, 'INVALID_SESSION'),
+                               # #89: 16gb declares no fast, and a deprecated proxy alias is not a delegable model.
+                               ({'model': 'ailocal-fast'}, 'UNKNOWN_MODEL'), ({'model': 'ailocal-architecture'}, 'UNKNOWN_MODEL'),
                                ({'mode': 'text', 'tools': True}, 'CONFLICTING_MODE'),
                                # The shipped policy stops at edit; full is refused before any CLI starts.
                                ({'agent': 'claude', 'mode': 'full', 'cwd': str(self.tmp)}, 'MODE_NOT_PERMITTED'),
                                ({'agent': 'codex', 'mode': 'full', 'cwd': str(self.tmp)}, 'MODE_NOT_PERMITTED')):
                 error(await session.call_tool('delegate', {'prompt': 'x', **args}), code)
-            work = asyncio.create_task(session.call_tool('delegate', {'prompt': 'x', 'model': 'ailocal-fast'}))
+            work = asyncio.create_task(session.call_tool('delegate', {'prompt': 'x', 'model': 'ailocal-primary'}))
             await asyncio.sleep(0.3)
-            fast = (await session.call_tool('model_guide', {'model': 'ailocal-fast'})).structured_content['models']['ailocal-fast']
+            fast = (await session.call_tool('model_guide', {'model': 'ailocal-primary'})).structured_content['models']['ailocal-primary']
             self.assertFalse(work.done(), 'model_guide waited for the running delegate')
             done = (await work).structured_content
             env = json.loads(done['output'])['env']   # the selected alias's limits and a fresh session id reach the CLI
             self.assertEqual((env['CLAUDE_CODE_MAX_OUTPUT_TOKENS'], env['CLAUDE_CODE_MAX_CONTEXT_TOKENS'], len(done['session_id'])),
                              (str(fast['max_output']), str(fast['context_input']), 36))
-            first = await session.call_tool('delegate', {'prompt': 'x', 'model': 'ailocal-fast', 'cwd': str(self.tmp), 'image_paths': [str(image)]})
+            first = await session.call_tool('delegate', {'prompt': 'x', 'model': 'ailocal-primary', 'cwd': str(self.tmp), 'image_paths': [str(image)]})
             self.assertFalse(first.is_error, first)
             sid = first.structured_content['session_id']
             resumed = await session.call_tool('delegate', {'prompt': 'x', 'resume': sid, 'image_paths': [str(image)]})

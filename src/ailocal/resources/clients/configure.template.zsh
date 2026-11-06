@@ -41,9 +41,10 @@ claude-local() {
   # and subagents that name a slot resolve to something LiteLLM serves.
   #
   # The slot block below is GENERATED from profiles/clients.toml `claude.slots` by
-  # sync-models.py — do not hand-edit it. Hand-maintained slots drift: pointing
+  # generation.py — do not hand-edit it. Hand-maintained slots drift: pointing
   # HAIKU at a small FIM tier hard-400s every background call, and a missing
-  # FABLE silently strands the `reviewer` subagent off the review tier.
+  # FABLE silently strands a subagent that names that slot. A slot naming a role
+  # the tier omits (`fast` on 16/32 GB) is already resolved to `primary` here.
   #
   # ENABLE_TOOL_SEARCH: documented values are true | auto | auto:N | false
   # (`force` is NOT a documented value). AILOCAL_TOOL_SEARCH overrides per
@@ -68,10 +69,10 @@ claude-local() {
   local -a slots
   # >>> BEGIN GENERATED claude slots — do not edit <<<
   slots=(
-    ANTHROPIC_DEFAULT_OPUS_MODEL="ailocal-architecture"
-    ANTHROPIC_DEFAULT_SONNET_MODEL="ailocal-implementation"
+    ANTHROPIC_DEFAULT_OPUS_MODEL="ailocal-primary"
+    ANTHROPIC_DEFAULT_SONNET_MODEL="ailocal-primary"
     ANTHROPIC_DEFAULT_HAIKU_MODEL="ailocal-fast"
-    ANTHROPIC_DEFAULT_FABLE_MODEL="ailocal-review"
+    ANTHROPIC_DEFAULT_FABLE_MODEL="ailocal-primary"
   )
   # >>> END GENERATED claude slots <<<
 
@@ -82,28 +83,36 @@ claude-local() {
   #
   # Exists because the slot names are generated and applied through `env`, which
   # overrides the inherited environment — so there was no supported way to ask
-  # "run claude-local, but with the architecture role on THAT model". Needed for
+  # "run claude-local, but with the primary role on THAT model". Needed for
   # client-compatibility testing and model comparisons, where creating a second
-  # alias named ailocal-architecture would leave LiteLLM with a duplicate
+  # alias named ailocal-primary would leave LiteLLM with a duplicate
   # model_name and an ambiguous choice between two backends.
   #
-  #   AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE=bench-gemma4-26b-mlx-off-32k claude-local ...
+  #   AILOCAL_PRIMARY_ALIAS_OVERRIDE=bench-gemma4-26b-mlx-off-32k claude-local ...
+  #
+  # The variable is named by ROLE, read from each generated slot's value: every
+  # slot the profile routes to `primary` follows AILOCAL_PRIMARY_ALIAS_OVERRIDE,
+  # and the haiku slot follows AILOCAL_FAST_ALIAS_OVERRIDE on a tier that
+  # declares `fast`, or AILOCAL_PRIMARY_ALIAS_OVERRIDE where it resolved to
+  # primary. No per-role list to maintain here.
   #
   # FAIL CLOSED: an override naming an alias LiteLLM does not serve aborts the
   # launch. Falling back to production would silently measure the wrong model.
-  local -A _ailocal_ovr=(
-    ANTHROPIC_DEFAULT_OPUS_MODEL   "${AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE:-}"
-    ANTHROPIC_DEFAULT_SONNET_MODEL "${AILOCAL_IMPLEMENTATION_ALIAS_OVERRIDE:-}"
-    ANTHROPIC_DEFAULT_HAIKU_MODEL  "${AILOCAL_FAST_ALIAS_OVERRIDE:-}"
-    ANTHROPIC_DEFAULT_FABLE_MODEL  "${AILOCAL_REVIEW_ALIAS_OVERRIDE:-}"
-  )
+  local -A _ailocal_ovr=()
+  local _slot _role _var
+  for _slot in "${slots[@]}"; do
+    _role="${${_slot#*=}#ailocal-}"
+    _var="AILOCAL_${_role:u}_ALIAS_OVERRIDE"
+    _ailocal_ovr[${_slot%%=*}]="${(P)_var:-}"
+  done
   # Precedence (code.claude.com/docs/en/settings):
   #   --model  >  settings.json "model"  >  ANTHROPIC_DEFAULT_*_MODEL
-  # Our settings.json pins model=ailocal-architecture, so the slot vars alone are
-  # silently outranked — an alias override propagated perfectly and served the
-  # production model anyway. The architecture override therefore also passes
-  # --model, the highest-priority supported mechanism. The slot rewrite below
-  # still matters: it redirects the subagent/background tiers.
+  # Our settings.json pins model=ailocal-primary (the launch default, which the
+  # OPUS slot also carries), so the slot vars alone are silently outranked — an
+  # alias override propagated perfectly and served the production model anyway.
+  # The OPUS slot's override therefore also passes --model, the highest-priority
+  # supported mechanism. The slot rewrite below still matters: it redirects the
+  # subagent/background tiers.
   # ANTHROPIC WORKFLOW, LOCALLY. Claude Code's built-in Workflow tool ships a
   # 21,822-byte schema that cannot be deferred: `non_deferrable_builtins` is fed
   # by an Anthropic rollout flag and by settings, but both only ADD to the
@@ -130,8 +139,8 @@ claude-local() {
   fi
 
   local -a _model_args=()
-  [[ -n "${AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE:-}" ]] && \
-    _model_args=(--model "$AILOCAL_ARCHITECTURE_ALIAS_OVERRIDE")
+  [[ -n "${_ailocal_ovr[ANTHROPIC_DEFAULT_OPUS_MODEL]:-}" ]] && \
+    _model_args=(--model "${_ailocal_ovr[ANTHROPIC_DEFAULT_OPUS_MODEL]}")
   local _ailocal_models="" _i _name _val
   for _name in ${(k)_ailocal_ovr}; do
     [[ -n "${_ailocal_ovr[$_name]}" ]] || continue
@@ -159,7 +168,7 @@ claude-local() {
   done
 
   # API_TIMEOUT_MS matches LiteLLM's own `timeout: 900` (config.template.yaml).
-  # This is why the architecture route appeared to "crash" after
+  # This is why the primary route appeared to "crash" after
   # 10-15 minutes: COLD prompt evaluation on this route is super-linear --
   #   27,791 tok -> 85 s      57,791 tok -> 341 s      87,791 tok -> 789 s
   # (326 -> 170 -> 111 tok/s; it gets SLOWER per token as the prompt grows).

@@ -132,14 +132,14 @@ def check_parallelism(context: int) -> CheckResult:
     npar = os.environ.get("OLLAMA_NUM_PARALLEL") or _run(
         ["launchctl", "getenv", "OLLAMA_NUM_PARALLEL"]) or "default"
     return CheckResult("parallelism", PASS,
-                       f"OLLAMA_NUM_PARALLEL={npar}, architecture context={context} "
+                       f"OLLAMA_NUM_PARALLEL={npar}, primary context={context} "
                        f"(KV is allocated per slot)")
 
 
-def doctor_only_checks(architecture_model: str, architecture_context: int) -> list[CheckResult]:
+def doctor_only_checks(primary_model: str, primary_context: int) -> list[CheckResult]:
     results = [check_env_file()]
     results += check_cli_tools()
     results += check_model_store()
-    results += [check_residency(architecture_model),
-                check_parallelism(architecture_context)]
+    results += [check_residency(primary_model),
+                check_parallelism(primary_context)]
     return results

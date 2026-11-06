@@ -2,7 +2,16 @@
 
 Release policy and the meaning of each bump: [RELEASING.md](RELEASING.md).
 
-## Unreleased
+## v0.16.0 (unreleased, minor) — one primary chat role
+
+### Changed
+
+- The chat roles collapse to `primary`, `fast` (64gb and 128gb only), `cyber` and `completion` (#89, ADR 018). On every shipped tier `architecture`, `implementation` and `review` were one backend with one thinking mode, differing only in output reserve and prose; `fast` was that backend with thinking off, which 16gb and 32gb cannot offer (Nemotron measured 20/25 off against 19/25 on). `primary` keeps the window the architecture role carried (49,152+16,384 on 16/32 GB, 163,840+32,768 on 64 GB, 229,376+32,768 on 128 GB); no model, geometry, sampling or thinking mode changes for any request. Claude's opus, sonnet and fable slots, the Codex default and the compat model ids map to `primary`; haiku maps to `fast`, or to `primary` where the tier declares none, through one rule, `policy.resolve_capability()`. The picker, the Codex catalog, the VS Code model group and the LiteLLM `model_list` each lose three entries per tier. The launcher's alias override is `AILOCAL_PRIMARY_ALIAS_OVERRIDE` (and `AILOCAL_FAST_ALIAS_OVERRIDE` where `fast` exists), read from the generated slot values.
+- **Deprecated:** `ailocal-architecture`, `ailocal-implementation`, `ailocal-review`, and `ailocal-fast` on 16gb and 32gb, are served as LiteLLM aliases of `ailocal-primary` for this release only, marked in the generated config. They are not delegable models and not client targets. 0.17 removes them: reselect `ailocal-primary` in any client where you chose one of them.
+
+### Migration
+
+- An edited `~/.config/ailocal/profiles/<tier>.toml` in the 0.15 format fails closed (`PROFILE_SCHEMA_INVALID`, naming the fix) until `ailocal install` migrates it; an unedited one is replaced by the shipped default as before. The migration moves `[architecture]` to `[primary]` verbatim (`[implementation]`, then `[review]`, when it is absent), so every value you set survives, and drops the other retired sections when their remaining fields are the shipped default. A retired section that carries its own edit is a conflict (0.15.1's own non-thinking sampling in `[implementation]` and `[fast]` on 16gb and 32gb is not one): the installer reports every field and both values, writes nothing for any tier, and stops; edit the profile so the sections agree, delete the section you do not want, or run `ailocal install --reset-config`. A `[fast]` on 16gb or 32gb is dropped when it is the shipped default and kept as your own fast role when you edited it. On those two tiers the migrated `[primary]` runs with thinking off, as the shipped profile does; your model, window and sampling are kept. Originals are backed up under `profiles/backups/roles-<timestamp>/`; `ailocal install --upgrade-models` then adopts the shipped role descriptions.
 
 ### Fixed
 

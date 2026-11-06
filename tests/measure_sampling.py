@@ -167,7 +167,7 @@ def main(argv=None):
     ap.add_argument("--context", type=positive, default=NUM_CTX)
     ap.add_argument("--max-output", type=positive, default=NUM_PREDICT)
     args = ap.parse_args(argv)
-    args.model = args.model or P.effective_role("implementation")["model"]
+    args.model = args.model or P.effective_role("primary")["model"]
     if args.context <= args.max_output:
         ap.error("context must be greater than output")
     if args.settings == "candidate":
@@ -196,7 +196,7 @@ def measure(args, settings, think, system):
     print(f"coding measurement — {args.model}   {datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC}\n"
           f"ollama {ollama}   mlx {mlx}\n[APPROX] direct Ollama, small function tasks; context={args.context}, "
           f"output={args.max_output}, think={think}; live implementation output ceiling="
-          f"{P.effective_role('implementation')['max_output']}\n{len(TASKS)} tasks x {args.reps} reps x "
+          f"{P.effective_role('primary')['max_output']}\n{len(TASKS)} tasks x {args.reps} reps x "
           f"{len(settings)} settings = {len(TASKS) * args.reps * len(settings)} scored generations\n")
 
     record, totals = [], {}

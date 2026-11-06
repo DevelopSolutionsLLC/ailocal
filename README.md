@@ -90,7 +90,7 @@ claude-local        # Claude Code, against your local models
 codex-local         # Codex CLI, against your local models
 ```
 
-In either client, `/model` lists exactly the enabled `ailocal-*` capabilities with the same labels. Each selection carries its own context window and reasoning default. `codex-local` runs commands in Codex's `workspace-write` sandbox without approval prompts: writes stay in the workspace and commands get no network; `codex-local --sandbox danger-full-access` lifts that for one session. Installed a client later? Run `ailocal clients`.
+In either client, `/model` lists exactly the enabled `ailocal-*` capabilities with the same labels: `ailocal-primary` (the chat model, with the tier's thinking mode), `ailocal-fast` on 64 and 128 GB (the same model with thinking off), `ailocal-cyber` and `ailocal-completion`. Each selection carries its own context window and reasoning default. `codex-local` runs commands in Codex's `workspace-write` sandbox without approval prompts: writes stay in the workspace and commands get no network; `codex-local --sandbox danger-full-access` lifts that for one session. Installed a client later? Run `ailocal clients`.
 
 ### VS Code: paste the key once
 
@@ -154,7 +154,7 @@ ailocal measures your memory and chooses a profile. You do not need to think abo
 | 64 GB | `gemma4:26b-qat-mtp` | 192K | ~37 GB |
 | 128 GB | `gemma4:26b-qat-mtp` | 256K | ~37 GB |
 
-Windows are totals including each role's output reserve (K = 1,024 tokens). Roles that share the main model share its window; a long conversation compacts in the client before it reaches that window.
+Windows are totals including each role's output reserve (K = 1,024 tokens). `fast` shares the main model and its window; a long conversation compacts in the client before it reaches that window. The 0.15 role names (`ailocal-architecture`, `ailocal-implementation`, `ailocal-review`, and `ailocal-fast` on 16/32 GB) still route to `ailocal-primary` in 0.16 and are removed in 0.17.
 
 Every backend follows one [model-format rule](docs/maintenance.md#model-format): official or author-published builds, GGUF by default, MLX only with a same-model comparison on real hardware. Each model is a `name:tag` Ollama identity created from a hash-pinned source; nothing is converted. Every profile also exposes **Cyber** as `ailocal-cyber`, a separate unrestricted model with its own guide that releases its memory sooner when idle. What was measured, what failed and what remains unverified is in the [model audit](docs/model-audit.md).
 

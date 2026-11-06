@@ -50,10 +50,9 @@ OLLAMA_ENV = {
     # which is not a default anyone chose; it is a default nobody noticed. A
     # process that wants a model pinned can still ask for -1 explicitly.
     "OLLAMA_KEEP_ALIVE": "6h",
-    # 4, not 5, and not 3. The tier needs THREE distinct models, not five: the
-    # architecture, implementation, review and fast roles all point at ONE
-    # primary model and share a single resident copy, so four roles cost one
-    # model. The other two are cyber and the completion model. The fourth slot is nomic-embed-text, which is NOT in any
+    # 4, not 5, and not 3. The tier needs THREE distinct models: primary (and
+    # fast, where declared, which is the same weights thinking off and shares
+    # its resident copy), cyber and the completion model. The fourth slot is nomic-embed-text, which is NOT in any
     # profile -- it is served by this same Ollama for indexing outside ailocal,
     # and it still occupies a slot.
     #
@@ -388,6 +387,168 @@ def upgrade_model_defaults(source: Path, config: Path) -> dict:
         for path in prepared:
             path.with_suffix(".toml.upgrade-tmp").unlink(missing_ok=True)
     return {"updated": [path.stem for path in prepared], "backup": backup}
+
+
+#: Fields the 0.15 shipped roles differed in BY DESIGN (each role's label, prose
+#: and output reserve). A difference here between two retired sections is the old
+#: default, not an operator decision, so it never counts as a conflict.
+ROLE_SPLIT_FIELDS = ("role", "purpose", "strengths", "weaknesses", "context_input", "max_output")
+
+#: Where [primary] takes its values from, first match wins.
+PRIMARY_SOURCES = ("primary", "architecture", "implementation", "review")
+
+#: Where a retired section differed from [architecture] in the 0.15.1 shipped profiles by
+#: default, not by an operator's hand: Qwen3.5's non-thinking sampling on 16gb and 32gb.
+#: The 0.16 primary there is Nemotron (#87), so these values match neither the migration
+#: source nor the shipped default and would otherwise read as an operator edit. On 64gb
+#: and 128gb the three roles were identical and [fast] stays.
+RETIRED_ROLE_DEFAULTS_015 = {
+    tier: {"implementation": {"temperature": 0.7, "top_p": 0.8, "presence_penalty": 1.5, "reasoning": False},
+           "fast": {"temperature": 0.0, "top_p": 0.9, "presence_penalty": 1.5, "reasoning": False}}
+    for tier in ("16gb", "32gb")}
+
+
+def _section_span(text: str, header: str) -> tuple[int, int] | None:
+    """(start, end) of `[header]` through the line before the next table, with the
+    comment and blank lines that introduce the next table left to it."""
+    match = re.search(r"(?m)^\[" + re.escape(header) + r"\][ \t]*(?:#[^\n]*)?$\n?", text)
+    if not match:
+        return None
+    following = re.search(r"(?m)^\[", text[match.end():])
+    end = match.end() + following.start() if following else len(text)
+    body = text[match.end():end]
+    kept = 0
+    for line in reversed(body.splitlines(keepends=True)):
+        if line.strip() and not line.lstrip().startswith("#"):
+            break
+        kept += len(line)
+    return match.start(), end - kept
+
+
+def migrate_profile_roles(source: Path, config: Path) -> dict:
+    """Collapse 0.15's [architecture]/[implementation]/[review] into [primary] (#89).
+
+    Runs on the operator's edited profiles, which provision() preserves; an
+    unedited one was already replaced by the shipped file and has nothing to
+    migrate. [primary] takes the first of PRIMARY_SOURCES present, verbatim, so
+    every value the operator set survives (`--upgrade-models` adopts the shipped
+    label and prose afterwards). Each other retired section is then compared with
+    it outside ROLE_SPLIT_FIELDS. A field that differs is a CONFLICT only when
+    the other section's value is neither the shipped default nor 0.15.1's own
+    default for that section (RETIRED_ROLE_DEFAULTS_015), because then both
+    sections carry an operator edit and there is no rule to choose between them;
+    it is reported, left for the operator, and nothing is written for any tier.
+    [fast] on a tier the shipped profile serves without one is dropped when,
+    outside those fields, it is the shipped default, equals the primary, or is
+    the primary with 0.15.1's fast overrides, and otherwise kept as the
+    operator's own fast role. On such a tier the primary also runs with
+    thinking off: ADR 018 serves 16gb and 32gb without thinking, and 0.15.1's
+    [architecture] thought there by shipped default, not by the operator's
+    choice (`--upgrade-models` is the path for every other shipped value).
+
+    Every candidate is parsed and compared before any live file changes;
+    complete originals are backed up.
+    """
+    prepared, conflicts, dropped, kept_fast, thinking_off = {}, {}, {}, [], []
+    for tier in policy.TIERS:
+        path = policy.profile_path(tier, config)
+        if not path.is_file():
+            continue
+        if path.resolve() == policy.profile_path(tier, source).resolve() or path.is_symlink():
+            raise ValueError("role migration refuses shipped-source paths and profile symlinks")
+        text = path.read_text()
+        data = tomllib.loads(text)
+        retired = [r for r in policy.RETIRED_ROLE_SECTIONS if r in data]
+        if not retired and "fast" not in data:
+            continue
+        shipped = policy.load_profile(tier, source)
+        stray_fast = "fast" in data and "fast" not in shipped
+        if not retired and not stray_fast:
+            continue
+        src = next((s for s in PRIMARY_SOURCES if s in data), None)
+        if src is None:
+            raise ValueError(f"{tier}.toml declares [fast] without a chat role to collapse into")
+        primary = data[src]
+
+        def other(section):
+            return {k: v for k, v in section.items() if k not in ROLE_SPLIT_FIELDS}
+
+        expected = {k: copy.deepcopy(v) for k, v in data.items() if k not in retired}
+        expected["primary"] = copy.deepcopy(primary)
+        no_thinking = "fast" not in shipped and primary.get("reasoning") is True
+        if no_thinking:
+            expected["primary"]["reasoning"] = False
+        remove, found, default = [r for r in retired if r != src], [], shipped["primary"]
+        legacy = RETIRED_ROLE_DEFAULTS_015.get(tier, {})
+        for section in remove:
+            shipped_015 = legacy.get(section, {})
+            for field in sorted(set(other(data[section])) | set(other(primary))):
+                value = data[section].get(field)
+                if value != primary.get(field) and value != default.get(field) \
+                        and not (field in shipped_015 and value == shipped_015[field]):
+                    found.append((field, {src: primary.get(field), section: value}))
+        if stray_fast:
+            if other(data["fast"]) in (other(primary), other(default), other(primary) | legacy.get("fast", {})):
+                remove.append("fast")
+                expected.pop("fast")
+            else:
+                kept_fast.append(tier)
+        if found:
+            conflicts[tier] = found
+            continue
+        if src == "primary" and not remove:
+            continue  # a kept [fast] beside [primary] is already the operator's policy
+        if src != "primary":
+            text = re.sub(r"(?m)^\[" + src + r"\]", "[primary]", text, count=1)
+        if no_thinking:
+            start, end = _section_span(text, "primary")
+            text = text[:start] + re.sub(r"(?m)^(reasoning[ \t]*=[ \t]*)true\b", r"\1false",
+                                         text[start:end], count=1) + text[end:]
+            thinking_off.append(tier)
+        for section in remove:
+            start, end = _section_span(text, section)
+            rest = text[end:].lstrip("\n")
+            text = text[:start].rstrip("\n") + ("\n\n" + rest if rest else "\n")
+        if tomllib.loads(text) != expected:
+            raise ValueError("role migration could not preserve unrelated profile policy")
+        prepared[path] = text
+        dropped[tier] = remove
+    if conflicts or not prepared:
+        return {"migrated": [], "backup": None, "conflicts": conflicts,
+                "dropped": {}, "kept_fast": [], "thinking_off": []}
+    backup = config / "backups" / ("roles-" + str(time.time_ns()))
+    backup.mkdir(parents=True)
+    for path in prepared:
+        shutil.copy2(path, backup / path.name)
+    changed = []
+    try:
+        for path, text in prepared.items():
+            temporary = path.with_suffix(".toml.upgrade-tmp")
+            temporary.write_text(text)
+            os.replace(temporary, path)
+            changed.append(path)
+    except BaseException:
+        for path in reversed(changed):
+            shutil.copy2(backup / path.name, path)
+        raise
+    finally:
+        for path in prepared:
+            path.with_suffix(".toml.upgrade-tmp").unlink(missing_ok=True)
+    return {"migrated": [path.stem for path in prepared], "backup": backup, "conflicts": {},
+            "dropped": dropped, "kept_fast": kept_fast, "thinking_off": thinking_off}
+
+
+def role_conflict_report(conflicts: dict) -> str:
+    """What the operator must decide before `ailocal install` can continue."""
+    lines = ["Profile role migration stopped: retired role sections carry different values, and "
+             "ailocal does not choose between them."]
+    for tier, found in sorted(conflicts.items()):
+        for field, values in found:
+            lines.append(f"  {tier}.toml  {field}: " + ", ".join(
+                f"[{section}] = {value!r}" for section, value in values.items()))
+    lines += ["Edit the profile so the sections agree, delete the section you do not want, or run "
+              "`ailocal install --reset-config` to take the shipped defaults (your files are backed up)."]
+    return "\n".join(lines)
 
 
 # ── host prerequisites ──────────────────────────────────────────────────────
@@ -1291,6 +1452,19 @@ def cmd_install(argv: list[str]) -> int:
         dim(f"absent {rel} (shipped default you removed)")
     for rel in report["retired"]:
         dim(f"retired {rel} (no longer shipped)")
+    migration = migrate_profile_roles(source, policy.config_root())
+    if migration["conflicts"]:
+        raise SystemExit(role_conflict_report(migration["conflicts"]))
+    for tier in migration["migrated"]:
+        ok(f"{tier}.toml: retired role sections collapsed into [primary]"
+           + (f"; dropped [{'], ['.join(migration['dropped'][tier])}]" if migration["dropped"][tier] else ""))
+    for tier in migration["kept_fast"]:
+        dim(f"{tier}.toml keeps your edited [fast]; the shipped profile serves that tier without one")
+    for tier in migration["thinking_off"]:
+        ok(f"{tier}.toml: [primary] thinking off; the shipped tier serves no fast role (ADR 018)")
+    if migration["backup"]:
+        warn(f"original profiles saved to {migration['backup']}; "
+             "`ailocal install --upgrade-models` adopts the shipped role descriptions")
     if "--upgrade-models" in argv:
         upgrade = upgrade_model_defaults(source, policy.config_root())
         if upgrade["updated"]:

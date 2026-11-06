@@ -137,7 +137,7 @@ def main(argv=None):
         return 0
 
     tier = args.tier or P.resolve_active_tier()
-    role = P.resolve_role(tier, "architecture")
+    role = P.resolve_role(tier, "primary")
     model, num_ctx = role["active"], role["context_input"] + role["max_output"]
     options = {"draft_num_predict": role["draft_num_predict"]} if role.get("draft_num_predict") is not None else {}
     ollama, _ = versions()
