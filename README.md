@@ -196,7 +196,7 @@ A thinking-mode Qwen turn can end with reasoning and no final reply. ailocal rep
 
 Every `claude-local` variable is process-scoped: set it inline for one session. The full table is in [docs/claude-local.md](docs/claude-local.md#configuration).
 
-`ailocal teardown` stops ailocal's services, restores stock Ollama's recorded startup preference, and keeps your models and profiles. See [maintenance](docs/maintenance.md#restoring-ollama-startup-on-teardown).
+`ailocal teardown` removes ailocal's containers, login agents, logs, owned patched runtimes and the client entries it wrote outside its roots, and keeps your models and profiles; `ailocal clients --remove` reverses the client entries alone. The one-release shim for the former app startup override is described in [maintenance](docs/maintenance.md#legacy-app-startup-override).
 
 ## Documentation
 

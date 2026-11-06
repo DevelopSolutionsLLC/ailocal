@@ -447,7 +447,28 @@ def ollama_env():
 
 def teardown():
     S.section("teardown and retired presets")
-    from ailocal import runtime
+    from ailocal import clients, runtime
+    with la() as box:
+        I.LOG_DIR.mkdir()
+        (I.LOG_DIR / "com.ailocal.ollama.log").write_text("x")
+        for label in I.AGENTS + I.RETIRED_AGENTS:
+            (box / f"{label}.plist").write_text("x")
+        calls = []
+        with po(I, "_bootout", lambda label: calls.append(("bootout", label))), \
+                po(I, "_run", lambda *a, **k: calls.append(a) or OK), po(I, "_clear_legacy_app_override"), \
+                patch("ailocal.ollama_patch.remove", return_value=(["/r/one"], ["/r/two"])), quiet():
+            I.remove_login_agents()
+        unset = {a[2] for a in calls if a[:2] == ("launchctl", "unsetenv")}
+        check(not list(box.glob("*.plist")) and not I.LOG_DIR.exists()
+              and unset == set(I.OLLAMA_ENV) | {"OLLAMA_NUM_PARALLEL"}
+              and [c[1] for c in calls if c[0] == "bootout"] == list(I.AGENTS + I.RETIRED_AGENTS)
+              and I.AGENTS == ("com.ailocal.ollama", "com.ailocal.ollama-env", "com.ailocal.ollama-watch"),
+              "teardown boots out the current and retired agents, clears the published OLLAMA_* env and removes the logs (#91)",
+              repr(calls)[:300])
+    with patch("ailocal.ollama_patch.remove", return_value=(["/r/one"], ["/r/two"])):
+        lines = I.prune_owned_runtimes()
+    check(lines == ["✓ removed owned Ollama runtime /r/one", "⚠ preserved modified or unrecognized runtime /r/two"],
+          "returning to stock prunes intact owned runtimes and preserves modified ones (#91)", lines)
     out = io.StringIO()
     with po(runtime, "_confirm", return_value=True), po(runtime, "compose", return_value=NS(returncode=1)), \
             po(I, "remove_login_agents") as ra, po(I, "retire_generated_clients") as rc, contextlib.redirect_stdout(out):
@@ -464,9 +485,11 @@ def teardown():
         (codex / "cyber.config.toml").symlink_to(outside)
         with po(runtime, "_confirm", return_value=True), po(runtime, "compose", return_value=NS(returncode=0)) as compose, \
                 po(runtime, "_docker") as docker, po(I, "remove_login_agents"), \
+                po(clients, "remove_client_writes", return_value=["removed x"]) as rm, \
                 po(I.policy, "deployed_client_root", return_value=root), quiet():
             result = runtime.cmd_teardown([])
             I.retire_generated_clients()
+        check(rm.called and rm.call_args.kwargs.get("dry", False) is False, "teardown removes the client writes outside ailocal's roots (#91)")
         check(result == 0 and compose.call_args.args == ("down", "--volumes", "--remove-orphans") and not docker.called
               and not (codex / "plan.config.toml").exists() and (codex / "review.config.toml").exists()
               and (codex / "cyber.config.toml").is_symlink() and outside.exists(),

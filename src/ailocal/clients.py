@@ -1224,7 +1224,108 @@ def lsp_baseline(root: Path, label: str) -> None:
 _TARGETS = {"vscode": target_vscode, "codex": target_codex, "claude": target_claude}
 
 
+def remove_client_writes(dry: bool = False) -> list[str]:
+    """Reverse every write `ailocal clients` makes OUTSIDE ailocal's own roots, each
+    on proof it is ailocal's: the two marker lines in ~/.zshrc, the Copilot
+    instruction file that begins with the shipped head, the `research`/`agent`
+    MCP entries whose command is the ailocal launcher (Copilot global scope and
+    VS Code), VS Code's owned provider group, and the recommended settings still
+    at their shipped value. What the proof does not cover is reported and left.
+    Returns one line per action; `dry` reports without writing."""
+    verb = "would remove" if dry else "removed"
+    lines: list[str] = []
+
+    rc = Path(os.environ.get("ZDOTDIR") or Path.home()) / ".zshrc"
+    if rc.is_file():
+        text = rc.read_text(encoding="utf-8")
+        kept = [ln for ln in text.splitlines(keepends=True)
+                if "# ailocal-configure" not in ln and "# ailocal-finalize" not in ln]
+        if "".join(kept) != text:
+            if not dry:
+                backup(rc)
+                rc.write_text("".join(kept).lstrip("\n"), encoding="utf-8")
+            lines.append(f"{verb} the ailocal lines from {rc}")
+
+    instructions = (Path(os.environ.get("COPILOT_HOME") or Path.home() / ".copilot")
+                    / "instructions" / "ailocal.instructions.md")
+    if instructions.is_file():
+        head = (policy.data_root() / "clients" / "copilot" / "ailocal.instructions.md").read_text(encoding="utf-8")
+        if instructions.read_text(encoding="utf-8").startswith(head):
+            if not dry:
+                instructions.unlink()
+            lines.append(f"{verb} {instructions}")
+        else:
+            lines.append(f"KEPT {instructions}: not provably ailocal's")
+
+    def _ours(entry) -> bool:
+        return (isinstance(entry, dict) and Path(str(entry.get("command", ""))).name == "ailocal"
+                and isinstance(entry.get("args"), list) and entry["args"][:1] == ["mcp"])
+
+    for path, key in ((policy.client_mcp_path("copilot", local=False), "mcpServers"),
+                      *(((d / "mcp.json", "servers"),) if (d := _vscode_user_dir()) else ())):
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            servers = data.get(key) if isinstance(data, dict) else None
+        except ValueError:
+            lines.append(f"KEPT {path}: not parseable")
+            continue
+        if not isinstance(servers, dict):
+            continue
+        ours = [n for n in ("research", "agent") if _ours(servers.get(n))]
+        foreign = [n for n in ("research", "agent") if n in servers and n not in ours]
+        if ours:
+            if not dry:
+                backup(path)
+                for n in ours:
+                    servers.pop(n)
+                _write_json(path, data, 2)
+            lines.append(f"{verb} {', '.join(ours)} from {path}")
+        for n in foreign:
+            lines.append(f"KEPT `{n}` in {path}: not the ailocal launcher")
+
+    user_dir = _vscode_user_dir()
+    if user_dir is not None:
+        models = user_dir / "chatLanguageModels.json"
+        if models.is_file():
+            try:
+                existing = json.loads(models.read_text(encoding="utf-8")) or []
+                owned = [g for g in existing if isinstance(g, dict) and vscode_owned(g)]
+            except ValueError:
+                owned, existing = [], None
+                lines.append(f"KEPT {models}: not parseable")
+            if owned:
+                if not dry:
+                    backup(models)
+                    _write_json(models, [g for g in existing if g not in owned], "\t")
+                lines.append(f"{verb} the {VSCODE_PROVIDER_NAME} provider group from {models}")
+        settings = user_dir / "settings.json"
+        if settings.is_file():
+            raw = settings.read_text(encoding="utf-8")
+            stripped = re.sub(r",(\s*[}\]])", r"\1", re.sub(r"//[^\n]*", "", raw))
+            try:
+                doc = json.loads(stripped)
+            except ValueError:
+                doc = None
+                lines.append(f"KEPT {settings}: not parseable")
+            if isinstance(doc, dict):
+                ours_keys = [k for k, v in RECOMMENDED_SETTINGS.items() if doc.get(k) == v]
+                if ours_keys:
+                    if not dry:
+                        backup(settings)
+                        for k in ours_keys:
+                            doc.pop(k)
+                        _write_json(settings, doc, 2)
+                    lines.append(f"{verb} {', '.join(ours_keys)} from {settings} (still at the shipped value)")
+    return lines or ["nothing of ailocal's outside its roots"]
+
+
 def main(argv: list[str]) -> int:
+    if "--remove" in argv:
+        for line in remove_client_writes(dry="--dry-run" in argv):
+            print(f"  {line}")
+        return 0
     selected = [a for a in argv if not a.startswith("-")]
     for name in selected:
         if name not in _TARGETS and name != "all":

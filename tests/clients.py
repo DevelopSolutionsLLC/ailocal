@@ -559,8 +559,50 @@ def rollback() -> None:
     check(not kept, "a clean run replaces every destination", f"unchanged: {kept}")
 
 
+def removal() -> None:
+    S.section("CLIENTS --remove: REVERSES ONLY PROVABLE WRITES (#91)")
+    with temp_dir() as box:
+        b = Path(box)
+        zd, cop, vs = b / "zsh", b / "copilot", b / "vscode"
+        (cop / "instructions").mkdir(parents=True), zd.mkdir(), vs.mkdir()
+        rc = zd / ".zshrc"
+        rc.write_text(f"{C._CONFIGURE_LINE}\nexport FOO=1\n\n{C._FINALIZE_LINE}\n")
+        head = (P.data_root() / "clients" / "copilot" / "ailocal.instructions.md").read_text()
+        (cop / "instructions" / "ailocal.instructions.md").write_text(head + "\nguidance\n")
+        (cop / "mcp-config.json").write_text(json.dumps({"mcpServers": {
+            "research": {"command": "/x/ailocal", "args": ["mcp", "research"]},
+            "agent": {"command": "/x/other", "args": ["mcp", "agent"]}, "mine": {"command": "/y"}}}))
+        (vs / "mcp.json").write_text(json.dumps({"servers": {"agent": {"command": "/x/ailocal", "args": ["mcp", "agent"]}}}))
+        (vs / "chatLanguageModels.json").write_text(json.dumps(
+            [{"name": C.VSCODE_PROVIDER_NAME, "vendor": C.VSCODE_VENDOR, "models": []}, {"name": "other", "vendor": "v"}]))
+        (vs / "settings.json").write_text(json.dumps({**C.RECOMMENDED_SETTINGS, "editor.fontSize": 13}))
+        env = {"ZDOTDIR": str(zd), "COPILOT_HOME": str(cop), "AILOCAL_VSCODE_USER": str(vs)}
+        snapshot = lambda: {p: p.read_text() for p in b.rglob("*") if p.is_file()}  # noqa: E731
+        before = snapshot()
+        with patch.dict(os.environ, env), patch.object(C, "backup", lambda p: True):
+            dry = C.remove_client_writes(dry=True)
+        check(snapshot() == before and all(l.startswith(("would remove", "KEPT")) for l in dry) and len(dry) == 7,
+              "--dry-run names every removal and writes nothing", dry)
+        with patch.dict(os.environ, env), patch.object(C, "backup", lambda p: True):
+            lines = C.remove_client_writes()
+        check(rc.read_text() == "export FOO=1\n\n" and not (cop / "instructions" / "ailocal.instructions.md").exists()
+              and set(json.loads((cop / "mcp-config.json").read_text())["mcpServers"]) == {"agent", "mine"}
+              and json.loads((vs / "mcp.json").read_text())["servers"] == {}
+              and json.loads((vs / "chatLanguageModels.json").read_text()) == [{"name": "other", "vendor": "v"}]
+              and json.loads((vs / "settings.json").read_text()) == {"editor.fontSize": 13}
+              and any(l.startswith("KEPT `agent`") for l in lines),
+              "marker lines, the shipped instruction file, launcher MCP entries, the provider group and shipped "
+              "settings go; a foreign `agent`, `mine` and the user's own values stay", lines)
+        (cop / "instructions" / "ailocal.instructions.md").write_text("# mine\n")
+        with patch.dict(os.environ, env), patch.object(C, "backup", lambda p: True):
+            again = C.remove_client_writes()
+        check((cop / "instructions" / "ailocal.instructions.md").exists() and any(l.startswith("KEPT") for l in again)
+              and not any(l.startswith("removed") for l in again),
+              "a second run finds nothing of ailocal's and keeps an instruction file it cannot prove")
+
+
 def main() -> int:
-    for section in (targets, vscode, mcp, codex, drift, roles, instructions, lsp, rollback):
+    for section in (targets, vscode, mcp, codex, drift, roles, instructions, lsp, rollback, removal):
         try:
             section()
         except Exception as exc:  # noqa: BLE001
