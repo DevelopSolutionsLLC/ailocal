@@ -406,6 +406,13 @@ def roles() -> None:
             f'echo "{v}=$ANTHROPIC_DEFAULT_{v}_MODEL"\n' for v in ("OPUS", "SONNET", "HAIKU", "FABLE"))
             + 'echo "WORKFLOWS=$CLAUDE_CODE_DISABLE_WORKFLOWS"\necho "ARGS=$*"\n')
         (stub / "claude").chmod(0o755)
+        # The override check fetches the proxy's catalogue; a stopped stack must not fail
+        # the gate, so /v1/models is answered here and everything else reaches real curl.
+        real_curl = shutil.which("curl") or "/usr/bin/curl"
+        catalogue = json.dumps({"data": [{"id": "ailocal-" + r} for r in ("primary", "fast", "cyber")]})
+        (stub / "curl").write_text(f"#!/bin/sh\ncase \"$*\" in *'/v1/models'*) echo '{catalogue}'; exit 0;; esac\n"
+                                   f'exec "{real_curl}" "$@"\n')
+        (stub / "curl").chmod(0o755)
         base = {k: v for k, v in os.environ.items() if not k.endswith("_ALIAS_OVERRIDE")
                 and k != "AILOCAL_NATIVE_WORKFLOWS"}
         base["PATH"] = f"{stub}{os.pathsep}{base['PATH']}"
@@ -601,8 +608,58 @@ def removal() -> None:
               "a second run finds nothing of ailocal's and keeps an instruction file it cannot prove")
 
 
+def copilot_instructions() -> None:
+    S.section("COPILOT INSTRUCTIONS: AN EARLIER RELEASE'S FILE IS REFRESHED AND REMOVABLE (#108)")
+    head_src = "src/ailocal/resources/clients/copilot/ailocal.instructions.md"
+    checklist_src = "src/ailocal/resources/clients/claude/references/build-checklist.md"
+    git = lambda *a: subprocess.run(["git", *a], cwd=REPO, capture_output=True, text=True).stdout  # noqa: E731
+    current = hashlib.sha256(C.copilot_instructions_head().encode()).hexdigest()
+    if (REPO / ".git").exists():
+        shipped = {}
+        for rev in git("log", "--format=%h", "c73ea03^..HEAD", "--", head_src, checklist_src).split():
+            h, k = git("show", f"{rev}:{head_src}"), git("show", f"{rev}:{checklist_src}")
+            if h and k:
+                shipped.setdefault(hashlib.sha256((h + C._CLAUDE_ONLY.sub("", k)).encode()).hexdigest(), rev)
+        missing = {d: r for d, r in shipped.items() if d != current and d not in C.RETIRED_COPILOT_HEADS}
+        check(not missing, "every head rendered since c73ea03 is the current one or listed as retired", missing)
+    old_head = git("show", f"c73ea03:{head_src}") + C._CLAUDE_ONLY.sub("", git("show", f"c73ea03:{checklist_src}"))
+    models = generation.load_models_yaml(P.profile_path("64gb", RESOURCES))
+    legacy = old_head + "\n\n" + C.copilot_model_guidance(models)
+    edited = "# my own notes\n\n" + C.copilot_model_guidance(models)
+    check(C.copilot_instructions_owned(C.copilot_instructions_text(models))
+          and (not old_head or C.copilot_instructions_owned(legacy)) and not C.copilot_instructions_owned(edited),
+          "the current and an earlier release's renderings are ailocal's; an edited head is not")
+    with temp_dir() as box:
+        cop, user = Path(box) / "copilot", Path(box) / "vscode"
+        (cop / "instructions").mkdir(parents=True), user.mkdir()
+        (user / "chatLanguageModels.json").write_text(json.dumps(
+            [{"name": C.VSCODE_PROVIDER_NAME, "vendor": C.VSCODE_VENDOR, "models": []}]))
+        target = cop / "instructions" / "ailocal.instructions.md"
+        results = {}
+        for label, text in (("legacy", legacy), ("edited", edited)):
+            target.write_text(text)
+            with patch.dict(os.environ, {"COPILOT_HOME": str(cop)}), \
+                    patch.object(C, "_vscode_user_dir", lambda: user), \
+                    patch.dict(generation._STAGE, clear=True), patch.dict(generation._STAGED_TEXT, clear=True):
+                generation.regen_vscode(models)
+                results[label] = generation._STAGE.get(target)
+        check(results["legacy"] == C.copilot_instructions_text(models)
+              and results["edited"] is not None and results["edited"].startswith("# my own notes")
+              and C.COPILOT_GUIDE_START in results["edited"],
+              "start rewrites an earlier release's file whole and only splices an edited one",
+              {k: (v or "")[:80] for k, v in results.items()})
+        target.write_text(legacy)
+        with patch.dict(os.environ, {"COPILOT_HOME": str(cop), "ZDOTDIR": str(Path(box) / "zsh"),
+                                     "AILOCAL_VSCODE_USER": str(user)}), \
+                patch.object(C, "backup", lambda p: True):
+            lines = C.remove_client_writes()
+        check(not target.exists() and any(str(target) in l and l.startswith("removed") for l in lines),
+              "teardown removes an earlier release's instruction file", lines)
+
+
 def main() -> int:
-    for section in (targets, vscode, mcp, codex, drift, roles, instructions, lsp, rollback, removal):
+    for section in (targets, vscode, mcp, codex, drift, roles, instructions, lsp, rollback, removal,
+                    copilot_instructions):
         try:
             section()
         except Exception as exc:  # noqa: BLE001
