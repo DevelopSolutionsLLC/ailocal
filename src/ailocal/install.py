@@ -441,12 +441,15 @@ def migrate_profile_roles(source: Path, config: Path) -> dict:
     [fast] on a tier the shipped profile serves without one is dropped when,
     outside those fields, it is the shipped default, equals the primary, or is
     the primary with 0.15.1's fast overrides, and otherwise kept as the
-    operator's own fast role.
+    operator's own fast role. On such a tier the primary also runs with
+    thinking off: ADR 018 serves 16gb and 32gb without thinking, and 0.15.1's
+    [architecture] thought there by shipped default, not by the operator's
+    choice (`--upgrade-models` is the path for every other shipped value).
 
     Every candidate is parsed and compared before any live file changes;
     complete originals are backed up.
     """
-    prepared, conflicts, dropped, kept_fast = {}, {}, {}, []
+    prepared, conflicts, dropped, kept_fast, thinking_off = {}, {}, {}, [], []
     for tier in policy.TIERS:
         path = policy.profile_path(tier, config)
         if not path.is_file():
@@ -472,6 +475,9 @@ def migrate_profile_roles(source: Path, config: Path) -> dict:
 
         expected = {k: copy.deepcopy(v) for k, v in data.items() if k not in retired}
         expected["primary"] = copy.deepcopy(primary)
+        no_thinking = "fast" not in shipped and primary.get("reasoning") is True
+        if no_thinking:
+            expected["primary"]["reasoning"] = False
         remove, found, default = [r for r in retired if r != src], [], shipped["primary"]
         legacy = RETIRED_ROLE_DEFAULTS_015.get(tier, {})
         for section in remove:
@@ -494,6 +500,11 @@ def migrate_profile_roles(source: Path, config: Path) -> dict:
             continue  # a kept [fast] beside [primary] is already the operator's policy
         if src != "primary":
             text = re.sub(r"(?m)^\[" + src + r"\]", "[primary]", text, count=1)
+        if no_thinking:
+            start, end = _section_span(text, "primary")
+            text = text[:start] + re.sub(r"(?m)^(reasoning[ \t]*=[ \t]*)true\b", r"\1false",
+                                         text[start:end], count=1) + text[end:]
+            thinking_off.append(tier)
         for section in remove:
             start, end = _section_span(text, section)
             rest = text[end:].lstrip("\n")
@@ -504,7 +515,7 @@ def migrate_profile_roles(source: Path, config: Path) -> dict:
         dropped[tier] = remove
     if conflicts or not prepared:
         return {"migrated": [], "backup": None, "conflicts": conflicts,
-                "dropped": {}, "kept_fast": []}
+                "dropped": {}, "kept_fast": [], "thinking_off": []}
     backup = config / "backups" / ("roles-" + str(time.time_ns()))
     backup.mkdir(parents=True)
     for path in prepared:
@@ -524,7 +535,7 @@ def migrate_profile_roles(source: Path, config: Path) -> dict:
         for path in prepared:
             path.with_suffix(".toml.upgrade-tmp").unlink(missing_ok=True)
     return {"migrated": [path.stem for path in prepared], "backup": backup, "conflicts": {},
-            "dropped": dropped, "kept_fast": kept_fast}
+            "dropped": dropped, "kept_fast": kept_fast, "thinking_off": thinking_off}
 
 
 def role_conflict_report(conflicts: dict) -> str:
@@ -1449,6 +1460,8 @@ def cmd_install(argv: list[str]) -> int:
            + (f"; dropped [{'], ['.join(migration['dropped'][tier])}]" if migration["dropped"][tier] else ""))
     for tier in migration["kept_fast"]:
         dim(f"{tier}.toml keeps your edited [fast]; the shipped profile serves that tier without one")
+    for tier in migration["thinking_off"]:
+        ok(f"{tier}.toml: [primary] thinking off; the shipped tier serves no fast role (ADR 018)")
     if migration["backup"]:
         warn(f"original profiles saved to {migration['backup']}; "
              "`ailocal install --upgrade-models` adopts the shipped role descriptions")

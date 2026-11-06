@@ -222,7 +222,7 @@ def install_flow():
                           (generation, "main", 0), (runtime, "cmd_start", 0), (clients, "present", present),
                           (checks_run, "main", verdict), (runtime, "compose", None), (clients, "report_missing", None),
                           (I, "provision", {"installed": [], "preserved": [], "absent": [], "retired": []}),
-                          (I, "migrate_profile_roles", {"migrated": [], "backup": None, "conflicts": {}, "dropped": {}, "kept_fast": []})):
+                          (I, "migrate_profile_roles", {"migrated": [], "backup": None, "conflicts": {}, "dropped": {}, "kept_fast": [], "thinking_off": []})):
             st.enter_context(po(obj, n, return_value=v))
         st.enter_context(patch("ailocal.ollama_patch.prepare", return_value=Path("/fixture/ollama")))
         return st.enter_context(patch("ailocal.environment.set_ollama_patch"))
@@ -582,8 +582,8 @@ def old_profile(tier: str) -> str:
                                                          "context_input = 57344\nmax_output = 8192")
     impl = primary.replace("[primary]", "[implementation]").replace("context_input = 49152\nmax_output = 16384",
                                                                   "context_input = 57344\nmax_output = 8192")
-    old = text[:start] + primary.replace("[primary]", "[architecture]") + "\n" + impl + "\n" + \
-        primary.replace("[primary]", "[review]") + "\n" + text[end:]
+    arch = primary.replace("[primary]", "[architecture]").replace("reasoning = false", "reasoning = true", 1)
+    old = text[:start] + arch + "\n" + impl + "\n" + primary.replace("[primary]", "[review]") + "\n" + text[end:]
     if not has_fast:
         old = old.replace("\n[completion]", "\n" + fast + "\n[completion]", 1)
     return old
@@ -624,6 +624,7 @@ def role_migration():
         originals["64gb"] = prof("64gb").read_bytes()
         res = I.migrate_profile_roles(RESOURCES, config)
         check(res["migrated"] == list(P.TIERS) and res["conflicts"] == {} and res["kept_fast"] == ["32gb"]
+              and res["thinking_off"] == ["16gb", "32gb"]
               and res["dropped"] == {"16gb": ["implementation", "review", "fast"], "32gb": ["implementation", "review"],
                                      "64gb": ["implementation", "review"], "128gb": ["implementation", "review"]}
               and all((res["backup"] / f"{t}.toml").read_bytes() == b for t, b in originals.items()),
@@ -639,6 +640,9 @@ def role_migration():
         check(p32["fast"]["temperature"] == 0.5 and p32["primary"]["temperature"] == 1.0
               and not any(r in d for d in after.values() for r in OLD_ROLES),
               "the operator's edited [fast] stays as their own fast role; no retired section remains")
+        check(p16["reasoning"] is False and p32["primary"]["reasoning"] is False
+              and after["64gb"]["primary"]["reasoning"] is True and after["128gb"]["primary"]["reasoning"] is True,
+              "a tier the shipped profile serves without fast gets a non-thinking primary; the others keep theirs")
         check({t: {r: (c["context_input"], c["max_output"]) for r, c in d.items() if r in ("primary", "fast", "cyber")}
                for t, d in after.items() if t != "16gb"}
               == {t: {r: (c["context_input"], c["max_output"]) for r, c in P.load_profile(t, RESOURCES).items()
@@ -647,7 +651,7 @@ def role_migration():
               "primary keeps the former architecture window on every tier; fast and cyber are unchanged")
         before = {t: prof(t).read_bytes() for t in P.TIERS}
         again = I.migrate_profile_roles(RESOURCES, config)
-        check(again == {"migrated": [], "backup": None, "conflicts": {}, "dropped": {}, "kept_fast": []}
+        check(again == {"migrated": [], "backup": None, "conflicts": {}, "dropped": {}, "kept_fast": [], "thinking_off": []}
               and all(prof(t).read_bytes() == b for t, b in before.items()),
               "a repeat is a no-op, a kept [fast] included")
         up = I.upgrade_model_defaults(RESOURCES, config)
@@ -682,8 +686,9 @@ def role_migration():
         prof("16gb").write_text(text)
         res = I.migrate_profile_roles(RESOURCES, config)
         check(res["migrated"] == ["16gb"] and res["conflicts"] == {} and res["kept_fast"] == []
-              and res["dropped"] == {"16gb": ["implementation", "review", "fast"]}
-              and P.load_profile("16gb", config)["primary"]["temperature"] == 1.0,
+              and res["thinking_off"] == ["16gb"] and res["dropped"] == {"16gb": ["implementation", "review", "fast"]}
+              and P.load_profile("16gb", config)["primary"]["temperature"] == 1.0
+              and P.load_profile("16gb", config)["primary"]["reasoning"] is False,
               "0.15.1's own non-thinking sampling in [implementation] and [fast] is not an operator edit",
               repr({k: v for k, v in res.items() if k != "backup"}))
         link = config / "profiles/128gb.toml"
