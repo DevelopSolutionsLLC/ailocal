@@ -71,14 +71,15 @@ for backend in ("nemotron-3.5-bolt:e4b-unrestricted",
           and not small.is_passthrough("ailocal-cyber")
           and "orchestration" in denied and "edit_and_run" not in denied,
           f"{backend}: local_cyber, negotiated, sheds orchestration only")
-for alias, want in (("ailocal-architecture", "local_agentic"),
-                    ("ailocal-implementation", "local_agentic"),
+# ailocal-architecture is a deprecated alias of ailocal-primary (#89): it resolves through model_group_alias.
+for alias, want in (("ailocal-primary", "local_agentic"),
+                    ("ailocal-architecture", "local_agentic"),
                     ("ailocal-completion", "local_completion"),
                     (FRONTIER, "frontier_passthrough")):
     check(reg.model_class(alias)[0] == want, f"{alias} -> {want}")
 # The class keys off the backing model, not the role: one model, one class.
 by_backend = {}
-for cap in ("architecture", "implementation", "review", "fast", "completion"):
+for cap in ("primary", "fast", "completion"):
     by_backend.setdefault(reg.backend_of("ailocal-" + cap), set()).add(
         reg.model_class("ailocal-" + cap)[0])
 check(all(len(c) == 1 for b, c in by_backend.items() if b),
@@ -90,19 +91,18 @@ check(reg.is_passthrough(FRONTIER) and reg.is_passthrough("nobody-registered"),
       "frontier and unknown models are passthrough (fail open)")
 
 suite.section("CAPABILITY FLAGS AND CONTEXT")
-check(reg.supports("ailocal-architecture", "tools") is True
-      and reg.supports("ailocal-architecture", "reasoning") is True,
+check(reg.supports("ailocal-primary", "tools") is True
+      and reg.supports("ailocal-primary", "reasoning") is True,
       "local_agentic declares tools and reasoning")
 check(reg.supports("ailocal-completion", "tools") is False, "FIM tier declares no tools")
-check(reg.supports("ailocal-implementation", "structured_output") is False,
+check(reg.supports("ailocal-primary", "structured_output") is False,
       "no local tier claims enforced structured output (ollama/ollama#6002)")
-check(reg.supports("ailocal-architecture", "nonexistent") is None, "unknown feature -> None")
-ctx = {c: reg.max_context(f"ailocal-{c}") for c in
-       ("architecture", "fast", "implementation", "review", "completion") if c in reg.contexts}
+check(reg.supports("ailocal-primary", "nonexistent") is None, "unknown feature -> None")
+ctx = {c: reg.max_context(f"ailocal-{c}") for c in ("primary", "fast", "completion") if c in reg.contexts}
 check(all(isinstance(v, int) and v > 0 for v in ctx.values()), f"positive windows ({ctx})")
-check(all(w == ctx["architecture"] for c, w in ctx.items()
-          if reg.backend_of("ailocal-" + c) == reg.backend_of("ailocal-architecture")),
-      "roles sharing architecture's backend share its window")
+check(all(w == ctx["primary"] for c, w in ctx.items()
+          if reg.backend_of("ailocal-" + c) == reg.backend_of("ailocal-primary")),
+      "roles sharing primary's backend share its window")
 check(ctx.get("completion", 0) == min(ctx.values()) if "completion" in ctx
       else reg.backend_of("ailocal-completion") is None, "completion is the smallest window")
 check(reg.max_context(FRONTIER) == 200000, "cloud class falls back to declared max_context")
@@ -129,11 +129,11 @@ for headers, want in (({"user-agent": "claude-cli/2.0.0"}, "claude-code"),
     check(reg.detect_client(headers) == want, f"{headers} -> {want}")
 
 suite.section("NEGOTIATION RULE AND GROUPS")
-rm = reg.removable_groups("claude-code", "ailocal-architecture")
+rm = reg.removable_groups("claude-code", "ailocal-primary")
 check({"orchestration", "scheduling", "worktree"} <= rm, "orchestration/scheduling/worktree removable")
 check(not rm & {"edit_and_run", "search", "lsp", "interactive"},
       "coding surface kept; a group only one side denies stays (intersection)")
-check(reg.removable_groups("unknown", "ailocal-architecture") == set()
+check(reg.removable_groups("unknown", "ailocal-primary") == set()
       and reg.removable_groups("claude-code", "unknown-model") == set(),
       "unknown client or model -> nothing removable")
 check(all(reg.is_protected(n) for n in ("web_search", "WebSearch", "<web_search>", "<namespace>"))
@@ -172,7 +172,7 @@ check(reg.classify_task("")[0] is None and reg.classify_task("hello there")[1] i
 suite.section("REGISTRY FAILS OPEN")
 missing = cr.Registry(path="/nonexistent", caps_json="/nonexistent", config_path="/nonexistent")
 check(missing.state == "absent" and missing.is_passthrough("x")
-      and missing.removable_groups("claude-code", "ailocal-architecture") == set()
+      and missing.removable_groups("claude-code", "ailocal-primary") == set()
       and missing.detect_client({"user-agent": "claude-cli"}) == "unknown",
       "missing registry: absent, passthrough, nothing removable, no client")
 with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as fh:
@@ -188,7 +188,7 @@ LITERAL = r"""(?<![A-Za-z0-9_{])['"]%s['"]"""
 code = open(f"{HOOKS}/tool_gateway.py", encoding="utf-8").read()
 code = re.sub(r"#.*", "", re.sub(r'"""(?:.|\n)*?"""', "", code))
 hits = [t for t in ("qwen", "deepseek", "claude-cli", "codex_cli", "Workflow", "mcp__lsp",
-                    "mcp__grepai", "namespace", "ailocal-architecture")
+                    "mcp__grepai", "namespace", "ailocal-primary")
         if re.search(LITERAL % re.escape(t), code)]
 check(not hits, f"tool_gateway.py has no model/client/tool literal (found {hits})")
 check(re.search(LITERAL % "namespace", 'if t.get("type") == "namespace":')
@@ -206,7 +206,7 @@ READ_B, WORKFLOW_B, LSP_B = len(READ), len(WORKFLOW), len(LSP)
 TOOLS = [json.loads(s) for s in (READ, WORKFLOW, LSP)]
 
 
-def req(model="ailocal-architecture", tools=None, headers=CLAUDE, **kw):
+def req(model="ailocal-primary", tools=None, headers=CLAUDE, **kw):
     return dict(headers, model=model, tools=list(TOOLS if tools is None else tools), **kw)
 
 
@@ -323,7 +323,7 @@ for data, want in (({"messages": [{"role": "user", "content": "fix the typo"}]},
 os.environ[tg.TASK_ENV] = "1"
 
 
-def drops(text, model="ailocal-architecture"):
+def drops(text, model="ailocal-primary"):
     r, _ = gw.negotiate(req(model, messages=[{"role": "user", "content": text}]), "anthropic_messages")
     return r
 
@@ -362,7 +362,7 @@ suite.section("NEGOTIATOR FAILS OPEN")
 re_, _ = tg.ToolGateway(registry=missing).negotiate(req(), "anthropic_messages")
 check(re_["tools_dropped"] == 0 and re_["passthrough"] and re_["bytes_in"] == 822,
       "no registry: nothing dropped, still measured")
-ru, _ = gw.negotiate({"model": "ailocal-architecture", "tools": list(TOOLS)}, "anthropic_messages")
+ru, _ = gw.negotiate({"model": "ailocal-primary", "tools": list(TOOLS)}, "anthropic_messages")
 check(ru["client"] == "unknown" and ru["tools_dropped"] == 0, "unknown client is never filtered")
 
 suite.section("MODES (off / report / filter)")
@@ -372,8 +372,8 @@ def hook(data):
     return asyncio.run(gw.async_pre_call_hook(None, None, data, "anthropic_messages"))
 
 
-for mode, model, want in (("off", "ailocal-architecture", 3), ("report", "ailocal-architecture", 3),
-                          ("filter", "ailocal-architecture", ["Read", "mcp__lsp__get_hover"]),
+for mode, model, want in (("off", "ailocal-primary", 3), ("report", "ailocal-primary", 3),
+                          ("filter", "ailocal-primary", ["Read", "mcp__lsp__get_hover"]),
                           ("filter", FRONTIER, 3)):
     os.environ[tg.MODE_ENV] = mode
     d = req(model)
@@ -519,14 +519,14 @@ finally:
 suite.section("REASONING LOOP GUARD (retry once: a loop without replayed reasoning, an empty completion as sent)")
 guard_mod = load_module("reasoning_loop_guard", f"{HOOKS}/reasoning_loop_guard.py")
 gemma, qwen = cr.Registry(), cr.Registry()
-gemma.backends["implementation"] = "gemma4:26b-qat-mtp"
-qwen.backends["implementation"] = "qwen3.5:9b-mtp"
-LIMIT = gemma.loop_guard_limit("ailocal-implementation")
+gemma.backends["primary"] = "gemma4:26b-qat-mtp"
+qwen.backends["primary"] = "qwen3.5:9b-mtp"
+LIMIT = gemma.loop_guard_limit("ailocal-primary")
 check(isinstance(LIMIT, int) and LIMIT > 0, f"gemma4 backend is guarded ({LIMIT})")
-check(qwen.loop_guard_limit("ailocal-implementation") is None, "qwen backend is not guarded (#38 replay kept)")
+check(qwen.loop_guard_limit("ailocal-primary") is None, "qwen backend is not guarded (#38 replay kept)")
 check(gemma.loop_guard_limit("nobody-registered") is None, "unknown model is not guarded")
 
-REQ = {"model": "ailocal-implementation", "stream": True, "tools": [{"type": "function", "name": "exec"}],
+REQ = {"model": "ailocal-primary", "stream": True, "tools": [{"type": "function", "name": "exec"}],
        "reasoning": {"effort": "medium"}, "litellm_logging_obj": object(), "litellm_call_id": "x",
        "input": [{"type": "message", "role": "user", "content": "q"},
                  {"type": "reasoning", "summary": [{"type": "summary_text", "text": "t"}]},

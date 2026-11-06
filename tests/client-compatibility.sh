@@ -42,7 +42,7 @@ OK_PROMPT='"Reply with the single word OK."'
 claude_code() {  # /v1/messages, Anthropic tool envelope
   curl -s -m 180 "$PROXY/v1/messages" -H "x-api-key: $KEY" -H 'anthropic-version: 2023-06-01' \
     -H 'content-type: application/json' -H 'user-agent: claude-cli/2.0.0 (cli)' \
-    -d '{"model":"ailocal-architecture","max_tokens":16,"messages":[{"role":"user","content":'"$OK_PROMPT"'}],
+    -d '{"model":"ailocal-primary","max_tokens":16,"messages":[{"role":"user","content":'"$OK_PROMPT"'}],
          "tools":[
            {"name":"Read","description":"Read a file","input_schema":{"type":"object","properties":{"path":{"type":"string"}},"$schema":"https://json-schema.org/draft/2020-12/schema"}},
            {"name":"Workflow","description":"Orchestrate a long multi-step workflow","input_schema":{"type":"object"}},
@@ -52,7 +52,7 @@ claude_code() {  # /v1/messages, Anthropic tool envelope
 codex() {  # /v1/responses, function + namespace + custom envelopes
   curl -s -m 180 "$PROXY/v1/responses" -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \
     -H 'originator: codex_cli_rs' \
-    -d '{"model":"ailocal-architecture","max_output_tokens":16,
+    -d '{"model":"ailocal-primary","max_output_tokens":16,
          "input":[{"type":"message","role":"user","content":'"$OK_PROMPT"'}],
          "tools":[
            {"type":"function","name":"exec_command","description":"Run a command","parameters":{"type":"object","properties":{"cmd":{"type":"string"}}}},
@@ -63,7 +63,7 @@ codex() {  # /v1/responses, function + namespace + custom envelopes
 vscode() {  # /v1/chat/completions, OpenAI nested-function envelope
   curl -s -m 180 "$PROXY/v1/chat/completions" -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \
     -H 'user-agent: vscode-copilot-chat/1.0' \
-    -d '{"model":"ailocal-architecture","max_tokens":16,"messages":[{"role":"user","content":'"$OK_PROMPT"'}],
+    -d '{"model":"ailocal-primary","max_tokens":16,"messages":[{"role":"user","content":'"$OK_PROMPT"'}],
          "tools":[
            {"type":"function","function":{"name":"Read","description":"Read a file","parameters":{"type":"object","properties":{"path":{"type":"string"}}}}},
            {"type":"function","function":{"name":"Workflow","description":"Orchestrate","parameters":{"type":"object"}}}]}'

@@ -72,7 +72,7 @@ def classification() -> None:
         results = [CheckResult(f"c{i}", s, "x") for i, s in enumerate(statuses)]
         check(exit_code(results) == code, f"{'+'.join(s.name for s in statuses)} exits {code}")
     roles = {"roles": {"completion": {"enabled": False, "max_input_tokens": 100},
-                       "implementation": {"enabled": True, "max_input_tokens": 2000},
+                       "primary": {"enabled": True, "max_input_tokens": 2000},
                        "cyber": {"enabled": True, "max_input_tokens": 500}}}
     with patch.object(S.policy, "effective_summary", return_value=roles), \
             patch.object(S, "http_json", return_value={"error": "ContextWindowExceededError"}) as request:

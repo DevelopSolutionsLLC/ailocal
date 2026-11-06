@@ -26,7 +26,7 @@ from ailocal import generation as G, policy as P  # noqa: E402
 S = Suite()
 check = S.check
 TMP = Path(tempfile.mkdtemp(prefix="ailocal-policy-"))
-GOOD = '[architecture]\nrole = "Lead"\nactive = "m:1"\ncontext_input = 100\nmax_output = 20\n'
+GOOD = '[primary]\nrole = "Lead"\nactive = "m:1"\ncontext_input = 100\nmax_output = 20\n'
 MLX_EVIDENCE = "same-model GGUF comparison"   # docs/maintenance.md#model-format
 
 
@@ -74,7 +74,7 @@ def resolver() -> None:
     S.section("RESOLVER FAILS CLOSED")
     for t in P.TIERS:
         check(code_of(P.load_profile, t) == "OK"
-              and sum(r in P.load_profile(t) for r in P.ROLES) >= 4, f"{t} loads")
+              and sum(r in P.load_profile(t) for r in P.ROLES) >= 3, f"{t} loads")
     tier_cases = [("missing marker", None, P.ACTIVE_PROFILE_MISSING),
                   ("empty marker", "   \n", P.ACTIVE_PROFILE_EMPTY),
                   ("unknown tier", "999gb", P.ACTIVE_PROFILE_INVALID)]
@@ -82,17 +82,19 @@ def resolver() -> None:
         root = box(marker)
         got = code_of(P.resolve_active_tier, root, root / "state")
         check(got == want, f"{label} => {want}", got)
-    head = '[architecture]\nrole = "L"\nactive = "m"\n'
+    head = '[primary]\nrole = "L"\nactive = "m"\n'
     load_cases = [
         ("missing profile file", None, P.PROFILE_FILE_MISSING),
-        ("malformed policy", "[architecture\n", P.PROFILE_INVALID),
+        ("malformed policy", "[primary\n", P.PROFILE_INVALID),
         ("non-integer context_input", head + 'context_input = "x"\n', P.ROLE_CONFIG_INVALID),
-        ("missing required field", '[architecture]\nrole = "L"\ncontext_input = 10\n',
+        ("missing required field", '[primary]\nrole = "L"\ncontext_input = 10\n',
          P.PROFILE_SCHEMA_INVALID),
         ("legacy `context`", head + "context = 4096\n", P.PROFILE_SCHEMA_INVALID),
         ("max_output -1", head + "context_input = 100\nmax_output = -1\n", P.ROLE_CONFIG_INVALID),
         ("duplicate key", GOOD + "context_input = 999\n", P.PROFILE_INVALID),
-        ("duplicate section", GOOD + '[architecture]\nrole = "X"\nactive = "o"\n', P.PROFILE_INVALID),
+        ("duplicate section", GOOD + '[primary]\nrole = "X"\nactive = "o"\n', P.PROFILE_INVALID),
+        ("retired role section", GOOD + '[review]\nrole = "R"\nactive = "m:1"\ncontext_input = 100\nmax_output = 20\n', P.PROFILE_SCHEMA_INVALID),
+        ("un-migrated 0.15 profile", GOOD.replace("[primary]", "[architecture]"), P.PROFILE_SCHEMA_INVALID),
     ]
     # Unknown keys were silently dropped before 2026-08-04, so a typo read as set and was not.
     src = 'source = { model="hf.co/a/b:t.gguf", sha256="' + "a" * 64 + '", renderer="r", parser="p", '
@@ -106,8 +108,10 @@ def resolver() -> None:
         got = code_of(P.load_profile, "64gb", box("64gb", text))
         check(got == want, f"{label} => {want}", got)
     root = box("64gb", GOOD)
-    check(code_of(P.resolve_role, "64gb", "review", root) == P.ROLE_MISSING, "absent role => ROLE_MISSING")
-    check(P.resolve_role("64gb", "architecture", root)["model"] == "m:1", "a colon in a value survives")
+    check(code_of(P.resolve_role, "64gb", "fast", root) == P.ROLE_MISSING, "absent role => ROLE_MISSING")
+    check(P.resolve_role("64gb", "primary", root)["model"] == "m:1", "a colon in a value survives")
+    msg = code_of(P.load_profile, "64gb", box("64gb", GOOD.replace("[primary]", "[architecture]")), message=True)
+    check("ailocal install" in msg, "a retired role section names the migration", msg)
     msg = code_of(P.load_profile, "64gb", box("64gb", GOOD + 'secret_token = "abc123SECRET"\n'), message=True)
     check(msg != "OK" and "abc123SECRET" not in msg, "errors carry a code, never profile values")
 
@@ -126,12 +130,12 @@ def resolver() -> None:
     # sys.executable, not PATH's `ailocal`: a stale pipx copy once answered and regenerated real config.
     cli = [sys.executable, "-m", "ailocal.cli", "profile"]
     run = lambda *a, **kw: subprocess.run(cli + list(a), capture_output=True, text=True, **kw)  # noqa: E731
-    r, f = run("active-tier"), run("role", "architecture", "--field", "model")
+    r, f = run("active-tier"), run("role", "primary", "--field", "model")
     check(r.returncode == f.returncode == 0 and r.stdout.strip() in P.TIERS and ":" in f.stdout,
           "active-tier and role --field print bare scalars", r.stdout + f.stdout)
     root = box("64gb", GOOD)
     shutil.copy(RESOURCES / "profiles/clients.toml", root / "profiles")
-    r = run("role", "architecture", "--field", "reasoning",
+    r = run("role", "primary", "--field", "reasoning",
             env={**os.environ, "AILOCAL_CONFIG": str(root), "AILOCAL_STATE": str(root / "state")})
     check(r.returncode == 0 and r.stdout.strip() == "", "an absent field prints empty, not 'None'",
           (r.stdout + r.stderr).strip())
@@ -165,13 +169,13 @@ def geometry() -> None:
     check("model: ollama_chat/nomic-shaped-name:1b" in blk, "a nomic-shaped name keeps the chat route")
     for penalty in (0.0, 1.5):
         arch = P.load_profile("64gb", box("64gb", GOOD + f"min_p = 0.0\npresence_penalty = {penalty}\n"))
-        blk = G.gen_role_block("architecture", arch["architecture"])
+        blk = G.gen_role_block("primary", arch["primary"])
         check("      min_p: 0.0" in blk and f"      presence_penalty: {penalty}" in blk
               and 'allowed_openai_params: ["presence_penalty"]' in blk,
               f"native sampling survives parsing and generation ({penalty})")
     # Omitting it would fall back to Claude Code's 32000, the number the backend does not serve.
     models, clients = G.load_models_yaml(RESOURCES / "profiles/64gb.toml"), G.load_clients_yaml()
-    launch = (clients.get("claude") or {}).get("launch_default", "architecture")
+    launch = (clients.get("claude") or {}).get("launch_default", "primary")
     models[launch] = {k: v for k, v in models[launch].items() if k != "max_output"}
     try:
         G.regen_claude_settings(models, clients)
@@ -182,7 +186,7 @@ def geometry() -> None:
 
 def generated() -> None:
     S.section("GENERATION PER TIER (claude-local only, never hosted roots)")
-    launch = P.load_client_policy(RESOURCES).get("claude", {}).get("launch_default", "architecture")
+    launch = P.load_client_policy(RESOURCES).get("claude", {}).get("launch_default", "primary")
     for tier in P.TIERS:
         b = Path(tempfile.mkdtemp(dir=TMP))
         shutil.copytree(RESOURCES / "profiles", b / "cfg/profiles")
@@ -204,7 +208,7 @@ def generated() -> None:
             continue
         settings = json.loads(local.read_text())
         cenv = settings.get("env", {})
-        enabled = [c for c in P.ROLES if P.resolve_role(tier, c, RESOURCES)["enabled"]]
+        enabled = list(P.enabled_roles(tier, RESOURCES))
         names = ["ailocal-" + c for c in enabled]
         role = P.resolve_role(tier, launch, RESOURCES)
         # Claude Code 2.1.224 defaults to 32000 output; a mismatch looped on max_tokens for ~27 min.
@@ -274,7 +278,21 @@ def generated() -> None:
         check("ollama/nomic-embed-text" not in litellm
               and litellm.count("model: ollama_chat/") == len(enabled),
               f"{tier}: every capability routes through ollama_chat; no embedding route")
-        check(P.resolve_role(tier, "architecture", RESOURCES)["model"]
+        # #89: the retired 0.15 names, and ailocal-fast where the tier omits [fast], are
+        # deprecated aliases of the role they now mean, never model_list entries.
+        aliases = dict(re.findall(r"^    (ailocal-\S+): (ailocal-\S+)$", litellm, re.M))
+        want = {"ailocal-" + o: "ailocal-" + n for o, n in P.deprecated_aliases(enabled).items()}
+        check(aliases == want and {"ailocal-architecture", "ailocal-implementation", "ailocal-review"} <= set(aliases)
+              and ("ailocal-fast" in aliases) is ("fast" not in enabled)
+              and "DEPRECATED since 0.16" in litellm and not set(aliases) & set(names),
+              f"{tier}: retired role names are deprecated aliases of primary", repr(aliases))
+        haiku = "ailocal-" + P.resolve_capability("fast", enabled)
+        zsh = (b / "clients/configure.zsh").read_text()
+        check(f'ANTHROPIC_DEFAULT_HAIKU_MODEL="{haiku}"' in zsh and zsh.count('="ailocal-primary"') == (3 if "fast" in enabled else 4)
+              and settings["model"] == "ailocal-primary" and codex["model"] == "ailocal-primary"
+              and re.search(r"claude-haiku-4-5: " + haiku, litellm) and not P.slot_problems(tier, RESOURCES),
+              f"{tier}: haiku resolves to {haiku}, every other slot and both defaults to primary, no slot warning")
+        check(P.resolve_role(tier, "primary", RESOURCES)["model"]
               in (b / "state/litellm/capabilities.json").read_text(),
               f"{tier}: capabilities.json reflects the resolved model")
         budgets = P.instruction_budgets(b / "cfg")
@@ -289,40 +307,49 @@ def generated() -> None:
     check("cyber" not in P.load_client_policy(RESOURCES).get("compat", {}), "cyber has no bare compat alias")
 
 
-# Tier design: primary (shared by the four chat roles), cyber, completion, total window, draft depth.
-# 16/32 (#87): one Nemotron 3.5 Bolt E4B library tag for every chat role and a hash-pinned
-# unrestricted E4B for cyber, both at the model's 65536-token native window; the DFlash draft
-# is built into each model, so no draft depth is configured.
-DESIGN = {
-    "16gb": ("nemotron-3.5-bolt:e4b", "nemotron-3.5-bolt:e4b-unrestricted", "qwen2.5-coder:1.5b-base", 65536, None),
-    "32gb": ("nemotron-3.5-bolt:e4b", "nemotron-3.5-bolt:e4b-unrestricted", "qwen2.5-coder:1.5b-base", 65536, None),
-    "64gb": (None, "gemma4:26b-unrestricted-qat-mtp-q4_K_M", "qwen2.5-coder:3b-base", 196608, None),
-    "128gb": (None, "gemma4:26b-unrestricted-qat-mtp-q4_K_M", "qwen2.5-coder:3b-base", 262144, None),
+# Tier design (#89): one primary chat role per tier, `fast` only where the primary thinks
+# (the same weights with thinking off), cyber on a separate model at the primary's total
+# window, and FIM completion. 16/32 (#87): one Nemotron 3.5 Bolt E4B library tag and a
+# hash-pinned unrestricted E4B for cyber, both at the model's 65536-token native window,
+# thinking off (20/25 off against 19/25 on), so no [fast]; the DFlash draft is built into
+# each model, so no draft depth is configured.
+DESIGN = {   # primary model, primary thinks, cyber model, completion model, total window
+    "16gb": ("nemotron-3.5-bolt:e4b", False, "nemotron-3.5-bolt:e4b-unrestricted", "qwen2.5-coder:1.5b-base", 65536),
+    "32gb": ("nemotron-3.5-bolt:e4b", False, "nemotron-3.5-bolt:e4b-unrestricted", "qwen2.5-coder:1.5b-base", 65536),
+    "64gb": ("gemma4:26b-qat-mtp", True, "gemma4:26b-unrestricted-qat-mtp-q4_K_M", "qwen2.5-coder:3b-base", 196608),
+    "128gb": ("gemma4:26b-qat-mtp", True, "gemma4:26b-unrestricted-qat-mtp-q4_K_M", "qwen2.5-coder:3b-base", 262144),
 }
-# 16/32 pay KV for the ceiling up front; 64/128 take the largest step under the 262144 native window.
-OUTPUT = {"16gb": (16384, 8192, 16384), "32gb": (16384, 8192, 16384),
-          "64gb": (32768, 32768, 32768), "128gb": (32768, 32768, 32768)}
-SHARED = ("architecture", "implementation", "review", "fast")
+# Output ceilings per role; the key set is the tier's role set. Primary keeps the window the
+# former architecture role carried; 16/32 pay KV for the ceiling up front, 64/128 take the
+# largest step under the 262144 native window.
+OUTPUT = {"16gb": {"primary": 16384, "cyber": 8192, "completion": 512},
+          "32gb": {"primary": 16384, "cyber": 8192, "completion": 512},
+          "64gb": {"primary": 32768, "fast": 8192, "cyber": 32768, "completion": 512},
+          "128gb": {"primary": 32768, "fast": 8192, "cyber": 32768, "completion": 512}}
+# Cyber's (context_input, max_output, reasoning): the primary's total with its own reserve.
+CYBER = {"16gb": (57344, 8192, False), "32gb": (57344, 8192, False),
+         "64gb": (163840, 32768, True), "128gb": (229376, 32768, True)}
 
 
 def hardware() -> None:
     S.section("TIER DESIGN")
     parsed = {t: P.load_profile_file(RESOURCES / "profiles" / f"{t}.toml") for t in P.TIERS}
-    patch_id = P.ollama_patch_spec()["id"]
-    for tier, (primary, cyber_model, completion, total, draft) in DESIGN.items():
+    for tier, (primary, thinks, cyber_model, completion, total) in DESIGN.items():
         caps = parsed[tier]
         rr = {r: P.resolve_role(tier, r, RESOURCES) for r in P.ROLES if r in caps}
-        if primary:
-            check(all(caps[c]["active"] == primary for c in SHARED)
-                  and {rr[c]["num_ctx"] for c in SHARED} == {total},
-                  f"{tier}: {primary} serves {', '.join(SHARED)} at {total} tokens")
-        cy, arch, impl = rr["cyber"], rr["architecture"], rr["implementation"]
-        check(arch["num_ctx"] == cy["num_ctx"] == total and cy["model"] == cyber_model,
-              f"{tier}: cyber is {cyber_model} at architecture's {total}-token total")
-        mirror = (impl["context_input"], impl["max_output"], False) if primary else \
-                 (arch["context_input"], arch["max_output"], arch["reasoning"])
-        check((cy["context_input"], cy["max_output"], cy["reasoning"]) == mirror,
-              f"{tier}: cyber mirrors {'implementation' if primary else 'architecture'}'s geometry")
+        pr, cy = rr["primary"], rr["cyber"]
+        check(pr["model"] == primary and bool(pr["reasoning"]) is thinks and pr["num_ctx"] == total,
+              f"{tier}: primary is {primary} at {total} tokens, thinking {'on' if thinks else 'off'}")
+        if thinks:
+            check(rr["fast"]["model"] == primary and not rr["fast"]["reasoning"] and rr["fast"]["num_ctx"] == total
+                  and rr["fast"]["keep_alive"] == pr["keep_alive"],
+                  f"{tier}: fast is the primary with thinking off, same window and keep-alive")
+        else:
+            check("fast" not in caps and P.resolve_capability("fast", tuple(rr)) == "primary",
+                  f"{tier}: a non-thinking primary declares no fast; fast resolves to primary")
+        check(cy["num_ctx"] == total and cy["model"] == cyber_model
+              and (cy["context_input"], cy["max_output"], bool(cy["reasoning"])) == CYBER[tier],
+              f"{tier}: cyber is {cyber_model} at the primary's {total}-token total with its own reserve")
         # Every shipped chat backend is Gemma-family on stock Ollama (#80, #87): vendor top_k 64,
         # no Qwen stop list, no runtime patch. A Qwen3.5 selection must declare the patch (ADR 016).
         check(not cy.get("runtime_patch") and not cy.get("stop") and cy["top_k"] == 64,
@@ -330,22 +357,17 @@ def hardware() -> None:
         check(rr["completion"]["enabled"] and rr["completion"]["model"] == completion
               and {completion, cyber_model} <= set(P.required_models(tier, RESOURCES)), f"{tier}: installs {completion} and cyber")
         check(not P.required_runtime_patch(tier, RESOURCES)
-              and not any(c.get("runtime_patch") or c.get("reasoning") for r, c in rr.items() if r != "completion" and tier in ("16gb", "32gb")),
-              f"{tier}: stock Ollama installs it; 16/32 chat roles run with thinking off")
-        if draft:
-            check(all(rr[r].get("draft_num_predict") == draft
-                      and f"draft_num_predict: {draft}" in G.gen_role_block(r, rr[r])
-                      for r in (*SHARED, "cyber")), f"{tier}: draft depth {draft} reaches the provider")
+              and not any(c.get("runtime_patch") for c in rr.values()),
+              f"{tier}: stock Ollama installs it")
         check(all(re.fullmatch(r"[0-9a-f]{64}", c["source"]["sha256"]) for c in rr.values() if c.get("source")),
               f"{tier}: every native source is hash-pinned")
-        ceilings = tuple(rr[c]["max_output"] for c in ("architecture", "implementation", "review", "fast", "completion"))
-        check(ceilings == (*OUTPUT[tier], 8192, 512), f"{tier}: output ceilings are {(*OUTPUT[tier], 8192, 512)}",
-              repr(ceilings))
+        ceilings = {r: c["max_output"] for r, c in rr.items()}
+        check(ceilings == OUTPUT[tier], f"{tier}: roles and output ceilings are {OUTPUT[tier]}", repr(ceilings))
         over = [r for r, c in rr.items()
                 if c["num_ctx"] > (32768 if c["model"].startswith("qwen2.5-coder:") else 262144)]
         check(not over, f"{tier}: every role fits its model's native window", ", ".join(over))
         check("compaction" not in caps, f"{tier} ships no [compaction] block")
-        if not primary:   # disabling cyber must not change the runtime the other roles need
+        if thinks:   # disabling cyber must not change the runtime the other roles need
             text = (RESOURCES / "profiles" / f"{tier}.toml").read_text()
             root = box(text=text.replace("[cyber]\n", "[cyber]\nenabled = false\n", 1), name=f"profiles/{tier}.toml")
             check(not P.resolve_role(tier, "cyber", root)["enabled"]
@@ -362,9 +384,29 @@ def hardware() -> None:
     check(all(P.resolve_role("128gb", c, RESOURCES)["num_ctx"] >= P.resolve_role("64gb", c, RESOURCES)["num_ctx"]
               for c in P.ROLES), "no 128gb context is below 64gb")
 
+    S.section("CAPABILITY RESOLUTION (#89)")
+    check(P.ROLES == ("primary", "fast", "cyber", "completion") and P.OPTIONAL_ROLES == {"fast": "primary"}
+          and set(P.RETIRED_ROLES) == {"architecture", "implementation", "review"} == set(P.RETIRED_ROLE_SECTIONS),
+          "the roles are primary, fast (optional), cyber and completion; the 0.15 names are retired")
+    check(P.resolve_capability("fast", ("primary", "cyber")) == "primary"
+          and P.resolve_capability("fast", ("primary", "fast")) == "fast"
+          and P.resolve_capability("primary", ("primary",)) == "primary"
+          and P.resolve_capability("nosuch", ("primary", "fast")) == "nosuch"
+          and P.resolve_capability("fast", ("cyber",)) == "fast",
+          "an absent optional role resolves to its stand-in; anything else is returned for the consumer to reject")
+    check(P.deprecated_aliases(("primary", "cyber", "completion"))
+          == {"architecture": "primary", "implementation": "primary", "review": "primary", "fast": "primary"}
+          and P.deprecated_aliases(("primary", "fast", "cyber", "completion"))
+          == {"architecture": "primary", "implementation": "primary", "review": "primary"}
+          and P.deprecated_aliases(("cyber",)) == {},
+          "deprecated aliases are the retired names plus an omitted optional role, each routed to a served role")
+    check(P.enabled_roles("16gb", RESOURCES) == ("primary", "cyber", "completion")
+          and P.enabled_roles("64gb", RESOURCES) == ("primary", "fast", "cyber", "completion"),
+          "enabled_roles lists a tier's served roles in ROLES order")
+
     S.section("MODEL IDENTITY")
     for tier, caps in parsed.items():
-        tags = {r: [caps[r]["active"], *caps[r].get("preferred", [])] for r in P.ROLES}
+        tags = {r: [caps[r]["active"], *caps[r].get("preferred", [])] for r in P.ROLES if r in caps}
         flat = [t for ts in tags.values() for t in ts]
         # `ollama create` without a tag publishes `name:latest`, which names nothing.
         check(all(":" in t and not t.endswith(":latest") for t in flat),
@@ -377,15 +419,14 @@ def hardware() -> None:
                                                       .get("evidence", "")) and MLX_EVIDENCE in ev)]
         check(not unproven, f"{tier}: every MLX selection records [REAL] same-model GGUF evidence",
               ", ".join(unproven))
-    unique = {t: {P.resolve_role(t, r, RESOURCES)["model"] for r in P.ROLES
-                  if P.resolve_role(t, r, RESOURCES)["enabled"]} for t in P.TIERS}
+    unique = {t: {P.resolve_role(t, r, RESOURCES)["model"] for r in P.enabled_roles(t, RESOURCES)} for t in P.TIERS}
     check(unique["64gb"] == unique["128gb"], "64gb and 128gb pull the same model set")
 
     readme = (REPO / "README.md").read_text()
-    ctx_k = round(P.resolve_role("64gb", "architecture", RESOURCES)["num_ctx"] / 1024)
-    check(f"{ctx_k}K" in readme, f"README quotes the 64gb architecture context ({ctx_k}K)")
+    ctx_k = round(P.resolve_role("64gb", "primary", RESOURCES)["num_ctx"] / 1024)
+    check(f"{ctx_k}K" in readme, f"README quotes the 64gb primary context ({ctx_k}K)")
     for tier, caps in parsed.items():
-        check(caps["architecture"]["active"] in readme, f"README names {tier}'s primary model")
+        check(caps["primary"]["active"] in readme, f"README names {tier}'s primary model")
 
 
 def client_policy() -> None:
@@ -393,10 +434,10 @@ def client_policy() -> None:
     cases = {"unknown client": '[nosuchclient]\ndefault = "fast"\n',
              "non-TOML": "bogus:\n  default: fast\n",
              "duplicate section": '[claude]\na = "fast"\n[claude]\nb = "fast"\n',
-             "duplicate key": '[claude]\ndefault = "fast"\ndefault = "review"\n',
+             "duplicate key": '[claude]\ndefault = "fast"\ndefault = "primary"\n',
              "unclosed list": '[continue]\nchat = ["a", "b"\n',
              "unclosed mapping": '[claude]\nslots = {opus = "fast"\n',
-             "bare dotted key": '[compat]\ngpt-5.5 = "implementation"\n'}   # nests instead of naming
+             "bare dotted key": '[compat]\ngpt-5.5 = "primary"\n'}   # nests instead of naming
     for name, text in cases.items():
         got = code_of(P.load_client_policy, box(text=text, name="profiles/clients.toml"))
         check(got == P.CLIENT_POLICY_INVALID, f"{name} is rejected", got)

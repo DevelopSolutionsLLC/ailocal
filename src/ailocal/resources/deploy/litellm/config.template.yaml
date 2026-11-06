@@ -34,9 +34,11 @@ router_settings:
   cooldown_time: 30                 # seconds before retrying a cooled-down model
 
   # ── Layer 2 aliases → capability groups ───────────────────────────────────
-  # GENERATED from profiles/clients.yaml by sync-models.py — claude-*/gpt-* compat names,
-  # each aliased to its ailocal-<capability> group.
-  # Do NOT hand-edit between the markers — edit profiles/clients.yaml and run sync.
+  # GENERATED from profiles/clients.toml by generation.py — claude-*/gpt-* compat names,
+  # each aliased to its ailocal-<capability> group, then the DEPRECATED aliases: the
+  # role names 0.16 retired (ailocal-architecture, -implementation, -review, and
+  # ailocal-fast on a tier without [fast]), served for one release (#89).
+  # Do NOT hand-edit between the markers — edit profiles/clients.toml and run ailocal start.
   # >>> BEGIN GENERATED model_group_alias — do not edit <<<
   # >>> END GENERATED model_group_alias <<<
 

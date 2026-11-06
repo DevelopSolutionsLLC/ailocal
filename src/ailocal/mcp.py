@@ -57,8 +57,10 @@ def claude_launch_environment() -> dict:
     """What claude-local sets besides URL, key and config root: the built-in
     slots from client policy plus its timeout and context switches."""
     from .generation import SLOT_ENV, mn
+    roles = policy.enabled_roles(policy.active_tier())
     slots = (policy.load_client_policy().get('claude') or {}).get('slots', {})
-    env = {SLOT_ENV[slot]: mn(cap) for slot, cap in slots.items() if slot in SLOT_ENV}
+    env = {SLOT_ENV[slot]: mn(policy.resolve_capability(cap, roles))
+           for slot, cap in slots.items() if slot in SLOT_ENV}
     env.update({'CLAUDE_CODE_DISABLE_1M_CONTEXT': '1', 'ENABLE_TOOL_SEARCH': 'true',
                 'CLAUDE_CODE_DISABLE_WORKFLOWS': '1', 'API_TIMEOUT_MS': '900000'})
     return env
@@ -74,7 +76,8 @@ def launch_environment(enable_answer: bool = False) -> dict:
             raise ValueError
     except ValueError:
         raise RuntimeError('research requires a loopback LiteLLM endpoint; hosted inference is refused') from None
-    cfg = policy.effective_role('fast')
+    fast = policy.effective_capability('fast')   # primary where the tier declares no fast
+    cfg = policy.effective_role(fast)
     # Approximate character accounting with room for source metadata and prompt.
     chars = max(256, min(24000, (cfg['context_input'] - 4096)))
     search_port = (os.environ.get('AILOCAL_SEARXNG_PORT')
@@ -82,7 +85,7 @@ def launch_environment(enable_answer: bool = False) -> dict:
     env = dict(os.environ)
     env.update({'LOCAL_RESEARCH_SEARCH_URL': f'http://127.0.0.1:{search_port}',
                 'LOCAL_RESEARCH_MODEL_URL': endpoint + '/v1',
-                'LOCAL_RESEARCH_MODEL': 'ailocal-fast',
+                'LOCAL_RESEARCH_MODEL': 'ailocal-' + fast,
                 'LOCAL_RESEARCH_API_KEY': runtime.env_value('LITELLM_MASTER_KEY'),
                 'LOCAL_RESEARCH_STATE': str(policy.state_root() / 'local-research'),
                 'LOCAL_RESEARCH_ENABLE_ANSWER': '1' if enable_answer else '0',

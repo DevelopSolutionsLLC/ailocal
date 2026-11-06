@@ -6,8 +6,8 @@ status = "model-limit-sized"  # ceilings from real model limits; not measured on
 
 disk_gb = 37
 
-[architecture]
-role = "Lead architect"
+[primary]
+role = "Primary"
 active = "gemma4:26b-qat-mtp"
 preferred = ["gemma4:26b-qat-mtp"]
 draft_num_predict = 2
@@ -17,50 +17,17 @@ context_input = 229376
 max_output = 32768
 temperature = 1.0
 keep_alive = "6h"
-purpose = ["architecture", "complex refactoring", "multi-step debugging", "design", "repository-wide planning", "large interactive/agent prompts"]
+purpose = ["design", "implementation", "code review", "complex refactoring", "multi-step debugging", "repository-wide planning", "large interactive/agent prompts"]
 strengths = ["native MTP", "native Ollama GGUF", "native tool calling"]
 weaknesses = ["cold prefill and long thinking can dominate task latency", "filled-window memory and task quality are unverified"]
 top_p = 0.95
 top_k = 64
 repeat_penalty = 1.0
-[implementation]
-role = "Daily coding"
-active = "gemma4:26b-qat-mtp"
-preferred = ["gemma4:26b-qat-mtp"]
-draft_num_predict = 2
-source = {"model" = "gemma4:26b-a4b-it-qat", "sha256" = "4c856523d61d77922dbc0b26753a6bf6208e5d69d80db0c04dcd776832d054c5", "renderer" = "gemma4-large", "parser" = "gemma4", "draft_model" = "hf.co/HauhauCS/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-MTP:mtp-gemma-4-26B-A4B-it.gguf", "draft_sha256" = "62bd3af7f66c9308de9a5454233852f8c7324c93767e8dfb824ed45b9179864a"}
-reasoning = true
-context_input = 229376
-max_output = 32768
-temperature = 1.0
-keep_alive = "6h"
-purpose = ["implementation", "features", "refactoring", "tests", "shell", "python", "typescript"]
-strengths = ["native MTP", "native Ollama GGUF", "native tool calling"]
-weaknesses = ["architecture", "repository-wide planning"]
-top_p = 0.95
-top_k = 64
-repeat_penalty = 1.0
-[review]
-role = "Code review"
-active = "gemma4:26b-qat-mtp"
-preferred = ["gemma4:26b-qat-mtp"]
-draft_num_predict = 2
-source = {"model" = "gemma4:26b-a4b-it-qat", "sha256" = "4c856523d61d77922dbc0b26753a6bf6208e5d69d80db0c04dcd776832d054c5", "renderer" = "gemma4-large", "parser" = "gemma4", "draft_model" = "hf.co/HauhauCS/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-MTP:mtp-gemma-4-26B-A4B-it.gguf", "draft_sha256" = "62bd3af7f66c9308de9a5454233852f8c7324c93767e8dfb824ed45b9179864a"}
-reasoning = true
-context_input = 229376
-max_output = 32768
-temperature = 1.0
-keep_alive = "6h"
-purpose = ["code review", "bug detection", "security review", "alternative solutions"]
-strengths = ["native MTP", "native Ollama GGUF", "native tool calling"]
-weaknesses = ["slower than the implementation tier", "not for bulk generation"]
-top_p = 0.95
-top_k = 64
-repeat_penalty = 1.0
+
 [fast]
-role = "Fast agent"
+role = "Fast (thinking off)"
 # The primary model with thinking off: same weights, window and keep-alive as
-# the roles above, so it adds no model and no reload. [REAL] 2026-11-02, 128 GB
+# primary, so it adds no model and no reload. [REAL] 2026-11-02, 128 GB
 # host, stock Ollama 0.40.13: against the former Qwen3.5 9B fast model, the
 # same 10 quick tasks x3 (classification, strict formats, JSON, an edit, a
 # summary, two tool calls) both passed 30/30; Gemma decoded ~185 vs ~124
@@ -76,11 +43,12 @@ max_output = 8192
 temperature = 1.0
 keep_alive = "6h"
 purpose = ["task classification", "doc summarisation", "quick edits", "tool-driven lookups"]
-strengths = ["native MTP", "already resident with the primary roles", "native tool calling"]
-weaknesses = ["no thinking - use architecture or review for difficult reasoning"]
+strengths = ["native MTP", "already resident as the primary", "native tool calling"]
+weaknesses = ["no thinking - use primary for difficult reasoning"]
 top_p = 0.95
 top_k = 64
 repeat_penalty = 1.0
+
 [completion]
 role = "Autocomplete (FIM)"
 active = "qwen2.5-coder:3b-base"

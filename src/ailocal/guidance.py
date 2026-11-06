@@ -112,11 +112,14 @@ def main(argv=None) -> int:
         result = policy.model_guides(args.tier)
         if candidates:
             models = result["models"]
-            # Native Claude slots are resolved through the same authored policy.
+            # Native Claude slots are resolved through the same authored policy,
+            # and through its one rule for a slot naming a role this tier omits.
             slots = policy.load_client_policy().get("claude", {}).get("slots", {})
+            roles = [name.removeprefix("ailocal-") for name in models]
             matches = {}
             for model in candidates:
-                alias = "ailocal-" + slots[model] if model in slots else model
+                alias = ("ailocal-" + policy.resolve_capability(slots[model], roles)
+                         if model in slots else model)
                 matches = {name: g for name, g in models.items()
                            if name == alias or g["model"] == model}
                 if matches:
@@ -176,6 +179,8 @@ def launch_default_hook_bytes(tier=None) -> tuple[int | None, int | None]:
     `ailocal check` counts it beside CLAUDE.md, so both measure the same event.
     """
     default = (policy.load_client_policy().get("claude") or {}).get("launch_default")
+    if default:
+        default = policy.resolve_capability(default, policy.enabled_roles(tier or policy.active_tier()))
     event = {"hook_event_name": "SessionStart", "cwd": "/"}
     named = hook_bytes({**event, "model": f"ailocal-{default}"}, tier) if default else None
     return named, hook_bytes(event, tier)

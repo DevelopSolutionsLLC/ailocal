@@ -50,10 +50,9 @@ OLLAMA_ENV = {
     # which is not a default anyone chose; it is a default nobody noticed. A
     # process that wants a model pinned can still ask for -1 explicitly.
     "OLLAMA_KEEP_ALIVE": "6h",
-    # 4, not 5, and not 3. The tier needs THREE distinct models, not five: the
-    # architecture, implementation, review and fast roles all point at ONE
-    # primary model and share a single resident copy, so four roles cost one
-    # model. The other two are cyber and the completion model. The fourth slot is nomic-embed-text, which is NOT in any
+    # 4, not 5, and not 3. The tier needs THREE distinct models: primary (and
+    # fast, where declared, which is the same weights thinking off and shares
+    # its resident copy), cyber and the completion model. The fourth slot is nomic-embed-text, which is NOT in any
     # profile -- it is served by this same Ollama for indexing outside ailocal,
     # and it still occupies a slot.
     #

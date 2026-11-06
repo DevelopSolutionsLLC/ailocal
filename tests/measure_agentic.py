@@ -240,7 +240,7 @@ def run(model, spec, depths, rounds, quick, repeats):
 
 
 def _run(model, spec, depths, rounds, quick, repeats):
-    ctx = spec.get("num_ctx") or P.effective_role("architecture")["num_ctx"]
+    ctx = spec.get("num_ctx") or P.effective_role("primary")["num_ctx"]
     opts, think = spec["options"], spec["think"]
     print(f"\n{'=' * 72}\n{model}\n  {spec['label']}\n  sampling     {opts}  think={think}\n  num_ctx      {ctx}")
     base = load_cold(model, ctx)
@@ -290,7 +290,7 @@ def main(argv=None):
     ap.add_argument("--rounds", type=positive, default=3, help="tool-loop rounds per model")
     ap.add_argument("--context", type=int, default=32768, help="candidate context for a bounded pilot")
     args = ap.parse_args(argv)
-    args.models = args.models or [P.effective_role("architecture")["model"]]
+    args.models = args.models or [P.effective_role("primary")["model"]]
     if unknown := sorted(set(args.models) - set(CANDIDATES)):
         ap.error(f"unknown candidates: {', '.join(unknown)}")
     if args.context < 16384:
@@ -303,7 +303,7 @@ def measure(args):
     ollama, mlx = versions()
     print(f"agentic candidate comparison   {datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC}\n"
           f"ollama {ollama}   mlx {mlx}\nnum_ctx {args.context} pilot override; active architecture "
-          f"window {P.effective_role('architecture')['num_ctx']}\n"
+          f"window {P.effective_role('primary')['num_ctx']}\n"
           "OLLAMA_KV_CACHE_TYPE / OLLAMA_FLASH_ATTENTION do not reach the MLX runner; MLX KV is unquantized.")
     depths = tuple(d for d in (DEPTHS[:1] if args.quick else DEPTHS) if d <= args.context // 2) if args.prefill else ()
     for model in args.models:

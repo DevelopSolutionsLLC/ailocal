@@ -415,8 +415,9 @@ def check_selected_ollama_runtime() -> CheckResult:
                            remediation="ailocal install")
 
 
-def check_generation(token: str, alias: str = "ailocal-fast") -> CheckResult:
-    """One bounded model response. The only call here that loads a model."""
+def check_generation(token: str, alias: str) -> CheckResult:
+    """One bounded model response on `alias`, the resolved fast capability. The
+    only call here that loads a model."""
     try:
         doc = http_json(f"{PROXY}/v1/chat/completions", token=token, payload={
             "model": alias, "temperature": 0,

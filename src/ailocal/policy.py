@@ -101,7 +101,29 @@ def client_mcp_path(client: str, *, local: bool) -> Path:
 #: capability ailocal advertised, provisioned and kept resident for no reader.
 #: Embedding ownership belongs to whoever indexes; Ollama is the shared
 #: prerequisite underneath both.
-ROLES = ("architecture", "implementation", "review", "fast", "cyber", "completion")
+#:
+#: `architecture`, `implementation` and `review` collapsed into `primary` in
+#: 0.16 (#89, ADR 018): on every shipped tier they were one backend with one
+#: thinking mode, differing only in output reserve and prose. `fast` is the
+#: primary with thinking off, so only a tier whose primary thinks declares it.
+ROLES = ("primary", "fast", "cyber", "completion")
+
+#: Roles a tier may omit, each with the role that stands in for it. A client
+#: slot, compat id or default that names an absent optional role resolves to
+#: its stand-in through resolve_capability(), and nowhere else: a per-tier
+#: special case in a consumer would be a second rule that could disagree.
+OPTIONAL_ROLES = {"fast": "primary"}
+
+#: Role names 0.16 retired, and the role each now means. Served as LiteLLM
+#: aliases for one release so a client configured against 0.15 keeps routing;
+#: never a configured role, never a client target. Removed in 0.17.
+RETIRED_ROLES = {"architecture": "primary", "implementation": "primary", "review": "primary"}
+
+#: Profile sections 0.16 retired. Unlike `embeddings`, a leftover one is not
+#: inert: it carries routing policy the operator edited, and silently reading
+#: `[primary]` beside it would run shipped defaults in place of those edits. So
+#: it fails closed, and `ailocal install` migrates the file (#89).
+RETIRED_ROLE_SECTIONS = tuple(RETIRED_ROLES)
 #: Sections that may appear in a profile and are NOT capabilities.
 #:
 #: `embeddings` is here because it USED to be one. Profiles live in the
@@ -311,8 +333,18 @@ def _read_toml(path: Path, missing: str, invalid: str) -> dict:
 def load_profile_file(path: Path) -> dict:
     """A profile document, unvalidated. load_profile() adds the schema checks."""
     data = _read_toml(Path(path), PROFILE_FILE_MISSING, PROFILE_INVALID)
+    _reject_retired_sections(data)
     _validate_guidance(data)
     return data
+
+
+def _reject_retired_sections(data: dict) -> None:
+    retired = [r for r in RETIRED_ROLE_SECTIONS if r in data]
+    if retired:
+        raise ProfileError(PROFILE_SCHEMA_INVALID,
+                           f"[{'], ['.join(retired)}] retired in 0.16: the chat roles are "
+                           "[primary] and, where the primary thinks, [fast]. `ailocal install` "
+                           "migrates an edited profile (#89)")
 
 
 def load_client_policy(repo_root=None) -> dict:
@@ -412,38 +444,73 @@ def client_capability_targets(repo_root=None) -> dict:
     return out
 
 
+def resolve_capability(target: str, roles) -> str:
+    """The enabled role a client target names, given the tier's enabled roles.
+
+    THE one rule for an absent optional role: `fast` on a tier that does not
+    declare it resolves to `primary`. Any other target is returned as given,
+    so a consumer's own validation rejects an unknown one instead of this
+    function guessing a role for it.
+    """
+    if target in roles:
+        return target
+    stand_in = OPTIONAL_ROLES.get(target)
+    return stand_in if stand_in is not None and stand_in in roles else target
+
+
+def deprecated_aliases(roles) -> dict:
+    """Retired capability names still served, each with the role it routes to.
+
+    The retired 0.15 roles, plus every optional role the tier omits. Generation
+    emits these as LiteLLM `model_group_alias` entries so `ailocal-architecture`
+    and, on 16/32 GB, `ailocal-fast` keep answering for one release.
+    """
+    out = {old: new for old, new in RETIRED_ROLES.items() if new in roles}
+    out.update({opt: stand for opt, stand in OPTIONAL_ROLES.items()
+                if opt not in roles and stand in roles})
+    return out
+
+
+def enabled_roles(tier: str, repo_root=None, _data=None) -> tuple:
+    """The roles a tier serves, in ROLES order. The set every client target
+    resolves against."""
+    data = load_profile(tier, repo_root) if _data is None else _data
+    return tuple(r for r in ROLES if r in data
+                 and resolve_role(tier, r, repo_root, _data=data)["enabled"])
+
+
+def effective_capability(target: str, repo_root=None) -> str:
+    """resolve_capability() against the active tier."""
+    return resolve_capability(target, enabled_roles(resolve_active_tier(repo_root), repo_root))
+
+
 def slot_problems(tier=None, repo_root=None) -> list:
     """Client slot assignments that violate profile geometry.
 
     Returns (severity, message) pairs; "error" must fail generation, "warning"
     is a papercut. The rule lives here because it compares client policy against
     profile geometry, and policy owns both.
-    """
-    import collections
 
+    Several slots on one capability is not a problem: Claude Code's /model is
+    the generated `modelPicker` with `replaceBuiltInOptions`, one row per
+    capability whatever the slots say, and the shipped policy points opus,
+    sonnet and fable at `primary` by design.
+    """
     tier = tier or resolve_active_tier(repo_root)
     profile = load_profile(tier, repo_root)
+    roles = enabled_roles(tier, repo_root, _data=profile)
     slots = (load_client_policy(repo_root).get("claude") or {}).get("slots", {})
     out = []
 
     # `completion` is FIM-only at a small window; a real agent turn routed there
     # hard-400s. Every built-in Claude slot carries full conversation context.
-    bad = sorted(s for s, cap in slots.items() if cap == "completion")
+    bad = sorted(s for s, cap in slots.items() if resolve_capability(cap, roles) == "completion")
     if bad:
         ctx = resolve_role(tier, "completion", repo_root)["total_context"] \
             if "completion" in profile else "?"
         out.append(("error",
                     f"claude.slots {bad} -> 'completion' (FIM tier, num_ctx {ctx}). "
                     f"Conversational slots must not use it. Fix clients.toml."))
-
-    # Two slots on one capability is legal, but Claude Code's /model picker
-    # lists that capability once per slot pointing at it.
-    for cap, n in collections.Counter(slots.values()).items():
-        if n > 1:
-            owners = sorted(s for s, v in slots.items() if v == cap)
-            out.append(("warning",
-                        f"claude.slots {owners} all map to '{cap}' — /model will "
-                        f"list it {n}x. Give each slot its own capability."))
     return out
 
 
@@ -486,6 +553,7 @@ def load_profile(tier: str, repo_root=None) -> dict:
     if not path.exists():
         raise ProfileError(PROFILE_FILE_MISSING, str(path))
     data = _read_toml(path, PROFILE_FILE_MISSING, PROFILE_INVALID)
+    _reject_retired_sections(data)
     present = [r for r in ROLES if r in data]
     if not present:
         raise ProfileError(PROFILE_SCHEMA_INVALID, "no capability roles found")

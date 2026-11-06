@@ -1,19 +1,21 @@
 # profile: 32gb
 # Declarative capability registry for 32 GB unified memory (Apple Silicon).
-# Architecture, implementation, review and fast share Ollama's library tag
-# nemotron-3.5-bolt:e4b, which Ollama serves on Apple Silicon as MLX NVFP4
-# safetensors with NVIDIA's built-in DFlash draft. Cyber is a hash-pinned native
+# The primary chat role is Ollama's library tag nemotron-3.5-bolt:e4b, which
+# Ollama serves on Apple Silicon as MLX NVFP4 safetensors with NVIDIA's
+# built-in DFlash draft. Cyber is a hash-pinned native
 # GGUF import of the Heretic (abliterated) E4B with the same DFlash draft and
-# its f16 projector. Completion is unchanged. Thinking is off in every chat role:
-# measured 2026-11-05, it cost time and no accuracy. Identities and evidence:
+# its f16 projector. Completion is unchanged. Thinking is off in both chat
+# roles (measured 2026-11-05: 20/25 off against 19/25 on, and it cost time), so
+# this tier declares no [fast]: that role is the primary with thinking off, and
+# every client surface that names it resolves to primary (policy.OPTIONAL_ROLES). Identities and evidence:
 # docs/model-audit.md, "16/32 GB: Nemotron 3.5 Bolt E4B replaces Qwen3.5".
 #
 # Geometry follows the one rule in docs/architecture.md#geometry: admission is
 # bounded by memory up to the backend's native window, and compaction is the
 # client's latency budget, never a geometry input.
 #
-# The backend's native window is 65536 tokens (gemma4.context_length), so every
-# chat role totals 65536 and roles differ only in output reserve; the earlier
+# The backend's native window is 65536 tokens (gemma4.context_length), so both
+# chat roles total 65536 and differ only in output reserve; the earlier
 # 139264-token total cannot be admitted by this model. The same model set as
 # 16 GB: the extra memory buys residency headroom (the primary ~7.2 GB and Cyber
 # ~7.1 GB on disk, before KV), not a larger window. Physical 32 GB fit and
@@ -23,10 +25,10 @@ disk_gb = 16
 
 # Sampling is NVIDIA's generation_config.json: temperature 1.0, top_p 0.95,
 # top_k 64; min_p, presence and repeat penalties neutral. The measured suite ran
-# at these values, so no role keeps the former fast-agent temperature exception.
+# at these values.
 # https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-BF16/raw/main/generation_config.json
-[architecture]
-role = "Lead architect (shared primary)"
+[primary]
+role = "Primary"
 active = "nemotron-3.5-bolt:e4b"
 preferred = ["nemotron-3.5-bolt:e4b"]
 reasoning = false
@@ -34,63 +36,9 @@ context_input = 49152
 max_output = 16384
 temperature = 1.0
 keep_alive = "6h"
-purpose = ["architecture", "refactoring", "multi-step debugging", "design"]
-strengths = ["shared resident primary - no load/evict churn", "built-in DFlash draft", "native tool calling"]
-weaknesses = ["64K native window", "no thinking", "one backend serves four roles"]
-top_p = 0.95
-top_k = 64
-repeat_penalty = 1.0
-min_p = 0.0
-presence_penalty = 0.0
-
-[implementation]
-role = "Daily coding (shared primary)"
-active = "nemotron-3.5-bolt:e4b"
-preferred = ["nemotron-3.5-bolt:e4b"]
-reasoning = false
-context_input = 57344
-max_output = 8192
-temperature = 1.0
-keep_alive = "6h"
-purpose = ["everyday coding", "features", "tests"]
-strengths = ["same resident backend as architecture - no reload between roles"]
-weaknesses = ["shares its budget with every other chat capability"]
-top_p = 0.95
-top_k = 64
-repeat_penalty = 1.0
-min_p = 0.0
-presence_penalty = 0.0
-
-[review]
-role = "Code review (shared primary)"
-active = "nemotron-3.5-bolt:e4b"
-preferred = ["nemotron-3.5-bolt:e4b"]
-reasoning = false
-context_input = 49152
-max_output = 16384
-temperature = 1.0
-keep_alive = "6h"
-purpose = ["code review", "bug detection", "security review"]
-strengths = ["larger output reserve for findings", "no separate model to load"]
-weaknesses = ["not a dedicated review model as on the 64 GB tier"]
-top_p = 0.95
-top_k = 64
-repeat_penalty = 1.0
-min_p = 0.0
-presence_penalty = 0.0
-
-[fast]
-role = "Fast agent (shared primary)"
-active = "nemotron-3.5-bolt:e4b"
-preferred = ["nemotron-3.5-bolt:e4b"]
-reasoning = false
-context_input = 57344
-max_output = 8192
-temperature = 1.0
-keep_alive = "6h"
-purpose = ["task classification", "summarisation", "quick edits", "tool-driven lookups"]
-strengths = ["no extra model resident - shares the primary"]
-weaknesses = ["larger than a dedicated 2b would be", "so marginally slower per token"]
+purpose = ["design", "implementation", "code review", "refactoring", "multi-step debugging", "tests"]
+strengths = ["one resident chat model - no load/evict churn", "built-in DFlash draft", "native tool calling"]
+weaknesses = ["64K native window", "no thinking"]
 top_p = 0.95
 top_k = 64
 repeat_penalty = 1.0
@@ -131,9 +79,9 @@ repeat_penalty = 1.0
 
 # ── cyber — unrestricted coding on a separate model ─────────────────────────
 # A separate model on purpose: abliterated weights are the capability, so it
-# cannot share the primary's resident copy the way the four roles above do.
-# Same E4B architecture and 65536 native window, so it follows implementation's
-# shape (non-thinking, 8192 output) and NVIDIA's sampling. The recipe binds three
+# cannot share the primary's resident copy.
+# Same E4B architecture and 65536 native window, so it keeps the primary's
+# total with an 8192-token output reserve, thinking off and NVIDIA's sampling. The recipe binds three
 # reviewed blobs by digest: the Heretic Q4_K_M weights, the f16 projector from the
 # same publisher revision, and NVIDIA's DFlash draft, byte-identical to the draft
 # layer of Ollama's own nemotron-3.5-bolt:e4b-q4_K_M. `files` rather than `from`,
@@ -156,7 +104,7 @@ repeat_penalty = 1.0
   # primary and clients cannot use, so it is released soon after it goes idle.
 keep_alive = "5m"
 purpose = ["refusal-sensitive coding", "security research", "tool-driven edits"]
-strengths = ["unrestricted weights", "NVIDIA DFlash draft attached", "native tool calling", "same window as implementation"]
+strengths = ["unrestricted weights", "NVIDIA DFlash draft attached", "native tool calling", "same total window as the primary"]
 weaknesses = ["a second model beside the primary - a cold load on first use", "GGUF decode is ~3x slower than the MLX primary", "third-party abliterated weights"]
 
 # One guide per exact backend, shared by all capability aliases using it.

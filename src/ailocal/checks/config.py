@@ -67,7 +67,7 @@ def check_client_mappings() -> list[CheckResult]:
     """Every clients.toml mapping must target a capability this tier defines."""
     tier = P.resolve_active_tier()
     profile = P.load_profile(tier)
-    known = {name for name in P.ROLES if name in profile}
+    known = set(P.enabled_roles(tier, _data=profile))
     try:
         targets = P.client_capability_targets()
     except P.ProfileError as exc:
@@ -75,7 +75,8 @@ def check_client_mappings() -> list[CheckResult]:
                             f"{exc.code}: {exc}")]
     out = []
     for client, capabilities in sorted(targets.items()):
-        unknown = sorted(capabilities - known)
+        # An optional role the tier omits resolves through policy's one rule.
+        unknown = sorted({P.resolve_capability(c, known) for c in capabilities} - known)
         out.append(CheckResult(
             f"client:{client}", FAIL if unknown else PASS,
             f"{client} mappings resolve" if not unknown

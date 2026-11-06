@@ -191,7 +191,7 @@ def model_pulls():
     for want, have, pull in (("v/m:mlx-4bit", "v/m:mlx-4bit-custom", True), ("v/m:mlx-4bit", "v/m:latest", True),
                              ("v/m:mlx-4bit", "v/m:mlx-4bit", False), ("v/m", "v/m:latest", False), ("v/m:latest", "v/m", False)):
         with contextlib.ExitStack() as st:
-            pulls(st, {have: 16.0}, {"implementation": {"model": want, "enabled": True}})
+            pulls(st, {have: 16.0}, {"primary": {"model": want, "enabled": True}})
             r = st.enter_context(po(I, "_run", return_value=OK))
             load = st.enter_context(po(M, "verify_load", return_value=True))
             rc = I.pull_models()
@@ -524,9 +524,9 @@ def model_upgrade():
         shutil.copytree(RESOURCES / "profiles", config / "profiles")
         prof = lambda t: config / f"profiles/{t}.toml"  # noqa: E731
         path, shipped = prof("32gb"), P.load_profile("32gb", RESOURCES)
-        ctx, temp, disk = shipped["architecture"]["context_input"], shipped["implementation"]["temperature"], shipped["disk_gb"]
+        ctx, temp, disk = shipped["primary"]["context_input"], shipped["primary"]["temperature"], shipped["disk_gb"]
         text = path.read_text()
-        # The first context_input row is architecture's; the other substitutions touch every matching row.
+        # The first context_input row is primary's; the other substitutions touch every matching row.
         text = text.replace(f"context_input = {ctx}", f"context_input = {ctx + 8192}", 1)
         for old, new in (("[completion]\n", "[completion]\nenabled = false\n"),
                          (f"temperature = {temp}", "temperature = 0.2"), (f"disk_gb = {disk}", f"disk_gb = {disk - 5}")):
@@ -535,13 +535,13 @@ def model_upgrade():
         before, routing = path.read_bytes(), prof("clients").read_bytes()
         authored = P.load_profile("32gb", config)
         total = max(c["context_input"] + c["max_output"] for r, c in authored.items()
-                    if r in P.ROLES and c["active"] == authored["architecture"]["active"])
+                    if r in P.ROLES and c["active"] == authored["primary"]["active"])
         res = I.upgrade_model_defaults(RESOURCES, config)
         after = P.load_profile("32gb", config)
-        arch = after["architecture"]
+        arch = after["primary"]
         check("32gb" in res["updated"] and (res["backup"] / "32gb.toml").read_bytes() == before, "the original policy is backed up")
         check(arch["max_output"] == 16384 and arch["context_input"] + arch["max_output"] == total
-              and after["implementation"]["temperature"] == temp and after["completion"].get("enabled", True)
+              and after["cyber"]["temperature"] == temp and after["completion"].get("enabled", True)
               and after["disk_gb"] == shipped["disk_gb"],
               "the shared runner keeps the largest authored window; shipped sampling, FIM and footprint are adopted")
         check(path.read_text().startswith("# operator comment\n") and prof("clients").read_bytes() == routing
@@ -549,7 +549,7 @@ def model_upgrade():
               "comments and client routing are preserved; a repeat is a no-op")
         for t in ("16gb", "32gb"):
             prof(t).write_text(prof(t).read_text().replace(
-                f"temperature = {P.load_profile(t, RESOURCES)['implementation']['temperature']}", "temperature = 0.3"))
+                f"temperature = {P.load_profile(t, RESOURCES)['primary']['temperature']}", "temperature = 0.3"))
         originals, real, calls = {t: prof(t).read_bytes() for t in ("16gb", "32gb")}, I.os.replace, []
 
         def flaky(a, b):

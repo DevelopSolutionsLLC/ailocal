@@ -8,11 +8,11 @@
     "",
     "All requests route through LiteLLM by ailocal-<capability> model id.",
     "Models and the /model picker are generated from profiles/<tier>.toml.",
-    "Launch default = ailocal-architecture.",
-    "Built-in slots remap: Opus->ailocal-architecture, Sonnet->ailocal-implementation, Haiku->ailocal-fast, Fable->ailocal-review.",
+    "Launch default = ailocal-primary.",
+    "Built-in slots remap: Opus->ailocal-primary, Sonnet->ailocal-primary, Haiku->ailocal-fast, Fable->ailocal-primary.",
     "Launch with: claude-local"
   ],
-  "model": "ailocal-architecture",
+  "model": "ailocal-primary",
   "autoMemoryEnabled": false,
   "attribution": {
     "commit": "",

@@ -1,6 +1,6 @@
 # ── GENERATED — DO NOT EDIT ─────────────────────────────────────────────────
 # Owner:       ailocal (generated, then deployed by `ailocal clients`)
-# Source:      profiles/<active tier>.yaml  (role: implementation)
+# Source:      profiles/<active tier>.toml  (role: primary)
 # Deployed to: ~/.config/ailocal/codex/config.toml  (CODEX_HOME)
 #
 # Model limits come from each entry in the generated model catalog. Selecting
