@@ -26,7 +26,7 @@ from ailocal import generation as G, policy as P  # noqa: E402
 S = Suite()
 check = S.check
 TMP = Path(tempfile.mkdtemp(prefix="ailocal-policy-"))
-GOOD = '[primary]\nrole = "Lead"\nactive = "m:1"\ncontext_input = 100\nmax_output = 20\n'
+GOOD = '[primary]\nrole = "Lead"\nactive = "m:1b"\ncontext_input = 100\nmax_output = 20\n'
 MLX_EVIDENCE = "same-model GGUF comparison"   # docs/maintenance.md#model-format
 
 
@@ -82,7 +82,7 @@ def resolver() -> None:
         root = box(marker)
         got = code_of(P.resolve_active_tier, root, root / "state")
         check(got == want, f"{label} => {want}", got)
-    head = '[primary]\nrole = "L"\nactive = "m"\n'
+    head = '[primary]\nrole = "L"\nactive = "m:1b"\n'
     load_cases = [
         ("missing profile file", None, P.PROFILE_FILE_MISSING),
         ("malformed policy", "[primary\n", P.PROFILE_INVALID),
@@ -92,8 +92,8 @@ def resolver() -> None:
         ("legacy `context`", head + "context = 4096\n", P.PROFILE_SCHEMA_INVALID),
         ("max_output -1", head + "context_input = 100\nmax_output = -1\n", P.ROLE_CONFIG_INVALID),
         ("duplicate key", GOOD + "context_input = 999\n", P.PROFILE_INVALID),
-        ("duplicate section", GOOD + '[primary]\nrole = "X"\nactive = "o"\n', P.PROFILE_INVALID),
-        ("retired role section", GOOD + '[review]\nrole = "R"\nactive = "m:1"\ncontext_input = 100\nmax_output = 20\n', P.PROFILE_SCHEMA_INVALID),
+        ("duplicate section", GOOD + '[primary]\nrole = "X"\nactive = "o:1b"\n', P.PROFILE_INVALID),
+        ("retired role section", GOOD + '[review]\nrole = "R"\nactive = "m:1b"\ncontext_input = 100\nmax_output = 20\n', P.PROFILE_SCHEMA_INVALID),
         ("un-migrated 0.15 profile", GOOD.replace("[primary]", "[architecture]"), P.PROFILE_SCHEMA_INVALID),
     ]
     # Unknown keys were silently dropped before 2026-08-04, so a typo read as set and was not.
@@ -109,7 +109,7 @@ def resolver() -> None:
         check(got == want, f"{label} => {want}", got)
     root = box("64gb", GOOD)
     check(code_of(P.resolve_role, "64gb", "fast", root) == P.ROLE_MISSING, "absent role => ROLE_MISSING")
-    check(P.resolve_role("64gb", "primary", root)["model"] == "m:1", "a colon in a value survives")
+    check(P.resolve_role("64gb", "primary", root)["model"] == "m:1b", "a colon in a value survives")
     msg = code_of(P.load_profile, "64gb", box("64gb", GOOD.replace("[primary]", "[architecture]")), message=True)
     check("ailocal install" in msg, "a retired role section names the migration", msg)
     msg = code_of(P.load_profile, "64gb", box("64gb", GOOD + 'secret_token = "abc123SECRET"\n'), message=True)
@@ -309,15 +309,14 @@ def generated() -> None:
 
 # Tier design (#89): one primary chat role per tier, `fast` only where the primary thinks
 # (the same weights with thinking off), cyber on a separate model at the primary's total
-# window, and FIM completion. 16/32 (#87): one Nemotron 3.5 Bolt E4B library tag and a
-# hash-pinned unrestricted E4B for cyber, both at the model's 65536-token native window,
-# thinking off (20/25 off against 19/25 on), so no [fast]; the DFlash draft is built into
-# each model, so no draft depth is configured.
+# window, and FIM completion. 16/32 (#93): Qwen3.5 4B / 9B MTP, hash-pinned native imports
+# under the structured names, thinking off and greedy (measured 2026-11-05), so no [fast];
+# windows are memory bounds (96K / 160K), with the embedded MTP draft depth configured.
 DESIGN = {   # primary model, primary thinks, cyber model, completion model, total window
-    "16gb": ("nemotron-3.5-bolt:e4b", False, "nemotron-3.5-bolt:e4b-unrestricted", "qwen2.5-coder:1.5b-base", 65536),
-    "32gb": ("nemotron-3.5-bolt:e4b", False, "nemotron-3.5-bolt:e4b-unrestricted", "qwen2.5-coder:1.5b-base", 65536),
-    "64gb": ("gemma4:26b-qat-mtp", True, "gemma4:26b-unrestricted-qat-mtp-q4_K_M", "qwen2.5-coder:3b-base", 196608),
-    "128gb": ("gemma4:26b-qat-mtp", True, "gemma4:26b-unrestricted-qat-mtp-q4_K_M", "qwen2.5-coder:3b-base", 262144),
+    "16gb": ("qwen3.5:4b-mtp", False, "qwen3.5:4b-unrestricted-mtp", "qwen2.5-coder:1.5b-base", 98304),
+    "32gb": ("qwen3.5:9b-calibrated-mtp", False, "qwen3.5:9b-unrestricted-mtp", "qwen2.5-coder:1.5b-base", 163840),
+    "64gb": ("gemma4:26b-qat-mtp", True, "gemma4:26b-unrestricted-qat-mtp", "qwen2.5-coder:3b-base", 196608),
+    "128gb": ("gemma4:26b-qat-mtp", True, "gemma4:26b-unrestricted-qat-mtp", "qwen2.5-coder:3b-base", 262144),
 }
 # Output ceilings per role; the key set is the tier's role set. Primary keeps the window the
 # former architecture role carried; 16/32 pay KV for the ceiling up front, 64/128 take the
@@ -327,7 +326,7 @@ OUTPUT = {"16gb": {"primary": 16384, "cyber": 8192, "completion": 512},
           "64gb": {"primary": 32768, "fast": 8192, "cyber": 32768, "completion": 512},
           "128gb": {"primary": 32768, "fast": 8192, "cyber": 32768, "completion": 512}}
 # Cyber's (context_input, max_output, reasoning): the primary's total with its own reserve.
-CYBER = {"16gb": (57344, 8192, False), "32gb": (57344, 8192, False),
+CYBER = {"16gb": (90112, 8192, False), "32gb": (155648, 8192, False),
          "64gb": (163840, 32768, True), "128gb": (229376, 32768, True)}
 
 
@@ -350,10 +349,13 @@ def hardware() -> None:
         check(cy["num_ctx"] == total and cy["model"] == cyber_model
               and (cy["context_input"], cy["max_output"], bool(cy["reasoning"])) == CYBER[tier],
               f"{tier}: cyber is {cyber_model} at the primary's {total}-token total with its own reserve")
-        # Every shipped chat backend is Gemma-family on stock Ollama (#80, #87): vendor top_k 64,
-        # no Qwen stop list, no runtime patch. A Qwen3.5 selection must declare the patch (ADR 016).
-        check(not cy.get("runtime_patch") and not cy.get("stop") and cy["top_k"] == 64,
-              f"{tier}: cyber ends turns on its EOS and needs no runtime patch")
+        # Every shipped chat backend runs on stock Ollama 0.40.14 (#80, #87, #93): no runtime
+        # patch anywhere. Gemma-family cyber ends turns on its EOS with vendor top_k 64; Qwen
+        # cyber carries the Qwen stop list and greedy sampling (temperature 0).
+        qwen = cyber_model.startswith("qwen3.5:")
+        check(not cy.get("runtime_patch")
+              and (bool(cy.get("stop")) and cy["temperature"] == 0.0 if qwen else not cy.get("stop") and cy["top_k"] == 64),
+              f"{tier}: cyber ends turns on {'the Qwen stop list, greedy' if qwen else 'its EOS'} and needs no runtime patch")
         check(rr["completion"]["enabled"] and rr["completion"]["model"] == completion
               and {completion, cyber_model} <= set(P.required_models(tier, RESOURCES)), f"{tier}: installs {completion} and cyber")
         check(not P.required_runtime_patch(tier, RESOURCES)
@@ -405,12 +407,28 @@ def hardware() -> None:
           "enabled_roles lists a tier's served roles in ROLES order")
 
     S.section("MODEL IDENTITY")
+    accepted = ["qwen3.5:4b-mtp", "qwen3.5:9b-calibrated-mtp", "qwen3.5:4b-unrestricted-mtp", "gemma4:26b-qat-mtp",
+                "gemma4:26b-unrestricted-qat-mtp", "qwen2.5-coder:1.5b-base", "nemotron-3.5-bolt:e4b-unrestricted",
+                "gemma4:26b-it-qat", "nomic-embed-text:270m", "gemma4:26b"]
+    rejected = ["qwen3.5:4b-mtp-q4_K_M", "gemma4:26b-unrestricted-qat-mtp-q4_K_M", "qwen3.5:4b-mtp-q8_0",
+                "gemma4:26b-mtp-qat", "gemma4:26b-qat-qat", "gemma4:26", "x:latest", "hf.co/a/b:c",
+                "Gemma4:26b-qat", "qwen3.5:4b-fp16", "m:1", "o", ""]
+    check([t for t in accepted if P.selection_name_error(t)] == [] and all(P.selection_name_error(t) for t in rejected),
+          "the naming structure accepts family:size with ordered variant tokens and rejects a quantization token, "
+          "a repeated or misordered token, a size without its unit, :latest, a repository URL and uppercase (#93)",
+          [t for t in accepted if P.selection_name_error(t)] + [t for t in rejected if not P.selection_name_error(t)])
+    check(code_of(P.load_profile, "64gb", box("64gb", GOOD.replace("m:1b", "qwen3.5:4b-mtp-q4_K_M"))) == P.PROFILE_SCHEMA_INVALID
+          and code_of(P.load_profile, "64gb", box("64gb", GOOD + 'preferred = ["m:1b", "m:1b-q4_K_M"]\n')) == P.PROFILE_SCHEMA_INVALID,
+          "a profile with a quantization token in active or preferred fails closed (#93)")
     for tier, caps in parsed.items():
         tags = {r: [caps[r]["active"], *caps[r].get("preferred", [])] for r in P.ROLES if r in caps}
         flat = [t for ts in tags.values() for t in ts]
         # `ollama create` without a tag publishes `name:latest`, which names nothing.
         check(all(":" in t and not t.endswith(":latest") for t in flat),
               f"{tier}: every selection is a name:tag identity, never :latest", repr(flat))
+        check(all(P.selection_name_error(t) is None for t in flat)
+              and all(P.selection_name_error(k) is None for k in caps.get("model_guidance", {})),
+              f"{tier}: every selection and guide key follows the one naming structure (#93)", repr(flat))
         check(all(t.startswith("qwen2.5-coder:") and t.endswith("-base") for t in tags["completion"]),
               f"{tier}: completion selects only official base tags")
         mlx = {t for r, ts in tags.items() if r != "completion" for t in ts

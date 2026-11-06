@@ -601,10 +601,11 @@ def old_profile(tier: str) -> str:
     start = text.index("\n[primary]") + 1
     end = min(i for i in (text.find("\n[fast]\n", start), text.find("\n[completion]", start)) if i > 0)
     primary = text[start:end]
-    fast = primary.replace("[primary]", "[fast]").replace("context_input = 49152\nmax_output = 16384",
-                                                         "context_input = 57344\nmax_output = 8192")
-    impl = primary.replace("[primary]", "[implementation]").replace("context_input = 49152\nmax_output = 16384",
-                                                                  "context_input = 57344\nmax_output = 8192")
+    ci, mo = (int(re.search(rf"(?m)^{k} = (\d+)$", primary).group(1)) for k in ("context_input", "max_output"))
+    # 0.15's implementation and fast kept the primary's total with an 8192 reserve.
+    split = f"context_input = {ci + mo - 8192}\nmax_output = 8192"
+    fast = primary.replace("[primary]", "[fast]").replace(f"context_input = {ci}\nmax_output = {mo}", split)
+    impl = primary.replace("[primary]", "[implementation]").replace(f"context_input = {ci}\nmax_output = {mo}", split)
     arch = primary.replace("[primary]", "[architecture]").replace("reasoning = false", "reasoning = true", 1)
     old = text[:start] + arch + "\n" + impl + "\n" + primary.replace("[primary]", "[review]") + "\n" + text[end:]
     if not has_fast:
@@ -624,26 +625,35 @@ def role_migration():
         check(all(set(OLD_ROLES) <= set(tomllib.loads(prof(t).read_text())) for t in P.TIERS)
               and all(raises(P.ProfileError, P.load_profile, t, config) for t in P.TIERS),
               "an un-migrated 0.15 profile fails closed until the installer migrates it")
+        shipped = {t: P.load_profile(t, RESOURCES)["primary"] for t in P.TIERS}
+
+        def edited(tier: str, section: str, **fields) -> None:
+            """Rewrite `fields` inside [section] of the operator's copy, whatever the shipped values are."""
+            text = prof(tier).read_text()
+            i = text.index(f"\n[{section}]\n") + 1
+            j = text.index("\n[", i)
+            body = text[i:j]
+            for key, value in fields.items():
+                body, n = re.subn(rf"(?m)^{key} = .*$", f"{key} = {value}", body, count=1)
+                assert n == 1, (tier, section, key)
+            prof(tier).write_text(text[:i] + body + text[j:])
         # 16gb: the operator edited architecture (an edit the primary must keep) and nothing else.
-        prof("16gb").write_text("# operator comment\n" + prof("16gb").read_text().replace(
-            "context_input = 49152\nmax_output = 16384\ntemperature = 1.0", "context_input = 40960\nmax_output = 16384\ntemperature = 0.7", 1))
+        edited("16gb", "architecture", context_input=40960, temperature=0.7)
+        prof("16gb").write_text("# operator comment\n" + prof("16gb").read_text())
         # 32gb: the operator edited [fast] on a tier the shipped profile serves without one.
-        text = prof("32gb").read_text()
-        i, j = text.index("\n[fast]\n"), text.index("\n[completion]")
-        prof("32gb").write_text(text[:i] + text[i:j].replace("temperature = 1.0", "temperature = 0.5", 1) + text[j:])
+        edited("32gb", "fast", temperature=0.5)
         # 64gb: the operator edited [review] alone -- two operator values, no rule to choose.
-        text = prof("64gb").read_text()
-        i, j = text.index("\n[review]\n"), text.index("\n[fast]\n")
-        prof("64gb").write_text(text[:i] + text[i:j].replace("temperature = 1.0", "temperature = 0.3", 1) + text[j:])
+        edited("64gb", "review", temperature=0.3)
         originals = {t: prof(t).read_bytes() for t in P.TIERS}
         res = I.migrate_profile_roles(RESOURCES, config)
         report = I.role_conflict_report(res["conflicts"])
         check(res["migrated"] == [] and res["backup"] is None and list(res["conflicts"]) == ["64gb"]
-              and res["conflicts"]["64gb"] == [("temperature", {"architecture": 1.0, "review": 0.3})]
+              and res["conflicts"]["64gb"] == [("temperature", {"architecture": shipped["64gb"]["temperature"], "review": 0.3})]
               and all(prof(t).read_bytes() == b for t, b in originals.items())
-              and "64gb.toml  temperature: [architecture] = 1.0, [review] = 0.3" in report and "--reset-config" in report,
+              and f"64gb.toml  temperature: [architecture] = {shipped['64gb']['temperature']}, [review] = 0.3" in report
+              and "--reset-config" in report,
               "a retired section carrying its own edit is reported, nothing is written for any tier", report)
-        prof("64gb").write_text(prof("64gb").read_text().replace("temperature = 0.3", "temperature = 1.0"))
+        edited("64gb", "review", temperature=shipped["64gb"]["temperature"])
         originals["64gb"] = prof("64gb").read_bytes()
         res = I.migrate_profile_roles(RESOURCES, config)
         check(res["migrated"] == list(P.TIERS) and res["conflicts"] == {} and res["kept_fast"] == ["32gb"]
@@ -655,12 +665,12 @@ def role_migration():
               repr({k: v for k, v in res.items() if k != "backup"}))
         after = {t: P.load_profile(t, config) for t in P.TIERS}
         p16, p32 = after["16gb"]["primary"], after["32gb"]
-        check((p16["context_input"], p16["max_output"], p16["temperature"]) == (40960, 16384, 0.7)
+        check((p16["context_input"], p16["max_output"], p16["temperature"]) == (40960, shipped["16gb"]["max_output"], 0.7)
               and p16["role"] == P.load_profile("16gb", RESOURCES)["primary"]["role"]
               and prof("16gb").read_text().startswith("# operator comment\n")
               and set(after["16gb"]) == set(P.load_profile("16gb", RESOURCES)),
               "primary takes [architecture] verbatim: the operator's window and sampling survive, comments too")
-        check(p32["fast"]["temperature"] == 0.5 and p32["primary"]["temperature"] == 1.0
+        check(p32["fast"]["temperature"] == 0.5 and p32["primary"]["temperature"] == shipped["32gb"]["temperature"]
               and not any(r in d for d in after.values() for r in OLD_ROLES),
               "the operator's edited [fast] stays as their own fast role; no retired section remains")
         check(p16["reasoning"] is False and p32["primary"]["reasoning"] is False
@@ -669,7 +679,8 @@ def role_migration():
         check({t: {r: (c["context_input"], c["max_output"]) for r, c in d.items() if r in ("primary", "fast", "cyber")}
                for t, d in after.items() if t != "16gb"}
               == {t: {r: (c["context_input"], c["max_output"]) for r, c in P.load_profile(t, RESOURCES).items()
-                      if r in ("primary", "fast", "cyber")} | ({"fast": (57344, 8192)} if t == "32gb" else {})
+                      if r in ("primary", "fast", "cyber")}
+                  | ({"fast": (shipped["32gb"]["context_input"] + shipped["32gb"]["max_output"] - 8192, 8192)} if t == "32gb" else {})
                   for t in P.TIERS if t != "16gb"},
               "primary keeps the former architecture window on every tier; fast and cyber are unchanged")
         before = {t: prof(t).read_bytes() for t in P.TIERS}
@@ -678,7 +689,7 @@ def role_migration():
               and all(prof(t).read_bytes() == b for t, b in before.items()),
               "a repeat is a no-op, a kept [fast] included")
         up = I.upgrade_model_defaults(RESOURCES, config)
-        check(up["updated"] == ["16gb"] and P.load_profile("16gb", config)["primary"]["temperature"] == 1.0
+        check(up["updated"] == ["16gb"] and P.load_profile("16gb", config)["primary"]["temperature"] == shipped["16gb"]["temperature"]
               and P.load_profile("16gb", config)["primary"]["context_input"] == 40960,
               "--upgrade-models then adopts the shipped sampling where it was edited and keeps the operator's window")
         for t in ("16gb", "32gb"):
@@ -710,7 +721,7 @@ def role_migration():
         res = I.migrate_profile_roles(RESOURCES, config)
         check(res["migrated"] == ["16gb"] and res["conflicts"] == {} and res["kept_fast"] == []
               and res["thinking_off"] == ["16gb"] and res["dropped"] == {"16gb": ["implementation", "review", "fast"]}
-              and P.load_profile("16gb", config)["primary"]["temperature"] == 1.0
+              and P.load_profile("16gb", config)["primary"]["temperature"] == shipped["16gb"]["temperature"]
               and P.load_profile("16gb", config)["primary"]["reasoning"] is False,
               "0.15.1's own non-thinking sampling in [implementation] and [fast] is not an operator edit",
               repr({k: v for k, v in res.items() if k != "backup"}))

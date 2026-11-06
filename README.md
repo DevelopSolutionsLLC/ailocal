@@ -149,8 +149,8 @@ ailocal measures your memory and chooses a profile. You do not need to think abo
 
 | Memory | Main model | Context window | Models on disk |
 |---|---|---|---|
-| 16 GB | `nemotron-3.5-bolt:e4b` | 64K | ~16 GB |
-| 32 GB | `nemotron-3.5-bolt:e4b` | 64K | ~16 GB |
+| 16 GB | `qwen3.5:4b-mtp` | 96K | ~10 GB |
+| 32 GB | `qwen3.5:9b-calibrated-mtp` | 160K | ~15 GB |
 | 64 GB | `gemma4:26b-qat-mtp` | 192K | ~37 GB |
 | 128 GB | `gemma4:26b-qat-mtp` | 256K | ~37 GB |
 
