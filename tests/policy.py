@@ -534,6 +534,14 @@ def env_ownership() -> None:
               "generated secrets live under state, user secrets under config")
         check(not hasattr(e, "migrate") and not hasattr(e, "legacy_file"),
               "the v0.11 .env migration is gone (#96): there is nothing left to migrate from")
+        check(e.bind() == e.BIND_LOCAL, "the proxy binds loopback unless told otherwise (#103)")
+        e.set_bind(e.BIND_LAN)
+        e.set_ollama_patch("")
+        e.set_bind("10.0.0.5")
+        user = e.parse(cfg / ".env.local")
+        check(e.bind() == "10.0.0.5" and user["AILOCAL_BIND"] == "10.0.0.5" and user.get("AILOCAL_OLLAMA_PATCH") == ""
+              and all(k in user for k in e.USER_ALWAYS) and mode(cfg / ".env.local") == 0o600,
+              "set_bind replaces its one line and keeps every other override (#103)")
 
 def timeouts() -> None:
     S.section("TIMEOUTS")

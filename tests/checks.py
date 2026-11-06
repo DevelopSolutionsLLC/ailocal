@@ -152,6 +152,22 @@ def bounded() -> None:
           and digest == ("custom-container-name", "sha256:expected")
           and not any(a[1:3] == ["ps", "-q"] for a in calls),
           "reachability and digest checks select this installation and never enumerate the host")
+    # #103: the proxy may leave loopback only when `ailocal bind` says so, and then as a warning.
+    from ailocal import environment
+    def ports(mapping):
+        return lambda argv, **_kw: SimpleNamespace(returncode=0, stdout=(
+            mapping if argv[1] == "port" else "/" + S.CONTAINER if argv[-1] == "{{.Name}}" else "x"))
+    outcomes = {}
+    for bind, mapping in (("0.0.0.0", "4000/tcp -> 0.0.0.0:4000\n4000/tcp -> [::]:4000"),
+                          ("0.0.0.0", "4000/tcp -> 127.0.0.1:4000"), ("127.0.0.1", "4000/tcp -> 0.0.0.0:4000"),
+                          ("10.0.0.5", "4000/tcp -> 0.0.0.0:4000")):
+        with patch.object(S, "_run", side_effect=ports(mapping)), patch.object(S, "_running_containers", lambda: ["x"]), \
+                patch.object(environment, "bind", lambda: bind):
+            outcomes[(bind, mapping.split()[-1])] = S.check_loopback()[0].status
+    check(outcomes == {("0.0.0.0", "[::]:4000"): WARN, ("0.0.0.0", "127.0.0.1:4000"): WARN,
+                       ("127.0.0.1", "0.0.0.0:4000"): FAIL, ("10.0.0.5", "0.0.0.0:4000"): FAIL},
+          "a configured LAN bind is a warning, a stale loopback a warning to restart, an unconfigured or "
+          "wrong address a failure (#103)", repr(outcomes))
     with tempfile.TemporaryDirectory() as box, patch.object(P, "deployed_client_root", return_value=Path(box)):
         fresh = C.check_local_artifacts().status
         (Path(box) / "claude").mkdir()

@@ -117,12 +117,12 @@ services:
       # must not accumulate inside the checkout.
       - ${AILOCAL_STATE:-./data}/captures:/app/captures
     ports:
-      # Localhost-only per security spec. To expose on a LAN, put an
-      # authenticating reverse proxy in front — never expose LiteLLM directly.
-      # Host port is overridable so an isolated integration stack can run
-      # without contending with a production instance. The CONTAINER port is
-      # fixed: the healthcheck and the internal service URL both assume 4000.
-      - "127.0.0.1:${AILOCAL_LITELLM_PORT:-4000}:4000"
+      # Loopback unless `ailocal bind lan` set AILOCAL_BIND (the proxy holds
+      # the master key, the one protection off-host). Host port is overridable
+      # so an isolated integration stack can run without contending with a
+      # production instance. The CONTAINER port is fixed: the healthcheck and
+      # the internal service URL both assume 4000.
+      - "${AILOCAL_BIND:-127.0.0.1}:${AILOCAL_LITELLM_PORT:-4000}:4000"
     healthcheck:
       # /health/liveliness = proxy process is up. It does NOT require Ollama to
       # be reachable (that is checked by `ailocal check`). curl is not in the LiteLLM
@@ -133,6 +133,6 @@ services:
       retries: 5
       start_period: 60s
 
-# Ports bind 127.0.0.1 only: this proxy holds the master key and must not be
-# reachable off-host. SearXNG is reached over the internal network, not a
-# published port.
+# The proxy is the only service that can leave loopback (`ailocal bind`): it
+# holds the master key. SearXNG is reached over the internal network, not a
+# published port, and Ollama binds loopback on the host.

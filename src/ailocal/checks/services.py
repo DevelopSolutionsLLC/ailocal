@@ -693,7 +693,12 @@ def _running_containers() -> list[str]:
 
 
 def check_loopback() -> list[CheckResult]:
-    """Check published ports of this installation's containers only."""
+    """Published ports of this installation's containers only. The proxy may
+    leave loopback when `ailocal bind` says so, reported as a warning each time
+    so it is never on by accident; anything else off-host is a failure."""
+    from ailocal import environment
+    from ailocal.runtime import _bind_matches
+    bind = environment.bind()
     out = []
     for cid in _running_containers():
         name = _run(["docker", "inspect", cid,
@@ -703,8 +708,22 @@ def check_loopback() -> list[CheckResult]:
             out.append(CheckResult("reachability", PASS,
                                    f"{name} publishes no ports"))
             continue
-        exposed = [line.split()[-1] for line in ports.splitlines()
-                   if not line.split()[-1].startswith(("127.0.0.1:", "[::1]:"))]
+        mappings = [line.split()[-1] for line in ports.splitlines()]
+        exposed = [m for m in mappings if not m.startswith(("127.0.0.1:", "[::1]:"))]
+        if name == CONTAINER and bind != environment.BIND_LOCAL:
+            if exposed and all(_bind_matches(bind, m) for m in exposed):
+                out.append(CheckResult("reachability", WARN,
+                                       f"{name} reachable off-host on {bind} by `ailocal bind`; "
+                                       "the master key is the only protection",
+                                       remediation="ailocal bind local && ailocal start"))
+            elif not exposed:
+                out.append(CheckResult("reachability", WARN,
+                                       f"{name} still binds loopback; `ailocal bind` set {bind}",
+                                       remediation="ailocal start"))
+            else:
+                out.append(CheckResult("reachability", FAIL,
+                                       f"{name} bound to {' '.join(exposed)}, not the configured {bind}"))
+            continue
         out.append(CheckResult("reachability", PASS, f"{name} bound to loopback only")
                    if not exposed else
                    CheckResult("reachability", FAIL,
