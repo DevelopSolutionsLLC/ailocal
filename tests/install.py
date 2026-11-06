@@ -670,6 +670,22 @@ def role_migration():
         shutil.copy(RESOURCES / "profiles/16gb.toml", prof("16gb"))
         check(I.migrate_profile_roles(RESOURCES, config)["migrated"] == ["32gb"],
               "a profile already in the new format is not touched")
+        # 16gb as v0.15.1 shipped it: [implementation] and [fast] carried Qwen's non-thinking
+        # sampling, which matches neither [architecture] nor the 0.16 (Nemotron) default.
+        text = old_profile("16gb")
+        for section, values in I.RETIRED_ROLE_DEFAULTS_015["16gb"].items():
+            i = text.index(f"\n[{section}]\n") + 1
+            j = text.index("\n[", i)
+            body = re.sub(r"(?m)^(" + "|".join(values) + r") = .*\n", "", text[i:j])
+            text = text[:i] + body.rstrip("\n") + "\n" + "".join(
+                f"{k} = {json.dumps(v)}\n" for k, v in values.items()) + text[j:]
+        prof("16gb").write_text(text)
+        res = I.migrate_profile_roles(RESOURCES, config)
+        check(res["migrated"] == ["16gb"] and res["conflicts"] == {} and res["kept_fast"] == []
+              and res["dropped"] == {"16gb": ["implementation", "review", "fast"]}
+              and P.load_profile("16gb", config)["primary"]["temperature"] == 1.0,
+              "0.15.1's own non-thinking sampling in [implementation] and [fast] is not an operator edit",
+              repr({k: v for k, v in res.items() if k != "backup"}))
         link = config / "profiles/128gb.toml"
         link.unlink(), link.symlink_to(RESOURCES / "profiles/128gb.toml")
         check(raises(ValueError, I.migrate_profile_roles, RESOURCES, config), "a profile symlink is refused")

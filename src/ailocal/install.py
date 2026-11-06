@@ -397,6 +397,16 @@ ROLE_SPLIT_FIELDS = ("role", "purpose", "strengths", "weaknesses", "context_inpu
 #: Where [primary] takes its values from, first match wins.
 PRIMARY_SOURCES = ("primary", "architecture", "implementation", "review")
 
+#: Where a retired section differed from [architecture] in the 0.15.1 shipped profiles by
+#: default, not by an operator's hand: Qwen3.5's non-thinking sampling on 16gb and 32gb.
+#: The 0.16 primary there is Nemotron (#87), so these values match neither the migration
+#: source nor the shipped default and would otherwise read as an operator edit. On 64gb
+#: and 128gb the three roles were identical and [fast] stays.
+RETIRED_ROLE_DEFAULTS_015 = {
+    tier: {"implementation": {"temperature": 0.7, "top_p": 0.8, "presence_penalty": 1.5, "reasoning": False},
+           "fast": {"temperature": 0.0, "top_p": 0.9, "presence_penalty": 1.5, "reasoning": False}}
+    for tier in ("16gb", "32gb")}
+
 
 def _section_span(text: str, header: str) -> tuple[int, int] | None:
     """(start, end) of `[header]` through the line before the next table, with the
@@ -424,13 +434,13 @@ def migrate_profile_roles(source: Path, config: Path) -> dict:
     every value the operator set survives (`--upgrade-models` adopts the shipped
     label and prose afterwards). Each other retired section is then compared with
     it outside ROLE_SPLIT_FIELDS. A field that differs is a CONFLICT only when
-    the other section's value is not the shipped default, because then both
+    the other section's value is neither the shipped default nor 0.15.1's own
+    default for that section (RETIRED_ROLE_DEFAULTS_015), because then both
     sections carry an operator edit and there is no rule to choose between them;
     it is reported, left for the operator, and nothing is written for any tier.
-    (The shipped 0.16 primary carries the values the three 0.15 roles shared,
-    so "still the shipped default" is one comparison.) [fast] on a tier the
-    shipped profile serves without one is dropped when, outside those fields, it
-    is the shipped default or equals the primary, and otherwise kept as the
+    [fast] on a tier the shipped profile serves without one is dropped when,
+    outside those fields, it is the shipped default, equals the primary, or is
+    the primary with 0.15.1's fast overrides, and otherwise kept as the
     operator's own fast role.
 
     Every candidate is parsed and compared before any live file changes;
@@ -463,13 +473,16 @@ def migrate_profile_roles(source: Path, config: Path) -> dict:
         expected = {k: copy.deepcopy(v) for k, v in data.items() if k not in retired}
         expected["primary"] = copy.deepcopy(primary)
         remove, found, default = [r for r in retired if r != src], [], shipped["primary"]
+        legacy = RETIRED_ROLE_DEFAULTS_015.get(tier, {})
         for section in remove:
+            shipped_015 = legacy.get(section, {})
             for field in sorted(set(other(data[section])) | set(other(primary))):
                 value = data[section].get(field)
-                if value != primary.get(field) and value != default.get(field):
+                if value != primary.get(field) and value != default.get(field) \
+                        and not (field in shipped_015 and value == shipped_015[field]):
                     found.append((field, {src: primary.get(field), section: value}))
         if stray_fast:
-            if other(data["fast"]) in (other(primary), other(default)):
+            if other(data["fast"]) in (other(primary), other(default), other(primary) | legacy.get("fast", {})):
                 remove.append("fast")
                 expected.pop("fast")
             else:
