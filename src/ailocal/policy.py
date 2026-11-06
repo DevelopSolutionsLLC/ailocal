@@ -161,6 +161,35 @@ RETIRED_ROLE_FIELDS = ("persona",)
 #: a value this module invents would not be one any generated config ever had.
 REQUIRED_ROLE_FIELDS = ("role", "active", "context_input")
 
+#: The one structure every model selection follows, `<family>:<size>[-<variant>…]`:
+#: a lowercase family (never a repository URL), a size (`4b`, `1.5b`, `270m`,
+#: `e4b`) and variant tokens from SELECTION_VARIANTS in that order, each at most
+#: once. A quantization token never appears: the quantization is what the
+#: source hash pins, so a library tag whose own name carries one is imported
+#: natively under the structured name. `ollama list` then shows one name per
+#: selection on every tier, and a guide keyed by name follows the model.
+SELECTION_VARIANTS = ("unrestricted", "calibrated", "it", "base", "qat", "mtp")
+SELECTION_NAME = re.compile(r"^(?P<family>[a-z0-9][a-z0-9.-]*):(?P<size>\d+(?:\.\d+)?[bm]|e\d+b)"
+                            r"(?P<variants>(?:-[a-z0-9_]+)*)$")
+
+
+def selection_name_error(name) -> str | None:
+    """Why `name` is not a structured selection name, or None when it is."""
+    m = SELECTION_NAME.fullmatch(str(name)) if isinstance(name, str) else None
+    if m is None:
+        return (f"{name!r} is not <family>:<size>[-variant…] (lowercase family, size such as "
+                "4b, 1.5b, 270m or e4b; never :latest or a repository URL)")
+    tokens = [t for t in m.group("variants").split("-") if t]
+    unknown = [t for t in tokens if t not in SELECTION_VARIANTS]
+    if unknown:
+        return (f"{name!r} carries {', '.join(unknown)}: the variant tokens are "
+                f"{', '.join(SELECTION_VARIANTS)}; a quantization is pinned by the source hash, never named")
+    order = [SELECTION_VARIANTS.index(t) for t in tokens]
+    if order != sorted(set(order)):
+        return f"{name!r}: variant tokens must appear once each, in the order {'-'.join(SELECTION_VARIANTS)}"
+    return None
+
+
 #: `context` was ambiguous — TOTAL window in one reader, INPUT budget in
 #: another. It is an error, not a fallback: guessing which was meant is how both
 #: interpretations survived side by side.
@@ -568,6 +597,9 @@ def _validate_guidance(data: dict) -> None:
     if not isinstance(guides, dict):
         raise ProfileError(PROFILE_SCHEMA_INVALID, "model_guidance must be a table")
     for model, guide in guides.items():
+        why = selection_name_error(model)
+        if why:
+            raise ProfileError(PROFILE_SCHEMA_INVALID, f"model_guidance key: {why}")
         required = {"summary", "prompting", "limitations", "evidence", "sources"}
         if not isinstance(guide, dict) or not required <= set(guide) <= required | {"name", "input_modalities"}:
             raise ProfileError(PROFILE_SCHEMA_INVALID, "invalid model_guidance fields")
@@ -633,6 +665,13 @@ def _validate_role(role: str, cfg) -> None:
     if missing:
         raise ProfileError(PROFILE_SCHEMA_INVALID,
                            f"{role} missing {', '.join(missing)}")
+    preferred = cfg.get("preferred")
+    if preferred is not None and (not isinstance(preferred, list) or not all(isinstance(p, str) for p in preferred)):
+        raise ProfileError(PROFILE_SCHEMA_INVALID, f"{role}.preferred must be a string list")
+    for field, name in (("active", cfg["active"]), *(("preferred", p) for p in preferred or [])):
+        why = selection_name_error(name)
+        if why:
+            raise ProfileError(PROFILE_SCHEMA_INVALID, f"{role}.{field}: {why}")
     source = cfg.get("source")
     draft = cfg.get("draft_num_predict")
     if draft is not None and (type(draft) is not int or draft < 0):

@@ -1,5 +1,34 @@
 # Model optimization audit — 2026-10-27
 
+## 16/32 GB: Qwen3.5 returns on stock Ollama, one naming structure for every tier — 2026-11-06 (#93)
+
+The 16gb and 32gb profiles return to Qwen3.5 4B and 9B, on stock Ollama 0.40.14, thinking off, greedy sampling (temperature 0, neutral top_p/top_k/min_p, no penalties), with the Qwen `<|im_end|>`/`<|im_start|>` stop lists. Every selection on every tier now carries the one structured name (`docs/architecture.md#model-names`); the 64/128 GB cyber alias `gemma4:26b-unrestricted-qat-mtp-q4_K_M` becomes `gemma4:26b-unrestricted-qat-mtp`, the name the operator's live profiles already used.
+
+| Tier, role | Selection | Source | Window |
+|---|---|---|---|
+| 16 GB primary | `qwen3.5:4b-mtp` | Ollama library `qwen3.5:4b-mtp-q4_K_M`, weights `a9d0a3e1d8c91732a3812becd31f8d4a8ff57414903f226306069f0437e2ac50`, MTP draft `83ba6dc1b62e441fd679cbfdb1df0fac0e14231a34ac890e4295d6e792e5dea9` and projector `e56a899b1540860385465756dd308c84417410b94dbc1c380adffd20a921ca60` attached by the library build; native import under the structured name | 81920+16384 |
+| 16 GB cyber | `qwen3.5:4b-unrestricted-mtp` | `hf.co/localslm/Qwen3.5-4B-MTP-Uncensored:model_q4_k_m.gguf`, `0fe4f588e328513e7b55158a699fa68bc55be226ca338714e633569d4d2e5007` | 90112+8192 |
+| 32 GB primary | `qwen3.5:9b-calibrated-mtp` | `hf.co/unsloth/Qwen3.5-9B-MTP-GGUF:Qwen3.5-9B-Q4_K_M.gguf`, `e8dd94817e95d6c0939102049d068418269978377b13616c4726235e232841fe` | 147456+16384 |
+| 32 GB cyber | `qwen3.5:9b-unrestricted-mtp` | `hf.co/localslm/Qwen3.5-9B-MTP-Uncensored:model_q4_k_m.gguf`, `2d1019622dd398ba68d17cd78651ec24ed39e4e7e3a5ad563d1060f66a5ab06f` | 155648+8192 |
+| 16/32 GB completion | `qwen2.5-coder:1.5b-base` | Ollama library | unchanged |
+
+[REAL] 2026-11-05, 128 GB M-series host, stock Ollama 0.40.14, thinking off, greedy, direct Ollama. Coding and tool use:
+
+| Model | HumanEval+ (164) | Same 93 problems as Nemotron | Tool loop | Recovery after an injected failure | Speed |
+|---|---|---|---|---|---|
+| Qwen3.5 4B Q4_K_M | 78.7% | 77/93 | 10/10 | 5/5 | 98 tok/s |
+| Qwen3.5 4B Q8_0 | 79.3% | 82/93 | 10/10 | 5/5 | 113 tok/s |
+| Qwen3.5 9B calibrated | 84.8% (published base 87.2%) | 85/93 | 10/10 | 5/5 | 51 tok/s |
+| Nemotron 3.5 Bolt E4B (reference, #87) | partial run | 81/93 | 3/3 | 1/1 | 159–260 tok/s |
+
+Greedy sampling closed the 4B's gap against Nemotron (16/25 on the 5-task suite under Qwen's non-thinking preset on 2026-11-05); on the same 93 problems the 9B beats Nemotron. The Q8_0 4B scores higher and faster but is not selected: on 16 GB its weights do not leave room for the 96K window beside cyber.
+
+[APPROX] Memory, an upper bound from each runner's physical footprint plus its mapped weights (vmmap's resident column was implausibly low and was not used): Qwen 4B Q4 at 96K ~6.8 GB (~8 GB with the helpers, fits 16 GB); Qwen 4B unrestricted at 96K ~5.4 GB (fits alone; Ollama unloads the primary to load it, ~12 GB together exceeds the ~10.7 GB the primary leaves); Qwen 9B and 9B unrestricted at 163,840 ~9.4 GB each (both resident on 32 GB, ~20 GB with the helpers; the 9B's attention geometry keeps KV near 24 KB per token); Gemma 26B + 26B unrestricted at 196K ~20.0 + 22.2 GB (~44.5 GB with the helpers under a ~48 GB default GPU limit on 64 GB, a narrow margin not confirmed on a 64 GB Mac) and at 262K ~21.3 + 23.5 GB on 128 GB. `OLLAMA_MAX_LOADED_MODELS=4` therefore holds on 64/128 GB; on 16/32 GB three loaded models and one parallel slot are the recommended limits, not yet modelled per tier.
+
+[REAL] 2026-11-06: `qwen3.5:4b-mtp-q4_K_M` pulled from the library on the 128 GB host; `/api/show` reports the three blobs above and `qwen35.context_length` 262144. The profiles were validated by schema and the gate; the 16/32 GB selections were not re-run end to end after the rename.
+
+[UNVERIFIED] Physical 16 GB and 32 GB fit on that hardware, full-window latency, repository-scale accuracy; the unrestricted builds were not re-measured under greedy sampling (their figures are the 2026-10-27/28 records).
+
 ## 16/32 GB: Nemotron 3.5 Bolt E4B replaces Qwen3.5 — 2026-11-05 (#87)
 
 The 16gb and 32gb profiles stop serving Qwen3.5 4B/9B. Every chat role runs NVIDIA Nemotron 3.5 Bolt E4B, thinking off, at the model's 65,536-token native window with NVIDIA's `generation_config.json` sampling (temperature 1.0, top_p 0.95, top_k 64; neutral min_p, presence and repeat penalties). The completion role is unchanged. No shipped role declares the patched Ollama runtime.
