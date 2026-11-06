@@ -184,32 +184,24 @@ Claude Code's variables are process-wide while its model slots route to differen
 
 **Add a client template** — place the authored template under `resources/clients/<client>/`, emit its rendered output to `$AILOCAL_STATE/clients/<client>/` from the generator, and deploy it from `src/ailocal/clients.py`. Never write generated output beside the template.
 
-**Add a bundled integration** — place it under `resources/integrations/<name>/` with its own
-provenance and licences, provision it from `src/ailocal/clients.py` into the state root, and
-give it a check in `src/ailocal/checks/`. It runs as a subprocess with its own interpreter, so
-ailocal's `dependencies = []` is unaffected. See the artifact component and ADR 011.
+**Add a bundled integration** — place it under `resources/integrations/<name>/` with its own provenance and licences, provision it from `src/ailocal/clients.py` into the state root, and give it a check in `src/ailocal/checks/`. It runs as a subprocess with its own interpreter, so ailocal's `dependencies = []` is unaffected. See the artifact component and ADR 011.
 
 ---
 
 ## The claude-local surface
 
-Inference is **always** through LiteLLM. There is no direct-Ollama path for an agent or a
-subagent, in production or otherwise; the proxy is the only route, which is what makes the
-gateway, the registry and the metrics meaningful.
+Inference is **always** through LiteLLM. There is no direct-Ollama path for an agent or a subagent, in production or otherwise; the proxy is the only route, which is what makes the gateway, the registry and the metrics meaningful.
 
 Client configuration shapes what the model sees on a `claude-local` request, without writing to `~/.claude`:
 
-- **MCP tool search** (`ENABLE_TOOL_SEARCH=true`) defers what can be deferred. Requires
-  LiteLLM ≥ 1.98, which preserves the mid-array `role: "system"` messages the deferred-tool
-  listing travels in.
+- **MCP tool search** (`ENABLE_TOOL_SEARCH=true`) defers what can be deferred. Requires LiteLLM ≥ 1.98, which preserves the mid-array `role: "system"` messages the deferred-tool listing travels in.
 - **Native Workflow disabled**, because its schema cannot be deferred at all.
 - **The bundled artifact MCP**, which declares `alwaysLoad` and is therefore eager.
 - **The bundled research search tool**, which also declares `alwaysLoad`; local answer synthesis is opt-in.
 
 A delegated subagent gets what it declares minus `Grep`/`Glob`; the matrix and measurement method are in [claude-local.md](claude-local.md#known-subagent-limitations). Adding research changes the parent tool surface; an exact current tool/byte count has not been measured.
 
-**Cadence is optional and separately owned.** ailocal neither installs nor depends on it, and
-`claude-local` is complete without it.
+**Cadence is optional and separately owned.** ailocal neither installs nor depends on it, and `claude-local` is complete without it.
 
 ---
 
@@ -247,11 +239,6 @@ Invalid Mermaid can no longer be published: `publish()` parses every diagram wit
 
 ## Decisions
 
-Durable decisions are in [adr/](adr/): the tool gateway and task classification
-(004, partially superseded at LiteLLM 1.98), local and hosted models side by
-side (008), host policy as TOML read by `tomllib` (010), the bundled
-artifact capability (011), and the collapse of the chat roles to `primary` and an
-optional `fast` (018). Numbers are never reused; a gap is a decision
-recorded elsewhere or never taken.
+Durable decisions are in [adr/](adr/): the tool gateway and task classification (004, partially superseded at LiteLLM 1.98), local and hosted models side by side (008), host policy as TOML read by `tomllib` (010), the bundled artifact capability (011), and the collapse of the chat roles to `primary` and an optional `fast` (018). Numbers are never reused; a gap is a decision recorded elsewhere or never taken.
 
 ---

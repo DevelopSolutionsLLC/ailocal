@@ -49,7 +49,7 @@ Language servers are optional and only matter for Claude Code. Install the ones 
 npm i -g pyright                                    # Python
 npm i -g typescript-language-server typescript      # TypeScript/JavaScript
 brew install gopls                                  # Go
-xcode-select --install                              # C/C++ (clangd); also needed to build the native runtime
+xcode-select --install                              # C/C++ (clangd); with Go, also for `--ollama-patch`
 ```
 
 ### 2. Clients (optional)
@@ -71,7 +71,7 @@ ailocal install
 
 That is the only install path. The tag is the current release; the same wheel is attached to [the release](https://github.com/DevelopSolutionsLLC/ailocal/releases/latest) for download and verification.
 
-`ailocal install` detects your memory tier, pulls and verifies the models, builds the reviewed native runtime (Go and Xcode's command-line tools are required), starts the services, configures the clients it finds, and ends with `ailocal check`. It asks before touching any client configuration and exits nonzero with the fixing commands if validation fails. Allow 10 to 55 GB of model storage depending on your tier. It is safe to re-run.
+`ailocal install` detects your memory tier, pulls and verifies the models, runs stock Ollama (the reviewed native runtime is built only for `--ollama-patch` or a role that declares it, and needs Go and Xcode's command-line tools), starts the services, configures the clients it finds, and ends with `ailocal check`. It asks before touching any client configuration and exits nonzero with the fixing commands if validation fails. Allow 10 to 55 GB of model storage depending on your tier. It is safe to re-run.
 
 ### 4. Verify
 
