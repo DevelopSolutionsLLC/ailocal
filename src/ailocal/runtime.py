@@ -13,10 +13,7 @@ import re
 import shutil
 import subprocess
 import sys
-import time
 import tomllib
-import urllib.error
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -24,21 +21,7 @@ from . import policy
 
 OLLAMA = policy.ollama_url()
 
-BOLD, DIM, RESET = "\033[1m", "\033[2m", "\033[0m"
-GREEN, RED, YELLOW, MAGENTA, CYAN = ("\033[32m", "\033[31m", "\033[33m",
-                                     "\033[35m", "\033[1;36m")
-
-
-def _c(text: object, colour: str) -> str:
-    return f"{colour}{text}{RESET}"
-
-
-def ok(m):   print(f"  {_c('✓', GREEN)} {m}")
-def bad(m):  print(f"  {_c('✗', RED)} {m}")
-def warn(m): print(f"  {_c('⚠', YELLOW)} {m}")
-def dim(m):  print(f"  {_c('—', DIM)} {m}")
-def hdr(m):  print(f"\n{BOLD}{m}{RESET}")
-def step(m): print(f"\n▶ {m}")
+from .report import BOLD, CYAN, DIM, GREEN, MAGENTA, RED, RESET, YELLOW, _c, bad, dim, hdr, ok, step, warn  # noqa: F401
 
 
 def _fail(message: str) -> "SystemExit":
@@ -198,23 +181,25 @@ def wait_ready(max_attempts: int = 30, progress: bool = False) -> bool:
     is the wrong signal here.
     """
     url = f"{proxy_url()}/health/liveliness"
-    for attempt in range(max_attempts):
-        if _get(url) is not None:
-            if progress:
-                print(" " * 20, end="\r")
-            return True
+    from .primitives import wait_until
+
+    def waited(attempt: int) -> None:
         if progress:
-            print(f"  Waiting... ({attempt * 3}s)", end="\r")
-        time.sleep(3)
-    return _get(url) is not None
+            print(f"  waiting for proxy{'.' * (attempt % 4)}", end="\r")
+    ready = wait_until(lambda: _get(url) is not None, max_attempts, 3, waited)
+    if progress:
+        print(" " * 20, end="\r")
+    return ready
 
 
 def _get(url: str, timeout: int = 3) -> str | None:
+    """The body of a 2xx answer, else None: a liveness probe, not a client."""
+    from .primitives import Unreachable, fetch
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as r:
-            return r.read().decode("utf-8", "replace")
-    except (urllib.error.URLError, OSError, ValueError):
+        status, body = fetch(url, timeout=timeout)
+    except Unreachable:
         return None
+    return body.decode("utf-8", "replace") if status < 400 else None
 
 
 def _docker(*args: str, timeout: int = 10) -> str:
@@ -425,8 +410,6 @@ def cmd_start(argv: list[str]) -> int:
     from . import generation
     if generation.main([]):
         raise _fail("generation failed — nothing was started")
-    from . import install
-    install.retire_generated_clients()
 
     # No `docker compose pull` here by design: start (including the boot
     # LaunchAgent) must be reproducible and offline-safe, so it runs whatever
@@ -516,7 +499,6 @@ def cmd_teardown(argv: list[str]) -> int:
         bad("Teardown incomplete: a launch agent could not be removed. "
             "Runtime payloads were preserved; resolve the launchd error above and retry.")
         return 1
-    install.retire_generated_clients()
     from . import clients
     for line in clients.remove_client_writes():
         print(f"  {line}")

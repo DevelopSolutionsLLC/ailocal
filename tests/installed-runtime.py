@@ -91,7 +91,7 @@ def _prove(s: Suite, box: Path, want_stack: bool) -> int:
     shutil.rmtree(source)
     s.check(not source.exists(), "the source checkout is gone")
     py("from ailocal import policy, model_sources; assert all(policy.resolve_role(t, 'cyber')['model'] "
-       "in policy.required_models(t) for t in policy.TIERS); print('ok')",
+       "== policy.load_profile(t)['cyber']['active'] for t in policy.TIERS); print('ok')",
        "profiles and the model importer resolve without a checkout")
     py("import hashlib; from ailocal import policy; s = policy.ollama_patch_spec(); "
        "assert all(len(s[k]) == 64 for k in ('native_archive_sha256', 'native_cli_sha256')); "

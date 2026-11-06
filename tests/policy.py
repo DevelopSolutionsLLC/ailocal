@@ -357,7 +357,8 @@ def hardware() -> None:
               and (bool(cy.get("stop")) and cy["temperature"] == 0.0 if qwen else not cy.get("stop") and cy["top_k"] == 64),
               f"{tier}: cyber ends turns on {'the Qwen stop list, greedy' if qwen else 'its EOS'} and needs no runtime patch")
         check(rr["completion"]["enabled"] and rr["completion"]["model"] == completion
-              and {completion, cyber_model} <= set(P.required_models(tier, RESOURCES)), f"{tier}: installs {completion} and cyber")
+              and {completion, cyber_model} <= {c["active"] for c in rr.values() if c.get("enabled", True)},
+              f"{tier}: installs {completion} and cyber")
         check(not P.required_runtime_patch(tier, RESOURCES)
               and not any(c.get("runtime_patch") for c in rr.values()),
               f"{tier}: stock Ollama installs it")
@@ -517,71 +518,22 @@ def env_ownership() -> None:
     from ailocal import environment as e
     mode = lambda p: stat.S_IMODE(p.stat().st_mode)  # noqa: E731
     S.section("ENVIRONMENT OWNERSHIP")
-    with machine() as (cfg, state):
-        (cfg / "env").write_text(f"AILOCAL_API_KEY={OLD_KEY}\n")   # a retired second copy of the key
-        e.migrate()
-        gen, user = e.parse(state / "env"), e.parse(cfg / ".env.local")
-        check(gen.get("LITELLM_MASTER_KEY") == OLD_KEY and gen.get("SEARXNG_SECRET") == OLD_SEARX
-              and sorted(gen) == sorted(e.GENERATED), "migration keeps generated secrets byte-for-byte, alone")
-        check(user.get("OPENAI_API_KEY") == "sk-user-openai-key" and user.get("ANTHROPIC_API_KEY") == ""
-              and user.get("AILOCAL_TOOL_GATEWAY") == "filter"
-              and not {"AILOCAL_TOOL_GATEWAY_CAPTURE", "OLLAMA_URL"} & set(user),
-              "user keys and non-default flags move to .env.local; defaults are not persisted")
-        live = (state / "env").read_text() + (cfg / ".env.local").read_text()
-        check(not (set(gen) | set(user)) & {*e.DEAD, "POSTGRES_PASSWORD", "JWT_SECRET"}
-              and "obsolete-postgres-password" not in live, "dead variables and obsolete credentials are dropped")
-        backups = list((state / "backups").glob("env-migration-*/.env"))
-        check(len(backups) == 1 and "obsolete-postgres-password" in backups[0].read_text()
-              and mode(backups[0]) == 0o600, "obsolete credentials survive only in one 0600 backup")
-        check(not (cfg / ".env").exists() and not (cfg / "env").exists() and mode(state / "env") == mode(cfg / ".env.local") == 0o600,
-              "the legacy file and key projection are retired; both owners are 0600")
-        before = ((state / "env").read_text(), (cfg / ".env.local").read_text())
-        e.migrate(), e.ensure(), e.ensure()
-        check(not e.needs_migration() and before == ((state / "env").read_text(), (cfg / ".env.local").read_text())
-              and e.value("LITELLM_MASTER_KEY") == OLD_KEY, "migration is idempotent and never rotates the key")
-        check(state in e.generated_file().parents and cfg in e.user_file().parents,
-              "generated secrets live under state, user secrets under config")
-    with machine(f"LITELLM_MASTER_KEY={OLD_KEY}\nSEARXNG_SECRET={OLD_SEARX}\n") as (cfg, _):
-        e.migrate()
-        user = e.parse(cfg / ".env.local")
-        check(all(user.get(k) == "" for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "BRAVE_API"))
-              and all(k in user for k in e.USER_ALWAYS), "absent provider keys become present and empty")
-    with machine() as (cfg, state):
-        real = e._write
-        e._write = lambda p, h, v: real(p, h, {k: x for k, x in v.items()
-                                               if not (p == e.user_file() and k == "OPENAI_API_KEY")})
-        try:
-            e.migrate()
-            check(False, "a lossy migration fails closed", "reported success")
-        except SystemExit as exc:
-            check("OPENAI_API_KEY" in str(exc), "a lossy migration fails closed and names the loss")
-        finally:
-            e._write = real
-        check(e.parse(cfg / ".env").get("OPENAI_API_KEY") == "sk-user-openai-key"
-              and list((state / "backups").glob("env-migration-*/.env")),
-              "a failed migration leaves its source intact and its backup taken")
     with machine(None) as (cfg, state):
         e.ensure()
-        key = e.value("LITELLM_MASTER_KEY")
-        e.ensure()
-        check(key.startswith("sk-") and len(key) > 20 and e.value("SEARXNG_SECRET")
-              and e.value("LITELLM_MASTER_KEY") == key, "a fresh install generates secrets once")
-        (state / "env").write_text(f"LITELLM_MASTER_KEY={OLD_KEY}\nSEARXNG_SECRET={OLD_SEARX}\nOLLAMA_URL=gen\n")
-        (cfg / ".env.local").write_text((cfg / ".env.local").read_text() + "OLLAMA_URL=http://o:11434\n")
-        check(e.value("OLLAMA_URL") == "http://o:11434" and [p.name for p in e.env_files()] == ["env", ".env.local"],
-              "the user file wins over generated state, in compose order too")
-        original = (cfg / ".env.local").read_text() + "# operator comment\nCUSTOM_SETTING=keep-me\n"
-        e.user_file().write_text(original)
-        secrets = e.generated_file().read_bytes()
-        e.set_ollama_patch("gemma4-switch-glu"), e.set_ollama_patch("gemma4-switch-glu")
-        text = e.user_file().read_text()
-        check(text.startswith(original) and text.count("AILOCAL_OLLAMA_PATCH=") == 1
-              and e.value("AILOCAL_OLLAMA_PATCH") == "gemma4-switch-glu" and mode(e.user_file()) == 0o600,
-              "runtime selection is idempotent and preserves authored settings")
-        e.set_ollama_patch("")
-        check(e.value("AILOCAL_OLLAMA_PATCH") == "" and e.generated_file().read_bytes() == secrets,
-              "returning to the stock runtime preserves generated secrets")
-
+        gen, user = e.parse(state / "env"), e.parse(cfg / ".env.local")
+        check(sorted(gen) == sorted(e.GENERATED) and all(gen[k] for k in e.GENERATED)
+              and all(user.get(k) == ("false" if k == "ENABLE_CLOUD" else "") for k in e.USER_ALWAYS),
+              "ensure() writes generated secrets under state and empty provider keys under config")
+        check(mode(state / "env") == mode(cfg / ".env.local") == 0o600, "both owners are 0600")
+        before = ((state / "env").read_text(), (cfg / ".env.local").read_text())
+        e.ensure(), e.ensure()
+        check(before == ((state / "env").read_text(), (cfg / ".env.local").read_text())
+              and e.value("LITELLM_MASTER_KEY") == gen["LITELLM_MASTER_KEY"],
+              "ensure() is idempotent and never rotates the key")
+        check(state in e.generated_file().parents and cfg in e.user_file().parents,
+              "generated secrets live under state, user secrets under config")
+        check(not hasattr(e, "migrate") and not hasattr(e, "legacy_file"),
+              "the v0.11 .env migration is gone (#96): there is nothing left to migrate from")
 
 def timeouts() -> None:
     S.section("TIMEOUTS")

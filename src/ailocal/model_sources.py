@@ -17,6 +17,8 @@ import urllib.request
 from pathlib import Path
 
 from . import policy
+from .primitives import Unreachable
+from .primitives import fetch as http_fetch
 
 
 def verify_load(model: str) -> bool:
@@ -27,14 +29,11 @@ def verify_load(model: str) -> bool:
     small-context check and expire its residency promptly, so installation does
     not pin every selected model or spend tokens evaluating them.
     """
-    request = urllib.request.Request(
-        f"{policy.ollama_url().rstrip('/')}/api/chat",
-        data=json.dumps({"model": model, "messages": [], "stream": False,
-                         "options": {"num_ctx": 2048}, "keep_alive": "1s"}).encode(),
-        headers={"Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(request, timeout=120) as response:
-            result = json.loads(response.read(65536))
+        _, raw = http_fetch(f"{policy.ollama_url().rstrip('/')}/api/chat",
+                       payload={"model": model, "messages": [], "stream": False,
+                                "options": {"num_ctx": 2048}, "keep_alive": "1s"}, timeout=120)
+        result = json.loads(raw[:65536])
         if not isinstance(result, dict) or result.get("done") is not True \
                 or result.get("done_reason") != "load" or result.get("error"):
             raise ValueError("no completed model load")
@@ -74,10 +73,9 @@ def fetch(source: dict, *, timeout: int = 900) -> Path:
             raise TimeoutError("model download budget exhausted")
         return min(60, seconds)
 
-    with urllib.request.urlopen(
-            f"https://huggingface.co/api/models/{repo}/revision/{revision}?blobs=true",
-            timeout=remaining()) as response:
-        metadata = json.load(response)
+    _, raw = http_fetch(f"https://huggingface.co/api/models/{repo}/revision/{revision}?blobs=true",
+                   timeout=remaining())
+    metadata = json.loads(raw)
     if metadata["sha"] != revision:
         raise ValueError("model source revision mismatch")
     weights = False
@@ -121,10 +119,9 @@ def _receipts() -> Path:
 def _digest(model: str) -> str | None:
     """The serving daemon's manifest digest for `model`, or None."""
     try:
-        with urllib.request.urlopen(f"{policy.ollama_url().rstrip('/')}/api/tags",
-                                    timeout=15) as response:
-            listed = json.load(response).get("models") or []
-    except (OSError, ValueError):
+        _, raw = http_fetch(f"{policy.ollama_url().rstrip('/')}/api/tags", timeout=15)
+        listed = json.loads(raw).get("models") or []
+    except (Unreachable, ValueError):
         return None
     for entry in listed:
         if entry.get("name") in (model, f"{model}:latest"):
@@ -192,13 +189,9 @@ def current(model: str, source: dict) -> bool:
     # Recheck native asset bindings even for old receipts: they may predate a
     # stricter verifier. A receipt alone cannot grandfather an invalid pin.
     try:
-        request = urllib.request.Request(
-            f"{policy.ollama_url().rstrip('/')}/api/show",
-            data=json.dumps({"model": model}).encode(),
-            headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(request, timeout=15) as response:
-            return _native_matches(json.load(response), source)
-    except (OSError, ValueError):
+        _, raw = http_fetch(f"{policy.ollama_url().rstrip('/')}/api/show", payload={"model": model}, timeout=15)
+        return _native_matches(json.loads(raw), source)
+    except (Unreachable, ValueError):
         return False
 
 
@@ -223,10 +216,8 @@ def _native(model: str, source: dict) -> bool:
     base = policy.ollama_url().rstrip("/")
 
     def call(path, body):
-        request = urllib.request.Request(base + path, data=json.dumps(body).encode(),
-                                         headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(request, timeout=180) as response:
-            return json.load(response)
+        _, raw = http_fetch(base + path, payload=body, timeout=180)
+        return json.loads(raw)
 
     shown = call("/api/show", {"model": source["model"]})
     expected = policy.ollama_model_store() / "blobs" / ("sha256-" + source["sha256"])
@@ -273,13 +264,9 @@ def _native(model: str, source: dict) -> bool:
     for name in (source["model"], source.get("draft_model"), source.get("projector_model")):
         if not name or name == model:
             continue
-        request = urllib.request.Request(base + "/api/delete", method="DELETE",
-                                         data=json.dumps({"model": name}).encode(),
-                                         headers={"Content-Type": "application/json"})
         try:
-            with urllib.request.urlopen(request, timeout=60):
-                pass
-        except OSError:
+            http_fetch(base + "/api/delete", payload={"model": name}, method="DELETE", timeout=60)
+        except Unreachable:
             print(f"  Source pull {name} was not removed; `ollama rm {name}` tidies the list",
                   flush=True)
     return verify_load(model)

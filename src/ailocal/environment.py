@@ -36,8 +36,6 @@ from __future__ import annotations
 
 import os
 import re
-import shutil
-import time
 from pathlib import Path
 
 from . import policy
@@ -53,29 +51,6 @@ GENERATED = ("LITELLM_MASTER_KEY", "SEARXNG_SECRET")
 #: line would turn that statement back into a question at every upgrade.
 USER_ALWAYS = ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "BRAVE_API", "ENABLE_CLOUD")
 
-#: User overrides of a value the code already defaults. Written ONLY when the
-#: user's value differs from the default, so the file states differences and
-#: nothing else. The defaults live where the consumer reads them — compose
-#: interpolation — and are repeated here to decide "is this a difference?".
-USER_OVERRIDE_DEFAULTS = {
-    "OLLAMA_URL": "http://host.docker.internal:11434",
-    "AILOCAL_TOOL_GATEWAY": "off",
-    "AILOCAL_TASK_NEGOTIATION": "off",
-    "AILOCAL_TOOL_GATEWAY_CAPTURE": "",
-}
-
-#: Zero consumers anywhere outside docs/, verified by grep over the source tree.
-#: Six carry live secret VALUES for Postgres, Redis and an admin/JWT pair —
-#: services ailocal does not run and has no code to start. Migrating them would
-#: promote demonstrably obsolete secrets into permanently supported state, so
-#: they are captured in the pre-migration backup and then removed.
-DEAD = (
-    "POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB", "REDIS_PASSWORD",
-    "JWT_SECRET", "ADMIN_PASSWORD",
-    "HOST_HTTP_PORT", "OLLAMA_QUANTIZATION", "AILOCAL_SESSION_LEDGER",
-    "AILOCAL_TRACE_DIR", "AILOCAL_ENV",
-)
-
 _LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$")
 
 
@@ -87,18 +62,6 @@ def generated_file() -> Path:
 
 def user_file() -> Path:
     return policy.config_root() / ".env.local"
-
-
-def legacy_file() -> Path:
-    """The mixed file this module replaces."""
-    return policy.config_root() / ".env"
-
-
-def legacy_projection() -> Path:
-    """`ailocal clients` used to write AILOCAL_API_KEY here — a second copy of
-    the master key, free to disagree with the canonical one after any rotation.
-    A projection is not an authority; consumers read the owner instead."""
-    return policy.config_root() / "env"
 
 
 # ── reading ─────────────────────────────────────────────────────────────────
@@ -131,10 +94,7 @@ def value(name: str) -> str:
     if name in user:
         return user[name]
     gen = parse(generated_file())
-    if name in gen:
-        return gen[name]
-    # A machine that has not migrated yet still answers correctly.
-    return parse(legacy_file()).get(name, "")
+    return gen.get(name, "")
 
 
 def env_files() -> list[Path]:
@@ -255,111 +215,3 @@ def ensure() -> None:
 
 
 # ── migration ───────────────────────────────────────────────────────────────
-
-def _backup(src: Path) -> Path:
-    """ONE bounded, timestamped copy under state, 0600. The only place the dead
-    credentials survive — captured because deleting a secret with no record is
-    not reversible, bounded because keeping them forever is the problem."""
-    root = policy.state_root() / "backups"
-    dest = root / f"env-migration-{time.strftime('%Y%m%d-%H%M%S')}"
-    dest.mkdir(parents=True, exist_ok=True)
-    root.chmod(0o700)
-    dest.chmod(0o700)
-    out = dest / src.name
-    shutil.copyfile(src, out)
-    out.chmod(0o600)
-    for old in sorted(root.iterdir(), reverse=True)[3:]:
-        shutil.rmtree(old, ignore_errors=True)
-    return out
-
-
-def needs_migration() -> bool:
-    return legacy_file().is_file() or legacy_projection().is_file()
-
-
-def migrate() -> list[str]:
-    """Split the legacy mixed file into its two real owners.
-
-    FAILS CLOSED: the legacy file is deleted only after both new files are on
-    disk AND read back carrying every value that had to survive. A partial
-    migration that had already deleted its own source would leave a machine with
-    no master key and no way to recover one — the containers would come up with
-    a key nothing else knows.
-
-    Idempotent: a machine with no legacy file has nothing to do, and one that
-    already migrated finds its generated secrets present and does not rotate.
-    """
-    actions: list[str] = []
-    legacy = legacy_file()
-    if not legacy.is_file():
-        if legacy_projection().is_file():
-            legacy_projection().unlink()
-            actions.append(f"removed the derived key projection {legacy_projection()}")
-        return actions
-
-    old = parse(legacy)
-    backup = _backup(legacy)
-    actions.append(f"backed up the legacy environment to {backup} (0600)")
-
-    # 1. generated secrets — REUSED, never re-rolled.
-    gen = dict(parse(generated_file()))
-    for k in GENERATED:
-        if not gen.get(k) and old.get(k):
-            gen[k] = old[k]
-    keep_generated = {k: gen[k] for k in GENERATED if gen.get(k)}
-    made = [k for k in GENERATED if not keep_generated.get(k)]
-    if keep_generated:
-        _write(generated_file(), _GENERATED_HEADER.format(user=user_file()),
-               keep_generated)
-    ensure_generated()                        # fills anything genuinely absent
-    if made:
-        actions.append(f"generated {', '.join(made)} (absent from the legacy file)")
-    actions.append(f"carried {len(keep_generated)} generated secret(s) forward "
-                   f"unchanged into {generated_file()}")
-
-    # 2. user values. Provider keys always; overrides only where they differ
-    # from the default the code already applies.
-    user = dict(parse(user_file()))
-    for k in USER_ALWAYS:
-        user.setdefault(k, old.get(k, "false" if k == "ENABLE_CLOUD" else ""))
-    kept_overrides = []
-    for k, default in USER_OVERRIDE_DEFAULTS.items():
-        if k in old and old[k] != default and k not in user:
-            user[k] = old[k]
-            kept_overrides.append(f"{k}={old[k]}")
-    ordered = {k: user[k] for k in USER_ALWAYS if k in user}
-    ordered.update({k: v for k, v in user.items() if k not in USER_ALWAYS})
-    _write(user_file(), _USER_HEADER, ordered)
-    actions.append(f"wrote {len(ordered)} user-owned value(s) to {user_file()} (0600)")
-    if kept_overrides:
-        actions.append("kept non-default override(s): " + ", ".join(kept_overrides))
-    at_default = [k for k in USER_OVERRIDE_DEFAULTS
-                  if k in old and old[k] == USER_OVERRIDE_DEFAULTS[k]]
-    if at_default:
-        actions.append("dropped value(s) equal to the code default: "
-                       + ", ".join(at_default))
-
-    # 3. VERIFY BEFORE DELETING. Nothing that had to survive may be missing.
-    back_gen, back_user = parse(generated_file()), parse(user_file())
-    required = {k: old[k] for k in GENERATED if old.get(k)}
-    required.update({k: old[k] for k in USER_ALWAYS if k in old})
-    missing = [k for k, v in required.items()
-               if back_user.get(k, back_gen.get(k)) != v]
-    if missing:
-        raise SystemExit(
-            "  ✗ environment migration incomplete — "
-            f"{len(missing)} value(s) did not survive: {', '.join(sorted(missing))}\n"
-            f"    Nothing was deleted. Your original file is untouched at {legacy}\n"
-            f"    and backed up at {backup}.")
-
-    # 4. only now retire the legacy owners.
-    dropped = [k for k in DEAD if k in old]
-    legacy.unlink()
-    actions.append(f"retired the mixed legacy file {legacy}")
-    if dropped:
-        actions.append(f"dropped {len(dropped)} value(s) with no consumer "
-                       f"(kept only in the backup): {', '.join(dropped)}")
-    if legacy_projection().is_file():
-        legacy_projection().unlink()
-        actions.append(f"removed the derived key projection {legacy_projection()}")
-    return actions

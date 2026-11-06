@@ -12,7 +12,6 @@ import pathlib
 import re
 import shutil
 import subprocess
-import urllib.error
 import urllib.request
 
 from .. import policy, runtime
@@ -37,23 +36,20 @@ class Unreachable(Exception):
 def http_json(url: str, *, token: str | None = None, payload: dict | None = None,
               timeout: int = CONNECT_TIMEOUT) -> dict:
     """One bounded HTTP/JSON call. Raises Unreachable rather than hanging."""
-    data = json.dumps(payload).encode() if payload is not None else None
-    req = urllib.request.Request(url, data=data, method="POST" if data else "GET")
-    if token:
-        req.add_header("Authorization", f"Bearer {token}")
-    if data:
-        req.add_header("Content-Type", "application/json")
+    from ailocal import primitives
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode() or "{}")
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode(errors="replace")
-        try:
-            return json.loads(body)
-        except ValueError:
-            raise Unreachable(f"HTTP {exc.code}: {body[:200]}") from exc
-    except (urllib.error.URLError, OSError, ValueError, TimeoutError) as exc:
+        status, raw = primitives.fetch(url, payload=payload, headers=headers,
+                                       method="POST" if payload is not None else "GET", timeout=timeout)
+    except primitives.Unreachable as exc:
         raise Unreachable(str(exc)) from exc
+    body = raw.decode(errors="replace")
+    try:
+        return json.loads(body or "{}")
+    except ValueError:
+        if status >= 400:
+            raise Unreachable(f"HTTP {status}: {body[:200]}") from None
+        raise Unreachable(f"not JSON: {body[:200]}") from None
 
 
 def _key_from(text: str, var: str) -> str:

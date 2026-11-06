@@ -44,8 +44,7 @@ def agent_environment() -> dict:
                 # Every file that can hold the proxy key; a delegated child is
                 # denied reads of them (the sandbox otherwise reads most paths).
                 'LOCAL_AGENT_DENY_READ': json.dumps([str(p) for p in (
-                    environment.user_file(), environment.generated_file(),
-                    environment.legacy_file(), environment.legacy_projection())]),
+                    environment.user_file(), environment.generated_file())]),
                 # Research mode starts this server, as claude-local registers it.
                 'LOCAL_AGENT_RESEARCH_MCP': json.dumps(registration()),
                 'LOCAL_AGENT_DEFAULT_MODEL': 'ailocal-cyber',

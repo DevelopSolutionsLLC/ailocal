@@ -118,25 +118,22 @@ def http(url: str, body: dict | None = None, timeout: int = 20):
     A 404 or 410 is returned, not raised: it is the registry's answer. A GitHub
     token from the environment goes to api.github.com only.
     """
-    import urllib.error
-    import urllib.request
+    from .primitives import Unreachable, fetch
     headers = {"Accept": "application/json", "User-Agent": "ailocal-audit"}
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     if token and url.startswith("https://api.github.com/"):
         headers["Authorization"] = f"Bearer {token}"
-    data = None
-    if body is not None:
-        data = json.dumps(body).encode()
-        headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(url, data=data, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return r.status, json.loads(r.read().decode())
-    except urllib.error.HTTPError as e:
-        if e.code in (404, 410):
-            return e.code, None
-        raise Unavailable(f"HTTP {e.code}") from e
-    except Exception as e:  # DNS, TLS, timeout, malformed JSON
+        status, raw = fetch(url, payload=body, headers=headers, timeout=timeout)
+    except Unreachable as e:
+        raise Unavailable(str(e)) from e
+    if status in (404, 410):
+        return status, None
+    if status >= 400:
+        raise Unavailable(f"HTTP {status}")
+    try:
+        return status, json.loads(raw.decode())
+    except (ValueError, UnicodeDecodeError) as e:
         raise Unavailable(type(e).__name__) from e
 
 

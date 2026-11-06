@@ -22,6 +22,7 @@ from pathlib import Path
 
 from ailocal import policy as _pc
 from ailocal.guidance import render as render_guidance
+from ailocal.report import ok, step, warn  # noqa: F401
 
 # Every path comes from policy. Four roots, each with ONE owner:
 #   config root   authored policy (profiles/, .env) — the operator's
@@ -86,9 +87,6 @@ def mn(cap):
     return f"{MODEL_PREFIX}{cap}"
 
 
-def step(m): print(f"\n▶ {m}")
-def ok(m):   print(f"  ✓ {m}")
-def warn(m): print(f"  ⚠ {m}", file=sys.stderr)
 
 
 
