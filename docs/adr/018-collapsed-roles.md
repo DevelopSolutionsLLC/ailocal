@@ -1,0 +1,32 @@
+# ADR 018: The chat roles are `primary` and an optional `fast`
+
+**Status:** Accepted · **Date:** 2026-11-05 · **Scope:** #89
+
+## Context
+
+Every tier configured five chat roles on one backend. Read from the shipped 0.15.1 profiles on 2026-11-05: on 16gb and 32gb, `architecture`, `implementation`, `review` and `fast` were all `nemotron-3.5-bolt:e4b` with thinking off and vendor sampling, differing only in the split of one 65,536-token window (49,152+16,384 for architecture and review, 57,344+8,192 for implementation and fast). On 64gb and 128gb, `architecture`, `implementation` and `review` were `gemma4:26b-qat-mtp` with identical geometry and thinking on; `fast` was the same model with thinking off and an 8,192 reserve. `cyber` (a separate unrestricted model) and `completion` (the FIM model) were the only roles that differed in what answered.
+
+The per-role prose claimed distinctions the configuration did not carry ("not a dedicated review model as on the 64 GB tier", "slower than the implementation tier"), the picker and the Codex catalog listed four names for one thing, `clients.toml` carried a historical measurement of two models that had left the deployment, and every consumer that enumerated roles paid for four where one would do. On 32gb, Nemotron measured 20/25 with thinking off and 19/25 with it on (2026-11-05), so those tiers have no non-thinking variant to offer either.
+
+## Decision
+
+1. **The roles are `primary`, `fast`, `cyber` and `completion`** (`policy.ROLES`). `primary` is the chat role, with its thinking mode set per tier: off on 16gb and 32gb, on for 64gb and 128gb. It keeps the window the former architecture role carried (49,152+16,384; 163,840+32,768; 229,376+32,768), because that split had the largest output reserve and the 32gb total is a separate pending decision. `cyber` and `completion` are unchanged.
+2. **`fast` is optional: the primary with thinking off.** Only a tier whose primary thinks declares it (64gb, 128gb), with its existing values. A client slot, compat id or default that names `fast` on a tier without it resolves to `primary` through `policy.resolve_capability()`, the one place that rule lives (`policy.OPTIONAL_ROLES`); no consumer carries a per-tier case.
+3. **Client slots** (`clients.toml`): Claude opus, sonnet and fable map to `primary`, haiku to `fast`; the Codex default and the compat model ids follow the same mapping. Three slots on one capability is no longer a warning: `/model` is the generated `modelPicker`, one row per capability.
+4. **The retired names are served for one release.** Generation emits `ailocal-architecture`, `ailocal-implementation`, `ailocal-review` and, on a tier without `fast`, `ailocal-fast` as LiteLLM `model_group_alias` entries routed to the role they now mean (`policy.RETIRED_ROLES`, `policy.deprecated_aliases()`), marked deprecated in the generated config. They are not configured roles and not client targets; 0.17 removes them.
+5. **A profile that still declares a retired section fails closed**, naming the migration: `[architecture]`, `[implementation]` or `[review]` carries routing policy the operator may have edited, and reading `[primary]` beside it would silently run shipped defaults in place of those edits. `ailocal install` migrates an edited profile (`install.migrate_profile_roles`): `[primary]` takes `[architecture]` verbatim (`[implementation]`, then `[review]`, when it is absent), so every operator value survives; a retired section whose other fields differ from that source *and* from the shipped default carries its own edit and is a conflict, reported with both values and left for the operator, with nothing written for any tier; `[fast]` on a tier the shipped profile serves without one is dropped when it is the shipped default or equals the primary, and otherwise kept as the operator's own fast role. Originals are backed up first, and `--upgrade-models` adopts the shipped role descriptions afterwards.
+
+## Consequences
+
+Generated client configuration shrinks by three capabilities per tier: the picker, the Codex catalog, the VS Code model group and the LiteLLM `model_list` each list one chat model plus `fast` where it exists. The launcher's alias override is named by role (`AILOCAL_PRIMARY_ALIAS_OVERRIDE`, `AILOCAL_FAST_ALIAS_OVERRIDE`) and read from the generated slot values, so it needs no per-role list. The research server's synthesis model and `ailocal check`'s generation probe resolve `fast` through the same rule.
+
+[REAL 2026-11-05, shipped profiles, scratch roots, `guidance.launch_default_hook_bytes`] The always-on Claude guide hook prints 1,737 bytes for the launch-default model on 64gb/128gb (1,742 before) and 1,186 on 16gb/32gb (1,191 before): the hook renders one model's guide, and the guide is per backend, not per role, so only the role label changed. The listing it prints when the event names no model shrinks by one line per retired role: 920 → 749 bytes on 64gb/128gb and 927 → 672 on 16gb/32gb. The scratchpad hook adds 363 bytes. The ailocal-owned always-on context is therefore 2,100 bytes on 64gb/128gb and 1,549 on 16gb/32gb, under the 4,096-byte budget with up to 1,996 bytes of CLAUDE.md beside it.
+
+An operator who selected `ailocal-review` or `ailocal-implementation` in a client keeps routing through the deprecated alias in 0.16 and must reselect before 0.17. A model-dependent measurement of the collapse itself is not needed: no backend, geometry, sampling or thinking mode changed for any request a client sends.
+
+## Alternatives
+
+- **Keep the names as configured roles pointing at one backend.** This is the state the decision replaces: four entries for one thing, prose describing differences that did not exist, and every consumer enumerating them.
+- **Keep `fast` on every tier.** On 16/32gb it would be the primary under a second name with a smaller output reserve; the smaller reserve is not a reason for a role.
+- **Resolve absent `fast` in each consumer.** Generation, the guide hook, the MCP launcher and the checks would each carry a per-tier case that could disagree; one function in policy cannot.
+- **Migrate conflicting edits by precedence (architecture wins).** It discards an operator value without telling them which; reporting costs one install run and loses nothing.
