@@ -544,6 +544,64 @@ def migrate_profile_roles(source: Path, config: Path) -> dict:
             "dropped": dropped, "kept_fast": kept_fast, "thinking_off": thinking_off}
 
 
+#: A trailing quantization token in a 0.15 selection name (`-q4_K_M`, `-q8_0`,
+#: `-f16`). The structured name carries none (#93); the source hash pins it.
+QUANT_SUFFIX = re.compile(r"-(?:i?q\d[\w]*|f16|bf16|fp16|f32)$", re.IGNORECASE)
+
+
+def migrate_selection_names(config: Path) -> dict:
+    """Rename a selection whose only fault is a trailing quantization token to
+    the structured name (#93), in `active`, `preferred` and the `model_guidance`
+    key, before anything loads the operator's profile. A 0.15.1 64gb/128gb
+    profile named cyber `gemma4:26b-unrestricted-qat-mtp-q4_K_M`; left as it
+    is, `load_profile` fails closed and the installer never reaches the
+    migration that would have fixed it. A name that is still invalid after the
+    rename is left for `load_profile` to report. Originals are backed up."""
+    prepared, renamed = {}, {}
+    for tier in policy.TIERS:
+        path = policy.profile_path(tier, config)
+        if not path.is_file() or path.is_symlink():
+            continue
+        text = path.read_text()
+        data = tomllib.loads(text)
+        names = set()
+        for role in policy.ROLES:
+            cfg = data.get(role)
+            if isinstance(cfg, dict):
+                names.update([cfg.get("active"), *(cfg.get("preferred") or [])])
+        names.update((data.get("model_guidance") or {}).keys())
+        pairs = {}
+        for name in sorted(n for n in names if isinstance(n, str)):
+            if policy.selection_name_error(name) is None:
+                continue
+            new = QUANT_SUFFIX.sub("", name)
+            if new != name and policy.selection_name_error(new) is None:
+                pairs[name] = new
+        if not pairs:
+            continue
+        for old, new in pairs.items():
+            text = text.replace(json.dumps(old), json.dumps(new))
+        after = tomllib.loads(text)
+        expected = json.loads(json.dumps(data))
+        for old, new in pairs.items():
+            expected = json.loads(json.dumps(expected).replace(json.dumps(old), json.dumps(new)))
+        if after != expected:
+            raise ValueError(f"{tier}.toml: selection rename could not preserve unrelated policy")
+        prepared[path] = text
+        renamed[tier] = sorted(pairs.items())
+    if not prepared:
+        return {"renamed": {}, "backup": None}
+    backup = config / "backups" / ("names-" + str(time.time_ns()))
+    backup.mkdir(parents=True)
+    for path in prepared:
+        shutil.copy2(path, backup / path.name)
+    for path, text in prepared.items():
+        temporary = path.with_suffix(".toml.upgrade-tmp")
+        temporary.write_text(text)
+        os.replace(temporary, path)
+    return {"renamed": renamed, "backup": backup}
+
+
 def role_conflict_report(conflicts: dict) -> str:
     """What the operator must decide before `ailocal install` can continue."""
     lines = ["Profile role migration stopped: retired role sections carry different values, and "
@@ -1118,6 +1176,11 @@ def _write_env(assume_yes: bool) -> None:
     state and never touches the user's file, so there is nothing to ask.
     """
     from . import environment
+    stale = policy.config_root() / ".env"
+    if stale.is_file():
+        warn(f"{stale} is a pre-0.12 file nothing reads any more: the master key in use is the one in "
+             f"{environment.generated_file()}; copy provider keys you still need into "
+             f"{environment.user_file()} and delete it")
     environment.ensure()
     ok(f"generated secrets in {environment.generated_file()} (chmod 600)")
     ok(f"your keys and overrides in {environment.user_file()} (chmod 600)")
@@ -1447,6 +1510,11 @@ def cmd_install(argv: list[str]) -> int:
     if migration["backup"]:
         warn(f"original profiles saved to {migration['backup']}; "
              "`ailocal install --upgrade-models` adopts the shipped role descriptions")
+    names = migrate_selection_names(policy.config_root())
+    for tier, pairs in names["renamed"].items():
+        ok(f"{tier}.toml: " + ", ".join(f"{o} → {n}" for o, n in pairs) + " (the structured name; #93)")
+    if names["backup"]:
+        dim(f"original profiles saved to {names['backup']}")
     if "--upgrade-models" in argv:
         upgrade = upgrade_model_defaults(source, policy.config_root())
         if upgrade["updated"]:
