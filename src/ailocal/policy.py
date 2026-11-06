@@ -543,20 +543,6 @@ def slot_problems(tier=None, repo_root=None) -> list:
     return out
 
 
-def required_models(tier=None, repo_root=None) -> list:
-    """Distinct backends an installation must pull for a tier."""
-    tier = tier or resolve_active_tier(repo_root)
-    profile = load_profile(tier, repo_root)
-    out = []
-    for role in ROLES:
-        if role not in profile:
-            continue
-        cfg = resolve_role(tier, role, repo_root)
-        if cfg.get("enabled", True) and cfg.get("active"):
-            out.append(cfg["active"])
-    return sorted(set(out))
-
-
 def resolve_active_tier(repo_root=None, state=None) -> str:
     """The active tier. NEVER defaults -- a missing marker is an error.
 

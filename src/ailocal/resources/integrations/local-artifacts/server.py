@@ -1089,16 +1089,10 @@ def _open_browser(url):
         return f"disabled:{source}"
     if not _needs_presentation():
         return "watched"
-    if sys.platform == "darwin":
-        cmd = ["open", url]
-    elif sys.platform.startswith("linux"):
-        cmd = ["xdg-open", url]
-    elif sys.platform.startswith("win"):
-        cmd = ["cmd", "/c", "start", "", url]
-    else:
+    if sys.platform != "darwin":          # the product runs on macOS only (AGENTS.md)
         return "unsupported-platform"
     try:
-        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.Popen(["open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return "opened"
     except Exception as e:
         return f"failed:{type(e).__name__}"

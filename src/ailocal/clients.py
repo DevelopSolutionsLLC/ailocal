@@ -16,7 +16,6 @@ Cadence's to register (servers.yaml), in hosted and local roots alike.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -87,7 +86,8 @@ def report_missing(names) -> None:
 #: products remove each other's entry. The same split as `research` (local) and
 #: `local-research` (hosted).
 AGENT_MCP = "agent"
-#: The name ailocal registered before it stopped writing hosted roots.
+#: The name ailocal registered before it stopped writing hosted roots. Removal
+#: condition: 0.18, two minor releases after hosted roots stopped being written.
 LEGACY_AGENT_MCP = "local-agent"
 
 
@@ -198,13 +198,7 @@ MANIFEST_NAME = ".ailocal-managed"
 _CLAUDE_ONLY = re.compile(r"<!-- claude-only -->.*?<!-- /claude-only -->\n?",
                           re.DOTALL)
 
-GREEN, YELLOW, RESET, BOLD = "\033[32m", "\033[33m", "\033[0m", "\033[1m"
-
-
-def step(m): print(f"\n▶ {m}")
-def info(m): print(f"  {GREEN}✓{RESET} {m}")
-def warn(m): print(f"  {YELLOW}⚠{RESET} {m}", file=sys.stderr)
-def skip(m): print(f"  — {m}")
+from .report import BOLD, GREEN, RESET, YELLOW, info, skip, step, warn  # noqa: F401
 
 
 def _code(*args, timeout: int = 120) -> str | None:
@@ -247,6 +241,8 @@ def backup(path: Path) -> bool:
 #: the only ownership proof available for them. `prompts/` was written with a
 #: plain copy, so retirement cannot ask a manifest what we wrote; declaring the
 #: exact names keeps the removal provable and leaves anything else alone.
+#: Removal condition, with retire_managed_dir's manifest path: 0.18, two minor
+#: releases after the agents, commands and prompts stopped shipping (v0.12).
 RETIRED_UNMANAGED = {"prompts": ("analyze-repo.md", "local-build.md")}
 
 
@@ -363,23 +359,18 @@ _FINALIZE_LINE = (
     '    # ailocal-finalize')
 
 
-def ensure_shell_sourcing(key: str) -> None:
+def ensure_shell_sourcing() -> None:
     """The client home, the wrapper env, and two idempotent ~/.zshrc lines.
 
     Those two marker-commented lines are the ONLY footprint ailocal leaves in
-    the user's rc file; uninstalling is removing them plus the config root."""
+    the user's rc file; `ailocal clients --remove` takes them out again."""
     step(f"Setting up {policy.deployed_client_root()}")
     cfg = policy.deployed_client_root()
     cfg.mkdir(parents=True, exist_ok=True)
     cfg.chmod(0o700)
 
-    # NO KEY PROJECTION HERE. This used to write `env` holding AILOCAL_API_KEY,
-    # a second copy of the master key that a rotation would leave stale while
-    # still looking authoritative. env.sh reads the canonical generated file
-    # instead: one owner, and nothing to keep in sync.
-    from . import environment
-    environment.legacy_projection().unlink(missing_ok=True)
-
+    # NO KEY PROJECTION HERE: env.sh reads the canonical generated file, one
+    # owner and nothing to keep in sync.
     data = policy.data_root()
     shutil.copyfile(data / "clients" / "finalize.zsh", cfg / "finalize.zsh")
     # Client-invoked hooks: the client execs these, so the deployed copy must be
@@ -416,31 +407,6 @@ def ensure_shell_sourcing(key: str) -> None:
 
 # ── VS Code / Copilot Chat ──────────────────────────────────────────────────
 #
-# DEPRECATED SETTINGS — do not reintroduce. The connector replaced
-# litellm-connector.baseUrl/.backends with VS Code's Language Models provider
-# groups plus SecretStorage; VS Code deprecated
-# github.copilot.chat.customOAIModels and replaced the "OpenAI Compatible"
-# provider with "Custom Endpoint".
-#   https://github.com/gethnet/litellm-connector-copilot/
-#   https://code.visualstudio.com/docs/agent-customization/language-models
-
-DEPRECATED_SETTINGS = (
-    "litellm-connector.baseUrl",                       # -> provider groups
-    "litellm-connector.backends",                      # -> provider groups
-    "github.copilot.chat.customOAIModels",             # -> Custom Endpoint
-    "github.copilot.agent.autoApprove",                # never a real setting
-    "github.copilot.chat.tools.terminal.autoApprove",  # never a real setting
-    # ailocal used to set this to "mainAgent". That routes Copilot's utility
-    # and `tools` calls onto the SELECTED model, so a single chat turn fires
-    # several concurrent 50k-token requests at one local 26B. Ollama serves
-    # them one at a time (a 26B at 98k context does not fit twice), so the
-    # third waits minutes for its first byte and the socket is reset —
-    # "fetch failed", rootCause "read ECONNRESET". The connector's own README
-    # says to leave it at "GitHub Copilot"; ailocal now removes the override
-    # instead of writing it.
-    "chat.byokUtilityModelDefault",
-)
-
 #: Added to settings.json ONLY if absent, so the user's own choices and their
 #: comments survive.
 #:
@@ -570,44 +536,6 @@ def _provider_group(models_json: Path, dry: bool) -> None:
               "key is initialized yet (see below).")
 
 
-def _prune_deprecated(settings_json: Path, dry: bool) -> None:
-    """Remove settings VS Code no longer honours: they make the config look
-    configured while doing nothing.
-
-    settings.json permits comments and trailing commas, so a stripped copy is
-    parsed to INSPECT and the file is rewritten only if something must go."""
-    try:
-        raw = settings_json.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        print("  no settings.json; nothing to prune")
-        return
-    stripped = re.sub(r",(\s*[}\]])", r"\1", re.sub(r"//[^\n]*", "", raw))
-    try:
-        doc = json.loads(stripped)
-    except ValueError:
-        warn("could not parse settings.json; leaving it untouched rather than "
-             "risk mangling it")
-        return
-    present = [k for k in DEPRECATED_SETTINGS if k in doc]
-    if not present:
-        info("no deprecated keys present")
-        return
-    if dry:
-        for k in present:
-            print(f"  would remove {k}")
-        return
-    for k in present:
-        doc.pop(k)
-    original = settings_json.with_suffix(settings_json.suffix + ".ailocal-bak")
-    if not original.exists():
-        original.write_text(raw, encoding="utf-8")
-    _write_json(settings_json, doc, 2)
-    for k in present:
-        info(f"removed {k}")
-    print("  NOTE settings.json was rewritten from parsed JSON, so any COMMENTS "
-          f"in it are gone. Original saved at {original.name}")
-
-
 def _ensure_recommended(settings_json: Path) -> None:
     text = settings_json.read_text(encoding="utf-8") if settings_json.exists() else "{}"
     missing = {k: v for k, v in RECOMMENDED_SETTINGS.items()
@@ -667,7 +595,6 @@ def install_vscode(argv: list[str]) -> int:
     # Code" path for an editor that is sitting right there, half-configured.
     try:
         _provider_group(user_dir / "chatLanguageModels.json", dry)
-        _prune_deprecated(user_dir / "settings.json", dry)
         if not dry:
             _ensure_recommended(user_dir / "settings.json")
             if not provision_vscode_research(user_dir / "mcp.json"):
@@ -694,9 +621,9 @@ def _copilot_instructions() -> None:
                    dest / "ailocal.instructions.md", claude_only=False)
     target = dest / "ailocal.instructions.md"
     target.write_text(target.read_text() + "\n\n" + copilot_model_guidance())
-    # ONE instruction file. session-primer.md was deployed beside this one with
-    # the same `applyTo: "**"`, so both loaded on every turn and stated the
-    # terminal protocol twice — in two wordings, which is worse than once.
+    # ONE instruction file: session-primer.md loaded beside this one on every
+    # turn and stated the terminal protocol twice. Removal condition for this
+    # unlink: 0.18, two minor releases after the file stopped shipping.
     (dest / "session-primer.md").unlink(missing_ok=True)
     info("Copilot instruction files deployed to ~/.copilot/instructions/")
 
@@ -777,7 +704,8 @@ def target_vscode() -> None:
 #: one digest per distinct rendering from e890d0e, which introduced the
 #: rendering, to 50b677f, the last change before ailocal stopped writing it.
 #: Recomputed from git history, so a file matching one of these is provably
-#: ailocal's own output and nobody's edit.
+#: ailocal's own output and nobody's edit. Removal condition: 0.18, two minor
+#: releases after ailocal stopped writing the file (50b677f).
 RETIRED_CODEX_INSTRUCTIONS = frozenset({
     "cd9d7186d5404430e2d5b3870861a28d30f32a2864dd252b84ae73ad864f1c8d",  # e890d0e
     "b68953f1b74959c61453cd038c9391cb37d3785e643b7f3f7365a7ebff3f1c54",  # 553ecf2
@@ -799,7 +727,8 @@ def retire_codex_instructions(path: Path) -> bool:
     operator's edit, a symlink -- is someone else's and stays."""
     if path.is_symlink() or not path.is_file():
         return False
-    if hashlib.sha256(path.read_bytes()).hexdigest() not in RETIRED_CODEX_INSTRUCTIONS:
+    from .primitives import sha256_file
+    if sha256_file(path) not in RETIRED_CODEX_INSTRUCTIONS:
         skip(f"{path} is not an ailocal rendering — left in place")
         return False
     path.unlink()
@@ -853,7 +782,8 @@ def provision_mcp_runtime(src: Path, name: str) -> Path | None:
             warn(f'could not create {name} runtime')
             return None
     stamp = venv / '.requirements.sha'
-    want = hashlib.sha256(req.read_bytes()).hexdigest()
+    from .primitives import sha256_file
+    want = sha256_file(req)
     if not stamp.is_file() or stamp.read_text().strip() != want:
         if _sh(str(py), '-m', 'pip', 'install', '-q', '-r', str(req)):
             warn(f'could not install {name} runtime dependencies')
@@ -1372,8 +1302,8 @@ def main(argv: list[str]) -> int:
     if generation.main([]):
         return 1
 
-    key = _master_key()
-    ensure_shell_sourcing(key)
+    _master_key()                 # the precondition: no key, no client to configure
+    ensure_shell_sourcing()
     # Only bundled integrations are provisioned here, never a global MCP sync.
     for name in selected:
         _TARGETS[name]()

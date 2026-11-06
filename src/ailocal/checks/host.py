@@ -45,11 +45,6 @@ def check_env_file() -> CheckResult:
                            ", ".join(f"{p}: {oct(p.stat().st_mode & 0o777)}"
                                      for p in loose),
                            "chmod 600 " + " ".join(str(p) for p in loose))
-    if environment.needs_migration():
-        return CheckResult("env", WARN,
-                           "a legacy mixed .env is still present",
-                           str(environment.legacy_file()),
-                           "ailocal install   (migrates it into the two owners)")
     return CheckResult("env", PASS, "environment present (generated + user)")
 
 

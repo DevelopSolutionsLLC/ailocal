@@ -33,7 +33,7 @@ def _configured(argv, present):
     with patch.dict(C._TARGETS, {n: (lambda n=n: order.append(n)) for n in C._TARGETS}), \
             patch.object(C, "present", lambda name: name in present), \
             patch.object(C, "_master_key", lambda: "sk-test"), \
-            patch.object(C, "ensure_shell_sourcing", lambda key: None), \
+            patch.object(C, "ensure_shell_sourcing", lambda: None), \
             patch.object(C, "report_missing", lambda names: None), \
             patch.object(generation, "main", lambda argv: 0):
         return C.main(argv), order
@@ -62,7 +62,7 @@ def _vscode(user_dir, which_code: bool, writes_fail: bool = False) -> int:
     with patch.multiple(C, _vscode_user_dir=lambda: user_dir,
                         _code=lambda *a: "1.99.0\nabc\nx64" if which_code else None,
                         _provider_group=boom if writes_fail else (lambda p, dry: None),
-                        _prune_deprecated=lambda p, dry: None, _ensure_recommended=lambda p: None,
+                        _ensure_recommended=lambda p: None,
                         provision_vscode_research=lambda p: True,
                         provision_vscode_agent=lambda p: True, provision_copilot_mcp=lambda: True,
                         native_vscode_available=lambda: True), \

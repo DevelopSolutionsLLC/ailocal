@@ -1,7 +1,6 @@
 """Build the reviewed Go-only Ollama patch beside its exact native payload."""
 from __future__ import annotations
 
-import hashlib
 from datetime import datetime, timezone
 import json
 import os
@@ -24,8 +23,8 @@ GO_SUMDB_EXEMPTIONS = ("GOSUMDB", "GONOSUMDB", "GONOSUMCHECK", "GOPRIVATE",
 
 
 def _sha(path: Path) -> str:
-    with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+    from .primitives import sha256_file
+    return sha256_file(path)
 
 
 def _inventory(root: Path) -> dict[str, str]:
@@ -224,6 +223,8 @@ def prepare() -> Path:
         if verify(binary):
             return binary
         raise RuntimeError(f"Existing owned Ollama runtime failed integrity checks: {target}")
+    # The product supports macOS on Apple Silicon only (AGENTS.md); this is the
+    # one place that states it in code, as a precondition of a native build.
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise RuntimeError("The reviewed Ollama patch supports macOS arm64 only")
     missing = [name for name in ("go", "git", "codesign") if not shutil.which(name)]
