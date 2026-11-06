@@ -30,8 +30,12 @@ from .runtime import bad, dim, ok, step, warn
 LA_DIR = Path.home() / "Library" / "LaunchAgents"
 LOG_DIR = Path.home() / "Library" / "Logs" / "ailocal"
 MODEL_STORE = str(policy.ollama_model_store())
-AGENTS = ("com.ailocal.ollama", "com.ailocal.preload", "com.ailocal.litellm",
-          "com.ailocal.ollama-env", "com.ailocal.ollama-watch")
+#: The login agents a current install writes; teardown removes exactly these.
+AGENTS = ("com.ailocal.ollama", "com.ailocal.ollama-env", "com.ailocal.ollama-watch")
+#: Written by releases before 2026-11-03 (the login model preload, 65bccaa) and
+#: still booted out so an upgrade-then-teardown leaves nothing. Removal
+#: condition: 0.18, two minor releases after the retirement.
+RETIRED_AGENTS = ("com.ailocal.preload",)
 
 #: Ollama's runtime environment, in one place. KEEP_ALIVE is the GLOBAL DEFAULT
 #: and governs only direct callers that send no per-request keep_alive — in
@@ -787,19 +791,35 @@ def retire_generated_clients() -> None:
 
 
 def remove_login_agents() -> None:
-    """The uninstall half, reached from `ailocal teardown`."""
+    """The uninstall half, reached from `ailocal teardown`: the agents, the
+    session environment they published, their log directory and every intact
+    owned runtime. Each is something install created; left behind, the GUI
+    session would keep OLLAMA_MODELS and OLLAMA_HOST until logout and the logs
+    would outlive the product that wrote them."""
     step("Removing ailocal startup LaunchAgents")
-    for label in AGENTS:
+    for label in AGENTS + RETIRED_AGENTS:
         _bootout(label)
         (LA_DIR / f"{label}.plist").unlink(missing_ok=True)
         ok(f"removed {label}")
+    for key in sorted(set(OLLAMA_ENV) | {"OLLAMA_NUM_PARALLEL"}):
+        _run("launchctl", "unsetenv", key, capture=True, timeout=5)
+    ok("cleared the OLLAMA_* session environment com.ailocal.ollama-env published")
+    if LOG_DIR.exists():
+        shutil.rmtree(LOG_DIR, ignore_errors=True)
+        ok(f"removed {LOG_DIR}")
     _clear_legacy_app_override()
+    for line in prune_owned_runtimes():
+        print(f"  {line}")
+
+
+def prune_owned_runtimes() -> list[str]:
+    """Remove every intact owned patched runtime; one line per path. Called when
+    nothing selects a patched runtime (install returning to stock, teardown):
+    a build nothing runs is 500 MB of state with no owner."""
     from .ollama_patch import remove
     removed, preserved = remove()
-    for path in removed:
-        ok(f"removed owned Ollama runtime {path}")
-    for path in preserved:
-        warn(f"preserved modified or unrecognized runtime {path}")
+    return ([f"✓ removed owned Ollama runtime {p}" for p in removed]
+            + [f"⚠ preserved modified or unrecognized runtime {p}" for p in preserved])
 
 
 def _clear_legacy_app_override() -> None:
@@ -1527,6 +1547,7 @@ def cmd_install(argv: list[str]) -> int:
     except (OSError, RuntimeError, subprocess.SubprocessError) as error:
         warn(f"Could not retire the old login model preload ({error}); installation is incomplete")
         return 1
+    stock = requested_patch == "none" or (requested_patch is None and not policy.ollama_patch_selection())
     if requested_patch is not None:
         from . import environment
         try:
@@ -1541,6 +1562,10 @@ def cmd_install(argv: list[str]) -> int:
             warn("Runtime selection could not be saved; the prior service was restored. "
                  "Repair configuration permissions and retry.")
             return 1
+    if stock:
+        # Nothing selects a patched runtime now; a build left on disk has no owner.
+        for line in prune_owned_runtimes():
+            print(f"  {line}")
 
     # Generation must succeed before anything is pulled; the plan below renders
     # from the generated artifact, so it cannot report stale numbers.

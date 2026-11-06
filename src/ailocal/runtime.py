@@ -486,13 +486,16 @@ def cmd_teardown(argv: list[str]) -> int:
     remove_images = "--images" in argv
     step("ailocal teardown")
     print("\n  This will permanently remove:")
-    print("    • All ailocal containers and volumes")
-    print("    • The ailocal Docker network")
-    print("    • The ailocal login agents")
-    print("  Stock Ollama's recorded startup preference will be restored after our server stops.")
+    print("    • All ailocal containers and volumes (the Docker network goes with them)")
+    print("    • The ailocal login agents, the OLLAMA_* session environment they published,")
+    print("      and their logs under ~/Library/Logs/ailocal")
+    print("    • Every intact owned patched Ollama runtime")
+    print("    • Generated client presets in ailocal's roots")
+    print("    • ailocal's lines in ~/.zshrc, its Copilot instruction file and MCP entries,")
+    print("      and its VS Code provider group, MCP entries and recommended settings")
     if remove_images:
         print("    • All pulled Docker images")
-    print(f"\n  Your configuration in {policy.config_root()} is NOT touched.")
+    print(f"\n  Your configuration in {policy.config_root()} and the model store are NOT touched.")
     print("  Re-run ailocal install + ailocal start to rebuild.\n")
     if not _confirm("Proceed?"):
         print("Aborted.")
@@ -510,10 +513,13 @@ def cmd_teardown(argv: list[str]) -> int:
     try:
         install.remove_login_agents()
     except (OSError, RuntimeError):
-        bad("Teardown incomplete: launch-agent removal or stock Ollama startup restoration failed. "
-            "Runtime payloads and any restore receipt were preserved; resolve the launchd/receipt error and retry.")
+        bad("Teardown incomplete: a launch agent could not be removed. "
+            "Runtime payloads were preserved; resolve the launchd error above and retry.")
         return 1
     install.retire_generated_clients()
+    from . import clients
+    for line in clients.remove_client_writes():
+        print(f"  {line}")
 
     if remove_images:
         step("Removing Docker images")
