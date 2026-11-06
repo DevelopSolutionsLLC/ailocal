@@ -328,16 +328,6 @@ def install_managed_dir(src: Path, dst: Path) -> None:
             info(f"  preserved external block in {entry.name}")
 
 
-def _concat_shared(head: Path, checklist: Path, dest: Path,
-                   claude_only: bool) -> None:
-    """A client's own protocol file plus the one shared build checklist."""
-    text = checklist.read_text(encoding="utf-8")
-    if not claude_only:
-        text = _CLAUDE_ONLY.sub("", text)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(head.read_text(encoding="utf-8") + text, encoding="utf-8")
-
-
 def _master_key() -> str:
     from . import runtime
     key = runtime.env_value("LITELLM_MASTER_KEY")
@@ -612,15 +602,52 @@ def install_vscode(argv: list[str]) -> int:
     return VSCODE_OK
 
 
-def _copilot_instructions() -> None:
+#: SHA-256 of each head (the text before the model-guidance block) ailocal has
+#: written into the Copilot instruction file, other than the current rendering,
+#: from c73ea03, which introduced the block. Recomputed from git history, so a
+#: head matching one is provably ailocal's output: teardown removes it and
+#: generation rewrites it. tests/clients.py recomputes the set from history and
+#: fails when a rendering is missing (#108).
+RETIRED_COPILOT_HEADS = frozenset({
+    "88df9fba7fbcae78e1f0c194a249902ecd2a324f453319c01b7bea48f2259807",  # c73ea03
+})
+
+
+def copilot_instructions_path() -> Path:
+    return (Path(os.environ.get("COPILOT_HOME") or Path.home() / ".copilot")
+            / "instructions" / "ailocal.instructions.md")
+
+
+def copilot_instructions_head() -> str:
+    """The protocol file plus the shared checklist, as written before the guidance block."""
     data = policy.data_root()
-    dest = Path.home() / ".copilot" / "instructions"
+    return ((data / "clients/copilot/ailocal.instructions.md").read_text(encoding="utf-8")
+            + _CLAUDE_ONLY.sub("", (data / "clients/claude/references/build-checklist.md")
+                               .read_text(encoding="utf-8")))
+
+
+def copilot_instructions_text(models=None) -> str:
+    return copilot_instructions_head() + "\n\n" + copilot_model_guidance(models)
+
+
+def copilot_instructions_owned(text: str) -> bool:
+    """ailocal wrote this file's head, in this release or an earlier one.
+
+    Comparing with the current head alone made every earlier release's file
+    'not provably ailocal's': an upgrade never refreshed it and teardown left
+    it behind with a retired role table (#108)."""
+    import hashlib
+    head = text.split("\n\n" + COPILOT_GUIDE_START, 1)[0]
+    if head == copilot_instructions_head():
+        return True
+    return hashlib.sha256(head.encode("utf-8")).hexdigest() in RETIRED_COPILOT_HEADS
+
+
+def _copilot_instructions() -> None:
+    target = copilot_instructions_path()
+    dest = target.parent
     dest.mkdir(parents=True, exist_ok=True)
-    _concat_shared(data / "clients/copilot/ailocal.instructions.md",
-                   data / "clients/claude/references/build-checklist.md",
-                   dest / "ailocal.instructions.md", claude_only=False)
-    target = dest / "ailocal.instructions.md"
-    target.write_text(target.read_text() + "\n\n" + copilot_model_guidance())
+    target.write_text(copilot_instructions_text(), encoding="utf-8")
     # ONE instruction file: session-primer.md loaded beside this one on every
     # turn and stated the terminal protocol twice. Removal condition for this
     # unlink: 0.18, two minor releases after the file stopped shipping.
@@ -1174,11 +1201,11 @@ def remove_client_writes(dry: bool = False) -> list[str]:
                 rc.write_text("".join(kept).lstrip("\n"), encoding="utf-8")
             lines.append(f"{verb} the ailocal lines from {rc}")
 
-    instructions = (Path(os.environ.get("COPILOT_HOME") or Path.home() / ".copilot")
-                    / "instructions" / "ailocal.instructions.md")
+    instructions = copilot_instructions_path()
     if instructions.is_file():
         head = (policy.data_root() / "clients" / "copilot" / "ailocal.instructions.md").read_text(encoding="utf-8")
-        if instructions.read_text(encoding="utf-8").startswith(head):
+        text = instructions.read_text(encoding="utf-8")
+        if copilot_instructions_owned(text) or text.startswith(head):
             if not dry:
                 instructions.unlink()
             lines.append(f"{verb} {instructions}")

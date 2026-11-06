@@ -494,6 +494,10 @@ def teardown():
         lines = I.prune_owned_runtimes()
     check(lines == ["✓ removed owned Ollama runtime /r/one", "⚠ preserved modified or unrecognized runtime /r/two"],
           "returning to stock prunes intact owned runtimes and preserves modified ones (#91)", lines)
+    with po(runtime, "_confirm", return_value=False), po(runtime, "compose") as compose, quiet():
+        declined = runtime.cmd_teardown([]), runtime.cmd_stop(["--volumes"])
+    check(declined == (1, 1) and not compose.called,
+          "a declined or unanswered teardown or volume wipe exits 1 and changes nothing", declined)
     out = io.StringIO()
     with po(runtime, "_confirm", return_value=True), po(runtime, "compose", return_value=NS(returncode=1)), \
             po(I, "remove_login_agents") as ra, contextlib.redirect_stdout(out):

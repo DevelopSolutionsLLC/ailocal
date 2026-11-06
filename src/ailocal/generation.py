@@ -546,9 +546,14 @@ def regen_vscode(models):
         warn(f"VS Code model configuration preserved, not regenerated: {exc}")
         return None
     stage(path, json.dumps(document, indent="\t") + "\n")
-    instructions = Path.home() / ".copilot/instructions/ailocal.instructions.md"
-    if instructions.is_file() and clients.COPILOT_GUIDE_START in instructions.read_text():
-        stage(instructions, splice(instructions.read_text(), clients.COPILOT_GUIDE_START,
+    instructions = clients.copilot_instructions_path()
+    text = instructions.read_text() if instructions.is_file() else ""
+    if clients.copilot_instructions_owned(text):
+        # Whole, so an upgrade refreshes the head as well as the guidance (#108).
+        stage(instructions, clients.copilot_instructions_text(models))
+    elif clients.COPILOT_GUIDE_START in text:
+        # An edited head is the operator's: only the generated block changes.
+        stage(instructions, splice(text, clients.COPILOT_GUIDE_START,
               clients.COPILOT_GUIDE_END, clients.copilot_model_guidance(models), "Copilot model guidance"))
     return True
 

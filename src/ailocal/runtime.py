@@ -453,7 +453,7 @@ def cmd_stop(argv: list[str]) -> int:
         warn("--volumes flag set: all Docker volumes will be removed.")
         if not _confirm("This destroys all database and cache data. Are you sure?"):
             print("Aborted.")
-            return 0
+            return 1  # declined is not done: a script must not read it as success
     step("Stopping ailocal services")
     if remove_volumes:
         compose("down", "--volumes", "--remove-orphans")
@@ -529,7 +529,7 @@ def cmd_teardown(argv: list[str]) -> int:
     print("  Re-run ailocal install + ailocal start to rebuild.\n")
     if not _confirm("Proceed?"):
         print("Aborted.")
-        return 0
+        return 1  # declined is not done: a script must not read it as success
 
     step("Stopping containers and removing volumes")
     result = compose("down", "--volumes", "--remove-orphans", check=False)
