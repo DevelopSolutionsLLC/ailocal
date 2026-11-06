@@ -45,7 +45,7 @@ The environment has exactly two owners and one precedence — generated state, t
 effective environment         loaded in that order by every consumer
 ```
 
-`ailocal install` migrates a legacy combined `~/.config/ailocal/.env` automatically, keeping the generated secrets byte-for-byte. No key is ever rotated.
+No key is ever rotated. `AILOCAL_BIND` in the user file is the proxy's host address (`ailocal bind lan|local|<ipv4>`; `127.0.0.1` when unset); Compose reads it through the same `--env-file` order, so the user file decides.
 
 ---
 

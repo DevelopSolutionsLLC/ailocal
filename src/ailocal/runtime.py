@@ -465,6 +465,53 @@ def cmd_stop(argv: list[str]) -> int:
     return 0
 
 
+def cmd_bind(argv: list[str]) -> int:
+    """`ailocal bind lan|local|<ipv4>|status`: where the proxy listens.
+
+    Only the proxy follows the switch, because only the proxy authenticates
+    (the master key); Ollama and SearXNG stay on loopback whatever it says. The
+    change is written to .env.local and applied by the next `ailocal start`.
+    """
+    from . import environment
+    want = argv[0] if argv else "status"
+    litellm = _container("AILOCAL_LITELLM_CONTAINER", "ailocal-litellm")
+    labels = {environment.BIND_LOCAL: "local (127.0.0.1, this machine only)",
+              environment.BIND_LAN: "lan (0.0.0.0, every interface)"}
+    if want == "status":
+        configured = environment.bind()
+        running = _docker("port", litellm, "4000").strip().splitlines()
+        print(f"  configured: {labels.get(configured, configured)}")
+        print(f"  running:    {', '.join(running) if running else 'proxy not running'}")
+        if running and not any(_bind_matches(configured, line) for line in running):
+            warn("the running proxy does not match the configured address; run ailocal start")
+        if configured != environment.BIND_LOCAL:
+            warn("off-host, the master key is the only protection; `ailocal bind local` closes it")
+        return 0
+    if want not in ("lan", "local"):
+        import ipaddress
+        try:
+            ipaddress.IPv4Address(want)
+        except ValueError:
+            print("usage: ailocal bind [lan|local|<ipv4 address of this machine>|status]", file=sys.stderr)
+            return 2
+    address = {"lan": environment.BIND_LAN, "local": environment.BIND_LOCAL}.get(want, want)
+    environment.set_bind(address)
+    ok(f"proxy bind set to {labels.get(address, address)} in {environment.user_file()}")
+    if address != environment.BIND_LOCAL:
+        warn("off-host, the master key is the only protection; Ollama and SearXNG stay on loopback")
+    dim("applies on the next ailocal start")
+    return 0
+
+
+def _bind_matches(configured: str, mapping: str) -> bool:
+    """Does one `docker port` line (`0.0.0.0:4000`, `[::]:4000`, `127.0.0.1:4000`)
+    realise the configured host address?"""
+    host = mapping.rsplit(":", 1)[0]
+    if configured == "0.0.0.0":
+        return host in ("0.0.0.0", "[::]")
+    return host == configured
+
+
 def cmd_teardown(argv: list[str]) -> int:
     remove_images = "--images" in argv
     step("ailocal teardown")
@@ -639,7 +686,7 @@ def cmd_status(argv: list[str]) -> int:
 
 
 COMMANDS = {"status": cmd_status, "start": cmd_start, "stop": cmd_stop,
-            "teardown": cmd_teardown}
+            "teardown": cmd_teardown, "bind": cmd_bind}
 
 
 def main(argv: list[str]) -> int:

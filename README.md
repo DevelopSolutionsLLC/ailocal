@@ -115,6 +115,7 @@ ailocal uses VS Code's built-in [Custom Endpoint provider](https://code.visualst
 | `ailocal status` | what is loaded right now |
 | `ailocal check` | is everything configured and working, end to end |
 | `ailocal clients` | configure the supported clients you have installed |
+| `ailocal bind lan` / `local` / `status` | let the proxy listen on every interface, or on this machine only (the default); applies on the next `ailocal start` |
 | `ailocal update --json` | which pinned images have newer candidates |
 | `ailocal audit` | are the pinned versions still free of advisories; nonzero when one is affected or yanked |
 
@@ -139,7 +140,7 @@ To move a pinned package: unpin, upgrade, run `ailocal check`, pin again. Docker
 | Codex CLI | Supported: interactive and `exec` sessions, tools, file edits, web search, research MCP (measured on 0.163.0) |
 | VS Code Copilot Chat | Supported for chat and inline completion |
 
-Any other OpenAI- or Anthropic-compatible app works against `http://127.0.0.1:4000` with the key in `~/.local/state/ailocal/env`.
+Any other OpenAI- or Anthropic-compatible app works against `http://127.0.0.1:4000` with the key in `~/.local/state/ailocal/env`. To reach it from another machine, `ailocal bind lan` then `ailocal start`: only the proxy opens, the master key is the only protection, and `ailocal check` says so until `ailocal bind local` closes it again. Ollama and SearXNG never leave loopback.
 
 Local models are capable everyday assistants, not frontier models. Expect strong routine work; do not expect hosted Opus or GPT on the hardest problems.
 

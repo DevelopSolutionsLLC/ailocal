@@ -10,7 +10,7 @@ ailocal runs entirely on one machine. There is no multi-tenancy, no remote acces
 
 | Boundary | Protection |
 |---|---|
-| Host ↔ network | Every published port binds `127.0.0.1`. Nothing is reachable off-host. |
+| Host ↔ network | Every published port binds `127.0.0.1`. Nothing is reachable off-host unless `ailocal bind lan` (or an address) opens the proxy, the one service that authenticates; `ailocal check` warns while it is open, and Ollama and SearXNG never follow. |
 | Client ↔ proxy | One shared key, `LITELLM_MASTER_KEY`. An unauthenticated request is rejected. |
 | Proxy ↔ SearXNG | Internal compose network only; SearXNG is not published for external use. |
 | Proxy ↔ Ollama | Host loopback. Ollama has no authentication and must not be exposed. |

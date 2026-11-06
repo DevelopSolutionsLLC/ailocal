@@ -446,6 +446,30 @@ def ollama_env():
                   and not prep.called, "unsupported parallelism is rejected before service changes")
 
 
+def bind():
+    S.section("ailocal bind: the proxy's host address (#103)")
+    from ailocal import environment, runtime
+    with tempfile.TemporaryDirectory() as box, \
+            patch.dict(os.environ, {"AILOCAL_CONFIG": f"{box}/config", "AILOCAL_STATE": f"{box}/state"}):
+        (Path(box) / "config").mkdir(), (Path(box) / "state").mkdir()
+        environment.ensure()
+        out = io.StringIO()
+        with po(runtime, "_docker", return_value="127.0.0.1:4000\n"), contextlib.redirect_stdout(out):
+            codes = [runtime.cmd_bind(["lan"]), runtime.cmd_bind(["status"]), runtime.cmd_bind(["nope"]),
+                     runtime.cmd_bind(["999.1.1.1"]), runtime.cmd_bind(["10.0.0.5"]), runtime.cmd_bind(["local"])]
+        text = out.getvalue()
+        check(codes == [0, 0, 2, 2, 0, 0] and environment.bind() == environment.BIND_LOCAL
+              and "run ailocal start" in text and "master key is the only protection" in text
+              and "applies on the next ailocal start" in text,
+              "lan, an IPv4 address and local are accepted and written; junk is refused; status names a stale "
+              "running proxy; the warning says the key is the only protection", text[-400:])
+        compose = (RESOURCES / "deploy" / "litellm" / "compose.yaml").read_text()
+        check('"${AILOCAL_BIND:-127.0.0.1}:${AILOCAL_LITELLM_PORT:-4000}:4000"' in compose
+              and "127.0.0.1:${AILOCAL_SEARXNG_PORT:-8080}:8080" in (RESOURCES / "deploy" / "searxng" / "compose.yaml").read_text()
+              and I.OLLAMA_ENV["OLLAMA_HOST"] == "127.0.0.1:11434",
+              "only the proxy's mapping follows AILOCAL_BIND; SearXNG and Ollama stay on loopback")
+
+
 def teardown():
     S.section("teardown and retired presets")
     from ailocal import clients, runtime
@@ -793,7 +817,7 @@ def idempotence():
 
 def main() -> int:
     for section in (model_sources, native_gguf, model_pulls, install_flow, launchd, activation, ollama_env,
-                    teardown, provenance, model_upgrade, role_migration, parity, idempotence):
+                    bind, teardown, provenance, model_upgrade, role_migration, parity, idempotence):
         try:
             section()
         except Exception as exc:  # noqa: BLE001

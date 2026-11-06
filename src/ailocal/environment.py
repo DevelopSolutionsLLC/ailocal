@@ -187,17 +187,38 @@ def ensure_user() -> dict[str, str]:
     return parse(path)
 
 
+#: Where the LiteLLM proxy listens. Loopback unless `ailocal bind` says
+#: otherwise; Ollama and SearXNG never follow it (neither authenticates).
+BIND_LOCAL = "127.0.0.1"
+BIND_LAN = "0.0.0.0"
+
+
+def bind() -> str:
+    """The configured proxy bind address; the one reader of AILOCAL_BIND."""
+    return value("AILOCAL_BIND") or BIND_LOCAL
+
+
+def set_bind(address: str) -> None:
+    """Persist the proxy bind address; `ailocal start` applies it."""
+    _set_user_value("AILOCAL_BIND", address)
+
+
 def set_ollama_patch(selected: str) -> None:
     """Persist an explicit installer choice without rewriting other overrides."""
+    _set_user_value("AILOCAL_OLLAMA_PATCH", selected)
+
+
+def _set_user_value(name: str, selected: str) -> None:
+    """Replace one line of the user file, keeping every other override."""
     ensure_user()
     path = user_file()
     lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
     lines = [line for line in lines if not (
-        (match := _LINE.match(line)) and match.group(1) == "AILOCAL_OLLAMA_PATCH")]
+        (match := _LINE.match(line)) and match.group(1) == name)]
     text = "".join(lines)
     if text and not text.endswith("\n"):
         text += "\n"
-    text += f"AILOCAL_OLLAMA_PATCH={selected}\n"
+    text += f"{name}={selected}\n"
     temporary = path.with_name(path.name + ".incoming")
     fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:

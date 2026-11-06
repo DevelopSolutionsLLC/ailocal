@@ -45,6 +45,7 @@ COMMANDS: dict[str, tuple[str, tuple]] = {
     "start":          ("ailocal.runtime", ("start",)),
     "stop":           ("ailocal.runtime", ("stop",)),
     "teardown":       ("ailocal.runtime", ("teardown",)),
+    "bind":           ("ailocal.runtime", ("bind",)),
     "clients":        ("ailocal.clients", ()),
     "mcp":            ("ailocal.mcp", ()),
 }
@@ -60,6 +61,7 @@ USAGE: dict[str, str] = {
     "start":    "usage: ailocal start [--no-wait]",
     "stop":     "usage: ailocal stop [--volumes]",
     "teardown": "usage: ailocal teardown [--images]",
+    "bind":     "usage: ailocal bind [lan|local|<ipv4>|status]",
     "clients":  "usage: ailocal clients [vscode|codex|claude|all ...] [--dry-run]",
     "mcp":      "usage: ailocal mcp research [--enable-answer]",
 }
@@ -70,7 +72,7 @@ USAGE: dict[str, str] = {
 GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("bootstrap the stack",        ("install",)),
     ("inspect",                    ("status", "check", "update", "audit")),
-    ("lifecycle",                  ("start", "stop")),
+    ("lifecycle",                  ("start", "stop", "bind")),
     ("point a client at it",       ("clients",)),
     ("bundled research tools",     ("mcp",)),
     ("remove it",                  ("teardown",)),
