@@ -450,15 +450,9 @@ model_classes:
 
   # ── Local: weak at agentic loops ──────────────────────────────────────────
   # REAL: qwen2.5-coder:14b was measured non-agentic (2 turns, file UNCHANGED).
-  # It is kept available (it is a fine single-shot coder) but the registry
-  # declares the limitation rather than encoding it in a conditional somewhere.
-  #
-  # `match_capabilities` was REMOVED here. It read [implementation, review],
-  # which meant the finding above — measured on a 14B coder this deployment no
-  # longer pulls — was being applied to whatever model happened to occupy those
-  # two roles, the same model that served the role beside them (all three are
-  # `primary` since 0.16). The class now matches only the models it was
-  # actually measured on, and is dormant until one of them is served.
+  # The class matches only the models it was measured on, never a role: a
+  # role-keyed match applied a 14B finding to whatever model served the role.
+  # Dormant until one of the listed models is served.
   local_nonagentic:
     match_models: ["*qwen2.5-coder:14b*", "*deepseek-coder-v2*"]
     supports_tools: true
@@ -716,6 +710,10 @@ task_classes:
       groups: [search, lsp]
       notes: "Understanding existing code: semantic search plus symbols."
 
+    # Task classes `architecture` and `review` are homonyms of the deprecated
+    # 0.15 aliases ailocal-architecture / ailocal-review until 0.17 removes
+    # those; they classify a REQUEST, never name a model, and are renamed with
+    # the alias removal (CHANGELOG, Deprecated).
     - name: architecture
       min_confidence_hits: 1
       patterns: ["design ", "architecture", "refactor", "restructure",

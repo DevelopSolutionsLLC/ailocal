@@ -17,6 +17,8 @@ ailocal runs Claude Code, Codex CLI and VS Code Copilot Chat against local model
 | `src/ailocal/resources/` | shipped assets — `deploy/` and `clients/` are read IN PLACE from the package; only `profiles/` is copied out |
 | `src/ailocal/policy.py` | the only reader of any of the above |
 
+Two words, one meaning each: a **role** is a section of a profile (`[primary]`, `[fast]`, `[cyber]`, `[completion]`); a **capability** is the served alias of that role, `ailocal-<role>`, which clients and the proxy name. `ailocal install --profile <tier>` names the profile for a tier (`16gb`, `32gb`, `64gb`, `128gb`).
+
 ## Development
 
 Cadence's shared policy (principal-engineer voice, evidence labels, version safety, the weekly audit) and its `repository-intelligence`, `tool-maintenance`, `security-review` and `work-tracking` skills apply; never copy their rules into shipped client instructions. Trace every change client → protocol → proxy → provider/tool, and keep deterministic checks apart from model-dependent evaluations.
@@ -30,7 +32,7 @@ python3 -m venv .venv && . .venv/bin/activate
 pip install -e .
 ```
 
-The gate imports `ailocal`, so run it from that venv. `pipx install -e .` additionally puts the command on PATH.
+The gate imports `ailocal`, so run it from that venv. `pipx install -e .` additionally puts the command on PATH. `pip install -e .` leaves `build/` and `src/ailocal.egg-info/` behind, ignored; `rm -rf build src/ailocal.egg-info` removes them, and the gate's root check ignores neither tracked residue nor an untracked file.
 
 ## Validate
 

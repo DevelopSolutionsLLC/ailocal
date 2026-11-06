@@ -1463,7 +1463,7 @@ def build_mcp():
         emoji: Annotated[str, Field(
             description="Optional emoji for the banner.")] = "\U0001F4C4",
         artifact_id: Annotated[str, Field(
-            description="Stable id for this artifact, e.g. 'ailocal-architecture'. "
+            description="Stable id for this artifact, e.g. 'release-notes'. "
                         "Pass the same id again to update it in place. Derived "
                         "from the title when omitted.")] = "",
         file_path: Annotated[str, Field(

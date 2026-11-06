@@ -582,7 +582,7 @@ PREREQUISITES = (
     ("ollama", "Ollama", "brew install --cask ollama-binary"),
 )
 #: The menu-bar app runs its own server and watchdog on :11434 and updates
-#: itself past the measured version; ailocal no longer stops it at runtime (#74).
+#: itself past the measured version, so install refuses while it exists (#74).
 OLLAMA_APP = Path("/Applications/Ollama.app")
 
 
@@ -615,15 +615,11 @@ def _wait(predicate, attempts: int, delay: float) -> bool:
 def _write_ollama_setenv_agent() -> None:
     """Login agent that publishes the effective Ollama env into the session.
 
-    SECOND consumer of the same settings. `com.ailocal.ollama` bakes them into
-    the SERVER's own environment; this one publishes it to user shells, so a
-    bare `ollama` CLI call sees what the daemon sees.
-
-    It must be rewritten wherever the server agent is, or the two drift. Observed
-    on a real install: the server plist carried KEEP_ALIVE 6h / MAX_LOADED 4
-    while this agent still carried the superseded -1 / 5, because a normal
-    install rewrote the first and only `--env-only` rewrote the second. Reading
-    either one then implied a different runtime than the server actually had.
+    SECOND consumer of the same settings: `com.ailocal.ollama` bakes them into
+    the server's own environment, this one publishes them to user shells so a
+    bare `ollama` call sees what the daemon sees. It is rewritten wherever the
+    server agent is; rewritten separately, the two carried different values
+    and either one implied a runtime the server did not have.
     """
     setenv = "; ".join(f"launchctl setenv {k} {v}" for k, v in _ollama_env().items())
     _write_agent("com.ailocal.ollama-env", ["/bin/sh", "-c", setenv])
@@ -1383,7 +1379,8 @@ pinned images and pull the model set. Everything after that is `ailocal start`.
 Idempotent.
 
   --yes              unattended: accept every default
-  --profile <tier>   override the tier detected from installed memory
+  --profile <tier>   use this tier's profile (16gb|32gb|64gb|128gb) instead of
+                     the one detected from installed memory
   --ollama-patch     select the reviewed Gemma MLX loader patch, or none to
                      restore stock Ollama. Requires Go; the signed native files
                      come from the pinned release archive. Builds once. Without

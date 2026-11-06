@@ -982,13 +982,11 @@ def target_claude() -> None:
     # settings.json is written here by generation; it carries no secret, because
     # the key reaches Claude through the claude-local wrapper's process-scoped
     # env, never through a file.
-    # NO agents OR commands. ailocal shipped planner/implementer/reviewer/
-    # search/tester and a local-build workflow — generic software-engineering
-    # roles that describe no local-inference fact. Measured: native Claude
-    # matched or beat that workflow on the same tasks, and a local runtime has
-    # no business teaching a client how to plan, implement or review. What
-    # ailocal uniquely knows reaches the model through the model-guide hooks
-    # and the capability catalog, not through a role roster.
+    # NO agents OR commands: a local runtime ships no software-engineering
+    # roles (measured: native Claude matched or beat them). What ailocal
+    # uniquely knows reaches the model through the model-guide hooks and the
+    # capability catalog. The two retirements remove what earlier releases
+    # shipped here (removal condition: 0.18, with RETIRED_UNMANAGED).
     retire_managed_dir(home / "agents")
     retire_managed_dir(home / "commands")
     install_managed_dir(policy.data_root() / "clients/claude/references",
