@@ -389,6 +389,144 @@ def upgrade_model_defaults(source: Path, config: Path) -> dict:
     return {"updated": [path.stem for path in prepared], "backup": backup}
 
 
+#: Fields the 0.15 shipped roles differed in BY DESIGN (each role's label, prose
+#: and output reserve). A difference here between two retired sections is the old
+#: default, not an operator decision, so it never counts as a conflict.
+ROLE_SPLIT_FIELDS = ("role", "purpose", "strengths", "weaknesses", "context_input", "max_output")
+
+#: Where [primary] takes its values from, first match wins.
+PRIMARY_SOURCES = ("primary", "architecture", "implementation", "review")
+
+
+def _section_span(text: str, header: str) -> tuple[int, int] | None:
+    """(start, end) of `[header]` through the line before the next table, with the
+    comment and blank lines that introduce the next table left to it."""
+    match = re.search(r"(?m)^\[" + re.escape(header) + r"\][ \t]*(?:#[^\n]*)?$\n?", text)
+    if not match:
+        return None
+    following = re.search(r"(?m)^\[", text[match.end():])
+    end = match.end() + following.start() if following else len(text)
+    body = text[match.end():end]
+    kept = 0
+    for line in reversed(body.splitlines(keepends=True)):
+        if line.strip() and not line.lstrip().startswith("#"):
+            break
+        kept += len(line)
+    return match.start(), end - kept
+
+
+def migrate_profile_roles(source: Path, config: Path) -> dict:
+    """Collapse 0.15's [architecture]/[implementation]/[review] into [primary] (#89).
+
+    Runs on the operator's edited profiles, which provision() preserves; an
+    unedited one was already replaced by the shipped file and has nothing to
+    migrate. [primary] takes the first of PRIMARY_SOURCES present, verbatim, so
+    every value the operator set survives (`--upgrade-models` adopts the shipped
+    label and prose afterwards). Each other retired section is then compared with
+    it outside ROLE_SPLIT_FIELDS. A field that differs is a CONFLICT only when
+    the other section's value is not the shipped default, because then both
+    sections carry an operator edit and there is no rule to choose between them;
+    it is reported, left for the operator, and nothing is written for any tier.
+    (The shipped 0.16 primary carries the values the three 0.15 roles shared,
+    so "still the shipped default" is one comparison.) [fast] on a tier the
+    shipped profile serves without one is dropped when, outside those fields, it
+    is the shipped default or equals the primary, and otherwise kept as the
+    operator's own fast role.
+
+    Every candidate is parsed and compared before any live file changes;
+    complete originals are backed up.
+    """
+    prepared, conflicts, dropped, kept_fast = {}, {}, {}, []
+    for tier in policy.TIERS:
+        path = policy.profile_path(tier, config)
+        if not path.is_file():
+            continue
+        if path.resolve() == policy.profile_path(tier, source).resolve() or path.is_symlink():
+            raise ValueError("role migration refuses shipped-source paths and profile symlinks")
+        text = path.read_text()
+        data = tomllib.loads(text)
+        retired = [r for r in policy.RETIRED_ROLE_SECTIONS if r in data]
+        if not retired and "fast" not in data:
+            continue
+        shipped = policy.load_profile(tier, source)
+        stray_fast = "fast" in data and "fast" not in shipped
+        if not retired and not stray_fast:
+            continue
+        src = next((s for s in PRIMARY_SOURCES if s in data), None)
+        if src is None:
+            raise ValueError(f"{tier}.toml declares [fast] without a chat role to collapse into")
+        primary = data[src]
+
+        def other(section):
+            return {k: v for k, v in section.items() if k not in ROLE_SPLIT_FIELDS}
+
+        expected = {k: copy.deepcopy(v) for k, v in data.items() if k not in retired}
+        expected["primary"] = copy.deepcopy(primary)
+        remove, found, default = [r for r in retired if r != src], [], shipped["primary"]
+        for section in remove:
+            for field in sorted(set(other(data[section])) | set(other(primary))):
+                value = data[section].get(field)
+                if value != primary.get(field) and value != default.get(field):
+                    found.append((field, {src: primary.get(field), section: value}))
+        if stray_fast:
+            if other(data["fast"]) in (other(primary), other(default)):
+                remove.append("fast")
+                expected.pop("fast")
+            else:
+                kept_fast.append(tier)
+        if found:
+            conflicts[tier] = found
+            continue
+        if src == "primary" and not remove:
+            continue  # a kept [fast] beside [primary] is already the operator's policy
+        if src != "primary":
+            text = re.sub(r"(?m)^\[" + src + r"\]", "[primary]", text, count=1)
+        for section in remove:
+            start, end = _section_span(text, section)
+            rest = text[end:].lstrip("\n")
+            text = text[:start].rstrip("\n") + ("\n\n" + rest if rest else "\n")
+        if tomllib.loads(text) != expected:
+            raise ValueError("role migration could not preserve unrelated profile policy")
+        prepared[path] = text
+        dropped[tier] = remove
+    if conflicts or not prepared:
+        return {"migrated": [], "backup": None, "conflicts": conflicts,
+                "dropped": {}, "kept_fast": []}
+    backup = config / "backups" / ("roles-" + str(time.time_ns()))
+    backup.mkdir(parents=True)
+    for path in prepared:
+        shutil.copy2(path, backup / path.name)
+    changed = []
+    try:
+        for path, text in prepared.items():
+            temporary = path.with_suffix(".toml.upgrade-tmp")
+            temporary.write_text(text)
+            os.replace(temporary, path)
+            changed.append(path)
+    except BaseException:
+        for path in reversed(changed):
+            shutil.copy2(backup / path.name, path)
+        raise
+    finally:
+        for path in prepared:
+            path.with_suffix(".toml.upgrade-tmp").unlink(missing_ok=True)
+    return {"migrated": [path.stem for path in prepared], "backup": backup, "conflicts": {},
+            "dropped": dropped, "kept_fast": kept_fast}
+
+
+def role_conflict_report(conflicts: dict) -> str:
+    """What the operator must decide before `ailocal install` can continue."""
+    lines = ["Profile role migration stopped: retired role sections carry different values, and "
+             "ailocal does not choose between them."]
+    for tier, found in sorted(conflicts.items()):
+        for field, values in found:
+            lines.append(f"  {tier}.toml  {field}: " + ", ".join(
+                f"[{section}] = {value!r}" for section, value in values.items()))
+    lines += ["Edit the profile so the sections agree, delete the section you do not want, or run "
+              "`ailocal install --reset-config` to take the shipped defaults (your files are backed up)."]
+    return "\n".join(lines)
+
+
 # ── host prerequisites ──────────────────────────────────────────────────────
 
 #: command -> how to get it. ailocal does not install other people's software:
@@ -1290,6 +1428,17 @@ def cmd_install(argv: list[str]) -> int:
         dim(f"absent {rel} (shipped default you removed)")
     for rel in report["retired"]:
         dim(f"retired {rel} (no longer shipped)")
+    migration = migrate_profile_roles(source, policy.config_root())
+    if migration["conflicts"]:
+        raise SystemExit(role_conflict_report(migration["conflicts"]))
+    for tier in migration["migrated"]:
+        ok(f"{tier}.toml: retired role sections collapsed into [primary]"
+           + (f"; dropped [{'], ['.join(migration['dropped'][tier])}]" if migration["dropped"][tier] else ""))
+    for tier in migration["kept_fast"]:
+        dim(f"{tier}.toml keeps your edited [fast]; the shipped profile serves that tier without one")
+    if migration["backup"]:
+        warn(f"original profiles saved to {migration['backup']}; "
+             "`ailocal install --upgrade-models` adopts the shipped role descriptions")
     if "--upgrade-models" in argv:
         upgrade = upgrade_model_defaults(source, policy.config_root())
         if upgrade["updated"]:
