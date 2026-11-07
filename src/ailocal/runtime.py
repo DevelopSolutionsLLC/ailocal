@@ -187,12 +187,8 @@ def _get(url: str, timeout: int = 3) -> str | None:
 
 
 def _docker(*args: str, timeout: int = 10) -> str:
-    try:
-        r = subprocess.run(["docker", *args], capture_output=True, text=True,
-                           timeout=timeout)
-        return r.stdout.strip() if r.returncode == 0 else ""
-    except (OSError, subprocess.SubprocessError):
-        return ""
+    from .primitives import command_output
+    return command_output("docker", *args, timeout=timeout)
 
 
 def _container(name_env: str, default: str) -> str:
