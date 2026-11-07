@@ -152,9 +152,11 @@ def check_codex_no_mcp() -> CheckResult:
     path = P.deployed_client_root() / "codex" / "config.toml"
     if path.is_file():
         import tomllib
+        from ailocal.mcp import registration
+        launcher = {k: registration()[k] for k in ('command', 'args')}
         try:
             servers = tomllib.loads(path.read_text()).get('mcp_servers', {})
-            if servers.get('research') != {'command': 'ailocal', 'args': ['mcp', 'research']}:
+            if servers.get('research') != launcher:
                 out.append('research launcher differs')
         except (OSError, ValueError):
             out.append('invalid Codex configuration')
