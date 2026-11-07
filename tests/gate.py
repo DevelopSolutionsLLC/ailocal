@@ -15,6 +15,7 @@ import subprocess
 import sys
 import time
 
+from ailocal import policy
 from ailocal.checks import FAIL
 from ailocal.checks import services as S
 
@@ -194,6 +195,7 @@ def _gate(argv: list[str]) -> int:
     _preconditions(repo)
     print("═" * 70 + "\n ailocal regression gate\n" + "═" * 70)
     passed, failures, slow = 0, [], []
+    logs = policy.state_root() / "gate" / time.strftime("%Y%m%dT%H%M%S")
     for heading, entries in _suites(full):
         print(f"\n{heading}")
         for label, runner in entries:
@@ -219,6 +221,11 @@ def _gate(argv: list[str]) -> int:
             for line in [l for l in out.splitlines()
                          if re.search(r"FAIL|[Ee]rror|Traceback|not idempotent", l)][:8]:
                 print(f"          {line}")
+            # The excerpt can miss the cause; a transient needs it all.
+            log = logs / (re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")[:60] + ".log")
+            logs.mkdir(parents=True, exist_ok=True)
+            log.write_text(out)
+            print(f"          full output: {log}")
             failures.append(label)
 
     print("\n" + "═" * 70)

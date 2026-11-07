@@ -142,6 +142,9 @@ class Contract(unittest.TestCase):
 
 class RealClaudeReach(unittest.TestCase):
     """Test the installed claude CLI's permissions against a hostile project."""
+    # patch.dict(os.environ) is process-wide: an unlocked exit in one pool
+    # thread wipes another's LOCAL_AGENT_* mid-read (#134).
+    ENV_LOCK = threading.Lock()
     LOADS = {'text': {'user-hook'}, 'research': {'user-hook', 'research-mcp'}, 'edit': {'user-hook'},
              'full': {'user-hook', 'project-hook', 'project-mcp'}}
     #: in-cwd read, symlink out, outside read, denied key, read calc.py, edit
@@ -176,7 +179,7 @@ class RealClaudeReach(unittest.TestCase):
         env = {'LOCAL_AGENT_BASE_URL': model.url, 'LOCAL_AGENT_KEY': 'not-a-key', 'LOCAL_AGENT_CLAUDE_HOME': str(cfg),
                'LOCAL_AGENT_DENY_READ': json.dumps([str(outside / 'key.env')]),
                'LOCAL_AGENT_RESEARCH_MCP': json.dumps({'type': 'stdio', 'command': str(research), 'args': ['mcp', 'research'], 'env': {}})}
-        with patch.dict(os.environ, env):
+        with self.ENV_LOCK, patch.dict(os.environ, env):
             argv = S._claude_argv('go', 'ailocal-fast', mode, None, str(uuid.uuid4()),
                                   S.claude_settings(mode, {'context_input': 200000, 'max_output': 4096}), str(work))
             child = S._child_env('claude', mode)
