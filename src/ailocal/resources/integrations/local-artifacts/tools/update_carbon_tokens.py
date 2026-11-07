@@ -8,6 +8,8 @@
 Developer command; rendering never touches the network. Resolves only the
 aliased tokens; no timestamp, so the same pin regenerates byte-identically.
 """
+from __future__ import annotations
+
 import argparse
 import base64
 import hashlib
@@ -17,7 +19,9 @@ import re
 import sys
 import tarfile
 import urllib.request
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 HERE = Path(__file__).resolve().parent.parent
 AUTHORED = HERE / "themes/artifact.tokens.json"
@@ -32,7 +36,7 @@ PALETTE_FILE = "color-palette.json"
 REF = re.compile(r"^\{([^}]+)\}$")
 
 
-def fetch(pin):
+def fetch(pin: str) -> tuple[dict, dict[str, dict], str]:
     """Return (palette, {mode: theme}, integrity) from the pinned tarball."""
     meta_url = f"https://registry.npmjs.org/{PKG.replace('/', '%2f')}/{pin}"
     with urllib.request.urlopen(meta_url, timeout=60) as r:
@@ -59,7 +63,7 @@ def fetch(pin):
     return out["palette"], {k: out[k] for k in THEME_FILES}, integrity
 
 
-def dig(tree, path):
+def dig(tree: object, path: Sequence[str]) -> Any:
     node = tree
     for part in path:
         if not isinstance(node, dict) or part not in node:
@@ -68,7 +72,7 @@ def dig(tree, path):
     return node
 
 
-def resolve(value, palette, depth=0):
+def resolve(value: object, palette: dict, depth: int = 0) -> dict:
     """Follow a Carbon alias chain down to a concrete DTCG colour object."""
     if depth > 16:
         sys.exit("circular reference in upstream tokens")
@@ -85,7 +89,7 @@ def resolve(value, palette, depth=0):
     sys.exit(f"unrecognised upstream value shape: {value!r}")
 
 
-def wanted(node, out=None):
+def wanted(node: object, out: set[str] | None = None) -> set[str]:
     """Return every {carbon....} alias the authored file uses."""
     out = set() if out is None else out
     if isinstance(node, dict):
@@ -102,14 +106,14 @@ def wanted(node, out=None):
     return out
 
 
-def insert(tree, path, token):
+def insert(tree: dict, path: Sequence[str], token: dict) -> None:
     node = tree
     for part in path[:-1]:
         node = node.setdefault(part, {})
     node[path[-1]] = token
 
 
-def build(pin):
+def build(pin: str) -> object:
     palette, themes, integrity = fetch(pin)
     refs = wanted(json.loads(AUTHORED.read_text()))
     if not refs:
@@ -137,7 +141,7 @@ def build(pin):
             "$extensions": {"com.developsolutions.ailocal": {"upstream": origin}},
         })
 
-    def prune(n):
+    def prune(n: object) -> object:
         if isinstance(n, dict):
             return {k: prune(v) for k, v in n.items() if v is not None}
         return n
@@ -167,7 +171,7 @@ def build(pin):
     })
 
 
-def main():
+def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--pin", default=PIN, help=f"upstream version (default {PIN})")
     ap.add_argument("--check", action="store_true",

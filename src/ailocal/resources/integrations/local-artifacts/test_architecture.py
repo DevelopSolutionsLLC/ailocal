@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Tests for the architecture + mermaid formats and their validation."""
+from __future__ import annotations
+
 import json, sys, tempfile, os
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -7,12 +9,12 @@ import architecture as A
 import check_diagram
 
 PASS = FAIL = 0
-def check(name, cond, detail=""):
+def check(name: str, cond: object, detail: object = "") -> None:
     global PASS, FAIL
     if cond: PASS += 1; print(f"  PASS  {name}")
     else: FAIL += 1; print(f"  FAIL  {name}  {detail}")
 
-def spec_err(spec):
+def spec_err(spec: object) -> str | None:
     try:
         A.validate(spec); return None
     except A.SpecError as e:

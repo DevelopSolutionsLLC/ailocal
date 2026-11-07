@@ -12,6 +12,8 @@ the viewer's grammar; under Node DOMPurify lacks a DOM, and a regex pre-check
 is a weaker second grammar. Chrome uses a throwaway profile and is killed once
 the verdict marker prints: with a profile `--dump-dom` never exits.
 """
+from __future__ import annotations
+
 import html
 import json
 import os
@@ -20,6 +22,7 @@ import select
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 VENDOR = Path(__file__).resolve().parent / "vendor"
@@ -64,14 +67,14 @@ class Result:
 
     __slots__ = ("state", "detail")
 
-    def __init__(self, state, detail=""):
+    def __init__(self, state: str, detail: str = "") -> None:
         self.state, self.detail = state, detail
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"Result({self.state!r}, {self.detail!r})"
 
 
-def find_chrome():
+def find_chrome() -> str | None:
     """Return the absolute path of a Chrome/Chromium binary, or None."""
     for c in _CHROME_CANDIDATES:
         if os.path.isabs(c):
@@ -84,12 +87,12 @@ def find_chrome():
     return None
 
 
-def available():
+def available() -> bool:
     """Return whether a real verdict is obtainable on this machine."""
     return bool(find_chrome()) and MERMAID_JS.is_file()
 
 
-def _read_until_verdict(proc, deadline_at):
+def _read_until_verdict(proc: subprocess.Popen[bytes], deadline_at: float) -> str:
     """Return stdout read until a marker or timeout; Chrome never exits."""
     import time
     buf = ""
@@ -114,7 +117,8 @@ def _read_until_verdict(proc, deadline_at):
     return buf
 
 
-def _run_chrome(chrome, page_uri, timeout):
+def _run_chrome(chrome: str, page_uri: str,
+                timeout: float) -> tuple[str | None, str | None]:
     """Launch, capture the verdict, then kill Chrome and drop its profile."""
     import time
     profile = tempfile.mkdtemp(prefix="mermaid-validate-profile-")
@@ -151,7 +155,9 @@ def _run_chrome(chrome, page_uri, timeout):
         shutil.rmtree(profile, ignore_errors=True)
 
 
-def parse(source, runner=None, timeout=TIMEOUT):
+def parse(source: str,
+          runner: Callable[[str], tuple[str | None, str | None]] | None = None,
+          timeout: float = TIMEOUT) -> Result:
     """Return a Result for `source`, the post-normalisation rendered text.
 
     Args:

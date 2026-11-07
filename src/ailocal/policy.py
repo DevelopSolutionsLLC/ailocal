@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import tomllib
+from collections.abc import Collection
 from pathlib import Path
 
 TIERS = ("16gb", "32gb", "64gb", "128gb")
@@ -115,7 +116,7 @@ SELECTION_NAME = re.compile(r"^(?P<family>[a-z0-9][a-z0-9.-]*):(?P<size>\d+(?:\.
                             r"(?P<variants>(?:-[a-z0-9_]+)*)$")
 
 
-def selection_name_error(name) -> str | None:
+def selection_name_error(name: object) -> str | None:
     """Return why `name` is not a structured selection name, or None."""
     m = SELECTION_NAME.fullmatch(str(name)) if isinstance(name, str) else None
     if m is None:
@@ -162,7 +163,7 @@ ROLE_CONFIG_INVALID = "ROLE_CONFIG_INVALID"
 class ProfileError(Exception):
     """Policy error carrying a code and key, never file contents (log leaks)."""
 
-    def __init__(self, code: str, detail: str = ""):
+    def __init__(self, code: str, detail: str = "") -> None:
         self.code = code
         self.detail = detail
         super().__init__(f"{code}: {detail}" if detail else code)
@@ -190,7 +191,7 @@ def ollama_url() -> str:
     return raw if "://" in raw else f"http://{raw}"
 
 
-def state_root(override_path=None) -> Path:
+def state_root(override_path: Path | str | None = None) -> Path:
     """Return the generated-state root, outside the checkout.
 
     Rendered SearXNG settings can hold a token; outside Git it cannot be
@@ -203,7 +204,7 @@ def state_root(override_path=None) -> Path:
         "XDG_STATE_HOME", ".local", "state") / "ailocal"
 
 
-def config_root(repo_root=None) -> Path:
+def config_root(repo_root: Path | str | None = None) -> Path:
     """Return the user policy root; overwritten only on shipped-digest match."""
     if repo_root is not None:
         return Path(repo_root)
@@ -211,7 +212,7 @@ def config_root(repo_root=None) -> Path:
     return Path(override) if override else _xdg("XDG_CONFIG_HOME", ".config") / "ailocal"
 
 
-def data_root(repo_root=None) -> Path:
+def data_root(repo_root: Path | str | None = None) -> Path:
     """Return the package's own resources (deploy/, clients/), never a copy.
 
     Compose bind-mounts deploy/; a copy could change under a live container.
@@ -236,20 +237,20 @@ def deployed_client_root() -> Path:
         "XDG_CONFIG_HOME", ".config") / "ailocal"
 
 
-def profiles_dir(repo_root=None) -> Path:
+def profiles_dir(repo_root: Path | str | None = None) -> Path:
     return config_root(repo_root) / "profiles"
 
 
-def profile_path(tier: str, repo_root=None) -> Path:
+def profile_path(tier: str, repo_root: Path | str | None = None) -> Path:
     return profiles_dir(repo_root) / f"{tier}.toml"
 
 
-def active_profile_path(state=None) -> Path:
+def active_profile_path(state: Path | str | None = None) -> Path:
     """Return the path recording the selected tier; spelled only here."""
     return state_root(state) / "active-profile"
 
 
-def client_policy_path(repo_root=None) -> Path:
+def client_policy_path(repo_root: Path | str | None = None) -> Path:
     return config_root(repo_root) / "profiles" / "clients.toml"
 
 
@@ -281,7 +282,7 @@ def _reject_retired_sections(data: dict) -> None:
                            "migrates an edited profile (#89)")
 
 
-def load_client_policy(repo_root=None) -> dict:
+def load_client_policy(repo_root: Path | str | None = None) -> dict:
     """Load per-client capability policy; fails closed like profiles."""
     data = _read_toml(client_policy_path(repo_root),
                       CLIENT_POLICY_MISSING, CLIENT_POLICY_INVALID)
@@ -308,7 +309,7 @@ DELEGATE_MODES = ("text", "research", "edit", "full")
 DELEGATE_DEFAULT_CEILING = "edit"
 
 
-def delegate_ceilings(repo_root=None) -> dict:
+def delegate_ceilings(repo_root: Path | str | None = None) -> dict:
     """Return the strongest mode `delegate` may grant each worker CLI.
 
     Absent `delegate_max_mode` keeps the sandboxed default; invalid fails.
@@ -329,7 +330,7 @@ def delegate_ceilings(repo_root=None) -> dict:
 INSTRUCTION_DEFAULT_MAX_BYTES = 4096
 
 
-def instruction_budgets(repo_root=None, tier=None) -> dict:
+def instruction_budgets(repo_root: Path | str | None = None, tier: str | None = None) -> dict:
     """Return per-client instruction-file budgets (`instruction_max_bytes`).
 
     Published for co-installed composers. Absent → measured default; invalid
@@ -353,7 +354,7 @@ def instruction_budgets(repo_root=None, tier=None) -> dict:
     return out
 
 
-def client_capability_targets(repo_root=None) -> dict:
+def client_capability_targets(repo_root: Path | str | None = None) -> dict:
     """Return model-routing targets per client; worker modes are excluded."""
     data = load_client_policy(repo_root)
     delegate_ceilings(repo_root)
@@ -378,7 +379,7 @@ def client_capability_targets(repo_root=None) -> dict:
     return out
 
 
-def resolve_capability(target: str, roles) -> str:
+def resolve_capability(target: str, roles: Collection[str]) -> str:
     """Return the enabled role a client target names.
 
     The one rule for absent optional roles; other targets pass through unchanged
@@ -390,7 +391,7 @@ def resolve_capability(target: str, roles) -> str:
     return stand_in if stand_in is not None and stand_in in roles else target
 
 
-def deprecated_aliases(roles) -> dict:
+def deprecated_aliases(roles: Collection[str]) -> dict:
     """Return retired or omitted role names still served → their target role."""
     out = {old: new for old, new in RETIRED_ROLES.items() if new in roles}
     out.update({opt: stand for opt, stand in OPTIONAL_ROLES.items()
@@ -398,19 +399,19 @@ def deprecated_aliases(roles) -> dict:
     return out
 
 
-def enabled_roles(tier: str, repo_root=None, _data=None) -> tuple:
+def enabled_roles(tier: str, repo_root: Path | str | None = None, _data: dict | None = None) -> tuple:
     """Return the roles a tier serves, in ROLES order."""
     data = load_profile(tier, repo_root) if _data is None else _data
     return tuple(r for r in ROLES if r in data
                  and resolve_role(tier, r, repo_root, _data=data)["enabled"])
 
 
-def effective_capability(target: str, repo_root=None) -> str:
+def effective_capability(target: str, repo_root: Path | str | None = None) -> str:
     """Resolve a capability against the active tier."""
     return resolve_capability(target, enabled_roles(resolve_active_tier(repo_root), repo_root))
 
 
-def slot_problems(tier=None, repo_root=None) -> list:
+def slot_problems(tier: str | None = None, repo_root: Path | str | None = None) -> list:
     """Return client slot assignments that violate profile geometry.
 
     Returns:
@@ -434,7 +435,7 @@ def slot_problems(tier=None, repo_root=None) -> list:
     return out
 
 
-def resolve_active_tier(repo_root=None, state=None) -> str:
+def resolve_active_tier(repo_root: Path | str | None = None, state: Path | str | None = None) -> str:
     """Return the active tier; never defaults, a missing marker is an error."""
     marker = active_profile_path(state)
     if not marker.exists():
@@ -448,7 +449,7 @@ def resolve_active_tier(repo_root=None, state=None) -> str:
     return tier
 
 
-def load_profile(tier: str, repo_root=None) -> dict:
+def load_profile(tier: str, repo_root: Path | str | None = None) -> dict:
     """Load and validate the whole profile; callers should not re-read."""
     if tier not in TIERS:
         raise ProfileError(ACTIVE_PROFILE_INVALID, f"{tier!r}")
@@ -516,7 +517,7 @@ def _known_role_fields() -> frozenset:
     }
 
 
-def _validate_role(role: str, cfg) -> None:
+def _validate_role(role: str, cfg: object) -> None:
     if not isinstance(cfg, dict):
         raise ProfileError(ROLE_CONFIG_INVALID, role)
     if LEGACY_CONTEXT_FIELD in cfg:
@@ -588,7 +589,7 @@ def _validate_role(role: str, cfg) -> None:
 
 
 
-def geometry(context_input, max_output):
+def geometry(context_input: object, max_output: object) -> dict:
     """Derive context geometry; every consumer calls this, none recomputes it.
 
         total_context     = context_input + max_output   -> Ollama num_ctx
@@ -612,7 +613,7 @@ def geometry(context_input, max_output):
             "num_predict": max_output, "max_input_tokens": context_input}
 
 
-def resolve_role(tier: str, role: str, repo_root=None, _data=None) -> dict:
+def resolve_role(tier: str, role: str, repo_root: Path | str | None = None, _data: dict | None = None) -> dict:
     """Return one role's effective configuration.
 
     `enabled` is false w/o a backend or on explicit disable. `_data` passes an
@@ -638,7 +639,7 @@ def resolve_role(tier: str, role: str, repo_root=None, _data=None) -> dict:
     return out
 
 
-def profile_summary(tier: str, repo_root=None) -> dict:
+def profile_summary(tier: str, repo_root: Path | str | None = None) -> dict:
     """Return a serializable view for shells, doctor and status."""
     data = load_profile(tier, repo_root)
     return {
@@ -650,7 +651,7 @@ def profile_summary(tier: str, repo_root=None) -> dict:
     }
 
 
-def required_runtime_patch(tier: str, repo_root=None) -> str | None:
+def required_runtime_patch(tier: str, repo_root: Path | str | None = None) -> str | None:
     """Return the runtime patch enabled models declare they require."""
     required = {cfg["runtime_patch"] for cfg in profile_summary(tier, repo_root)["roles"].values()
                 if cfg["enabled"] and cfg.get("runtime_patch")}
@@ -661,19 +662,19 @@ def required_runtime_patch(tier: str, repo_root=None) -> str | None:
 
 # Runtime views derive from the profile per call; a cached file could go stale.
 
-def active_tier(repo_root=None) -> str:
+def active_tier(repo_root: Path | str | None = None) -> str:
     return resolve_active_tier(repo_root)
 
 
-def effective_role(role: str, repo_root=None) -> dict:
+def effective_role(role: str, repo_root: Path | str | None = None) -> dict:
     return resolve_role(resolve_active_tier(repo_root), role, repo_root)
 
 
-def effective_summary(repo_root=None) -> dict:
+def effective_summary(repo_root: Path | str | None = None) -> dict:
     return profile_summary(resolve_active_tier(repo_root), repo_root)
 
 
-def model_guides(tier=None, repo_root=None) -> dict:
+def model_guides(tier: str | None = None, repo_root: Path | str | None = None) -> dict:
     """Return the public model guide for direct clients and MCP callers."""
     summary = profile_summary(tier or active_tier(repo_root), repo_root)
     return {"tier": summary["tier"], "models": {

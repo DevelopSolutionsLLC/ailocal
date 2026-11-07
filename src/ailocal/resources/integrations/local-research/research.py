@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 import hashlib
 from html.parser import HTMLParser
@@ -12,6 +13,7 @@ from pathlib import Path
 import re
 import sqlite3
 import time
+from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from brave import ENDPOINT, Brave, Ledger, summary
@@ -93,7 +95,7 @@ class Config:
 
 class Cache:
     """One disposable, size-capped SQLite cache shared by MCP sessions."""
-    def __init__(self, root: Path):
+    def __init__(self, root: Path) -> None:
         self.warning = None
         self.db = None
         try:
@@ -114,7 +116,7 @@ class Cache:
                 self.db.close()
             self.db = None
 
-    def get(self, key):
+    def get(self, key: str) -> Any:
         if self.db is None:
             return None
         try:
@@ -125,7 +127,7 @@ class Cache:
             self.warning = 'CACHE_READ_FAILED: using live results without cache'
             return None
 
-    def put(self, key, value, ttl):
+    def put(self, key: str, value: object, ttl: float) -> None:
         if self.db is None:
             return
         try:
@@ -139,11 +141,11 @@ class Cache:
             self.warning = 'CACHE_WRITE_FAILED: result was not cached'
 
 
-def cache_key(*parts):
+def cache_key(*parts: object) -> str:
     return hashlib.sha256(json.dumps([1, *parts], sort_keys=True).encode()).hexdigest()
 
 
-def clean_url(value):
+def clean_url(value: str) -> str | None:
     try:
         p = urlsplit(value)
         if (p.scheme not in ('http', 'https') or not p.hostname or p.username is not None or p.password is not None
@@ -162,7 +164,7 @@ def clean_url(value):
 
 
 class Text(HTMLParser):
-    def __init__(self, capture_sections=False):
+    def __init__(self, capture_sections: bool = False) -> None:
         super().__init__(convert_charrefs=True)
         self.hidden = 0
         self.parts = []
@@ -170,13 +172,13 @@ class Text(HTMLParser):
         self.section_stack = []
         self.sections = []
 
-    def handle_starttag(self, tag, attrs):
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag in ('script', 'style', 'noscript', 'svg'):
             self.hidden += 1
         if self.capture_sections and tag == 'section':
             self.section_stack.append((dict(attrs).get('id', ''), len(self.parts)))
 
-    def handle_endtag(self, tag):
+    def handle_endtag(self, tag: str) -> None:
         if tag in ('script', 'style', 'noscript', 'svg'):
             self.hidden = max(0, self.hidden - 1)
         if self.capture_sections and tag == 'section' and self.section_stack:
@@ -184,18 +186,18 @@ class Text(HTMLParser):
             if key and len(self.sections) < 100:
                 self.sections.append((key, ' '.join(' '.join(self.parts[start:]).split())[:16000]))
 
-    def handle_data(self, value):
+    def handle_data(self, value: str) -> None:
         if not self.hidden:
             self.parts.append(value)
 
 
-def plain(value):
+def plain(value: str) -> str:
     parser = Text()
     parser.feed(value)
     return ' '.join(' '.join(parser.parts).split())
 
 
-def relevant_excerpt(text, question):
+def relevant_excerpt(text: str, question: str) -> str:
     """Spend the page budget on matching passages, not a table of contents."""
     if len(text) <= 8000:
         return text
@@ -220,11 +222,11 @@ def relevant_excerpt(text, question):
     return (text[:300] + '\n[...]\n' + '\n[...]\n'.join(text[a:b] for a,b in merged))[:8000]
 
 
-def page_excerpt(value, question):
+def page_excerpt(value: str, question: str) -> str:
     parser = Text(capture_sections=True)
     parser.feed(value)
     words = {w.rstrip('s') for w in re.findall(r'[a-z0-9]{4,}', question.lower())}
-    def score(section):
+    def score(section: tuple[str, str]) -> tuple[int, int]:
         key = re.sub(r'[^a-z0-9]', '', section[0].lower()).rstrip('s')
         return sum(len(w)**2 for w in words if key.endswith(w)), -len(key)
     sections = sorted(parser.sections, key=score, reverse=True)
@@ -233,14 +235,14 @@ def page_excerpt(value, question):
     return relevant_excerpt(' '.join(' '.join(parser.parts).split()), question)
 
 
-def keywords(query):
+def keywords(query: str) -> str:
     """Return ≤ 3 distinctive terms, in query order, for AND-only search APIs.
 
     Technical tokens rank first, then longer words; short words over-constrain
     an AND match without narrowing the topic.
     """
     terms = list(dict.fromkeys(t for t in re.findall(r"[\w][\w./+#-]*", query) if t.lower() not in STOPWORDS))
-    def rank(item):
+    def rank(item: tuple[int, str]) -> tuple[bool, int, int]:
         index, term = item
         technical = term.isupper() or any(c.isdigit() for c in term) or any(c.isupper() for c in term[1:])
         return (not technical, -len(term), index)
@@ -248,7 +250,7 @@ def keywords(query):
     return ' '.join(term for _, term in keep)
 
 
-def identity(url):
+def identity(url: str) -> tuple[str, str, str]:
     """Return a URL key ignoring www., a trailing slash and tracking params."""
     p = urlsplit(url)
     host = p.hostname.removeprefix('www.')
@@ -257,7 +259,7 @@ def identity(url):
 
 
 class Research:
-    def __init__(self, config: Config):
+    def __init__(self, config: Config) -> None:
         self.config = config
         self.cache = Cache(config.state)
         self.brave = Brave(config.brave_key, Ledger(config.state / 'brave-ledger.sqlite3', config.brave_budget),
@@ -265,7 +267,7 @@ class Research:
         self.calls: dict[str, int] = {}
 
     @staticmethod
-    def validate(query, sites):
+    def validate(query: object, sites: object) -> tuple[str, list[str]]:
         if not isinstance(query, str) or not 1 <= len(query.strip()) <= 400:
             raise ResearchError('INVALID_QUERY: provide 1 to 400 characters')
         # SearXNG routing operators must not override credit/provider selection.
@@ -278,7 +280,7 @@ class Research:
             raise ResearchError('INVALID_SITES: provide at most eight DNS hostnames')
         return query.strip(), sorted(set(hostname(s) for s in sites or []))
 
-    async def json_request(self, url, **kwargs):
+    async def json_request(self, url: str, **kwargs: Any) -> dict[str, Any]:
         status, _, data = await request(url, **kwargs)
         if status != 200:
             raise ResearchError('BACKEND_HTTP_ERROR: check backend health and credentials')
@@ -310,7 +312,8 @@ class Research:
                                       'refine it or answer from these sources')
         return result
 
-    def plan(self, query, sites, preset, names):
+    def plan(self, query: str, sites: list[str], preset: str,
+             names: Collection[str]) -> list[tuple[list[str], str, str | None, str]]:
         """Return bounded stage-one attempts: (engines, query, site, form)."""
         spec = PRESETS[preset]
         attempts = []
@@ -332,7 +335,8 @@ class Research:
             attempts.append((broad, query, None, 'original'))
         return attempts[:MAX_SEARX_REQUESTS]
 
-    async def searx(self, engines, query, site):
+    async def searx(self, engines: list[str], query: str,
+                    site: str | None) -> tuple[dict[str, Any], bool]:
         q = query + (f' site:{site}' if site else '')
         key = cache_key('searx', self.config.search_url, engines, q)
         cached = self.cache.get(key)
@@ -346,7 +350,8 @@ class Research:
         self.cache.put(key, value, 900)
         return value, False
 
-    async def brave_search(self, query, site, preset):
+    async def brave_search(self, query: str, site: str | None,
+                           preset: str) -> tuple[list[dict[str, Any]], bool]:
         q = query + (f' site:{site}' if site else '')
         kind = 'discussions' if preset == 'forums' and not site else 'web'
         key = cache_key('brave', q, kind)
@@ -357,7 +362,8 @@ class Research:
         self.cache.put(key, results, 900)
         return results, False
 
-    async def _search(self, query, sites, preset, use_brave=None):
+    async def _search(self, query: str, sites: list[str] | None, preset: str | None,
+                      use_brave: bool | None = None) -> dict[str, Any]:
         query, sites = self.validate(query, sites)
         preset = preset or 'web'
         if preset not in PRESETS:
@@ -372,7 +378,8 @@ class Research:
         brave = {'used': 0, 'cache_hits': 0, 'refusal': None}
         semaphore = asyncio.Semaphore(4)
 
-        def collect(index, engines, scope, items, provider):
+        def collect(index: int, engines: list[str], scope: list[str],
+                    items: Iterable[Mapping[str, Any]], provider: str) -> None:
             for rank, item in enumerate(items):
                 attributed = item.get('engines', [])
                 matched = [e for e in engines if e in attributed]
@@ -397,7 +404,7 @@ class Research:
                     record['read'] = 'login_walled'
                 records[key] = record
 
-        async def run(engines, q, site, form):
+        async def run(engines: list[str], q: str, site: str | None, form: str) -> int:
             index = len(attempts)
             entry = {'engines': engines, 'site': site, 'query_form': form, 'query': q + (f' site:{site}' if site else '')}
             attempts.append(entry)
@@ -414,7 +421,7 @@ class Research:
             entry.update(status='ok', results=len(value['results']), new_sources=len(records) - before, cache_hit=hit)
             return len(value['results'])
 
-        async def run_brave(q, site, reason):
+        async def run_brave(q: str, site: str | None, reason: str) -> None:
             index = len(attempts)
             entry = {'engines': ['brave'], 'site': site, 'query_form': 'original', 'query': q + (f' site:{site}' if site else ''), 'reason': reason}
             attempts.append(entry)
@@ -493,7 +500,7 @@ class Research:
             result['warnings'].append(self.cache.warning)
         return result
 
-    def brave_report(self, brave):
+    def brave_report(self, brave: Mapping[str, Any]) -> dict[str, Any]:
         if not self.brave.configured:
             return {'summary': 'Brave: not configured; keyless providers only.'}
         report = self.brave.ledger.status()
@@ -502,7 +509,8 @@ class Research:
             return {'summary': line}
         return {**brave, **report, 'session_used': self.brave.session_used, 'summary': line}
 
-    async def page(self, source, sites, question=''):
+    async def page(self, source: Mapping[str, Any], sites: list[str],
+                   question: str = '') -> dict[str, Any]:
         key = cache_key('page', 3, source['url'], sites, question)
         cached = self.cache.get(key)
         if cached is not None:

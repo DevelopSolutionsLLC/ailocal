@@ -7,6 +7,7 @@ exits on them. No registration or discovery: a check is a function.
 from __future__ import annotations
 
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 
@@ -66,7 +67,7 @@ _MARK = {PASS: ("\033[32m✓\033[0m", 1), FAIL: ("\033[31m✗\033[0m", 2),
          SKIP: ("\033[2m—\033[0m", 1)}
 
 
-def render(results) -> None:
+def render(results: Iterable[CheckResult]) -> None:
     """Print results; non-passes go to stderr with their fix.
 
     stderr so a caller redirecting stdout still sees what is wrong.
@@ -83,6 +84,6 @@ def render(results) -> None:
                 print(f"      → {line}", file=out)
 
 
-def exit_code(results) -> int:
+def exit_code(results: Iterable[CheckResult]) -> int:
     """Return 1 if anything failed, else 0; WARN and BLOCKED never fail."""
     return 1 if any(r.status is FAIL for r in results) else 0

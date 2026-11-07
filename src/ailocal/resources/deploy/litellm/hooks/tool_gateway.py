@@ -9,15 +9,23 @@ Registered after websearch_interception so it sees the full tool list.
 Ref: https://docs.litellm.ai/docs/proxy/call_hooks
 """
 
+from __future__ import annotations
+
 import json
 import os
 import re
 import time
+from collections.abc import Callable, Collection, Mapping
+from types import ModuleType
+from typing import TYPE_CHECKING, Any
 
 from litellm.integrations.custom_logger import CustomLogger
 
+if TYPE_CHECKING:
+    from .capability_registry import Registry as RegistryType
 
-def _load_registry_module():
+
+def _load_registry_module() -> ModuleType:
     """Import sibling capability_registry.py by path.
 
     LiteLLM's file loader puts no hooks dir on sys.path, so a plain import fails
@@ -44,13 +52,13 @@ VALID_MODES = ("off", "report", "filter")
 CAPTURE_DIR = os.environ.get("AILOCAL_TOOL_GATEWAY_CAPTURE") or ""
 
 
-def encode(obj):
+def encode(obj: object) -> str:
     """Encode canonically; byte counts compare only if every site uses this."""
     return json.dumps(obj, separators=(",", ":"), ensure_ascii=False,
                       sort_keys=True, default=str)
 
 
-def emit(record):
+def emit(record: Mapping[str, object]) -> None:
     """Print one metric line (LiteLLM filters loggers); never raises."""
     try:
         print("tool_gateway_metric " + json.dumps(record, default=str),
@@ -59,7 +67,7 @@ def emit(record):
         pass
 
 
-def mode():
+def mode() -> str:
     raw = (os.environ.get(MODE_ENV) or "off").strip().lower()
     if raw not in VALID_MODES:
         emit({"event": "bad_mode", "value": raw, "using": "off"})
@@ -69,7 +77,7 @@ def mode():
 
 # Dialects share data["tools"] but not entry shape; only name and bytes matter.
 
-def tool_name(tool):
+def tool_name(tool: object) -> str:
     """Return a tool's logical name; unnamed ones get a protected `<type>`."""
     if not isinstance(tool, dict):
         return "<malformed>"
@@ -81,25 +89,25 @@ def tool_name(tool):
     return "<%s>" % (tool.get("type") or "unknown")
 
 
-def tool_bytes(tool):
+def tool_bytes(tool: object) -> int:
     return len(encode(tool).encode("utf-8"))
 
 
 TASK_ENV = "AILOCAL_TASK_NEGOTIATION"
 
 
-def task_negotiation_enabled():
+def task_negotiation_enabled() -> bool:
     """Return whether opt-in task negotiation is on; a miss strands an agent."""
     return (os.environ.get(TASK_ENV) or "").strip().lower() in ("1", "true", "on")
 
 
-def _single_user_turn(data):
+def _single_user_turn(data: Mapping[str, Any] | None) -> bool:
     """Return whether the user has spoken exactly once, whatever the agent did.
 
     Bounds the conversational class: holds for the agent loop answering one
     question, lifts on the next user ask. Unrecognised shapes → False (keep).
     """
-    def is_real_user_turn(m):
+    def is_real_user_turn(m: object) -> bool:
         """Return whether a message is human text (tool results are `user`)."""
         if not isinstance(m, dict) or m.get("role") != "user":
             return False
@@ -126,13 +134,13 @@ def _single_user_turn(data):
     return False
 
 
-def first_user_text(data):
+def first_user_text(data: Mapping[str, Any] | None) -> str:
     """Return the first user message in any dialect, minus client scaffolding.
 
     User text only, so a confused model cannot narrow its own tools;
     <system-reminder> blocks would otherwise classify every session.
     """
-    def text_of(content):
+    def text_of(content: object) -> str:
         if isinstance(content, str):
             return content
         if isinstance(content, list):
@@ -140,7 +148,7 @@ def first_user_text(data):
                               if isinstance(b, dict) and b.get("type") == "text")
         return ""
 
-    def strip_injected(text):
+    def strip_injected(text: str | None) -> str:
         out, depth = [], 0
         for chunk in re.split(r"(<system-reminder>|</system-reminder>)", text or ""):
             if chunk == "<system-reminder>":
@@ -167,7 +175,9 @@ def first_user_text(data):
     return ""
 
 
-def expand_namespaces(tools, cfg, group_of=None):
+def expand_namespaces(tools: list[Any], cfg: Mapping[str, Any],
+                      group_of: Callable[[str], str | None] | None = None,
+                      ) -> tuple[list[Any], list[dict[str, Any]]]:
     """Flatten namespace bundles into standalone function tools; pure.
 
     LiteLLM drops Codex's MCP bundles before the backend; this runs first.
@@ -219,7 +229,7 @@ def expand_namespaces(tools, cfg, group_of=None):
     return out, info
 
 
-def _schema_of(tool):
+def _schema_of(tool: object) -> tuple[dict[Any, Any], str] | tuple[None, None]:
     """Return (container, key) of a tool's parameter schema, or (None, None)."""
     if not isinstance(tool, dict):
         return None, None
@@ -234,7 +244,7 @@ def _schema_of(tool):
     return None, None
 
 
-def _strip_keys(node, keys):
+def _strip_keys(node: object, keys: Collection[str]) -> object:
     """Return a copy of a schema without `keys`; report mode must not mutate."""
     if isinstance(node, dict):
         return {k: _strip_keys(v, keys) for k, v in node.items()
@@ -244,7 +254,8 @@ def _strip_keys(node, keys):
     return node
 
 
-def _truncate_descriptions(node, limit, marker, top_level=True):
+def _truncate_descriptions(node: object, limit: int, marker: str,
+                           top_level: bool = True) -> object:
     """Return a copy of a schema with `description` fields shortened."""
     if isinstance(node, dict):
         out = {}
@@ -260,7 +271,7 @@ def _truncate_descriptions(node, limit, marker, top_level=True):
     return node
 
 
-def rewrite_tool(tool, rules):
+def rewrite_tool(tool: object, rules: Mapping[str, Any]) -> object:
     """Return one tool rewritten by registry rules; strips before truncating."""
     if not rules.get("enabled") or not isinstance(tool, dict):
         return tool
@@ -307,7 +318,7 @@ def rewrite_tool(tool, rules):
     return out
 
 
-def tokens_est(text, model=None):
+def tokens_est(text: str, model: str | None = None) -> int | None:
     """Return a cl100k token estimate, or None when no counter (not zero)."""
     try:
         import litellm
@@ -318,12 +329,13 @@ def tokens_est(text, model=None):
 
 class ToolGateway(CustomLogger):
 
-    def __init__(self, registry=None):
+    def __init__(self, registry: RegistryType | None = None) -> None:
         super().__init__()
         self.registry = registry if registry is not None else Registry()
         emit({"event": "gateway_init", "registry": self.registry.describe()})
 
-    def negotiate(self, data, call_type=None):
+    def negotiate(self, data: dict[str, Any], call_type: str | None = None,
+                  ) -> tuple[dict[str, Any], list[tuple[str, int, object]]]:
         """Decide which tools to forward; mutates nothing.
 
         Returns:
@@ -350,7 +362,7 @@ class ToolGateway(CustomLogger):
         sizes = [tool_bytes(t) for t in tools]
         total_bytes = sum(sizes)
 
-        def reaches(tool):
+        def reaches(tool: object) -> bool:
             """Return whether LiteLLM forwards this entry on this route."""
             ttype = tool.get("type") if isinstance(tool, dict) else None
             return not reg.route_drops_type(route, ttype)
@@ -479,7 +491,7 @@ class ToolGateway(CustomLogger):
                 "none — no group is removable for this client/model pair")
         return report, keep
 
-    def capture(self, data, report):
+    def capture(self, data: dict[str, Any], report: dict[str, Any]) -> None:
         """Dump the raw tool payload for the test corpus."""
         if not CAPTURE_DIR:
             return
@@ -502,8 +514,9 @@ class ToolGateway(CustomLogger):
         except Exception as exc:
             emit({"event": "capture_failed", "error": str(exc)})
 
-    async def async_pre_call_hook(self, user_api_key_dict, cache, data,
-                                  call_type):
+    async def async_pre_call_hook(self, user_api_key_dict: object, cache: object,
+                                  data: dict[str, Any],
+                                  call_type: str | None) -> dict[str, Any]:
         current = mode()
         if current == "off":
             return data

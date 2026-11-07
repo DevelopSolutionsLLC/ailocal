@@ -4,10 +4,14 @@ The model supplies meaning; this module owns geometry and presentation, so
 the model never writes a coordinate and the artifact holds no script.
 """
 
+from __future__ import annotations
+
 import json
 import subprocess
 import shutil
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 HERE = Path(__file__).resolve().parent
 LAYOUT_JS = HERE / "layout.mjs"
@@ -27,7 +31,7 @@ class SpecError(Exception):
 
 # Sizing and rendering share these. Advances over-estimate: too wide only adds
 # whitespace, too narrow overflows the node.
-def _typo(k, d):
+def _typo(k: str, d: float) -> float:
     import tokens as _t
     return _t.load()["typography"].get(k, d)
 
@@ -39,11 +43,11 @@ ELABEL_PX, ELABEL_ADV = _typo("edge_label_px", 10.5), 0.62
 TYPE_PX, TYPE_ADV = _typo("type_label_px", 8.5), 0.66
 
 
-def _w(text, px, adv):
+def _w(text: str | None, px: float, adv: float) -> float:
     return len(text or "") * px * adv
 
 
-def node_size(n):
+def node_size(n: Mapping[str, Any]) -> tuple[int, int]:
     """Return card (width, height); the type label is its own row (C4)."""
     title = _w(n["label"], TITLE_PX, TITLE_ADV)
     sub = _w(n.get("subtitle"), SUB_PX, SUB_ADV)
@@ -61,7 +65,7 @@ def node_size(n):
     return round(width), round(height)
 
 
-def _text(v, field, required=True):
+def _text(v: object, field: str, required: bool = True) -> str | None:
     if v is None or v == "":
         if required:
             raise SpecError(f"'{field}' is required and must be a non-empty string.")
@@ -76,7 +80,8 @@ def _text(v, field, required=True):
     return v
 
 
-def validate(spec):
+def validate(spec: object) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]],
+                                   list[dict[str, Any]], dict[str, Any]]:
     """Return (nodes, groups, edges, meta); raise SpecError with a fix."""
     if not isinstance(spec, dict):
         raise SpecError("the architecture spec must be a JSON object.")
@@ -185,7 +190,8 @@ def validate(spec):
     return nodes, groups, edges, meta
 
 
-def run_layout(nodes, groups, edges, meta):
+def run_layout(nodes: Mapping[str, Mapping[str, Any]], groups: Mapping[str, Mapping[str, Any]],
+               edges: Sequence[Mapping[str, Any]], meta: Mapping[str, Any]) -> dict[str, Any]:
     used_groups = [g for g in groups if any(n["group"] == g for n in nodes.values())]
     children = []
     for gid in used_groups:
@@ -232,12 +238,12 @@ def run_layout(nodes, groups, edges, meta):
     return json.loads(out.stdout)
 
 
-def _elk_node(n):
+def _elk_node(n: Mapping[str, Any]) -> dict[str, Any]:
     w, h = node_size(n)
     return {"id": n["id"], "width": w, "height": h}
 
 
-def _elk_edge(e):
+def _elk_edge(e: Mapping[str, Any]) -> dict[str, Any]:
     d = {"id": e["id"], "sources": [e["from"]], "targets": [e["to"]]}
     if e["label"]:
         d["labels"] = [{"text": e["label"],
@@ -261,7 +267,7 @@ TYPE_LABELS = THEME["type_labels"]
 ACCENTS = tuple(THEME["light"]["accent"])
 
 
-def _css_vars(mode):
+def _css_vars(mode: str) -> str:
     t = THEME[mode]
     out = [f"--canvas:{t['canvas']}", f"--surface:{t['surface']}",
            f"--group:{t['group_surface']}", f"--ink:{t['ink']}",
@@ -312,16 +318,16 @@ CSS = (CSS.replace("%LIGHT%", _css_vars("light"))
           .replace("%SANS%", TYPO["sans"]).replace("%MONO%", TYPO["mono"]))
 
 
-def accent_for(kind):
+def accent_for(kind: str) -> str:
     return kind if kind in THEME["light"]["accent"] else "default"
 
 
-def esc(t):
+def esc(t: object) -> str:
     return (str(t).replace("&", "&amp;").replace("<", "&lt;")
             .replace(">", "&gt;").replace('"', "&quot;"))
 
 
-def _rounded_path(pts, r=9):
+def _rounded_path(pts: Sequence[Sequence[float]], r: float = 9) -> str:
     """Return an orthogonal SVG path with corners softened, route unchanged."""
     if len(pts) < 2:
         return ""
@@ -339,7 +345,9 @@ def _rounded_path(pts, r=9):
     return " ".join(d)
 
 
-def render_svg(nodes, groups, edges, meta, laid):
+def render_svg(nodes: Mapping[str, Mapping[str, Any]], groups: Mapping[str, Mapping[str, Any]],
+               edges: Sequence[Mapping[str, Any]], meta: Mapping[str, Any],
+               laid: Mapping[str, Any]) -> str:
     """Render laid-out semantics as SVG: card, accent rail, type label."""
     pos = {n["id"]: n for n in laid["nodes"]}
     W, H = laid["width"], laid["height"]
@@ -460,7 +468,7 @@ def render_svg(nodes, groups, edges, meta, laid):
             f'</div></body></html>')
 
 
-def build(spec):
+def build(spec: object) -> str:
     """Run the full pipeline; raise SpecError with an actionable message."""
     nodes, groups, edges, meta = validate(spec)
     laid = run_layout(nodes, groups, edges, meta)

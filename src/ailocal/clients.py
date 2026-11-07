@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import tomllib
+from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
 
@@ -42,7 +43,7 @@ def present(name: str) -> bool:
     return shutil.which({"claude": "claude", "codex": "codex"}[name]) is not None
 
 
-def report_missing(names) -> None:
+def report_missing(names: Iterable[str]) -> None:
     """Name every absent client once, with the one command that installs it."""
     absent = [n for n in names if not present(n)]
     if not absent:
@@ -61,7 +62,7 @@ AGENT_MCP = "agent"
 LEGACY_AGENT_MCP = "local-agent"
 
 
-def provision_local_agent(names=("claude", "codex")) -> bool:
+def provision_local_agent(names: Iterable[str] = ("claude", "codex")) -> bool:
     """Register the agent MCP in claude-local and codex-local, and nowhere else.
 
     Hosted roots belong to Cadence's `local-agent` declaration. Registration
@@ -77,7 +78,7 @@ def provision_local_agent(names=("claude", "codex")) -> bool:
     from .mcp import agent_registration
     entry = agent_registration()
 
-    def matches(got):
+    def matches(got: object) -> bool:
         return (isinstance(got, dict)
                 and Path(got.get("command", "")).name == "ailocal"
                 and list(got.get("args", [])) == entry["args"])
@@ -91,7 +92,7 @@ def provision_local_agent(names=("claude", "codex")) -> bool:
         env = dict(os.environ)
         env["CODEX_HOME" if client == "codex" else "CLAUDE_CONFIG_DIR"] = str(path.parent)
 
-        def read_entry(name):
+        def read_entry(name: str) -> object:
             if not path.exists():
                 return None
             if client == "codex":
@@ -156,7 +157,7 @@ _CLAUDE_ONLY = re.compile(r"<!-- claude-only -->.*?<!-- /claude-only -->\n?",
 from .report import BOLD, GREEN, RESET, YELLOW, info, skip, step, warn  # noqa: F401
 
 
-def _code(*args, timeout: int = 120) -> str | None:
+def _code(*args: str, timeout: int = 120) -> str | None:
     """Run the VS Code CLI; None means it is not usable at all."""
     if not shutil.which("code"):
         return None
@@ -168,7 +169,7 @@ def _code(*args, timeout: int = 120) -> str | None:
     return r.stdout if r.returncode == 0 else None
 
 
-def _sh(*args, timeout: int = 900) -> int:
+def _sh(*args: str | Path, timeout: int = 900) -> int:
     """Run a provisioning command; return its exit status. Never raises."""
     try:
         return subprocess.run([str(a) for a in args], timeout=timeout).returncode
@@ -368,7 +369,7 @@ def native_vscode_available() -> bool:
         return False
 
 
-def _write_json(path: Path, data, indent) -> None:
+def _write_json(path: Path, data: object, indent: int | str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
     with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent,
@@ -383,7 +384,7 @@ def _write_json(path: Path, data, indent) -> None:
             tmp.unlink(missing_ok=True)
 
 
-def vscode_owned(group) -> bool:
+def vscode_owned(group: object) -> bool:
     """Return whether a group is ailocal's or the retired one for this proxy."""
     return isinstance(group, dict) and (
         (group.get("vendor") == VSCODE_VENDOR and group.get("name") == VSCODE_PROVIDER_NAME)
@@ -536,7 +537,7 @@ def copilot_instructions_head() -> str:
                                .read_text(encoding="utf-8")))
 
 
-def copilot_instructions_text(models=None) -> str:
+def copilot_instructions_text(models: dict[str, dict] | None = None) -> str:
     return copilot_instructions_head() + "\n\n" + copilot_model_guidance(models)
 
 
@@ -562,7 +563,7 @@ def _copilot_instructions() -> None:
     info("Copilot instruction files deployed to ~/.copilot/instructions/")
 
 
-def copilot_model_guidance(models=None) -> str:
+def copilot_model_guidance(models: dict[str, dict] | None = None) -> str:
     """Render profile-owned advice as native instructions, usable w/o MCP."""
     if models is None:
         from . import generation
@@ -931,7 +932,7 @@ def lsp_baseline(root: Path, label: str) -> None:
 
     env = {**os.environ, "CLAUDE_CONFIG_DIR": str(root)}
 
-    def claude(*args) -> tuple[int, str]:
+    def claude(*args: str) -> tuple[int, str]:
         try:
             r = subprocess.run(["claude", *args], capture_output=True, text=True,
                                env=env, timeout=120)
@@ -1023,7 +1024,7 @@ def remove_client_writes(dry: bool = False) -> list[str]:
         else:
             lines.append(f"KEPT {instructions}: not provably ailocal's")
 
-    def _ours(entry) -> bool:
+    def _ours(entry: object) -> bool:
         return (isinstance(entry, dict) and Path(str(entry.get("command", ""))).name == "ailocal"
                 and isinstance(entry.get("args"), list) and entry["args"][:1] == ["mcp"])
 

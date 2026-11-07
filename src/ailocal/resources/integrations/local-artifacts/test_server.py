@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Test local-artifacts directly; run: .venv/bin/python test_server.py."""
+from __future__ import annotations
+
 import importlib.util, json, os, shutil, socket, subprocess, sys, tempfile, time, urllib.request, urllib.error
 from pathlib import Path
 
@@ -15,12 +17,13 @@ srv = importlib.util.module_from_spec(spec); spec.loader.exec_module(srv)
 srv.start_http_thread(); srv._http_ready.wait(5)
 
 PASS = FAIL = 0
-def check(name, cond, detail=""):
+def check(name: str, cond: object, detail: object = "") -> None:
     global PASS, FAIL
     if cond: PASS += 1; print(f"  PASS  {name}")
     else: FAIL += 1; print(f"  FAIL  {name}  {detail}")
 
-def get(path, host=None, raw=False):
+def get(path: str, host: str | None = None,
+        raw: bool = False) -> tuple[int, dict[str, str], str]:
     r = urllib.request.Request(f"http://127.0.0.1:{PORT}{path}")
     if host: r.add_header("Host", host)
     try:

@@ -15,8 +15,13 @@ import sys
 import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from . import policy
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+    from datetime import timedelta
 
 OLLAMA = policy.ollama_url()
 
@@ -119,7 +124,7 @@ def render_searxng_settings() -> None:
         raise _fail(f"SEARXNG_SETTINGS_GENERATION_FAILED: {e}") from None
 
 
-def compose_argv(args) -> list[str]:
+def compose_argv(args: Iterable[object]) -> list[str]:
     data = policy.data_root()
     argv = ["docker", "compose", "--project-directory", str(data)]
     # Order is the ownership model: the last --env-file wins, so user overrides.
@@ -145,7 +150,8 @@ def compose_env() -> dict:
 _NEEDS_SETTINGS = frozenset({"up", "start", "restart", "create", "run"})
 
 
-def compose(*args, check: bool = True, capture: bool = False):
+def compose(*args: str, check: bool = True,
+            capture: bool = False) -> subprocess.CompletedProcess[str]:
     if args and args[0] in _NEEDS_SETTINGS:
         render_searxng_settings()
     policy.state_root().mkdir(parents=True, exist_ok=True)
@@ -220,7 +226,7 @@ def _expires(raw: str | None) -> datetime | None:
         return None
 
 
-def _remaining(delta) -> str:
+def _remaining(delta: timedelta) -> str:
     secs = int(delta.total_seconds())
     if secs <= 0:
         return "expiring"

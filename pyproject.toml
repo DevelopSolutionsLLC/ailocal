@@ -46,15 +46,19 @@ where = ["src"]
 include = ["ailocal*"]
 exclude = ["ailocal.resources*"]
 
-# Standard §8a: Google docstrings, comments and docstrings ≤ 80 columns. D1 is off:
-# docstrings go on public API by judgement, not on every definition.
+# Standard §8a: typed signatures, Google docstrings, comments ≤ 80 columns. D1 is
+# off: docstrings go on public API by judgement, not on every definition.
 [tool.ruff]
 required-version = ">=0.17.3"
 extend-exclude = ["dist", "build"]
 
 [tool.ruff.lint]
-select = ["D", "W505"]
-ignore = ["D1"]
+select = ["ANN", "D", "W505"]
+# ANN401: `Any` is allowed where a value is really arbitrary JSON or a foreign object.
+ignore = ["ANN401", "D1"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ANN"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

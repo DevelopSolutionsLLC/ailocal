@@ -8,16 +8,24 @@ sees one response. Scope: backends `reasoning_loop_guard` names.
 Retire when a captured loop no longer loops unhooked, and when Ollama accepts or
 reports the malformed call.
 """
+from __future__ import annotations
+
 import copy
 import logging
 import os
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
+from types import ModuleType
+from typing import TYPE_CHECKING, Any
 
 from litellm.integrations.custom_logger import CustomLogger
+
+if TYPE_CHECKING:
+    from .capability_registry import Registry
 
 log = logging.getLogger("ailocal.reasoning_loop_guard")
 
 
-def _load_registry_module():
+def _load_registry_module() -> ModuleType:
     """Import sibling capability_registry.py by path; hooks are off sys.path."""
     import importlib.util
     import sys as _sys
@@ -38,20 +46,20 @@ RESPONSES_FIELDS = ("model", "input", "instructions", "tools", "tool_choice",
                     "truncation", "prompt_cache_key", "user")
 
 
-def _get(obj, name):
+def _get(obj: Any, name: str) -> Any:
     return obj.get(name) if isinstance(obj, dict) else getattr(obj, name, None)
 
 
-def _event_type(chunk):
+def _event_type(chunk: Any) -> str:
     t = _get(chunk, "type")
     return getattr(t, "value", t) or ""
 
 
-def _is_reasoning_delta(t):
+def _is_reasoning_delta(t: str) -> bool:
     return t.startswith("response.reasoning") and t.endswith(".delta")
 
 
-def _is_answer(chunk, t):
+def _is_answer(chunk: Any, t: str) -> bool:
     """Return whether an event carries visible output or a tool call."""
     if t.startswith(("response.output_text", "response.function_call",
                      "response.content_part", "response.refusal")):
@@ -62,14 +70,14 @@ def _is_answer(chunk, t):
     return False
 
 
-def _replayed_reasoning(data):
+def _replayed_reasoning(data: object) -> int:
     items = data.get("input") if isinstance(data, dict) else None
     if not isinstance(items, list):
         return 0
     return sum(1 for i in items if isinstance(i, dict) and i.get("type") == "reasoning")
 
 
-def resend(data, drop_reasoning=True):
+def resend(data: dict[str, Any], drop_reasoning: bool = True) -> dict[str, Any]:
     """Return Responses fields, minus replayed reasoning if `drop_reasoning`."""
     retry = {k: copy.deepcopy(data[k]) for k in RESPONSES_FIELDS if k in data}
     if drop_reasoning:
@@ -79,31 +87,35 @@ def resend(data, drop_reasoning=True):
     return retry
 
 
-async def _router_retry(data):
+async def _router_retry(data: dict[str, Any]) -> Any:
     from litellm.proxy.proxy_server import llm_router
     return await llm_router.aresponses(**data)
 
 
 class ReasoningLoopGuard(CustomLogger):
-    def __init__(self, registry=None, retry=None):
+    def __init__(self, registry: Registry | None = None,
+                 retry: Callable[[dict[str, Any]], Awaitable[AsyncIterable[Any]]] | None = None,
+                 ) -> None:
         super().__init__()
         self._registry = registry
         self._retry = retry or _router_retry
 
     @property
-    def registry(self):
+    def registry(self) -> Registry:
         if self._registry is None:
             self._registry = _load_registry_module().Registry()
         return self._registry
 
-    def limit_for(self, request_data):
+    def limit_for(self, request_data: dict[str, Any] | None) -> int | None:
         """Return None to pass, else the char limit (0: retry only)."""
         limit = self.registry.loop_guard_limit((request_data or {}).get("model"))
         if limit is None:
             return None
         return limit if _replayed_reasoning(request_data) else 0
 
-    async def async_post_call_streaming_iterator_hook(self, user_api_key_dict, response, request_data):
+    async def async_post_call_streaming_iterator_hook(self, user_api_key_dict: object, response: Any,
+                                                      request_data: dict[str, Any],
+                                                      ) -> AsyncIterator[Any]:
         limit = self.limit_for(request_data)
         if limit is None:
             async for chunk in response:

@@ -14,6 +14,7 @@ import tempfile
 import time
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 from . import policy
 
@@ -82,7 +83,7 @@ def remove() -> tuple[list[str], list[str]]:
     return removed, preserved
 
 
-def _run(args: list[str], deadline: float, **kwargs) -> str:
+def _run(args: list[str], deadline: float, **kwargs: Any) -> str:
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise RuntimeError("Ollama patch preparation exceeded its 1200-second budget")

@@ -10,12 +10,13 @@ import fcntl
 import json
 import os
 import sys
+from collections.abc import Iterator
 
 from . import __version__
 
 
 @contextlib.contextmanager
-def _lifecycle_lock():
+def _lifecycle_lock() -> Iterator[None]:
     """Hold the lock so two lifecycle commands cannot race over services."""
     from . import policy
     root = policy.state_root()
@@ -94,7 +95,7 @@ def _profile(argv: list[str]) -> int:
     query = argv[0] if argv else ""
     rest = argv[1:]
 
-    def opt(name):
+    def opt(name: str) -> str | None:
         return rest[rest.index(name) + 1] if name in rest else None
 
     try:

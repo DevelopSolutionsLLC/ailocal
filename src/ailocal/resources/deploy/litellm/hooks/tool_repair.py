@@ -7,6 +7,8 @@ are required, tools must be declared, and arguments are schema-checked and
 never invented. complete_ui_metadata() is a separate, narrower native repair.
 """
 
+from __future__ import annotations
+
 import collections
 import copy
 import json
@@ -14,6 +16,8 @@ import logging
 import os
 import re
 import uuid
+from collections.abc import AsyncIterable, AsyncIterator, Iterator
+from typing import Any
 
 from litellm.integrations.custom_logger import CustomLogger
 
@@ -23,7 +27,7 @@ log = logging.getLogger("tool_repair")
 AILOCAL_DEBUG = os.environ.get("AILOCAL_TOOL_REPAIR_DEBUG") == "1"
 
 
-def attribute(**fields):
+def attribute(**fields: object) -> None:
     """Print one parseable native-or-rescued line; only if debug is on."""
     if not AILOCAL_DEBUG:
         return
@@ -37,7 +41,9 @@ def attribute(**fields):
 _COUNTS = collections.Counter()
 
 
-def record(outcome, reason=None, tool=None, route=None, model=None, turn=None):
+def record(outcome: str, reason: str | None = None, tool: str | None = None,
+           route: str | None = None, model: object = None,
+           turn: int | None = None) -> None:
     """Count one repair decision: attempted|repaired|rejected|native."""
     try:
         _COUNTS[(outcome, reason or "-", tool or "-")] += 1
@@ -50,7 +56,7 @@ def record(outcome, reason=None, tool=None, route=None, model=None, turn=None):
         pass
 
 
-def _turn_of(request_data):
+def _turn_of(request_data: dict | None) -> int | None:
     """Return the turn index: assistant messages in the history, plus one."""
     try:
         d = request_data or {}
@@ -64,7 +70,7 @@ def _turn_of(request_data):
         return None
 
 
-def _route_of(request_data, hint=None):
+def _route_of(request_data: dict | None, hint: str | None = None) -> str:
     """Return the API route of the request; `hint` wins when given."""
     if hint:
         return hint
@@ -74,20 +80,21 @@ def _route_of(request_data, hint=None):
     return "/v1/chat/completions"
 
 
-def _ctx(request_data, route=None):
+def _ctx(request_data: dict | None, route: str | None = None) -> dict[str, Any]:
     """Return the metric dimensions: route, model, turn."""
     d = request_data or {}
     return {"route": _route_of(d, route), "model": d.get("model"),
             "turn": _turn_of(d)}
 
 
-def _reject(reason, tool=None, ctx=None):
+def _reject(reason: str, tool: str | None = None,
+            ctx: dict[str, Any] | None = None) -> None:
     """Record a rejected repair candidate and return None."""
     record("rejected", reason=reason, tool=tool, **(ctx or {}))
     return None
 
 
-def counters():
+def counters() -> dict[tuple[str, str, str], int]:
     """Return a snapshot {(outcome, reason, tool): n}."""
     return dict(_COUNTS)
 
@@ -104,7 +111,7 @@ JSON_BLOB_RE = re.compile(
 HINTS = ("<function=", '"name"')
 
 
-def _maybe_marker(text):
+def _maybe_marker(text: str) -> bool:
     """Return whether `text` contains or may still grow into a tool marker.
 
     Markers stream token by token; holding viable prefixes stops a fragment
@@ -125,11 +132,11 @@ def _maybe_marker(text):
     return False
 
 
-def _strip_code(text):
+def _strip_code(text: str) -> str:
     return INLINE_RE.sub("", FENCE_RE.sub("", text))
 
 
-def _coerce(value, spec):
+def _coerce(value: object, spec: dict | None) -> object:
     """Coerce to the schema's declared type; never fail a call over coercion.
 
     Already-typed values pass through untouched.
@@ -156,7 +163,7 @@ def _coerce(value, spec):
     return v
 
 
-def _index_tools(declared):
+def _index_tools(declared: list | None) -> dict[str, dict]:
     """Map name -> function schema for the tools the caller declared."""
     index = {}
     for t in declared or []:
@@ -166,7 +173,7 @@ def _index_tools(declared):
     return index
 
 
-def _validate(name, args, tool_index):
+def _validate(name: str, args: dict, tool_index: dict[str, dict]) -> dict | None:
     """Return an OpenAI tool_call dict, or None to reject the candidate."""
     if name not in tool_index:
         return None  # hallucinated / unknown tool
@@ -193,7 +200,7 @@ LABEL_WORDS = 5
 LABEL_CHARS = 60
 
 
-def _short_label(prompt):
+def _short_label(prompt: str) -> str:
     """Return the prompt's first words as a bounded, deterministic label.
 
     Subagent types are open-ended, so no fixed label fits; the prompt is
@@ -204,7 +211,8 @@ def _short_label(prompt):
     return label or "Delegated agent task"
 
 
-def complete_ui_metadata(name, args_text, declared_tools, ctx=None):
+def complete_ui_metadata(name: object, args_text: str, declared_tools: list | None,
+                         ctx: dict[str, Any] | None = None) -> str | None:
     """Add ONE missing UI-metadata argument to a native tool call's arguments.
 
     Returns:
@@ -257,7 +265,8 @@ def complete_ui_metadata(name, args_text, declared_tools, ctx=None):
     return json.dumps(patched)
 
 
-def recover(content, declared_tools, ctx=None):
+def recover(content: str | None, declared_tools: list | None,
+            ctx: dict[str, Any] | None = None) -> tuple[list[dict] | None, str | None]:
     """Return (tool_calls | None, leftover_text); pure.
 
     `ctx` is metrics-only and never affects the decision.
@@ -335,7 +344,8 @@ TERMINAL_FENCE_RE = re.compile(
     r'```(?:json)?[ \t]*\n((?:(?!```).)*?)\n?[ \t]*```[ \t\r\n]*\Z', re.S)
 
 
-def responses_fence_candidate(text, declared_tools, ctx=None):
+def responses_fence_candidate(text: str, declared_tools: list | None,
+                              ctx: dict[str, Any] | None = None) -> list[dict] | None:
     """Recover a tool call from output_text — Responses route only.
 
     Not `recover()`, which strips fences. Accepts only one terminal fence with
@@ -375,7 +385,7 @@ def responses_fence_candidate(text, declared_tools, ctx=None):
     return [call]
 
 
-def _responses_function_call_events(call, output_index):
+def _responses_function_call_events(call: dict, output_index: int) -> list[object]:
     """Build the event sequence LiteLLM emits for a genuine function call.
 
     Mirrors responses/streaming_iterator.py's function_call branch.
@@ -421,13 +431,14 @@ def _responses_function_call_events(call, output_index):
     ]
 
 
-def _responses_event_name(chunk):
+def _responses_event_name(chunk: object) -> object:
     """Return the event type, tolerant of enum-or-str typing."""
     t = getattr(chunk, "type", None)
     return getattr(t, "value", t) if t is not None else None
 
 
-def _responses_stream_from_complete(response, request_data=None):
+def _responses_stream_from_complete(response: Any,
+                                    request_data: dict | None = None) -> Iterator[object]:
     """Yield a valid /v1/responses event stream for a completed response.
 
     LiteLLM's own (_)build_synthetic_response_events builds the sequence; a
@@ -438,7 +449,7 @@ def _responses_stream_from_complete(response, request_data=None):
     logging_obj = (request_data or {}).get("litellm_logging_obj")
     status = getattr(response, "status", None)
 
-    def _terminal_override():
+    def _terminal_override() -> object | None:
         """Return a failed/incomplete terminal event in place of `completed`.
 
         LiteLLM always ends with response.completed; the only divergence.
@@ -475,7 +486,7 @@ def _responses_stream_from_complete(response, request_data=None):
             "emitting the minimal fallback sequence", exc,
         )
 
-    def _plain(obj):
+    def _plain(obj: Any) -> object:
         return obj.model_dump() if hasattr(obj, "model_dump") else obj
 
     try:
@@ -494,7 +505,7 @@ def _responses_stream_from_complete(response, request_data=None):
 _REASONING_TEXT_PARTS = ("output_text", "text", "reasoning_text")
 
 
-def _summarised_reasoning(item):
+def _summarised_reasoning(item: Any) -> Any:
     """Reshape a de-streamed reasoning item as LiteLLM's streaming path does.
 
     Codex drops reasoning without `summary`, so Qwen3.5 answers inside an open
@@ -516,7 +527,7 @@ def _summarised_reasoning(item):
     return {**item, **update}
 
 
-def _with_reasoning_summaries(response):
+def _with_reasoning_summaries(response: Any) -> Any:
     """Return the response with reasoning items summarised, or it unchanged.
 
     Upstream: BerriAI/litellm#41262, #45552. Retire when the non-streaming
@@ -538,22 +549,22 @@ class _CompletedResponseStream:
     proxy's container-ownership pass.
     """
 
-    def __init__(self, response, request_data):
+    def __init__(self, response: Any, request_data: dict | None) -> None:
         self._events = iter(list(_responses_stream_from_complete(response, request_data)))
         self._hidden_params = getattr(response, "_hidden_params", None) or {}
         self.completed_response = response
 
-    def __aiter__(self):
+    def __aiter__(self) -> _CompletedResponseStream:
         return self
 
-    async def __anext__(self):
+    async def __anext__(self) -> object:
         try:
             return next(self._events)
         except StopIteration:
             raise StopAsyncIteration from None
 
 
-def _destreamed_responses_result(request_data, response):
+def _destreamed_responses_result(request_data: dict | None, response: object) -> bool:
     """Return whether websearch_interception de-streamed this response."""
     return (bool((request_data or {}).get("_websearch_interception_converted_stream"))
             and type(response).__name__ == "ResponsesAPIResponse")
@@ -563,7 +574,7 @@ class ToolRepair(CustomLogger):
     """Registered via litellm_settings.callbacks."""
 
     @staticmethod
-    def _repair_anthropic(data, response):
+    def _repair_anthropic(data: dict, response: Any) -> bool:
         """Repair the Anthropic /v1/messages shape.
 
         Claude Code's route: top-level `content`, no `.choices`, so the OpenAI
@@ -637,7 +648,9 @@ class ToolRepair(CustomLogger):
         log.info("tool_repair: recovered tool_use block(s) on /v1/messages")
         return True
 
-    async def async_post_call_success_deployment_hook(self, request_data, response, call_type):
+    async def async_post_call_success_deployment_hook(
+            self, request_data: dict, response: object,
+            call_type: object) -> _CompletedResponseStream | None:
         """Re-stream a /v1/responses web search that was de-streamed.
 
         LiteLLM re-wraps it on /v1/messages but not /v1/responses, so clients
@@ -650,7 +663,8 @@ class ToolRepair(CustomLogger):
         log.info("tool_repair: re-streaming a de-streamed /v1/responses web search")
         return _CompletedResponseStream(_with_reasoning_summaries(response), request_data)
 
-    async def async_post_call_success_hook(self, data, user_api_key_dict, response):
+    async def async_post_call_success_hook(self, data: dict, user_api_key_dict: object,
+                                           response: Any) -> Any:
         try:
             if AILOCAL_DEBUG:
                 print(f"tool_repair: HOOK resp={type(response).__name__} "
@@ -678,11 +692,11 @@ class ToolRepair(CustomLogger):
         return response
 
     @staticmethod
-    def _sse(event_type, payload):
+    def _sse(event_type: str, payload: dict) -> bytes:
         return (f"event: {event_type}\ndata: {json.dumps(payload)}\n\n").encode()
 
     @classmethod
-    def _native_tool_use_events(cls, ts, args_text):
+    def _native_tool_use_events(cls, ts: dict, args_text: str) -> list[bytes]:
         """Re-emit one buffered tool_use block with `args_text` as input."""
         idx = ts.get("index", 0)
         return [
@@ -697,7 +711,8 @@ class ToolRepair(CustomLogger):
         ]
 
     @classmethod
-    def _anthropic_native_arg_repair(cls, text, state, tools):
+    def _anthropic_native_arg_repair(cls, text: str, state: dict,
+                                     tools: list | None) -> list[bytes] | None:
         """Complete a missing UI-metadata arg on a native streamed tool_use.
 
         Buffers the block start→stop: the decision needs the whole arguments.
@@ -750,7 +765,8 @@ class ToolRepair(CustomLogger):
         return None
 
     @classmethod
-    def _anthropic_sse_repair(cls, raw, state, tools):
+    def _anthropic_sse_repair(cls, raw: bytes, state: dict,
+                              tools: list | None) -> list[bytes]:
         """Recover malformed tool calls on the Anthropic SSE byte stream.
 
         Bytes, because the adapter encodes SSE before any callback seam. Buffers
@@ -848,7 +864,7 @@ class ToolRepair(CustomLogger):
         return [raw]
 
     @staticmethod
-    def _fix_anthropic_sse_stop_reason(raw, state):
+    def _fix_anthropic_sse_stop_reason(raw: bytes, state: dict) -> bytes | None:
         """Repair stop_reason after a tool_use block was injected.
 
         Claude Code will not run a tool in an end_turn turn. Injected streams
@@ -875,8 +891,9 @@ class ToolRepair(CustomLogger):
         return None
 
     async def async_post_call_streaming_iterator_hook(
-        self, user_api_key_dict, response, request_data
-    ):
+        self, user_api_key_dict: object, response: AsyncIterable[Any],
+        request_data: dict | None
+    ) -> AsyncIterator[object]:
         """Buffer suspected tool syntax instead of streaming it as text.
 
         A tool call is executed, not read, so buffering costs the user nothing.

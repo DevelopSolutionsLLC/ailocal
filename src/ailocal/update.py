@@ -12,6 +12,10 @@ import json
 import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from . import audit
 
 SCHEMA_VERSION = 3   # 3: candidate comes from version_policy
 
@@ -57,7 +61,7 @@ def position(declared: str, releases: list[str]) -> int | None:
     return found.index(declared) if declared in found else None
 
 
-def advisory_fixes(pin) -> tuple[list[str], str]:
+def advisory_fixes(pin: audit.Pin) -> tuple[list[str], str]:
     """Return (advisory fix versions for `pin`, a note if unreadable).
 
     These admit a release younger than seven days.

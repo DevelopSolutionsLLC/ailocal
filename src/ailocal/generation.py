@@ -5,6 +5,7 @@ Reads profiles/<tier>.toml and clients.toml via policy and writes each output
 straight into the home its consumer reads, swapped atomically in memory.
 Never hand-edit an output: edit the profile; `ailocal start` regenerates.
 """
+from __future__ import annotations
 
 import json
 import os
@@ -12,6 +13,7 @@ import re
 import shutil
 import sys
 import tomllib
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -62,7 +64,7 @@ CS_END   = "  # >>> END GENERATED claude slots <<<"
 
 # One model_list entry per capability; `ailocal-` prefix applied at emit only.
 MODEL_PREFIX = "ailocal-"
-def mn(cap):
+def mn(cap: str) -> str:
     """Return the client-facing `ailocal-` model id LiteLLM serves for `cap`."""
     return f"{MODEL_PREFIX}{cap}"
 
@@ -71,7 +73,7 @@ def mn(cap):
 
 
 
-def flow_list(v):
+def flow_list(v: list | None) -> list:
     """Return an optional list field; absent means empty."""
     return v or []
 
@@ -81,14 +83,14 @@ def flow_list(v):
 
 
 # profile resolution
-def resolve_tier(explicit=None):
+def resolve_tier(explicit: str | None = None) -> str:
     """Return the active tier: --profile wins, else the marker; no default."""
     if explicit:
         return explicit
     return _pc.resolve_active_tier()
 
 
-def profile_path(tier=None, explicit=None):
+def profile_path(tier: str | None = None, explicit: str | None = None) -> Path:
     p = PROFILES_DIR / f"{resolve_tier(explicit) if tier is None else tier}.toml"
     if not p.exists():
         print(f"Error: profile not found: {p}", file=sys.stderr)
@@ -97,7 +99,7 @@ def profile_path(tier=None, explicit=None):
 
 
 # config loading
-def load_models_yaml(path):
+def load_models_yaml(path: Path | str) -> dict[str, dict]:
     """Read a profile through the one policy reader."""
     data = _pc.load_profile_file(Path(path))
     models = {}
@@ -117,17 +119,17 @@ def load_models_yaml(path):
     return models
 
 
-def load_clients_yaml():
+def load_clients_yaml() -> dict:
     """Return client policy from the one policy owner."""
     return _pc.load_client_policy()
 
 
-def backend_of(info):
+def backend_of(info: dict) -> str:
     """Return the Ollama tag served; `active` is required, so no fallback."""
     return info.get("active") or ""
 
 
-def norm_keep_alive(v):
+def norm_keep_alive(v: object) -> str | None:
     """Map forever/persistent → -1; pass durations (2h, 60m) or -1 through."""
     if v in (None, ""):
         return None
@@ -135,19 +137,19 @@ def norm_keep_alive(v):
     return "-1" if s.lower() in ("forever", "persistent") else s
 
 
-def _geom(info):
+def _geom(info: dict) -> dict:
     """Return role geometry from policy; missing context_input is an error."""
     return _pc.geometry(info.get("context_input"), info.get("max_output"))
 
 
-def ctx_of(info):
+def ctx_of(info: dict) -> int:
     """Return the total window (Ollama num_ctx); derived, never configured."""
     return _geom(info)["num_ctx"]
 
 
 # LiteLLM model_list
 
-def gen_role_block(role, info):
+def gen_role_block(role: str, info: dict) -> str:
     num_ctx = ctx_of(info)
     backend = backend_of(info)
     ka = norm_keep_alive(info.get("keep_alive"))
@@ -220,17 +222,17 @@ def gen_role_block(role, info):
     return header + "\n".join(params) + "\n" + "\n".join(mi) + "\n"
 
 
-def gen_model_list(models):
+def gen_model_list(models: dict[str, dict]) -> str:
     blocks = [gen_role_block(r, i) for r, i in models.items()]
     return ML_BEGIN + "\n\n" + "\n".join(blocks) + "\n" + ML_END + "\n"
 
 
-def resolve(cap, models):
+def resolve(cap: str, models: dict[str, dict]) -> str:
     """Resolve a client target to the enabled capability it names."""
     return _pc.resolve_capability(cap, models)
 
 
-def gen_alias_block(models, clients):
+def gen_alias_block(models: dict[str, dict], clients: dict) -> str:
     """Return model_group_alias lines mapping client-compat names to groups.
 
     claude-*/gpt-* names that clients hard-code point at `ailocal-<cap>`. The
@@ -249,7 +251,7 @@ def gen_alias_block(models, clients):
     return "\n".join(lines) + "\n"
 
 
-def splice(text, begin, end, generated, label):
+def splice(text: str, begin: str, end: str, generated: str, label: str) -> str:
     """Replace a marked region; a missing marker is fatal, never empty."""
     pat = re.compile(re.escape(begin) + r".*?" + re.escape(end) + r"\n?", re.DOTALL)
     if not pat.search(text):
@@ -258,7 +260,7 @@ def splice(text, begin, end, generated, label):
     return pat.sub(lambda _m: generated, text, count=1)
 
 
-def regen_litellm(models, clients):
+def regen_litellm(models: dict[str, dict], clients: dict) -> bool:
     # Always from the template: reading config.yaml back keeps hand-edits.
     text = LITELLM_TEMPLATE.read_text()
     text = splice(text, ML_BEGIN, ML_END, gen_model_list(models), "model_list")
@@ -269,7 +271,7 @@ def regen_litellm(models, clients):
 
 
 # capabilities.generated.json (for `ailocal status`)
-def write_caps_json(models):
+def write_caps_json(models: dict[str, dict]) -> bool:
     caps = []
     for name, info in models.items():
         ka = norm_keep_alive(info.get("keep_alive"))
@@ -303,7 +305,7 @@ def _home_relative(path: Path) -> str:
         return str(path)
 
 
-def write_integration_contract(models):
+def write_integration_contract(models: dict[str, dict]) -> bool:
     """Write the one surface an external consumer reads about this runtime.
 
     Facts only, no policy or prose. Consumers fail closed on an unknown
@@ -386,7 +388,7 @@ CATALOG_TOOLING = (
     "Finish every task with a non-empty final answer after the tool results. State what changed "
     "and what was checked, or report the blocking error; a tool result alone is not a final reply."
 )
-def regen_catalog(models):
+def regen_catalog(models: dict[str, dict]) -> bool:
     """Stage the Codex model catalog, one entry per capability in ROLES order.
 
     Window = admission (context_input); Codex 0.163.0 compacts at 90% of it on
@@ -440,7 +442,7 @@ def regen_catalog(models):
     return True
 
 
-def regen_vscode(models):
+def regen_vscode(models: dict[str, dict]) -> bool | None:
     """Refresh an already configured ailocal provider/instruction block only.
 
     Returns None for an unusable editor file: preserved, reported, non-blocking.
@@ -484,7 +486,7 @@ SLOT_ENV = {
 
 
 
-def gen_slot_block(models, clients):
+def gen_slot_block(models: dict[str, dict], clients: dict) -> str:
     lines = [CS_BEGIN, "  slots=("]
     for slot, cap in (clients.get("claude") or {}).get("slots", {}).items():
         var = SLOT_ENV.get(slot)
@@ -497,7 +499,7 @@ def gen_slot_block(models, clients):
 
 
 
-def regen_configure_zsh(models, clients):
+def regen_configure_zsh(models: dict[str, dict], clients: dict) -> bool:
     if not CONFIGURE_ZSH_TPL.exists():
         return False
     text = CONFIGURE_ZSH_TPL.read_text()
@@ -506,7 +508,7 @@ def regen_configure_zsh(models, clients):
     return True
 
 
-def claude_picker_rows(models):
+def claude_picker_rows(models: dict[str, dict]) -> list[dict[str, str]]:
     """Return `modelPicker` rows: every enabled capability, in ROLES order.
 
     `replaceBuiltInOptions: true` hides the built-in and gateway-discovered
@@ -517,7 +519,7 @@ def claude_picker_rows(models):
             for name, info in models.items()]
 
 
-def regen_claude_settings(models, clients):
+def regen_claude_settings(models: dict[str, dict], clients: dict) -> bool:
     """Stage settings.json, co-owned with Claude Code: on-disk keys win.
 
     Only ailocal's keys are overwritten: `model` (reset: Claude saves the last
@@ -684,7 +686,7 @@ def _keep_codex_projects(text: str) -> str:
     return text.rstrip("\n") + "\n\n" + "".join(blocks).rstrip("\n") + "\n"
 
 
-def regen_codex(models, clients):
+def regen_codex(models: dict[str, dict], clients: dict) -> bool:
     cx = clients.get("codex", {})
     default = resolve(cx.get("default", next(iter(models))), models)
     done = False
@@ -703,7 +705,7 @@ def regen_codex(models, clients):
 
 
 
-def parse_profile_flag(argv):
+def parse_profile_flag(argv: Sequence[str]) -> tuple[str | None, list[str]]:
     """Pull `--profile <tier>` out of argv; return (tier or None, rest)."""
     tier, rest, i = None, [], 0
     while i < len(argv):
@@ -725,13 +727,13 @@ MARKER_TOML = ("# Generated by ailocal. Do not edit.\n"
                "# Owner: DevelopSolutions, LLC\n")
 
 
-def stage(path, text):
+def stage(path: Path | str, text: str) -> None:
     """Record an output for flush_stage() to write."""
     _STAGE[Path(path)] = text
     _STAGED_TEXT[Path(path)] = text
 
 
-def flush_stage():
+def flush_stage() -> int:
     """Write every staged output, then swap them in with rollback on failure.
 
     Per-file atomic (os.replace); a mid-way failure restores replaced files,
@@ -789,10 +791,10 @@ def flush_stage():
 
 
 
-def _stable(t):
+def _stable(t: str) -> str:
     return re.sub(r'"generated_at":\s*"[^"]*"', '"generated_at": ""', t)
 
-def _same(dest, text):
+def _same(dest: Path, text: str) -> bool:
     """Return whether the destination already holds this output.
 
     JSON and TOML compare parsed: co-owners reorder keys and tables; else text.
@@ -810,7 +812,7 @@ def _same(dest, text):
         return False
 
 
-def main(argv=None):
+def main(argv: Sequence[str] | None = None) -> int:
     tier, args = parse_profile_flag(sys.argv[1:] if argv is None else list(argv))
 
     check_only = bool(args) and args[0] == "--check"
@@ -850,7 +852,7 @@ def main(argv=None):
     ok("codex config + profiles") if regen_codex(models, clients) else warn("codex skipped")
     if check_only:
         # Normalise the generated_at timestamp, else every run is drift.
-        def _label(d):
+        def _label(d: Path) -> str:
             for base in (_pc.state_root(), _pc.config_root(), _pc.data_root()):
                 try:
                     return str(d.relative_to(base))

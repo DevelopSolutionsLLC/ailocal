@@ -4,6 +4,8 @@
 The opener is a detached Popen, so assertions wait for the shim's file;
 reading it at once reports a false "never opened".
 """
+from __future__ import annotations
+
 import json
 import os
 import signal
@@ -19,7 +21,7 @@ PORT = int(os.environ.get("TEST_AUTOOPEN_PORT", "7893"))
 failures = []
 
 
-def check(name, cond, detail=""):
+def check(name: str, cond: bool, detail: str = "") -> None:
     print(f"  {'PASS' if cond else 'FAIL'}  {name}" + (f"  [{detail}]" if detail and not cond else ""))
     if not cond:
         failures.append(name)
@@ -27,7 +29,7 @@ def check(name, cond, detail=""):
 
 # harness
 
-def make_shim(tmp):
+def make_shim(tmp: str) -> Path:
     """Write a stand-in for `open`/`xdg-open` that records, never launches."""
     shim_dir = Path(tmp) / "shim"
     shim_dir.mkdir(parents=True, exist_ok=True)
@@ -38,7 +40,7 @@ def make_shim(tmp):
     return shim_dir
 
 
-def opened(log, wait=2.5):
+def opened(log: Path, wait: float = 2.5) -> int:
     """Return how often the opener ran, waiting out the async Popen first."""
     deadline = time.time() + wait
     while time.time() < deadline:
@@ -51,7 +53,8 @@ def opened(log, wait=2.5):
     return len([l for l in Path(log).read_text().splitlines() if l.strip()])
 
 
-def fresh_server_module(tmp, shim, env_extra=None):
+def fresh_server_module(tmp: str, shim: Path,
+                        env_extra: dict[str, str] | None = None) -> dict[str, str]:
     """Run a scenario in its own process: server.py globals are per-process."""
     env = dict(os.environ)
     # Else the approved root is cwd and runs litter the checkout w/ .artifacts/.
@@ -73,7 +76,9 @@ def fresh_server_module(tmp, shim, env_extra=None):
     return env
 
 
-def run_scenario(script, tmp, shim, env_extra=None, timeout=120):
+def run_scenario(script: str, tmp: str, shim: Path,
+                 env_extra: dict[str, str] | None = None,
+                 timeout: float = 120) -> tuple[subprocess.CompletedProcess[str], Path]:
     log = Path(tmp) / f"open-{time.time_ns()}.log"
     log.write_text("")
     env = fresh_server_module(tmp, shim, env_extra)
@@ -87,14 +92,14 @@ def run_scenario(script, tmp, shim, env_extra=None, timeout=120):
 DEFAULT_PORT = 7891
 
 
-def _viewer_pid(port):
+def _viewer_pid(port: int) -> int | None:
     """Return the PID listening on `port`, or None; the only kill handle."""
     out = subprocess.run(["lsof", "-t", f"-iTCP:{port}", "-sTCP:LISTEN"],
                          capture_output=True, text=True).stdout.split()
     return int(out[0]) if out else None
 
 
-def kill_viewers():
+def kill_viewers() -> None:
     """Terminate only the viewer on this suite's port; never the default."""
     if PORT == DEFAULT_PORT:
         raise SystemExit(
@@ -129,7 +134,7 @@ def pub(**kw):
 
 # cases
 
-def case_a_first_publish(tmp, shim):
+def case_a_first_publish(tmp: str, shim: Path) -> None:
     p, log = run_scenario(PRELUDE + """
 ok, msg = pub(title="a", content="# a", fmt="markdown")
 print("OK" if ok else "FAILED")
@@ -140,7 +145,7 @@ time.sleep(1.5)
     kill_viewers()
 
 
-def case_b_repeat_publish_while_watched(tmp, shim):
+def case_b_repeat_publish_while_watched(tmp: str, shim: Path) -> None:
     """Check a second publish w/ a watcher present opens nothing."""
     p, log = run_scenario(PRELUDE + """
 import threading, urllib.request
@@ -162,7 +167,7 @@ time.sleep(1.0)
     kill_viewers()
 
 
-def case_c_viewer_reaped(tmp, shim):
+def case_c_viewer_reaped(tmp: str, shim: Path) -> None:
     """Check a viewer replaced mid-session w/ no tab opens again."""
     p, log = run_scenario(PRELUDE + """
 import subprocess, signal
@@ -189,7 +194,7 @@ time.sleep(1.5)
     kill_viewers()
 
 
-def case_d_transient_disconnect(tmp, shim):
+def case_d_transient_disconnect(tmp: str, shim: Path) -> None:
     """Check a tab that drops and heals earns no second window."""
     p, log = run_scenario(PRELUDE + """
 import threading, urllib.request
@@ -216,7 +221,7 @@ time.sleep(1.0)
     kill_viewers()
 
 
-def case_e_invalid_mermaid(tmp, shim):
+def case_e_invalid_mermaid(tmp: str, shim: Path) -> None:
     p, log = run_scenario(PRELUDE + """
 ok, msg = pub(title="bad", content="classDiagram\\n    Stage <|--\\n ))) x (((", fmt="mermaid")
 print("REFUSED" if not ok else "PUBLISHED")
@@ -227,7 +232,7 @@ time.sleep(1.0)
     kill_viewers()
 
 
-def case_f_validator_unavailable(tmp, shim):
+def case_f_validator_unavailable(tmp: str, shim: Path) -> None:
     """Check no Chrome → Mermaid is refused and nothing opens."""
     p, log = run_scenario(PRELUDE + """
 import mermaid_validate
@@ -242,7 +247,7 @@ time.sleep(1.0)
     kill_viewers()
 
 
-def case_g_disabled(tmp, shim):
+def case_g_disabled(tmp: str, shim: Path) -> None:
     for var in ("LOCAL_ARTIFACTS_AUTO_OPEN", "CLAUDE_CODE_ARTIFACT_AUTO_OPEN"):
         p, log = run_scenario(PRELUDE + """
 ok, _ = pub(title="a", content="# a", fmt="markdown")
@@ -254,7 +259,7 @@ time.sleep(1.0)
         kill_viewers()
 
 
-def case_formats(tmp, shim):
+def case_formats(tmp: str, shim: Path) -> None:
     for fmt, content in (("markdown", "# m"),
                          ("architecture",
                           json.dumps({"nodes": [{"id": "a", "label": "A"},
@@ -272,7 +277,7 @@ time.sleep(1.5)
         kill_viewers()
 
 
-def case_precedence():
+def case_precedence() -> None:
     """Check env precedence directly against the decision function."""
     import importlib
     sys.path.insert(0, str(HERE))
@@ -318,7 +323,7 @@ def case_precedence():
           "find_chrome" not in src.split("def _open_browser")[1].split("def ")[0])
 
 
-def main():
+def main() -> int:
     print("test_autoopen.py — presentation lifecycle")
     kill_viewers()
     with tempfile.TemporaryDirectory() as tmp:

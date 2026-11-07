@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Serve research over stdio MCP; failures never expose transport details."""
+from __future__ import annotations
+
 import logging
 import os
 import socket
 import sys
 import time
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -59,7 +62,7 @@ def wait_for_backends(dependencies: list[tuple[str, str]], *,
                 time.sleep(interval)
 
 
-def build_mcp(config):
+def build_mcp(config: Config) -> Any:
     from mcp.server.mcpserver import MCPServer
     from mcp.server.mcpserver.exceptions import ToolError
     from mcp.types import ToolAnnotations
@@ -77,7 +80,8 @@ def build_mcp(config):
         'end with the last search\'s brave.summary value, verbatim, on its own line.'))
     research = Research(config)
 
-    async def invoke(method, *args):
+    async def invoke(method: Callable[..., Awaitable[dict[str, Any]]],
+                     *args: object) -> dict[str, Any]:
         try:
             return await method(*args)
         except ResearchError as error:
@@ -101,7 +105,7 @@ def build_mcp(config):
     return app
 
 
-def main():
+def main() -> None:
     config = Config(
         search_url=os.environ['LOCAL_RESEARCH_SEARCH_URL'],
         model_url=os.environ['LOCAL_RESEARCH_MODEL_URL'],

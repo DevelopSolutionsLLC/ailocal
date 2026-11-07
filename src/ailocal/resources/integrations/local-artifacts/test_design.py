@@ -7,6 +7,8 @@ Computed from the canonical tokens (pinned @carbon/themes). WCAG 2.2:
   graphical objects NEEDED to understand content >= 3.0:1
 Decorative borders need only be visible, not 3:1.
 """
+from __future__ import annotations
+
 import importlib.util
 import json
 import os
@@ -23,7 +25,7 @@ THEME = _tokens.load()
 PASS = FAIL = 0
 
 
-def check(name, cond, detail=""):
+def check(name: str, cond: object, detail: str = "") -> None:
     global PASS, FAIL
     if cond:
         PASS += 1
@@ -33,18 +35,18 @@ def check(name, cond, detail=""):
         print(f"  FAIL  {name}  {detail}")
 
 
-def _lin(c):
+def _lin(c: float) -> float:
     c /= 255
     return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
 
 
-def lum(hexstr):
+def lum(hexstr: str) -> float:
     h = hexstr.lstrip("#")
     r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
     return 0.2126 * _lin(r) + 0.7152 * _lin(g) + 0.0722 * _lin(b)
 
 
-def contrast(a, b):
+def contrast(a: str, b: str) -> float:
     la, lb = lum(a), lum(b)
     hi, lo = max(la, lb), min(la, lb)
     return (hi + 0.05) / (lo + 0.05)
@@ -190,7 +192,7 @@ check("generated file records an integrity hash for the pinned tarball",
 check("upstream licence is recorded for attribution", up.get("license") == "Apache-2.0")
 
 
-def colours(node, out=None):
+def colours(node: object, out: list[dict] | None = None) -> list[dict]:
     out = [] if out is None else out
     if isinstance(node, dict):
         if "$value" in node and isinstance(node["$value"], dict) \
