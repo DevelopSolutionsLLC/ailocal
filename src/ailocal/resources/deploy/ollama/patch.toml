@@ -1,7 +1,7 @@
 # Reviewed Go-only backport; never apply to another upstream base.
 id = "gemma4-switch-glu"
 base_version = "0.40.14"
-# Why the base is held older than the ≈N-2 policy would pick: read by
+# Why the base is held older than the version policy's candidate: read by
 # `ailocal update`, which reports the base's N-position against upstream.
 hold = "the reviewed backport patches (18631, security, router, stop, qwen35-history) target this exact base; a newer base needs them re-applied and the native regression re-run before it can be selected"
 # [REAL] 2026-11-05: built by ollama_patch.prepare() in 52 s with go1.27.3

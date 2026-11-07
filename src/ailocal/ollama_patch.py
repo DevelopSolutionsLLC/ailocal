@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import json
 import os
 import platform
+import re
 import shutil
 import signal
 import subprocess
@@ -213,6 +214,25 @@ def _cached_native_payload(root: Path, spec: dict) -> tuple[Path, dict] | None:
     return None
 
 
+
+def _require_supported_go(toolchain: str) -> None:
+    """Refuse a toolchain outside the version policy: its standard library is
+    linked into the daemon, so an outdated point release ships its advisories
+    (docs/security.md "Version policy")."""
+    from . import version_policy as vp
+    from .checks import services
+    m = re.search(r"\bgo(\d+(?:\.\d+)+)\b", toolchain)
+    if not m:
+        raise RuntimeError(f"could not read the Go version from {toolchain!r}")
+    try:
+        listing = services.http_json(vp.GO_RELEASES, timeout=20)
+    except services.Unreachable as e:
+        raise RuntimeError(f"cannot confirm go{m.group(1)} is a supported release ({e}); "
+                           "the patched build needs go.dev reachable") from None
+    supported, why = vp.go_supported(m.group(1), listing if isinstance(listing, list) else [])
+    if not supported:
+        raise RuntimeError(f"{why}; install it (brew upgrade go) and re-run")
+
 def prepare() -> Path:
     """Build/test atomically; never switch a service or change the installed cask."""
     spec = policy.ollama_patch_spec()
@@ -321,6 +341,7 @@ def prepare() -> Path:
                    GOCACHE=str(work / "gocache"),
                    OLLAMA_MODELS=str(test_models), OLLAMA_HOST="127.0.0.1:0")
         toolchain = _run(["go", "version"], deadline, cwd=source, env=env).strip()
+        _require_supported_go(toolchain)
         flags = (f"-s -w -X=github.com/ollama/ollama/version.Version={spec['version']} "
                  "-X=github.com/ollama/ollama/server.mode=release")
         _run(["go", "build", "-trimpath", "-ldflags", flags,

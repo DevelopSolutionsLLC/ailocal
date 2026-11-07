@@ -55,7 +55,7 @@ class PatchInstall(unittest.TestCase):
             self.assertEqual(kwargs["env"]["OLLAMA_HOST"], "127.0.0.1:0")
             return "Warning: could not connect\nWarning: client version is 0.40.8\n"
         if args[:2] == ["go", "version"]:
-            return "fixture go version"
+            return "go version go1.27.3 darwin/arm64"
         if args[0] == "go":
             output = Path(args[args.index("-o") + 1])
             output.write_text("fixture executable")
@@ -76,10 +76,19 @@ class PatchInstall(unittest.TestCase):
             return output
         return runner
 
-    def build(self, runner=None):
+    GO_LISTING = [{"version": "go1.27.3", "stable": True}, {"version": "go1.26.10", "stable": True}]
+
+    def build(self, runner=None, go_listing=None):
+        listing = self.GO_LISTING if go_listing is None else go_listing
         with (patch.object(candidate, "_download"), patch.object(candidate, "_extract", return_value=self.root),
-              patch.object(candidate, "_run", side_effect=runner or self.run_step)):
+              patch.object(candidate, "_run", side_effect=runner or self.run_step),
+              patch("ailocal.checks.services.http_json", return_value=listing)):
             return candidate.prepare()
+
+    def test_an_unsupported_go_toolchain_is_refused(self):
+        """An outdated point release links its standard-library advisories into the daemon (#106)."""
+        with self.assertRaisesRegex(RuntimeError, "not a current supported release"):
+            self.build(go_listing=[{"version": "go1.27.4", "stable": True}, {"version": "go1.26.11", "stable": True}])
 
     @staticmethod
     def receipt(directory, **changes):

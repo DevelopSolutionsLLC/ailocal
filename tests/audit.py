@@ -157,7 +157,7 @@ with mock.patch("ailocal.checks.services._running_digest") as running, \
         mock.patch("ailocal.checks.services.check_updates", return_value=[]):
     doc = update.report(mode=update.UPSTREAM)
 check(not running.called and doc["mode"] == update.UPSTREAM and all("installed" not in c for c in doc["components"])
-      and doc["schema_version"] == 2 and doc["project"] == "ailocal", "upstream mode never consults the machine")
+      and doc["schema_version"] == 3 and doc["project"] == "ailocal", "upstream mode never consults the machine")
 check(any(c["state"] == update.DEGRADED for c in doc["components"]) and doc["status"] != "current"
       and all(c["state"] in {update.CURRENT, update.AVAILABLE, update.BLOCKED, update.DEGRADED} for c in doc["components"]),
       "a failed upstream check degrades, never reports current")
@@ -176,22 +176,51 @@ check(all(c["state"] != update.CURRENT and any("not queried" in n or "no upstrea
 
 pos, C = update.position, update.Component
 tags = ["v0.40.17", "v0.40.16", "v0.40.15-rc1", "v0.40.15", "v0.40.14", "v0.40.13"]
-check(pos("0.40.14", tags) == (3, "0.40.15") and pos("0.40.17", tags)[0] == 0 and pos("0.40.18", tags)[0] is None
-      and pos("0.40.13", tags)[1] == "0.40.15" and pos("1.0.0", ["v1.0.0", "v0.9.0"]) == (0, ""),
-      "release position skips pre-releases; the candidate is the third-newest stable")
+check(pos("0.40.14", tags) == 3 and pos("0.40.17", tags) == 0 and pos("0.40.18", tags) is None
+      and pos("1.0.0", ["v1.0.0", "v0.9.0"]) == 0,
+      "release position skips pre-releases and is context only")
+
+from datetime import datetime, timedelta, timezone  # noqa: E402
+from ailocal import version_policy as vp  # noqa: E402
+NOW = datetime(2026, 11, 7, 12, tzinfo=timezone.utc)
+iso = lambda days: (NOW - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
+LIST = [{"tag_name": "v0.40.17", "published_at": iso(1), "prerelease": False},
+        {"tag_name": "v0.40.16", "published_at": iso(6.9), "prerelease": False},
+        {"tag_name": "v0.40.16-rc1", "published_at": iso(9), "prerelease": True},
+        {"tag_name": "v0.40.15", "published_at": iso(7), "prerelease": False},
+        {"tag_name": "v0.40.14", "published_at": iso(20), "prerelease": False}]
+REL = vp.from_github(LIST)
+check([r.version for r in REL] == ["0.40.17", "0.40.16", "0.40.15", "0.40.14"]
+      and vp.candidate(REL, now=NOW)[0] == "0.40.15",
+      "the candidate is the newest stable release at least seven full days old, not a count (#106)")
+check(vp.candidate(REL, ["0.40.16"], now=NOW)[0] == "0.40.17" and "security" in vp.candidate(REL, ["0.40.16"], now=NOW)[1]
+      and vp.candidate(REL, ["0.40.18"], now=NOW)[0] == "0.40.15",
+      "a release under seven days old is proposed only when it contains an advisory's fix (#106)")
+check(vp.candidate(vp.from_github(LIST[:2]), now=NOW)[0] == "", "nothing old enough proposes nothing")
+GO = [{"version": "go1.27.3", "stable": True}, {"version": "go1.26.10", "stable": True}]
+check(vp.go_supported("1.27.3", GO)[0] and vp.go_supported("go1.26.10", GO)[0]
+      and not vp.go_supported("1.27.1", GO)[0] and not vp.go_supported("1.25.9", GO)[0]
+      and not vp.go_supported("1.27.3", [])[0],
+      "Go is supported only at the newest point release of a listed line; an empty listing refuses (#106)")
 notes = update.position_notes
-check("too new" in notes(C(name="x", position=1, candidate="a"))[0] and notes(C(name="x", position=2))[0].startswith("N-2: at")
-      and "no recorded hold" in notes(C(name="x", position=3, candidate="a"))[0]
-      and "held: why" in notes(C(name="x", position=3, hold="why"))[0] and notes(C(name="x")) == [],
-      "position notes: N-0/1 too new, N-2 at the hold, N-3 flagged unless held")
-RELEASES = [{"tag_name": t, "prerelease": "rc" in t, "draft": False} for t in tags]
-with mock.patch("ailocal.checks.services.http_json", lambda url, **kw: RELEASES):
+check("no release is at least seven days old" in notes(C(name="x", declared="1", position=1))[0]
+      and "at the policy's candidate" in notes(C(name="x", declared="2", position=1, candidate="2"))[0]
+      and "no recorded hold" in notes(C(name="x", declared="1", position=3, candidate="2"))[0]
+      and "held: why" in notes(C(name="x", declared="1", position=3, candidate="2", hold="why"))[0]
+      and "security release" in notes(C(name="x", declared="3", position=0, candidate="2"))[0]
+      and notes(C(name="x")) == [],
+      "position notes name the policy's candidate, a hold, or a declared version ahead of it")
+RELEASES = [{"tag_name": t, "prerelease": "rc" in t, "draft": False, "published_at": iso(30 - i)}
+            for i, t in enumerate(tags)]
+with mock.patch("ailocal.checks.services.http_json", lambda url, **kw: RELEASES), \
+        mock.patch("ailocal.update.advisory_fixes", return_value=([], "")):
     o = update._ollama(update.UPSTREAM)
-check(o.declared == "0.40.14" and o.position == 3 and o.candidate == "0.40.15" and o.state == update.AVAILABLE
+check(o.declared == "0.40.14" and o.position == 3 and o.candidate == "0.40.17" and o.state == update.AVAILABLE
       and o.available == "0.40.17" and o.installed is None and o.hold
       and any("held: the reviewed backport patches" in n for n in o.notes), "the Ollama base is placed upstream; its hold is stated", o)
 with mock.patch("ailocal.checks.services.http_json",
-                lambda url, **kw: {"version": "0.40.14-ailocal.18631.1"} if "api/version" in url else RELEASES):
+                lambda url, **kw: {"version": "0.40.14-ailocal.18631.1"} if "api/version" in url else RELEASES), \
+        mock.patch("ailocal.update.advisory_fixes", return_value=([], "")):
     check(update._ollama(update.LOCAL).installed == "0.40.14-ailocal.18631.1", "local mode reads the running daemon")
 from ailocal.checks import services as sv  # noqa: E402
 with mock.patch("ailocal.checks.services.http_json", mock.Mock(side_effect=sv.Unreachable("offline"))):
