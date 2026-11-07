@@ -146,8 +146,9 @@ Shipped selections (profiles `16gb`, `32gb`, `64gb`, `128gb`):
 | Proxy/client projection | Every alias served and routed; FIM excluded from chat pickers; FIM completed: 16 GB 28/28, 32 GB 28/28, 64 GB 32/32 ([REAL] 2026-10-28, 64 GB host). |
 | Qwen thinking empty-turn defect | Cause: Ollama `Qwen35Renderer` writes an empty think block for un-replayed turns; renderer patch took four Qwen backends to 4/4 final replies vs 2-4/4 empty on stock ([REAL] 2026-10-29, #38). Shipped Qwen roles run thinking off. |
 | Delegation and client paths | 24 bounded coding workflows across 4B, 9B, 26B standard and unrestricted through hosted Claude, hosted Codex, `claude-local`, `codex-local` completed (not 24 first-attempt successes) ([REAL client paths; APPROX fixtures] 2026-10-29). |
+| VS Code Copilot MCP call | In the VS Code Copilot harness on `ailocal-fast` (26B), `#grepai_search` called grepai's `grepai_search` over MCP after manual approval and answered with `packages/ranking/src/digest.ts` ([REAL] 2026-11-07, #46). It required grepai 1.2.0: 1.0.0 deadlocks on Copilot's `subscriptions/listen` (mark3labs/mcp-go#976, Cadence #268). The model wrapped the path in a `/path/to/` placeholder. |
 | Memory, all tiers | [APPROX] 2026-11-05 upper bounds: see per-model rows; `OLLAMA_MAX_LOADED_MODELS=4` holds on 64/128 GB; on 16/32 GB three loaded models and one parallel slot are recommended, not modelled per tier. `/api/ps` underreports GGUF residency and is not memory proof. |
-| Unverified, all tiers | Physical 16, 32 and 128 GB hardware; filled-window quality and latency; repository-scale accuracy; VS Code GUI chat or image turn; native parent-subagent guide inheritance. |
+| Unverified, all tiers | Physical 16, 32 and 128 GB hardware; filled-window quality and latency; repository-scale accuracy; VS Code GUI image turn; native parent-subagent guide inheritance. |
 
 ### qwen3.5:4b-mtp (16 GB primary)
 
