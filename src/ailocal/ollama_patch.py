@@ -255,6 +255,7 @@ def prepare() -> Path:
                          "vendor_binary_sha256": (parent_receipt.get("native_origin") or {}).get(
                              "vendor_binary_sha256", parent_receipt.get("stock_sha256"))}
     else:
+        parent_receipt = None
         # Cask = unmodified pinned tarball (CLI hash proves it); else fetch it.
         stock = Path(policy.stock_ollama_binary()).resolve()
         if stock.is_file() and _sha(stock) == spec["native_cli_sha256"]:
@@ -297,7 +298,7 @@ def prepare() -> Path:
         native = _copy_payload(stock, payload)
         if not cached:  # a cached payload was verified when built and is pinned by its receipt
             _verify_native_signatures(payload, deadline)
-        if cached and native != parent_receipt["native_files"]:
+        if parent_receipt is not None and native != parent_receipt["native_files"]:
             raise RuntimeError("Cached native payload does not match its validated receipt")
         if stock_hash != _sha(stock) or native != {
                 name: _sha(stock.parent / name) for name in native}:

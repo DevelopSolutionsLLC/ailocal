@@ -181,6 +181,8 @@ def main(argv: list[str] | None = None) -> int:
 
     # In-process: one dispatch mechanism, no second interpreter to choose.
     import importlib
+
+    from . import policy as P
     module, fixed = COMMANDS[cmd]
     with (_lifecycle_lock() if cmd in ("install", "start", "stop", "teardown")
           and not {"-h", "--help"}.intersection(argv)

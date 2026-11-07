@@ -33,6 +33,8 @@ def _load_registry_module() -> ModuleType:
         return _sys.modules["capability_registry"]
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "capability_registry.py")
     spec = importlib.util.spec_from_file_location("capability_registry", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {path}")
     module = importlib.util.module_from_spec(spec)
     _sys.modules["capability_registry"] = module
     spec.loader.exec_module(module)

@@ -142,6 +142,8 @@ def _coerce(value: object, spec: dict | None) -> object:
     Already-typed values pass through untouched.
     """
     t = (spec or {}).get("type")
+    if not isinstance(t, str):  # a union type list is unhashable; pass through
+        t = ""
     if not isinstance(value, str):
         py = {"integer": int, "number": (int, float), "boolean": bool,
               "object": dict, "array": list, "string": str}.get(t)

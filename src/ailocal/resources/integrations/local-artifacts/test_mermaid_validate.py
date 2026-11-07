@@ -18,6 +18,7 @@ sys.path.insert(0, str(HERE))
 _ARTIFACT_ROOT = tempfile.mkdtemp(prefix="la-testroot-")
 os.environ["LOCAL_ARTIFACTS_ROOT"] = _ARTIFACT_ROOT
 spec = importlib.util.spec_from_file_location("srv", HERE / "server.py")
+assert spec is not None and spec.loader is not None
 srv = importlib.util.module_from_spec(spec); spec.loader.exec_module(srv)
 import mermaid_validate as V
 

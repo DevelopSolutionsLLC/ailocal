@@ -28,7 +28,10 @@ import uuid
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from pathlib import Path
 from types import FrameType
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:  # anyio loads lazily, inside the MCP runtime only
+    from anyio.abc import ByteSendStream
 
 log = logging.getLogger('local-agent')
 
@@ -159,9 +162,10 @@ def claude_settings(mode: str, guide: dict) -> dict:
     """
     plan = CLAUDE_PLAN[mode]
     settings: dict[str, Any] = {'autoMemoryEnabled': False}
+    sandbox: dict[str, object] = {'enabled': True, 'failIfUnavailable': True,
+                                  'allowUnsandboxedCommands': False}
     if plan['sandbox'] == 'confined':
-        settings['sandbox'] = {'enabled': True, 'failIfUnavailable': True,
-                               'allowUnsandboxedCommands': False}
+        settings['sandbox'] = sandbox
     elif plan['sandbox'] == 'off':
         settings['sandbox'] = {'enabled': False}
     settings['env'] = {'CLAUDE_CODE_MAX_OUTPUT_TOKENS': str(guide['max_output']),
@@ -174,12 +178,13 @@ def claude_settings(mode: str, guide: dict) -> dict:
     # Sandboxed Bash could read the key file: credentials.files denies it, and
     # Read (outside the sandbox) needs a `//` rule (/en/sandboxing).
     denied = _denied_paths()
-    settings['permissions'] = {'deny': [f'Read(/{p})' for p in denied]}
+    permissions: dict[str, object] = {'deny': [f'Read(/{p})' for p in denied]}
+    settings['permissions'] = permissions
     if plan['reads'] == 'working directory':
         # Read/Grep/Glob refuse paths outside cwd, symlinks followed.
-        settings['permissions']['blockReadsOutsideWorkingDirectories'] = True
+        permissions['blockReadsOutsideWorkingDirectories'] = True
     if plan['sandbox'] == 'confined':
-        settings['sandbox']['credentials'] = {'files': [{'path': p, 'mode': 'deny'} for p in denied]}
+        sandbox['credentials'] = {'files': [{'path': p, 'mode': 'deny'} for p in denied]}
     return settings
 
 
@@ -466,21 +471,24 @@ async def _run(argv: list[str], env: dict[str, str], cwd: str | None,
     except FileNotFoundError:
         raise DelegateError(f'AGENT_CLI_MISSING: {argv[0]} is not installed') from None
     _ACTIVE.add(proc.pid)
+    # PIPE above guarantees both streams; this narrows them for the checker.
+    assert proc.stdout is not None and proc.stderr is not None
+    stdout, stderr, stdin = proc.stdout, proc.stderr, proc.stdin
     out, overflow, drained = bytearray(), False, anyio.Event()
 
-    async def feed() -> None:
+    async def feed(stdin: ByteSendStream, data: bytes) -> None:
         try:
-            await proc.stdin.send(input_data)
+            await stdin.send(data)
         except (anyio.BrokenResourceError, anyio.ClosedResourceError):
             pass  # Exit/result decides failure, not a pipe diagnostic.
         finally:
-            await proc.stdin.aclose()
+            await stdin.aclose()
 
     async def pump() -> None:
         nonlocal overflow
         skipping = False
         try:
-            async for chunk in proc.stdout:
+            async for chunk in stdout:
                 if on_line is None:
                     out.extend(chunk)
                     if len(out) > STDOUT_LIMIT:
@@ -505,15 +513,16 @@ async def _run(argv: list[str], env: dict[str, str], cwd: str | None,
             drained.set()
 
     async def discard() -> None:
-        async for _ in proc.stderr:
+        async for _ in stderr:
             pass
 
+    code: int | None = None
     try:
         async with anyio.create_task_group() as tasks:
             tasks.start_soon(pump)
             tasks.start_soon(discard)
-            if input_data is not None:
-                tasks.start_soon(feed)
+            if input_data is not None and stdin is not None:
+                tasks.start_soon(feed, stdin, input_data)
             code = await proc.wait()
             with anyio.move_on_after(DRAIN_GRACE):
                 await drained.wait()
@@ -521,6 +530,8 @@ async def _run(argv: list[str], env: dict[str, str], cwd: str | None,
     finally:
         with anyio.CancelScope(shield=True):
             await _reap(proc)
+    if code is None:  # a task group may swallow a cancellation before wait()
+        raise DelegateError('DELEGATE_FAILED: the local run was cancelled before it exited')
     if overflow:
         raise DelegateError('DELEGATE_OUTPUT_LIMIT: the local run produced more output than this tool returns')
     if on_line is not None and out:
@@ -794,6 +805,7 @@ async def delegate_claude(prompt: str, model: str, mode: str, cwd: str, resume: 
         out = json.dumps(terminal[-1] if terminal else {}).encode()
     else:
         code, out = await _run(argv, _child_env('claude', mode), cwd)
+    payload: dict = {}
     try:
         payload = json.loads(out)
         text = payload.get('result', '')
@@ -829,7 +841,9 @@ def _permission_denials(payload: dict) -> list[dict[str, str]]:
     for entry in payload.get('permission_denials') or ():
         if not isinstance(entry, dict):
             continue
-        tool_input = entry.get('tool_input') if isinstance(entry.get('tool_input'), dict) else {}
+        tool_input = entry.get('tool_input')
+        if not isinstance(tool_input, dict):
+            tool_input = {}
         target = next((tool_input[k] for k in ('file_path', 'path', 'command', 'pattern', 'url')
                        if isinstance(tool_input.get(k), str)), '')
         out.append({'tool': str(entry.get('tool_name') or '')[:64], 'target': target[:200]})

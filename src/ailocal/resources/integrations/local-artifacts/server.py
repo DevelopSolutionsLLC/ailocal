@@ -586,7 +586,7 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "local-artifacts"
     sys_version = ""
 
-    def log_message(self, fmt: str, *args: object) -> None:
+    def log_message(self, format: str, *args: object) -> None:
         pass  # MCP speaks stdio; stdout must stay clean
 
     # No do_POST: upstream's unauthenticated cross-origin publish is removed.
@@ -1024,7 +1024,7 @@ def publish(title: str, content: str = "", file_path: str = "", fmt: str = "html
                        + ", ".join(FORMATS) + ".")
 
     resolved, err = resolve_input(content or "", file_path or "")
-    if err:
+    if resolved is None:
         return False, f"Publish failed: {err}"
 
     text, fmt_hint = resolved

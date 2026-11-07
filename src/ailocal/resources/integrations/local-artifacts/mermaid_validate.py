@@ -24,6 +24,7 @@ import subprocess
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
+from typing import IO, Protocol
 
 VENDOR = Path(__file__).resolve().parent / "vendor"
 MERMAID_JS = VENDOR / "mermaid.min.js"
@@ -92,21 +93,33 @@ def available() -> bool:
     return bool(find_chrome()) and MERMAID_JS.is_file()
 
 
-def _read_until_verdict(proc: subprocess.Popen[bytes], deadline_at: float) -> str:
+class _Proc(Protocol):
+    """The part of a Popen the verdict reader uses; tests pass a fake."""
+
+    @property
+    def stdout(self) -> IO[bytes] | None: ...
+
+    def poll(self) -> int | None: ...
+
+
+def _read_until_verdict(proc: _Proc, deadline_at: float) -> str:
     """Return stdout read until a marker or timeout; Chrome never exits."""
     import time
     buf = ""
+    stdout = proc.stdout
+    if stdout is None:  # spawned without stdout=PIPE: nothing to read
+        return buf
     while time.monotonic() < deadline_at:
         if proc.poll() is not None:
             try:
-                buf += (proc.stdout.read() or b"").decode("utf-8", "replace")
+                buf += (stdout.read() or b"").decode("utf-8", "replace")
             except Exception:
                 pass
             return buf
-        ready, _, _ = select.select([proc.stdout], [], [], 0.25)
+        ready, _, _ = select.select([stdout], [], [], 0.25)
         if ready:
             try:
-                chunk = os.read(proc.stdout.fileno(), 65536)
+                chunk = os.read(stdout.fileno(), 65536)
             except OSError:
                 return buf
             if not chunk:
@@ -169,9 +182,9 @@ def parse(source: str,
         return Result(UNAVAILABLE,
                       "mermaid.min.js is missing from vendor/. Reinstall "
                       "local-artifacts.")
-    chrome = None
+    chrome = ""
     if runner is None:
-        chrome = find_chrome()
+        chrome = find_chrome() or ""
         if not chrome:
             return Result(UNAVAILABLE,
                           "no Chrome or Chromium was found on this machine, so "

@@ -93,6 +93,7 @@ check("accents that are indistinguishable in greyscale are covered by labels",
 print("\nPRESENTATION BOUNDARY (the model owns meaning, not looks)")
 os.environ["LOCAL_ARTIFACTS_AUTO_OPEN"] = "0"
 spec = importlib.util.spec_from_file_location("srv", str(HERE / "server.py"))
+assert spec is not None and spec.loader is not None
 srv = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(srv)
 

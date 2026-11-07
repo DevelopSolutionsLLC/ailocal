@@ -230,12 +230,14 @@ def upgrade_model_defaults(source: Path, config: Path) -> dict:
 
     def table(text: str, header: str | None, values: dict[str, object]) -> str:
         # header None is the top-level preamble before the first table.
-        match = (re.match(r"", text) if header is None else
-                 re.search(r"(?m)^" + re.escape(header) + r"[ \t]*(?:#[^\n]*)?$", text))
-        if not match:
-            return text.rstrip() + "\n\n" + header + "\n" + "".join(
-                key + " = " + literal(value) + "\n" for key, value in values.items() if value is not None)
-        start = match.end()
+        if header is None:
+            start = 0
+        else:
+            match = re.search(r"(?m)^" + re.escape(header) + r"[ \t]*(?:#[^\n]*)?$", text)
+            if not match:
+                return text.rstrip() + "\n\n" + header + "\n" + "".join(
+                    key + " = " + literal(value) + "\n" for key, value in values.items() if value is not None)
+            start = match.end()
         following = re.search(r"(?m)^\[", text[start:])
         end = start + following.start() if following else len(text)
         body = text[start:end]
@@ -358,6 +360,14 @@ def _section_span(text: str, header: str) -> tuple[int, int] | None:
     return match.start(), end - kept
 
 
+def _span_or_raise(text: str, header: str) -> tuple[int, int]:
+    # A dotted or inline table parses but has no [header] line to cut.
+    span = _section_span(text, header)
+    if span is None:
+        raise ValueError(f"role migration could not delimit [{header}]")
+    return span
+
+
 def migrate_profile_roles(source: Path, config: Path) -> dict:
     """Collapse 0.15's architecture/implementation/review into [primary] (#89).
 
@@ -418,12 +428,12 @@ def migrate_profile_roles(source: Path, config: Path) -> dict:
         if src != "primary":
             text = re.sub(r"(?m)^\[" + src + r"\]", "[primary]", text, count=1)
         if no_thinking:
-            start, end = _section_span(text, "primary")
+            start, end = _span_or_raise(text, "primary")
             text = text[:start] + re.sub(r"(?m)^(reasoning[ \t]*=[ \t]*)true\b", r"\1false",
                                          text[start:end], count=1) + text[end:]
             thinking_off.append(tier)
         for section in remove:
-            start, end = _section_span(text, section)
+            start, end = _span_or_raise(text, section)
             rest = text[end:].lstrip("\n")
             text = text[:start].rstrip("\n") + ("\n\n" + rest if rest else "\n")
         if tomllib.loads(text) != expected:
@@ -1341,7 +1351,7 @@ def cmd_install(argv: list[str]) -> int:
 
     step("Detecting hardware profile")
     ram = _memory_gb()
-    tier = select_tier(_opt(argv, "--profile", ""), assume_yes)
+    tier = select_tier(_opt(argv, "--profile") or "", assume_yes)
     required_patch = policy.required_runtime_patch(tier)
     if required_patch and requested_patch == "none":
         raise SystemExit("The selected profile requires the patched Ollama runtime. "

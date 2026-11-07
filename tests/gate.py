@@ -7,6 +7,7 @@ nothing is skipped to green.
 
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 import re
@@ -100,6 +101,7 @@ def _suites(full: bool) -> list:
             ("litellm runtime matches the validated version", _version_current),
             ("shell parses (bash -n, zsh -n) and passes ShellCheck", _shell_clean),
             ("python parses at 3.13 and meets standard §8a (ruff)", _ruff_clean),
+            ("src type-checks clean, each integration in its own runtime (pyright)", _pyright_clean),
             ("every module imports on the floor interpreter (3.13)", _floor_imports),
             ("the repository root holds only project concepts", _root_is_clean),
         ]),
@@ -155,6 +157,40 @@ def _ruff_clean(repo: pathlib.Path) -> tuple[int, str]:
     r = subprocess.run(["ruff", "check", "--output-format", "concise", "src", "tests"],
                        capture_output=True, text=True, cwd=repo)
     return r.returncode, r.stdout.strip()
+
+
+def _pyright_clean(repo: pathlib.Path) -> tuple[int, str]:
+    """Type-check src on this venv, each integration in its provisioned one."""
+    exe = os.environ.get("AILOCAL_PYRIGHT") or shutil.which("pyright")
+    if not exe:
+        return 1, "pyright is required: npm i -g pyright, or set AILOCAL_PYRIGHT"
+    runs = {"src": [exe, "--outputjson", "--pythonpath", sys.executable, "src"]}
+    for d in sorted((repo / RES / "integrations").iterdir()):
+        if not (d / "requirements.txt").is_file():
+            continue
+        py = policy.state_root() / d.name / ".venv/bin/python"
+        if not py.is_file():
+            return 1, f"{d.name} runtime missing: {py}; run: ailocal clients claude codex"
+        runs[d.name] = [exe, "--outputjson", "-p", "tests/pyright-integrations.json",
+                        "--pythonpath", str(py), str(d.relative_to(repo))]
+    procs = {k: subprocess.Popen(c, cwd=repo, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                 text=True) for k, c in runs.items()}
+    bad = []
+    for name, proc in procs.items():
+        out, err = proc.communicate()
+        try:
+            report = json.loads(out)
+        except ValueError:
+            bad.append(f"{name}: pyright error (exit {proc.returncode}): {(err or out).strip()[:300]}")
+            continue
+        # Zero files analysed is a misconfiguration, never a clean pass.
+        if proc.returncode or not report["summary"]["filesAnalyzed"]:
+            errors = [f"{d['file']}:{d['range']['start']['line'] + 1}: error: {d['message']}"
+                      for d in report["generalDiagnostics"] if d["severity"] == "error"]
+            bad.append(f"{name}: exit {proc.returncode}, "
+                       f"{report['summary']['filesAnalyzed']} files analysed")
+            bad += errors
+    return (1 if bad else 0), "\n".join(bad)
 
 
 def _floor_imports(repo: pathlib.Path) -> tuple[int, str]:

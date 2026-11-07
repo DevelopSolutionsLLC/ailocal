@@ -15,6 +15,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import types
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -61,6 +62,26 @@ def code_of(fn, *args):
         return exc.code
 
 
+def _cli_profile_error() -> tuple[int, str]:
+    """Run `ailocal check` against a command that raises; return (rc, code)."""
+    from ailocal import cli
+
+    def boom(argv):
+        raise P.ProfileError(P.PROFILE_INVALID, "x")
+    sys.modules["_raises_profile"] = types.SimpleNamespace(main=boom)
+    saved, cli.COMMANDS["check"] = cli.COMMANDS["check"], ("_raises_profile", ())
+    err = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(err):
+            rc = cli.main(["check"])
+    except Exception as exc:  # report a crash as a mismatch, not a suite abort
+        return 1, repr(exc)
+    finally:
+        cli.COMMANDS["check"] = saved
+        sys.modules.pop("_raises_profile", None)
+    return rc, P.PROFILE_INVALID if P.PROFILE_INVALID in err.getvalue() else err.getvalue()
+
+
 def fails_closed() -> None:
     S.section("POLICY FILES FAIL CLOSED")
     want, got = {}, {}
@@ -90,6 +111,8 @@ def fails_closed() -> None:
     want["missing clients.toml"], got["missing clients.toml"] = P.CLIENT_POLICY_MISSING, code_of(P.load_client_policy, box())
     want.update({t: "OK" for t in P.TIERS})
     got.update({t: code_of(P.load_profile, t) for t in P.TIERS})
+    want["command raises ProfileError"] = (2, P.PROFILE_INVALID)
+    got["command raises ProfileError"] = _cli_profile_error()
     check(got == want, "every shipped tier loads; a missing or malformed profile or clients.toml fails closed "
           "with its code", repr({k: v for k, v in got.items() if want[k] != v}))
 

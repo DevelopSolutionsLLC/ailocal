@@ -48,8 +48,17 @@ for label, text in (("json fence", '```json\n{"name": "Read", "arguments": {"fil
                     ("qwen <function=>", '<function=Read>\n<parameter=file_path>/tmp/a</parameter>\n</function>')):
     calls, left = tr.recover(text, TOOLS)
     repaired[label] = ([(c["function"]["name"], json.loads(c["function"]["arguments"])) for c in calls or []], left or "")
-check(all(v == ([("Read", {"file_path": "/tmp/a"})], "") for v in repaired.values()),
-      "a call emitted as text becomes exactly one tool call (dropped or duplicated call)", str(repaired))
+# A JSON Schema union type is a list, which no dict lookup may hash.
+UNION = [_tool("Read", {"file_path": "string", "limit": ["integer", "null"]}, ["file_path"])]
+try:
+    calls, left = tr.recover('{"name": "Read", "arguments": {"file_path": "/tmp/a", "limit": 5}}', UNION)
+    union = ([(c["function"]["name"], json.loads(c["function"]["arguments"])) for c in calls or []], left or "")
+except TypeError as exc:
+    union = repr(exc)
+check(all(v == ([("Read", {"file_path": "/tmp/a"})], "") for v in repaired.values())
+      and union == ([("Read", {"file_path": "/tmp/a", "limit": 5})], ""),
+      "a call emitted as text becomes exactly one tool call (dropped or duplicated call)",
+      str({**repaired, "union type": union}))
 prose = ('To read a file, the agent emits a call like this:\n\n'
          '```json\n{"name": "Read", "arguments": {"file_path": "/tmp/x"}}\n```\n\nThat is how it works.')
 accepted = [label for text, label in (

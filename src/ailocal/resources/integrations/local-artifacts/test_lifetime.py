@@ -144,6 +144,7 @@ try:
          str(HERE / "server.py")],
         env=ENV, cwd=str(HERE), stdout=subprocess.PIPE, text=True,
         start_new_session=True)          # give it its own group to kill
+    assert holder.stdout is not None  # stdout=PIPE above
     holder.stdout.readline()
     owner_before = listener_pids()
     check("viewer is up before the group kill", len(owner_before) == 1, str(owner_before))
@@ -222,6 +223,7 @@ try:
     for k, v in ENV.items():
         os.environ[k] = v
     spec = importlib.util.spec_from_file_location("srv_h", str(HERE / "server.py"))
+    assert spec is not None and spec.loader is not None
     m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 
     real_await = m._await_ingest
@@ -231,20 +233,20 @@ try:
         calls["n"] += 1
         return False if calls["n"] == 1 else real_await(*a, **kw)
 
-    m._await_ingest = flaky
+    setattr(m, "_await_ingest", flaky)
     ok, msg = m.publish(title="Recovered", content="<h1>recovered</h1>")
     check("a transient ingest failure is recovered, not reported as fine",
           ok and "Artifact published." in msg and "NOT viewable" not in msg, msg[:160])
     check("recovery actually retried the ingest", calls["n"] >= 2, str(calls["n"]))
     check("and the viewer really serves it", "Recovered" in get("/")[1])
 
-    m._await_ingest = lambda *a, **kw: False        # never ingests
+    setattr(m, "_await_ingest", lambda *a, **kw: False)  # never ingests
     ok, msg = m.publish(title="Honest", content="<h1>honest</h1>")
     check("a persistent failure is reported, not dressed up as success",
           "NOT viewable" in msg and "not responding" in msg, msg[:200])
     check("and it still tells you where the source landed",
           "source_path:" in msg and ".artifacts" in msg, msg[:240])
-    m._await_ingest = real_await
+    setattr(m, "_await_ingest", real_await)
 
 finally:
     cleanup()

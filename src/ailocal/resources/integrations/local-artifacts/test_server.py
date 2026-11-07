@@ -13,6 +13,7 @@ os.environ.update(LOCAL_ARTIFACTS_PORT=str(PORT), LOCAL_ARTIFACTS_ROOT=str(ROOT)
                   XDG_STATE_HOME=str(STATE), LOCAL_ARTIFACTS_AUTO_OPEN="0")
 
 spec = importlib.util.spec_from_file_location("srv", str(Path(__file__).parent / "server.py"))
+assert spec is not None and spec.loader is not None
 srv = importlib.util.module_from_spec(spec); spec.loader.exec_module(srv)
 srv.start_http_thread(); srv._http_ready.wait(5)
 
