@@ -99,7 +99,7 @@ def _read_until_verdict(proc: subprocess.Popen[bytes], deadline_at: float) -> st
     while time.monotonic() < deadline_at:
         if proc.poll() is not None:
             try:
-                buf += proc.stdout.read() or ""
+                buf += (proc.stdout.read() or b"").decode("utf-8", "replace")
             except Exception:
                 pass
             return buf
