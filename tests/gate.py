@@ -97,7 +97,8 @@ def _suites(full: bool) -> list:
             ("generation is a fixed point", _fixed_point),
             ("litellm runtime matches the validated version", _version_current),
             ("shell parses (bash -n, zsh -n) and passes ShellCheck", _shell_clean),
-            ("python parses at 3.11 and meets standard §8a (ruff)", _ruff_clean),
+            ("python parses at 3.13 and meets standard §8a (ruff)", _ruff_clean),
+            ("every module imports on the floor interpreter (3.13)", _floor_imports),
             ("the repository root holds only project concepts", _root_is_clean),
         ]),
     ]
@@ -152,6 +153,24 @@ def _ruff_clean(repo: pathlib.Path) -> tuple[int, str]:
     r = subprocess.run(["ruff", "check", "--output-format", "concise", "src", "tests"],
                        capture_output=True, text=True, cwd=repo)
     return r.returncode, r.stdout.strip()
+
+
+def _floor_imports(repo: pathlib.Path) -> tuple[int, str]:
+    """Import every ailocal module on the requires-python floor interpreter."""
+    minor = re.search(r'requires-python = ">=3\.(\d+)"',
+                      (repo / "pyproject.toml").read_text()).group(1)
+    exe = shutil.which(f"python3.{minor}")
+    if not exe:
+        return 1, f"python3.{minor} is required: brew install python@3.{minor}"
+    code = ("import importlib, pkgutil, sys; sys.path.insert(0, 'src'); import ailocal\n"
+            "bad = []\n"
+            "for m in pkgutil.walk_packages(ailocal.__path__, 'ailocal.'):\n"
+            "    if '.resources' in m.name: continue\n"
+            "    try: importlib.import_module(m.name)\n"
+            "    except BaseException as e: bad.append(f'{m.name}: {e!r}')\n"
+            "print('\\n'.join(bad)); sys.exit(1 if bad else 0)")
+    r = subprocess.run([exe, "-I", "-c", code], capture_output=True, text=True, cwd=repo)
+    return r.returncode, (r.stdout + r.stderr).strip()
 
 
 def _root_is_clean(repo: pathlib.Path) -> tuple[int, str]:
