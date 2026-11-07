@@ -78,7 +78,7 @@ def _suites(full: bool) -> list:
     py = sys.executable
     suites = [
         ("SUITES", [
-            ("policy: fail-closed profiles, hosted roots, budgets, secrets, bind", [py, "tests/policy.py"]),
+            ("policy: fail-closed profiles, hosted roots, output ceiling, secrets, bind", [py, "tests/policy.py"]),
             ("clients: generation, targets, co-owned config", [py, "tests/clients.py"]),
             ("install: model provenance, owned config, launchd, teardown", [py, "tests/install.py"]),
             ("audit and update reporting", [py, "tests/audit.py"]),
@@ -87,6 +87,7 @@ def _suites(full: bool) -> list:
             ("gateway in the proxy image: hook import, reasoning effort, tool identity, loop guard",
              ["/bin/bash", "tests/in-container.sh", "tests/gateway-impl.py"]),
             ("model guidance and delegation", [py, "tests/guidance.py"]),
+            ("scratchpad hook: private, unescapable", [py, "tests/scratchpad.py"]),
             ("research MCP: network boundary, Brave key and budget, citations", [py, "tests/research.py"]),
             ("bundled artifacts", [py, "tests/artifacts.py"] + (["--full"] if full else [])),
             ("checks, commands and documentation", [py, "tests/checks.py"]),
