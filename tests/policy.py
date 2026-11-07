@@ -6,6 +6,7 @@ is pointed at a temp dir that must stay empty."""
 from __future__ import annotations
 
 import contextlib
+import io
 import json
 import os
 import shutil
@@ -17,7 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from harness import RESOURCES, Suite  # noqa: E402
-from ailocal import policy as P  # noqa: E402
+from ailocal import generation as G, policy as P  # noqa: E402
 
 S = Suite()
 check = S.check
@@ -118,14 +119,25 @@ def generated() -> None:
     check(not bad, "every tier generates claude-local and leaves every hosted root empty", repr(bad))
     if bad:
         return
-    # #56: subtracting the guide hook from the published budget left Claude less than Cadence's policy.
-    got = {t: json.loads((g["root"] / "clients/integration-contract.json").read_text()).get("instructions")
-           for t, g in runs.items()}
-    want = {t: {"claude": {"max_bytes": (b := P.instruction_budgets(runs[t]["root"] / "cfg", t))["claude"],
-                           "file": "CLAUDE.md"},
-                "codex": {"max_bytes": b["codex"], "file": "AGENTS.md"}} for t in runs}
-    check(got == want, "the integration contract publishes each tier's full instruction budget (#56)",
-          f"{got} vs {want}")
+    launch = P.load_client_policy(RESOURCES).get("claude", {}).get("launch_default", "primary")
+    # Claude Code defaults to 32000 output tokens; a mismatch looped on max_tokens for ~27 min.
+    got, want = {}, {}
+    for tier, g in runs.items():
+        cenv = json.loads((g["root"] / "clients/claude/settings.json").read_text()).get("env", {})
+        role = P.resolve_role(tier, launch, RESOURCES)
+        got[tier] = (cenv.get("CLAUDE_CODE_MAX_OUTPUT_TOKENS"), cenv.get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"))
+        want[tier] = (str(role["max_output"]), str(role["context_input"]))
+    models, clients = G.load_models_yaml(RESOURCES / "profiles/64gb.toml"), G.load_clients_yaml()
+    models[launch] = {k: v for k, v in models[launch].items() if k != "max_output"}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            G.regen_claude_settings(models, clients)
+        rejected = "returned"
+    except SystemExit as exc:
+        rejected = str(exc)
+    check(got == want and "max_output" in rejected,
+          f"Claude's output and window are {launch}'s max_output and context_input; a launch role without "
+          "max_output is rejected rather than left to Claude's 32000", f"{got} vs {want}; {rejected}")
 
 
 def env_ownership() -> None:
