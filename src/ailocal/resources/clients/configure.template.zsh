@@ -11,17 +11,21 @@ fi
 
 # Process-scoped env only, so plain `claude` / `codex` stay on the cloud.
 
-claude-local() {
-  local cfg="${XDG_CONFIG_HOME:-$HOME/.config}/ailocal"
-  # One key owner: read the canonical generated file; derive the URL.
+# Set the caller's `key` and `base`; one key owner, the generated env file.
+_ailocal_endpoint() {
   local state="${AILOCAL_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/ailocal}"
-  local base key
   key=$(grep '^LITELLM_MASTER_KEY=' "$state/env" 2>/dev/null | cut -d= -f2-)
   base="${AILOCAL_PROXY:-http://127.0.0.1:${AILOCAL_LITELLM_PORT:-4000}}"
   if [[ -z "$key" ]]; then
-    echo "claude-local: no key in ${state}/env — run ailocal install" >&2
+    echo "$1: no key in ${state}/env — run ailocal install" >&2
     return 1
   fi
+}
+
+claude-local() {
+  local cfg="${XDG_CONFIG_HOME:-$HOME/.config}/ailocal"
+  local base key
+  _ailocal_endpoint claude-local || return 1
   # Slots remap built-in model slots to served aliases; generated from
   # profiles/clients.toml `claude.slots`. An array, so markers can sit inside.
   # ENABLE_TOOL_SEARCH=true: Claude Code turns deferral off for non-first-party
@@ -94,15 +98,8 @@ claude-local() {
 
 codex-local() {
   local cfg="${XDG_CONFIG_HOME:-$HOME/.config}/ailocal"
-  # One key owner: read the canonical generated file; derive the URL.
-  local state="${AILOCAL_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/ailocal}"
   local base key
-  key=$(grep '^LITELLM_MASTER_KEY=' "$state/env" 2>/dev/null | cut -d= -f2-)
-  base="${AILOCAL_PROXY:-http://127.0.0.1:${AILOCAL_LITELLM_PORT:-4000}}"
-  if [[ -z "$key" ]]; then
-    echo "codex-local: no key in ${state}/env — run ailocal install" >&2
-    return 1
-  fi
+  _ailocal_endpoint codex-local || return 1
   CODEX_HOME="$cfg/codex" OPENAI_API_KEY="$key" OPENAI_BASE_URL="$base/v1" \
     command codex -c 'mcp_servers.agent.env.LOCAL_AGENT_CALLER="local"' \
       -c 'mcp_servers.agent.enabled_tools=["model_guide"]' "$@"
