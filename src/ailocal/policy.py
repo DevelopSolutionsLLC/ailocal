@@ -430,21 +430,31 @@ def delegate_ceilings(repo_root=None) -> dict:
 INSTRUCTION_DEFAULT_MAX_BYTES = 4096
 
 
-def instruction_budgets(repo_root=None) -> dict:
+def instruction_budgets(repo_root=None, tier=None) -> dict:
     """Per-client instruction-file budget, from `[claude]`/`[codex] instruction_max_bytes`.
 
     Published in the integration contract so a co-installed instruction composer
     can fit it, and checked by `ailocal check` whoever wrote the file. An absent
     key keeps the measured default; a non-positive or non-integer one fails closed.
+    `instruction_max_bytes_by_tier` replaces the value for the named tier, because
+    the budget is a property of the tier's model (#47); it applies only when the
+    caller names the tier, so a reader without one gets the tier-independent value.
     """
     data = load_client_policy(repo_root)
     out = {}
     for client in ("claude", "codex"):
-        value = (data.get(client) or {}).get("instruction_max_bytes", INSTRUCTION_DEFAULT_MAX_BYTES)
-        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        mapping = data.get(client) or {}
+        value = mapping.get("instruction_max_bytes", INSTRUCTION_DEFAULT_MAX_BYTES)
+        by_tier = mapping.get("instruction_max_bytes_by_tier", {})
+        if not isinstance(by_tier, dict) or not set(by_tier) <= set(TIERS):
             raise ProfileError(CLIENT_POLICY_INVALID,
-                               f"{client}.instruction_max_bytes must be a positive integer")
-        out[client] = value
+                               f"{client}.instruction_max_bytes_by_tier must map tiers "
+                               f"({', '.join(TIERS)}) to byte counts")
+        for v in (value, *by_tier.values()):
+            if isinstance(v, bool) or not isinstance(v, int) or v <= 0:
+                raise ProfileError(CLIENT_POLICY_INVALID,
+                                   f"{client}.instruction_max_bytes must be a positive integer")
+        out[client] = by_tier.get(tier, value)
     return out
 
 

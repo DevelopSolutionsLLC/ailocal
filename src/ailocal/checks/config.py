@@ -395,7 +395,7 @@ def check_instruction_budget() -> list[CheckResult]:
     failure: the file is not ailocal's to rewrite.
     """
     out = []
-    budgets = P.instruction_budgets()
+    budgets = P.instruction_budgets(tier=P.resolve_active_tier())
     for client, name in (("claude", "CLAUDE.md"), ("codex", "AGENTS.md")):
         path = P.deployed_client_root() / client / name
         size, limit = (path.stat().st_size if path.is_file() else 0), budgets[client]
