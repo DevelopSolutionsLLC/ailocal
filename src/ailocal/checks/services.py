@@ -775,12 +775,24 @@ def check_updates(images: list[str]) -> list[CheckResult]:
         ref, cur = (image.split("@", 1) + [""])[:2]
         repo = ref.split(":", 1)[0]
         if repo == "ghcr.io/berriai/litellm":
+            # `releases/latest` is the newest release whatever its age; the version
+            # policy (version_policy.py) is what may be adopted (#106).
+            from .. import audit, update, version_policy as vp
             try:
-                body = http_json("https://api.github.com/repos/BerriAI/"
-                                 "litellm/releases/latest", timeout=20)
+                listing = http_json("https://api.github.com/repos/BerriAI/"
+                                    "litellm/releases?per_page=100", timeout=20)
             except Unreachable:
-                body = {}
-            newest = (body or {}).get("tag_name") or ""
+                listing = []
+            pinned = _litellm_pinned_version()
+            fixed, unread = update.advisory_fixes(audit.Pin(repo, "image", pinned, "deploy/litellm/compose.yaml",
+                                                             github="BerriAI/litellm", pypi="litellm")) \
+                if pinned and listing else ([], "")
+            chosen, why = vp.candidate(vp.from_github(listing), fixed)
+            if listing and not chosen:
+                out.append(CheckResult("update", PASS, f"{repo}: no release is at least seven days old"
+                                       + (f"; {unread}" if unread else "")))
+                continue
+            newest = f"v{chosen}" if chosen else ""
             candidate = f"{repo}:{newest}"
         elif repo == "searxng/searxng":
             # Rolling `latest`, no semver releases — which is exactly why it
@@ -803,13 +815,14 @@ def check_updates(images: list[str]) -> list[CheckResult]:
             if newer[-1] == pinned_version:
                 out.append(CheckResult("update", PASS,
                                        f"{repo} is current ({pinned_version}, at or "
-                                       f"ahead of newest release {newest})"))
+                                       f"ahead of the policy's candidate {newest})"))
                 continue
         if remote and remote == cur:
             out.append(CheckResult("update", PASS, f"{repo} is current ({newest})"))
         else:
             out.append(CheckResult("update", WARN,
-                                   f"{repo}: {newest} available for review",
+                                   f"{repo}: {newest} available for review"
+                                   + (f" ({why})" if "litellm" in repo else ""),
                                    remediation="edit the digest in "
                                                "deploy/*/compose.yaml, then "
                                                "ailocal start, then run the gate"))

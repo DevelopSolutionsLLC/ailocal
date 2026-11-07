@@ -81,6 +81,14 @@ The patched-Ollama build drops every setting that exempts a Go module from the p
 
 `ailocal check` includes the supply chain: every image pinned by digest, the running image identical to the declared one, loopback-only binding, and provenance where a publisher signs. `ailocal check --updates` additionally asks upstream what exists; it never pulls over a running service and never rewrites a pin. A check that could not complete reports as such — an absent scanner is not a pass.
 
+**Version policy.** Every path that chooses an upstream version (the Ollama base, the LiteLLM image, the Go toolchain for the patched build) applies one rule, implemented once in [`version_policy.py`](../src/ailocal/version_policy.py):
+
+- Adopt the newest stable release whose publication, per the publisher's release record (GitHub `published_at`), is at least seven full days old. A count such as "two releases behind" is not the rule: a fast release train makes it an arbitrary age, and on 2026-11-02 a slow one made it propose go1.27.1 over go1.27.3, with 14 standard-library advisories open against it.
+- A younger release qualifies only when it contains the fix for an advisory that affects the declared version. If the advisories cannot be read, no younger release qualifies.
+- An unsupported line is never adopted or kept. For Go, supported means the newest point release of one of the two lines go.dev lists; the patched build refuses any other toolchain and refuses to guess when go.dev cannot be reached.
+
+The age is the defence against a compromised release, which is usually withdrawn within days (LiteLLM 1.107.0, 2026-10-22). `ailocal update` reports the policy's candidate per component, and a declared version newer than the candidate is flagged for review: it is legitimate only as a security release. Searxng publishes no versioned releases, so it stays on a reviewed digest.
+
 **Upgrading an image** means changing the digest, re-running the scan, running the full gate, and confirming the proxy still serves every alias with the expected geometry. A tag bump without a digest change is not an upgrade.
 
 **Is the pin still safe?** `ailocal audit` checks every declared pin, and the Ollama base actually running, against live advisory sources, before a release and in weekly maintenance. That question changes daily and needs a network, so the audit is not part of `ailocal check` or the gate. Container images have no OSV ecosystem; the audit maps each image to its publisher's GitHub repository explicitly, and reports an unmapped image as unverified. Each run is recorded under the state root and published through the integration contract, so the machine-wide weekly audit (`cadence audit --local`) reports these findings once a week beside everything else on the machine.

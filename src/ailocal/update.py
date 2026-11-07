@@ -27,8 +27,10 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 
-SCHEMA_VERSION = 2   # 2: position, candidate and hold on a component; the ollama component
+SCHEMA_VERSION = 3   # 3: candidate is the version policy's (seven-day age, security sooner), not ≈N-2
+#                      2: position, candidate and hold on a component; the ollama component
 
 _OLLAMA_RELEASES = "https://api.github.com/repos/ollama/ollama/releases?per_page=100"
 
@@ -56,42 +58,58 @@ class Component:
     #: How many newer stable upstream releases exist (0 = newest). None when
     #: upstream was not asked or the declared version is not in its list.
     position: int | None = None
-    #: The ≈N-2 release the version-safety policy would pick today.
+    #: The release the version policy adopts today (version_policy.candidate).
     candidate: str = ""
-    #: The recorded reason this component is held older than ≈N-2, from its
-    #: declaration file. Empty means no hold is recorded.
+    #: The recorded reason this component is held older than its candidate,
+    #: from its declaration file. Empty means no hold is recorded.
     hold: str = ""
     notes: list[str] = field(default_factory=list)
 
 
-def position(declared: str, releases: list[str]) -> tuple[int | None, str]:
-    """(how many stable releases are newer than `declared`, the ≈N-2 candidate).
+def position(declared: str, releases: list[str]) -> int | None:
+    """How many stable releases are newer than `declared` (0 = newest). Context
+    only: the candidate is chosen by version_policy, never by this count.
 
     `releases` are tags as upstream lists them; pre-releases and anything not
     purely numeric are dropped, so `v0.40.9-rc1` never counts as a release.
     A declared version absent from the list has no position: that is reported,
     not guessed."""
-    def key(v): return tuple(int(x) for x in v.split("."))
-    stable = sorted({v.lstrip("v") for v in releases
-                     if re.fullmatch(r"v?\d+(?:\.\d+)+", v)}, key=key, reverse=True)
-    candidate = stable[2] if len(stable) > 2 else ""
+    from . import version_policy as vp
+    found = sorted({vp.stable(v) for v in releases if vp.stable(v)}, key=vp.key, reverse=True)
     declared = declared.lstrip("v")
-    return (stable.index(declared) if declared in stable else None), candidate
+    return found.index(declared) if declared in found else None
 
 
-def position_notes(c: Component) -> list[str]:
-    """What the ≈N-2 policy says about this position. Never an action."""
+def advisory_fixes(pin) -> tuple[list[str], str]:
+    """(fix versions of advisories affecting `pin`, a note when they could not be read).
+
+    These are what admit a release younger than seven days."""
+    from . import audit
+    try:
+        r = audit.check(pin)
+    except Exception as e:  # noqa: BLE001 -- the reason is reported, the young release stays out
+        return [], f"advisories could not be read ({type(e).__name__}); no release under seven days is admitted"
+    if r.result == audit.UNVERIFIED:
+        return [], "advisories could not be read; no release under seven days is admitted"
+    return sorted({f for a in r.advisories for f in a.get("fixed", []) if f}), ""
+
+
+def position_notes(c: Component, why: str = "") -> list[str]:
+    """What the version policy says about the declared version. Never an action."""
+    from . import version_policy as vp
     if c.position is None:
         return []
-    if c.position <= 1:
-        return [f"N-{c.position}: too new for the ≈N-2 hold"
-                + (f"; the policy's candidate is {c.candidate}" if c.candidate else "")]
-    if c.position == 2:
-        return ["N-2: at the ≈N-2 hold"]
+    declared = c.declared.lstrip("v")
+    if not c.candidate:
+        return [f"N-{c.position}: {why or 'no release is at least seven days old'}"] if c.position else []
+    if c.candidate == declared:
+        return [f"N-{c.position}: at the policy's candidate ({why})" if why else f"N-{c.position}: at the policy's candidate"]
+    if vp.key(c.candidate) < vp.key(declared):
+        return [f"N-{c.position}: newer than the policy's candidate {c.candidate}; keep it only "
+                "if it was adopted as a security release"]
     if c.hold:
-        return [f"N-{c.position}: older than ≈N-2, held: {c.hold}"]
-    return [f"N-{c.position}: older than ≈N-2 with no recorded hold"
-            + (f"; the policy's candidate is {c.candidate}" if c.candidate else "")]
+        return [f"N-{c.position}: the policy's candidate is {c.candidate}; held: {c.hold}"]
+    return [f"N-{c.position}: the policy's candidate is {c.candidate} ({why}) with no recorded hold"]
 
 
 def _split(ref: str) -> tuple[str, str, str]:
@@ -190,9 +208,15 @@ def _ollama(mode: str) -> Component:
         c.state = DEGRADED
         c.notes.append(f"could not list upstream releases: {e}")
         return c
+    from . import audit, version_policy as vp
     tags = [r.get("tag_name", "") for r in releases if isinstance(r, dict)
             and not r.get("prerelease") and not r.get("draft")]
-    c.position, c.candidate = position(spec["base_version"], tags)
+    c.position = position(spec["base_version"], tags)
+    fixed, unread = advisory_fixes(audit.Pin(audit.OLLAMA_MODULE, "go", spec["base_version"],
+                                             "deploy/ollama/patch.toml", github=audit.OLLAMA_REPO))
+    if unread:
+        c.notes.append(unread)
+    c.candidate, why = vp.candidate(vp.from_github(releases), fixed)
     newest = next((t.lstrip("v") for t in tags if re.fullmatch(r"v?\d+(?:\.\d+)+", t)), "")
     if c.position is None:
         c.state = DEGRADED
@@ -200,7 +224,13 @@ def _ollama(mode: str) -> Component:
         return c
     c.state = AVAILABLE if c.position > 0 else CURRENT
     c.available = newest if c.position > 0 else ""
-    c.notes += position_notes(c)
+    c.notes += position_notes(c, why)
+    mine = next((r for r in vp.from_github(releases) if r.version == spec["base_version"]), None)
+    young = mine and (vp.age(mine) or vp.MIN_AGE) < vp.MIN_AGE
+    if young:
+        when = vp.age(mine)
+        c.notes.append(f"the declared base was published {mine.published_at[:10]} and is eligible under the "
+                       f"seven-day rule from {(datetime.now(timezone.utc) - when + vp.MIN_AGE):%Y-%m-%d}")
     if c.state == AVAILABLE:
         c.notes.append("a newer base needs the reviewed patches re-applied and the native regression "
                        "re-run before it can be selected (docs/maintenance.md)")
