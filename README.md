@@ -116,6 +116,7 @@ ailocal uses VS Code's built-in [Custom Endpoint provider](https://code.visualst
 | `ailocal check` | is everything configured and working, end to end |
 | `ailocal clients` | configure the supported clients you have installed |
 | `ailocal bind lan` / `local` / `status` | let the proxy listen on every interface, or on this machine only (the default); applies on the next `ailocal start` |
+| `ailocal docker check` / `apply` / `restore` | compare Docker Desktop's settings with ailocal's [recommendations](src/ailocal/resources/deploy/docker-desktop/settings.toml) (telemetry, updates, extensions, MCP Toolkit, localhost port binding); `apply` restarts Docker Desktop, records the originals, and `restore` or `ailocal teardown` puts them back. Memory and disk are never changed |
 | `ailocal update --json` | which pinned images have newer candidates |
 | `ailocal audit` | are the pinned versions still free of advisories; nonzero when one is affected or yanked |
 

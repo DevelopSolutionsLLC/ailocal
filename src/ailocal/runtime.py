@@ -523,6 +523,8 @@ def cmd_teardown(argv: list[str]) -> int:
     print("    • Generated client presets in ailocal's roots")
     print("    • ailocal's lines in ~/.zshrc, its Copilot instruction file and MCP entries,")
     print("      and its VS Code provider group, MCP entries and recommended settings")
+    print("    • Docker Desktop settings `ailocal docker apply` changed go back to their")
+    print("      recorded values (Docker Desktop restarts once if any do)")
     if remove_images:
         print("    • All pulled Docker images")
     print(f"\n  Your configuration in {policy.config_root()} and the model store are NOT touched.")
@@ -549,6 +551,11 @@ def cmd_teardown(argv: list[str]) -> int:
     from . import clients
     for line in clients.remove_client_writes():
         print(f"  {line}")
+    from . import docker_desktop
+    try:
+        docker_desktop.restore()
+    except (OSError, ValueError, RuntimeError) as error:
+        warn(f"Docker Desktop settings not restored ({error}); run ailocal docker restore")
 
     if remove_images:
         step("Removing Docker images")

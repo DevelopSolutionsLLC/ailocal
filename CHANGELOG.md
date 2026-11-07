@@ -33,6 +33,7 @@ Release policy and the meaning of each bump: [RELEASING.md](RELEASING.md).
 
 ### Added
 
+- `ailocal docker check|apply|restore` (#105): eight recommended Docker Desktop settings, shipped as data and checked against Docker's settings reference. A personal install has no documented write path, so `apply` writes `settings-store.json` only while Docker Desktop is stopped, reads every value back after the restart and rolls the whole file back if one did not take. The originals are recorded once; `restore` and `ailocal teardown` put back each one the operator has not changed since. `ailocal install` names the command when settings differ and never applies them.
 - `ailocal bind lan|local|<ipv4>|status` (#103): where the LiteLLM proxy listens, written to `.env.local` as `AILOCAL_BIND` and applied by the next `ailocal start`. Only the proxy follows the switch, because only the proxy authenticates (the master key); Ollama's API and SearXNG stay on loopback whatever it says. `ailocal check` reports an open proxy as a warning each time, a running proxy that does not match the setting as a warning to restart, and any other off-host port as a failure.
 
 ### Changed

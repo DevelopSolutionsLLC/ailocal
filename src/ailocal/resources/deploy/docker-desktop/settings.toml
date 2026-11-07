@@ -1,0 +1,81 @@
+# Docker Desktop settings `ailocal docker` recommends. Read only through
+# docker_desktop.recommended(); `ailocal docker check|apply|restore` acts on
+# them on its own schedule. `ailocal install` only names the command.
+#
+# `backend` is the setting's path in Docker Desktop's effective settings
+# (backend socket GET /app/settings); `key` is its settings-store.json name.
+# Docker documents the settings by their admin-settings.json names (Settings
+# reference, docs.docker.com/desktop/enterprise/hardened-desktop/
+# settings-management/settings-reference/, read 2026-11-07) but not
+# settings-store.json (docker/docs#23706), and admin-settings.json applies only
+# to Docker Business. `verified` names where each key was written and read back;
+# apply re-reads every value after the restart and rolls back one that did not
+# take, so a renamed key is reported, never silently kept.
+#
+# Memory, disk and anything unlisted are the operator's and never written.
+# `retire_when` is the condition that removes an entry.
+
+[[setting]]
+backend = "desktop.analyticsEnabled"
+key = "AnalyticsEnabled"
+recommended = false
+why = "usage statistics and crash reports are not sent to Docker (Docker's default is on)"
+verified = "written 4.97.0 2026-11-02; read back 4.98.0 2026-11-07"
+retire_when = "never; a privacy default"
+
+[[setting]]
+backend = "desktop.autoDownloadUpdates"
+key = "AutoDownloadUpdates"
+recommended = false
+why = "updates follow the version policy; `ailocal update` reports them"
+# Absent from the Settings reference on 2026-11-07; present in the effective settings.
+verified = "written 4.97.0 2026-11-02; read back 4.98.0 2026-11-07"
+retire_when = "Docker Desktop offers a minimum release age"
+
+[[setting]]
+backend = "desktop.disableUpdate"
+key = "DisableUpdate"
+recommended = true
+why = "Docker's own update checks and prompts are replaced by `ailocal update`"
+verified = "written 4.97.0 2026-11-02; read back 4.98.0 2026-11-07"
+retire_when = "`ailocal update` stops reporting Docker Desktop"
+
+[[setting]]
+backend = "desktop.allowBetaFeatures"
+key = "AllowBetaFeatures"
+recommended = false
+why = "no public-beta features (Docker's default)"
+verified = "written 4.97.0 2026-11-02; read back 4.98.0 2026-11-07"
+retire_when = "never; Docker's own default"
+
+[[setting]]
+backend = "desktop.enableDockerAI"
+key = "EnableDockerAI"
+recommended = false
+why = "Gordon sends prompts to Docker's cloud (Docker's default is off)"
+verified = "written 4.97.0 2026-11-02; read back 4.98.0 2026-11-07"
+retire_when = "never; a privacy default"
+
+[[setting]]
+backend = "extensions.enabled"
+key = "ExtensionsEnabled"
+recommended = false
+why = "extensions run third-party code with engine access; ailocal uses none (Docker's default is on)"
+verified = "written 4.97.0 2026-11-02; read back 4.98.0 2026-11-07"
+retire_when = "ailocal ships a feature that needs an extension"
+
+[[setting]]
+backend = "desktop.enableDockerMCPToolkit"
+key = "EnableDockerMCPToolkit"
+recommended = false
+why = "the MCP Toolkit runs tool servers with access to your secrets; ailocal serves its own MCP (Docker's default is on)"
+verified = "written 4.97.0 2026-11-02; read back 4.98.0 2026-11-07"
+retire_when = "ailocal ships a feature that uses Docker's MCP catalog"
+
+[[setting]]
+backend = "vm.network.portBindingBehavior"
+key = "PortBindingBehavior"
+recommended = "default-local-port-binding"
+why = "published ports bind to 127.0.0.1 unless a mapping names 0.0.0.0 (Docker's default binds all interfaces)"
+verified = "written 4.97.0 2026-11-02; read back 4.98.0 2026-11-07"
+retire_when = "Docker Desktop defaults to localhost binding"

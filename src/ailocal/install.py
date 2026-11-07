@@ -1674,6 +1674,11 @@ def cmd_install(argv: list[str]) -> int:
     step("Done")
     print(f"  LiteLLM proxy is ready at {runtime.proxy_url()}")
     print("  Verify a real request:  ailocal check")
+    # Offered, never applied: the change restarts Docker Desktop and is the operator's call.
+    from . import docker_desktop
+    current = docker_desktop.effective()
+    if current is not None and docker_desktop.drift(current):
+        print("  Recommended Docker Desktop settings are not all in effect: ailocal docker check")
     return 0
 
 
