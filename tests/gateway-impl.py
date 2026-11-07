@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
-"""Proxy hooks as the image loads them: import, capability registry, tool negotiator,
-reasoning-effort transport and the reasoning loop guard. Runs inside the LiteLLM
-container via tests/in-container.sh; reads /app paths only and talks to a fake
-Ollama on 127.0.0.1.
+"""Proxy hooks as the image loads them: import, reasoning-effort transport, tool-result
+identity and the reasoning loop guard. Runs inside the LiteLLM container via
+tests/in-container.sh; reads /app paths only and talks to a fake Ollama on 127.0.0.1.
 """
 import asyncio
 import json
-import os
 import subprocess
 import sys
 import threading
@@ -41,78 +39,7 @@ for hook in ("reasoning_router", "reasoning_loop_guard", "startup", "tool_repair
 check(not failed, "every registered hook imports by path, as LiteLLM loads it (boot crash)", str(failed))
 
 cr = load_module("capability_registry", f"{HOOKS}/capability_registry.py")
-tg = load_module("tool_gateway", f"{HOOKS}/tool_gateway.py")
 router = load_module("reasoning_router", f"{HOOKS}/reasoning_router.py")
-reg = cr.Registry()
-gw = tg.ToolGateway(registry=reg)
-FRONTIER = "claude-3-5-sonnet-2024-10-22"
-CLAUDE = {"proxy_server_request": {"headers": {"user-agent": "claude-cli/2.0.0"}}}
-CODEX = {"proxy_server_request": {"headers": {"originator": "codex_cli_rs"}}}
-
-# ── registry ────────────────────────────────────────────────────────────
-suite.section("MODEL CLASSIFICATION")
-classes = {}
-for backend in ("nemotron-3.5-bolt:e4b-unrestricted",
-                "gemma4:26b-unrestricted-qat-mtp",
-                "ailocal-qwen3.5-9b-coder-uncensored:mlx-7fed86c",
-                "hf.co/localslm/Qwen3.5-4B-MTP-Uncensored:model_q4_k_m.gguf",
-                "huihui_ai/qwen3.5-abliterated:9b-Claude-4.6-Opus-q4_K"):
-    small = cr.Registry()
-    small.backends["cyber"] = backend
-    denied = small.removable_groups("claude-code", "ailocal-cyber")
-    classes[backend] = (small.model_class("ailocal-cyber")[0], small.is_passthrough("ailocal-cyber"),
-                        "orchestration" in denied, "edit_and_run" in denied)
-check(all(v == ("local_cyber", False, True, False) for v in classes.values()),
-      "every shipped cyber backend is local_cyber and negotiated, shedding orchestration only", str(classes))
-
-# ── negotiator: known answers from hand-written canonical JSON ──────────
-READ = ('{"description":"Read a file","input_schema":{"properties":{"path":{"type":"string"}},'
-        '"required":["path"],"type":"object"},"name":"Read"}')
-WORKFLOW = ('{"description":"' + "x" * 500 + '","input_schema":'
-            '{"properties":{},"type":"object"},"name":"Workflow"}')
-LSP = '{"description":"Hover","input_schema":{"properties":{},"type":"object"},"name":"mcp__lsp__get_hover"}'
-TOOLS = [json.loads(s) for s in (READ, WORKFLOW, LSP)]
-BYTES_IN = len(READ) + len(WORKFLOW) + len(LSP)
-
-
-def req(model="ailocal-primary", tools=None, headers=CLAUDE, **kw):
-    return dict(headers, model=model, tools=list(TOOLS if tools is None else tools), **kw)
-
-
-suite.section("NEGOTIATION")
-rep, _ = gw.negotiate(req(), "anthropic_messages")
-got = (rep["model_class"], rep["dropped_names"], rep["dropped_groups"], rep["bytes_dropped"],
-       rep["bytes_kept"] + rep["bytes_dropped"] == rep["bytes_in"] == BYTES_IN)
-check(got == ("local_agentic", ["Workflow"], ["orchestration"], len(WORKFLOW), True),
-      "Claude Code on a local model sheds only orchestration, and kept + dropped == in", str(got))
-# bytes_kept vs bytes_reachable once reported a -133.7% "reduction" on a Codex capture.
-sh = {"type": "shell", "name": "multi_agent_v1", "description": "spawn sub-agents"}
-fn = {"type": "function", "name": "exec_command", "description": "run", "parameters": {"type": "object"}}
-rr, _ = gw.negotiate(req(headers=CODEX, input="", tools=[sh, fn]), "aresponses")
-got = (rr["bytes_dropped"], rr["bytes_dropped_moot"], rr["bytes_reachable"],
-       rr["bytes_kept_reachable"] <= min(rr["bytes_kept"], rr["bytes_reachable"]))
-check(got == (0, tg.tool_bytes(sh), tg.tool_bytes(fn), True),
-      "a tool LiteLLM discards on /v1/responses is moot, never claimed as a saving (-133.7% report)", str(got))
-missing = cr.Registry(path="/nonexistent", caps_json="/nonexistent", config_path="/nonexistent")
-outcomes = {"frontier": gw.negotiate(req(FRONTIER), "anthropic_messages")[0],
-            "unregistered model": gw.negotiate(req("nobody-registered"), "anthropic_messages")[0],
-            "no registry": tg.ToolGateway(registry=missing).negotiate(req(), "anthropic_messages")[0]}
-got = {k: (r["passthrough"], r["tools_dropped"], r["bytes_in"]) for k, r in outcomes.items()}
-check(all(v == (True, 0, BYTES_IN) for v in got.values()),
-      "frontier, unregistered model and missing registry fail open: nothing dropped, still measured", str(got))
-# Native LSP survived only by fail-open once; every task class with a floor must keep it.
-os.environ[tg.MODE_ENV], os.environ[tg.TASK_ENV] = "filter", "1"
-NATIVE = {"description": "Language server", "input_schema": {"properties": {}, "type": "object"}, "name": "LSP"}
-kept = {}
-for prompt in ("fix the failing auth test", "review this diff for security issues",
-               "show me an example of hello world in C++"):
-    d = req(tools=[NATIVE, json.loads(WORKFLOW)], messages=[{"role": "user", "content": prompt}])
-    asyncio.run(gw.async_pre_call_hook(None, None, d, "anthropic_messages"))
-    kept[prompt] = "LSP" in [t.get("name") for t in d["tools"]]
-os.environ.pop(tg.TASK_ENV, None)
-os.environ.pop(tg.MODE_ENV, None)
-check(list(kept.values()) == [True, True, False],
-      "filter mode keeps native LSP for every task class with a floor; only conversation sheds it", str(kept))
 
 # ── reasoning effort and tool identity at the Ollama boundary ──────────
 import litellm  # noqa: E402

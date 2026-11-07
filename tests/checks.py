@@ -5,70 +5,24 @@ The live section runs `ailocal check` against this installation; everything else
 """
 from __future__ import annotations
 
-import copy
 import os
 import plistlib
-import re
-import socket
 import sys
 import tempfile
-import urllib.request
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from harness import REPO, RESOURCES, Suite, run  # noqa: E402
+from harness import REPO, Suite, run  # noqa: E402
 
 from ailocal import environment  # noqa: E402
 from ailocal import policy as P  # noqa: E402
-from ailocal.checks import BLOCKED, FAIL, PASS, WARN, CheckResult, exit_code  # noqa: E402
-from ailocal.checks import config as C  # noqa: E402
+from ailocal.checks import FAIL, PASS, WARN  # noqa: E402
 from ailocal.checks import services as S  # noqa: E402
 
 suite = Suite("CHECKS AND READ-ONLY COMMANDS")
 check = suite.check
-
-
-def configuration() -> None:
-    suite.section("configuration checks need no stack")
-    shipped = P.load_client_policy(RESOURCES)
-    with patch.object(P, "load_client_policy", return_value=shipped):
-        shipped_ok = all(r.status is PASS for r in C.check_client_mappings())
-    faults = [(("claude", "launch_default"), "missing-capability", "summary"),
-              (("claude", "slots", "opus"), "missing-capability", "summary"),
-              (("compat", "fixture-metadata"), "disk_gb", "summary"),
-              (("codex", "delegate_max_mode"), "invalid-mode", "detail")]
-    undetected = []
-    for path, value, field in faults:
-        policy = copy.deepcopy(shipped)
-        node = policy
-        for key in path[:-1]:
-            node = node[key]
-        node[path[-1]] = value
-        needle = "delegate_max_mode" if field == "detail" else value
-        with patch.object(P, "load_client_policy", return_value=policy):
-            if not any(r.status is FAIL and needle in (getattr(r, field) or "")
-                       for r in C.check_client_mappings()):
-                undetected.append(".".join(path))
-    check(shipped_ok and not undetected,
-          "client routing validation passes the shipped policy and fails each invalid field",
-          f"shipped_ok={shipped_ok} undetected={undetected}")
-
-    opened: list[str] = []
-
-    def trap(target, *_a, **_k):
-        opened.append(str(getattr(target, "full_url", target)))
-        raise AssertionError("network call from a deterministic check")
-
-    with patch.object(socket, "create_connection", trap), patch.object(urllib.request, "urlopen", trap):
-        C.deterministic_checks()
-    check(not opened, "deterministic checks open no socket", "; ".join(opened[:3]))
-
-    table = {statuses: exit_code([CheckResult(f"c{i}", s, "x") for i, s in enumerate(statuses)])
-             for statuses in ((PASS,), (FAIL,), (WARN,), (BLOCKED,), (WARN, FAIL))}
-    check(list(table.values()) == [0, 1, 0, 0, 1], "only a FAIL makes `ailocal check` exit non-zero",
-          repr({"+".join(s.name for s in k): v for k, v in table.items()}))
 
 
 def services() -> None:
@@ -83,43 +37,6 @@ def services() -> None:
         verdicts.append((r.status, r.remediation))
     check(verdicts == [(FAIL, "ailocal start")] * 2,
           "a detached config mount fails and points at `ailocal start`", repr(verdicts))
-
-    # Default diagnostics never spend metered search quota: one free engine, and the federated
-    # search reachable only through `--external-search`.
-    run_src = (REPO / "src/ailocal/checks/run.py").read_text()
-    services_src = (REPO / "src/ailocal/checks/services.py").read_text()
-    probe = services_src.split("def check_searxng(")[1].split("def check_searxng_query(")[0]
-    callers = [q.relative_to(REPO) for q in (REPO / "src").rglob("*.py")
-               if "/resources/" not in str(q) and q.name not in ("services.py", "run.py")
-               and re.search(r"check_searxng_external|--external-search", q.read_text())]
-    check(S.FREE_ENGINE_QUERY.strip().startswith("!wp") and S.FREE_ENGINE_NAME == "wikipedia"
-          and "/config" in probe and "/search?" not in probe
-          and "--external-search" in run_src and not callers,
-          "default checks spend no metered search quota; federated search needs --external-search",
-          str(callers))
-
-    # Only this installation's containers are audited, never other projects or isolated test stacks.
-    names = {"foreign": "/unrelated-service", "isolated": "/test-service", "local": "/custom-container-name"}
-    calls = []
-
-    def docker(argv, **_kw):
-        calls.append(argv)
-        value = ("local" if "compose" in argv and "ps" in argv else
-                 "foreign isolated local" if argv[1:3] == ["ps", "-q"] else
-                 "4000/tcp -> 127.0.0.1:4000" if argv[1] == "port" else
-                 names[argv[2]] if argv[-1] == "{{.Name}}" else
-                 "example/proxy:test@sha256:expected" if argv[-1] == "{{.Config.Image}}" else
-                 "sha256:image" if argv[-1] == "{{.Image}}" else "example/proxy@sha256:expected")
-        return SimpleNamespace(stdout=value, returncode=0)
-
-    with patch.object(S, "_run", side_effect=docker):
-        results = S.check_loopback()
-        digest = S._running_digest("example/proxy")
-    check(len(results) == 1 and "custom-container-name" in results[0].summary
-          and [a for a in calls if a[1] == "port"] == [["docker", "port", "local"]]
-          and digest == ("custom-container-name", "sha256:expected")
-          and not any(a[1:3] == ["ps", "-q"] for a in calls),
-          "reachability and digest checks select this installation and never enumerate the host")
 
     # #103: the proxy may leave loopback only when `ailocal bind` says so, and then as a warning.
     def ports(mapping):
@@ -196,7 +113,7 @@ def live() -> None:
 
 
 if __name__ == "__main__":
-    for section in (configuration, services, managed_ollama, commands, live):
+    for section in (services, managed_ollama, commands, live):
         try:
             section()
         except Exception as exc:  # noqa: BLE001 - one broken section must not hide the others

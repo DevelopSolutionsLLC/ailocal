@@ -78,16 +78,16 @@ def _suites(full: bool) -> list:
     py = sys.executable
     suites = [
         ("SUITES", [
-            ("policy: profiles, budgets, environment ownership", [py, "tests/policy.py"]),
+            ("policy: fail-closed profiles, hosted roots, budgets, secrets, bind", [py, "tests/policy.py"]),
             ("clients: generation, targets, co-owned config", [py, "tests/clients.py"]),
-            ("install: provisioning, provenance, launchd, teardown", [py, "tests/install.py"]),
+            ("install: model provenance, owned config, launchd, teardown", [py, "tests/install.py"]),
             ("audit and update reporting", [py, "tests/audit.py"]),
             ("patched Ollama runtime", [py, "tests/ollama-patch.py"]),
-            ("gateway: tool repair, re-streaming, probe routes", [py, "tests/gateway.py"]),
-            ("gateway in the proxy image: registry, negotiator, reasoning effort",
+            ("gateway: tool repair and proxy auth", [py, "tests/gateway.py"]),
+            ("gateway in the proxy image: hook import, reasoning effort, tool identity, loop guard",
              ["/bin/bash", "tests/in-container.sh", "tests/gateway-impl.py"]),
             ("model guidance and delegation", [py, "tests/guidance.py"]),
-            ("research MCP and search settings", [py, "tests/research.py"]),
+            ("research MCP: network boundary, Brave key and budget, citations", [py, "tests/research.py"]),
             ("bundled artifacts", [py, "tests/artifacts.py"] + (["--full"] if full else [])),
             ("checks, commands and documentation", [py, "tests/checks.py"]),
             ("measurement drivers (fixtures, no model)", [py, "tests/measurement-contracts.py"]),

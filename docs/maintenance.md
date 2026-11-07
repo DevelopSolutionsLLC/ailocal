@@ -38,7 +38,7 @@ These take minutes, load and unload models, must run alone, and assert nothing a
 
 | Suite | Run when | Reads |
 |---|---|---|
-| `tests/installed-runtime.py [--stack]` | packaging, resources or provisioning change | the wheel works without a checkout (beside an existing install, not on a clean machine) |
+| `tests/installed-runtime.py` | packaging, resources or provisioning change | the wheel works without a checkout (beside an existing install, not on a clean machine) |
 | `tests/measure_geometry.py [--quick]` | Ollama upgrade, model change, unmeasured tier | the numbers profiles cite |
 | `tests/measure_cache.py [--quick\|--tail N]` | Ollama upgrade, model change, unmeasured tier | KV prefix reuse across turns; `--tail N` is passive (last N real requests from the Ollama log), use it right after a session. [REAL] 16 GB, `qwen3.5:4b`: a warm turn's prefill fell from ~18.6K tokens to a few dozen (~99.8% reuse, ~115× faster) through `claude-local`. |
 | `./tests/artifact-routing.sh [runs]` | the artifact tool description, `alwaysLoad`/`searchHint` or the routing contract changes | an aggregate rate at which a real model calls the tool; the wording itself is asserted in-gate by `test_routing_contract.py` |
