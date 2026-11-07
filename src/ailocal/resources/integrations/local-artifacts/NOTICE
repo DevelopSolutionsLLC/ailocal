@@ -159,4 +159,4 @@ WHAT THIS FORK CHANGED, AND WHY
     Publishing crosses the process boundary through the 0600 state file, which
     is now written atomically -- deliberately NOT over HTTP, so the write
     endpoint removed in (1) stays removed.
-    See docs/adr/013-artifact-preview-lifetime.md.
+    See docs/decisions.md (013).

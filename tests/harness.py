@@ -28,6 +28,15 @@ if str(REPO / "src") not in _pp.split(os.pathsep):
 
 _GREEN, _RED, _YELLOW, _RESET = "\033[32m", "\033[31m", "\033[33m", "\033[0m"
 
+#: Tests one suite (one component) may report. A suite past it fails, so the
+#: limit is enforced rather than remembered (#113).
+MAX_TESTS = 10
+
+
+def _over_limit(count: int) -> str:
+    return (f"{count} tests exceed the {MAX_TESTS}-per-component limit: merge or delete "
+            "the ones a kept test already covers" if count > MAX_TESTS else "")
+
 
 class Suite:
     """One PASS/FAIL/SKIP line per check; report() returns the exit status."""
@@ -62,6 +71,8 @@ class Suite:
 
     def report(self) -> int:
         print()
+        if over := _over_limit(self.passed + len(self.failures) + self.skipped):
+            self.failures.append(over)
         if self.failures:
             print(f"FAILED ({len(self.failures)})")
             for f in self.failures:
@@ -70,6 +81,16 @@ class Suite:
         tail = f", {self.skipped} skipped" if self.skipped else ""
         print(f"all checks passed ({self.passed}{tail})")
         return 0
+
+
+def unittest_main() -> None:
+    """unittest.main() with the per-component limit applied to the tests it ran."""
+    import unittest
+    result = unittest.main(exit=False).result
+    if over := _over_limit(result.testsRun):
+        print(f"FAILED: {over}")
+        sys.exit(1)
+    sys.exit(0 if result.wasSuccessful() else 1)
 
 
 def load_module(name: str, path: os.PathLike | str) -> types.ModuleType:

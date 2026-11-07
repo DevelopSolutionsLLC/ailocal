@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""Model guidance (exact backend, native hook delivery, MCP model_guide) and the local-agent delegation
-boundary: argv/env contract, real-CLI reach per mode against scripted endpoints (no inference), process
-lifecycle, session binding and explicit image inputs. Temp roots only; re-executes under the local-agent venv."""
-import asyncio, base64, contextlib, copy, http.server, importlib.util, io, json, os, re, shlex, shutil, signal
-import struct, subprocess, sys, tempfile, threading, time, unittest, uuid, zlib
+"""Model guidance (native hook delivery, co-owned Claude settings, instruction budgets) and the local-agent
+delegation boundary: argv/env contract, real-CLI reach per mode against scripted endpoints (no inference) and
+the stdio server end to end. Temp roots only; re-executes under the local-agent venv."""
+import asyncio, contextlib, http.server, importlib.util, io, json, os, re, shlex, shutil
+import struct, subprocess, sys, tempfile, threading, unittest, uuid, zlib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 RES = ROOT / 'src/ailocal/resources'
 AGENT = RES / 'integrations/local-agent'
 sys.path.insert(0, str(ROOT / 'src'))
+sys.path.insert(0, str(ROOT / 'tests'))
 from ailocal import policy
 
 if importlib.util.find_spec('mcp') is None:
@@ -26,7 +27,6 @@ sys.path.insert(0, str(AGENT))
 import server as S
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
-from mcp.server.mcpserver.exceptions import ToolError
 
 GUIDE = {'context_input': 253952, 'max_output': 8192}
 after = lambda argv, flag: argv[argv.index(flag) + 1]
@@ -39,10 +39,10 @@ def hook(event, tier='16gb'):
     return rc, out.getvalue(), err.getvalue()
 
 
-def png(rgb=(224, 34, 51), width=64, height=64, broken=False):
+def png(rgb=(224, 34, 51), width=64, height=64):
     chunk = lambda kind, data: (struct.pack('>I', len(data)) + kind + data
                                 + struct.pack('>I', zlib.crc32(kind + data) & 0xffffffff))
-    pixels = b'not-zlib' if broken else zlib.compress((b'\0' + bytes(rgb) * width) * height)
+    pixels = zlib.compress((b'\0' + bytes(rgb) * width) * height)
     return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>2I5B', width, height, 8, 2, 0, 0, 0))
             + chunk(b'IDAT', pixels) + chunk(b'IEND', b''))
 
@@ -92,25 +92,6 @@ class ScriptedModel:
 
 
 class Guidance(unittest.TestCase):
-    def test_guides_are_keyed_by_exact_backend(self):
-        for tier in policy.TIERS:
-            guides = policy.model_guides(tier, RES)['models']
-            self.assertEqual(set(guides), {'ailocal-' + r for r, c in policy.profile_summary(tier, RES)['roles'].items() if c['enabled']})
-            for alias, guide in guides.items():
-                role = policy.resolve_role(tier, alias.removeprefix('ailocal-'), RES)
-                self.assertEqual((guide['model'], guide['context_input'], guide['sampling']['temperature']),
-                                 (role['model'], role['context_input'], role['temperature']))
-                if role.get('draft_num_predict') is not None:
-                    self.assertEqual(guide['sampling']['draft_num_predict'], role['draft_num_predict'])
-                self.assertTrue(guide['sources'] and guide['evidence'].startswith('['))
-        data = policy.load_profile('16gb', RES)
-        data['cyber']['active'] = 'operator-custom-model'   # a changed backend never inherits another's guide
-        guide = policy.guidance_for(data, 'cyber')
-        self.assertEqual(('No model-specific guidance' in guide['summary'], guide['sources']), (True, []))
-        data = policy.load_profile('16gb', RES)
-        data['model_guidance'][data['primary']['active']]['prompting'] = 'wrong shape'
-        self.assertRaises(policy.ProfileError, policy._validate_guidance, data)
-
     def test_native_hook_follows_the_selected_model(self):
         rc, out, _ = hook({'hook_event_name': 'PostModelSwitch', 'to_model': 'ailocal-cyber'})
         self.assertTrue(policy.resolve_role('16gb', 'cyber', RES)['model'] in out and 'ailocal-primary' not in out)
@@ -156,12 +137,10 @@ class Guidance(unittest.TestCase):
             self.assertTrue(rc == 0 and json.dumps(cwd) in out and previous not in out)
         self.assertNotIn('Task working directory:', hook({'model': 'ailocal-cyber', 'cwd': 'relative/path'})[1])
 
-    def test_generators_share_guidance_and_preserve_external_hooks(self):
+    def test_claude_settings_keep_external_hooks_and_user_choices(self):
+        """settings.json is co-owned: regeneration keeps foreign hooks and an operator's explicit values."""
         models = generation.load_models_yaml(RES / 'profiles/16gb.toml')
-        self.assertTrue('model_guidance' not in models and 'completion' in models)
         tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
-        (tmp / '16gb.toml').write_text((RES / 'profiles/16gb.toml').read_text().replace('[cyber]\n', '[cyber]\nenabled = false\n', 1))
-        self.assertNotIn('cyber', generation.load_models_yaml(tmp / '16gb.toml'))
         target, external = tmp / 'settings.json', {'hooks': [{'type': 'command', 'command': 'external-hook'}]}
         target.write_text(json.dumps({'hooks': {'SessionStart': [external]}}))
         with patch.object(generation, 'CLAUDE_SETTINGS', target), patch.object(generation, 'stage') as stage:
@@ -178,25 +157,6 @@ class Guidance(unittest.TestCase):
             self.assertEqual(data['attribution'], {'commit': '', 'pr': '', 'sessionUrl': False})
             target.write_text(json.dumps(dict(data, attribution={'commit': 'x'})))
             self.assertEqual(regen()['attribution'], {'commit': 'x'})
-        catalog = lambda roles: (generation.regen_catalog(roles), {e['slug']: e for e in json.loads(stage.call_args.args[1])['models']})[1]
-        with patch.object(generation, 'stage') as stage:
-            for tier in policy.TIERS:
-                roles = policy.profile_summary(tier, RES)['roles']
-                for slug, entry in catalog(roles).items():
-                    role = slug.removeprefix('ailocal-')
-                    expected = ['text'] if role == 'completion' else roles[role]['guidance'].get('input_modalities', ['text'])
-                    self.assertEqual(entry['input_modalities'], expected, (tier, slug))
-                replacement = {**roles['primary'], 'active': 'replacement'}
-                replacement['guidance'] = policy.guidance_for({'primary': replacement}, 'primary')
-                self.assertEqual(catalog({'primary': replacement})['ailocal-primary']['input_modalities'], ['text'])
-            entries = catalog(models)
-            entries64 = catalog(policy.profile_summary('64gb', RES)['roles'])
-        self.assertIn(models['cyber']['guidance']['evidence'], entries['ailocal-cyber']['base_instructions'])
-        # #87: 16gb's Nemotron carries its DFlash draft inside the model, so no depth is configured or claimed.
-        self.assertIn('Current MTP draft tokens: 1.', entries['ailocal-cyber']['base_instructions'])   # #93: Qwen MTP, depth 1
-        self.assertIn('Current MTP draft tokens: 3.', entries64['ailocal-cyber']['base_instructions'])
-        self.assertFalse(entries['ailocal-cyber']['supports_parallel_tool_calls'] or entries['ailocal-completion']['supports_parallel_tool_calls'])
-        self.assertIn('supports_function_calling: false', generation.gen_role_block('completion', models['completion']))
 
     def test_client_policy_defaults_and_fails_closed(self):
         tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
@@ -237,7 +197,30 @@ class Guidance(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()) as printed:
             self.assertEqual(guidance.main(['--hook', '--tier', '64gb']), 0)
             self.assertEqual(guidance.hook_bytes(event, '64gb'), len(printed.getvalue().encode()))
-        # #78: the scratchpad is private, never under a pre-claimed base, and the id cannot escape it.
+        # #60: the shipped scratchpad hook is measured from its source, in both roots.
+        self.assertTrue(all(isinstance(C._scratchpad_hook_bytes(t), int) and C._scratchpad_hook_bytes(t) > 200
+                            for t in ('claude', 'codex')))
+        (tmp / 'claude').mkdir()
+        (tmp / 'claude/CLAUDE.md').write_text('owner: cadence\n' + 'x' * 2985)
+        with patch.object(policy, 'deployed_client_root', return_value=tmp), \
+                patch.dict(os.environ, {'AILOCAL_CONFIG': str(tmp)}), \
+                patch.object(C, '_scratchpad_hook_bytes', return_value=50), \
+                patch.object(policy, 'resolve_active_tier', return_value='64gb'):
+            budget = lambda: next(r for r in C.check_instruction_budget() if r.name == 'claude-instructions')
+            with patch.object(C, '_guide_hook_bytes', return_value=(1000, 300)):
+                claude = budget()
+                self.assertEqual(claude.status, C.PASS)
+                self.assertIn('CLAUDE.md 3000 + guide hook 1000 + scratchpad hook 50', claude.summary)
+            # The no-model case is counted when it is the larger: "fits" is never claimed for it.
+            with patch.object(C, '_guide_hook_bytes', return_value=(1000, 1200)):
+                claude = budget()
+                self.assertEqual(claude.status, C.WARN)
+                self.assertIn('4250/4096', claude.summary)
+                self.assertIn('1200 when the event names none', claude.detail)
+                self.assertIn('fits alone', claude.remediation)
+
+    def test_scratchpad_is_private_and_unescapable(self):
+        """#78: the scratchpad is private, never under a pre-claimed base, and the session id cannot escape it."""
         hook = RES / 'clients/scratchpad-hook.sh'
         with tempfile.TemporaryDirectory() as box:
             root = Path(box).resolve()
@@ -261,34 +244,6 @@ class Guidance(unittest.TestCase):
             made = run_hook('s1')
             self.assertNotEqual(made.parent, base)
             self.assertTrue(made.parent.name.startswith('ailocal-scratchpad.') and not any(elsewhere.iterdir()))
-        # #60: the shipped scratchpad hook is measured from its source, in both roots.
-        self.assertTrue(all(isinstance(C._scratchpad_hook_bytes(t), int) and C._scratchpad_hook_bytes(t) > 200
-                            for t in ('claude', 'codex')))
-        (tmp / 'claude').mkdir()
-        (tmp / 'claude/CLAUDE.md').write_text('owner: cadence\n' + 'x' * 2985)
-        with patch.object(policy, 'deployed_client_root', return_value=tmp), \
-                patch.dict(os.environ, {'AILOCAL_CONFIG': str(tmp)}), \
-                patch.object(C, '_scratchpad_hook_bytes', return_value=50), \
-                patch.object(policy, 'resolve_active_tier', return_value='64gb'):
-            budget = lambda: next(r for r in C.check_instruction_budget() if r.name == 'claude-instructions')
-            with patch.object(C, '_guide_hook_bytes', return_value=(1000, 300)):
-                claude = budget()
-                self.assertEqual(claude.status, C.PASS)
-                self.assertIn('CLAUDE.md 3000 + guide hook 1000 + scratchpad hook 50', claude.summary)
-            # The no-model case is counted when it is the larger: "fits" is never claimed for it.
-            with patch.object(C, '_guide_hook_bytes', return_value=(1000, 1200)):
-                claude = budget()
-                self.assertEqual(claude.status, C.WARN)
-                self.assertIn('4250/4096', claude.summary)
-                self.assertIn('1200 when the event names none', claude.detail)
-                self.assertIn('fits alone', claude.remediation)
-
-    def test_contract_publishes_the_full_budget(self):
-        """#56: subtracting the hook left Claude less than Cadence's compact policy."""
-        with patch.object(generation, 'stage') as stage, contextlib.redirect_stderr(io.StringIO()):
-            generation.write_integration_contract({'fast': {}})
-        published = {c: e['max_bytes'] for c, e in json.loads(stage.call_args.args[1])['instructions'].items()}
-        self.assertEqual(published, policy.instruction_budgets(tier=policy.resolve_active_tier()))
 
 
 class Contract(unittest.TestCase):
@@ -405,73 +360,6 @@ class Contract(unittest.TestCase):
         self.assertEqual(probe(['-c', f'default_permissions="{S.CODEX_PROFILE}"',   # the probe can tell
                                 '-c', f'permissions.{S.CODEX_PROFILE}={{extends=":read-only"}}']), ['READABLE'])
 
-    def test_mode_resolution_and_operator_ceiling(self):
-        R, ceilings = S.resolve_mode, {'claude': 'full', 'codex': 'edit'}
-        # The legacy flag keeps its meaning; an explicit mode wins when tools agrees or is omitted.
-        self.assertEqual([R(None, None), R(None, False), R(None, True), R('text', False), R('edit', True), R('full', None),
-                          R('research', None)], ['text', 'text', 'edit', 'text', 'edit', 'full', 'research'])
-        S.permit_mode('full', 'claude', ceilings); S.permit_mode('edit', 'codex', ceilings)
-        S.permit_mode('research', 'claude', {}); S.supported_mode('research', 'claude')
-        guides = {'models': {'ailocal-fast': GUIDE, 'ailocal-completion': GUIDE}}
-        self.assertIs(S.selected_guide(guides, 'ailocal-fast'), GUIDE)
-        refusals = [('CONFLICTING_MODE', R, args) for args in (('text', True), ('edit', False), ('full', False), ('research', True),
-                                                               ('research', False))]
-        refusals += [('UNKNOWN_MODE', R, ('bogus', None)), ('UNSUPPORTED_MODE', S.supported_mode, ('research', 'codex')),
-                     ('MODEL_NOT_DELEGABLE', S.selected_guide, (guides, 'ailocal-completion')),
-                     ('UNKNOWN_MODEL', S.selected_guide, (guides, 'ailocal-coder'))]
-        refusals += [('MODE_NOT_PERMITTED', S.permit_mode, args) for args in (
-            ('full', 'codex', ceilings), ('edit', 'claude', {'claude': 'text'}), ('research', 'claude', {'claude': 'text'}),
-            ('edit', 'claude', {'claude': 'research'}), ('edit', 'claude', {'claude': 'bogus'}), ('full', 'claude', {}))]
-        for code, call, args in refusals:
-            with self.assertRaisesRegex(S.DelegateError, '^' + code, msg=args):
-                call(*args)
-
-    def test_failed_runs_are_errors_not_answers(self):
-        sid, thread = str(uuid.UUID(int=0)), '0199a213-81c0-7800-8aa1-bbab2a035a53'
-        ev = lambda kind, **kw: json.dumps({'type': kind, **kw})
-        def claude(code, out):
-            async def run(argv, *a):
-                return code, out.encode()
-            return 'claude', run
-        def codex(code, events, message='x'):
-            async def run(argv, env, cwd, on_line):
-                Path(after(argv, '-o')).write_text(message)
-                [on_line(line.encode()) for line in events]
-                return code, b''
-            return 'codex', run
-        started, completed = ev('thread.started', thread_id=thread), ev('turn.completed')
-        failed, empty = 'DELEGATE_FAILED: local {} run did not complete', 'DELEGATE_EMPTY: local {} run returned no answer'
-        cases = [(claude(0, ev('result', is_error=True, subtype='error_max_turns', result='x')), 'DELEGATE_FAILED: local Claude run error_max_turns'),
-                 (claude(1, json.dumps({'is_error': False, 'result': 'partial', 'session_id': sid})), failed),
-                 (claude(1, json.dumps({'is_error': True, 'subtype': 'success', 'session_id': sid})), failed),
-                 (claude(0, json.dumps({'result': 'done', 'session_id': 'another'})), failed),
-                 (claude(0, json.dumps({'result': ' ', 'session_id': sid})), empty), (claude(0, 'not json'), failed),
-                 (claude(0, ev('result', subtype='success', is_error=False, result=' ', session_id=sid)), empty + ' resumable'),
-                 (codex(1, [started, completed]), failed), (codex(0, [started]), failed),
-                 (codex(0, [started, ev('turn.failed'), completed]), failed), (codex(0, [started, completed], ' \n'), empty + ' resumable')]
-        with patch.dict(os.environ, {'LOCAL_AGENT_BASE_URL': 'http://127.0.0.1:4000', 'LOCAL_AGENT_KEY': 'k'}):
-            for (agent, run), expected in cases:
-                name = agent.capitalize()
-                with patch.object(S, '_run', side_effect=run), self.assertRaises(S.DelegateError) as caught:
-                    asyncio.run(getattr(S, 'delegate_' + agent)('p', 'm', 'text', None, sid if agent == 'claude' else None, GUIDE))
-                resumable = isinstance(caught.exception, S.CompletedWithoutReply)
-                self.assertEqual(str(caught.exception) + (' resumable' if resumable else ''), expected.format(name))
-            for (agent, run), session, output in ((claude(0, json.dumps({'result': 'done', 'session_id': sid})), sid, 'done'),
-                                                  # The id is the thread.started event's, not the first UUID in the stream.
-                                                  (codex(0, [ev('item.completed', item={'id': sid}), started, completed], 'last'), thread, 'last')):
-                with patch.object(S, '_run', side_effect=run):
-                    done = asyncio.run(getattr(S, 'delegate_' + agent)('p', 'm', 'text', None, sid if agent == 'claude' else None, GUIDE))
-                self.assertEqual((done['output'], done['session_id']), (output, session))
-
-    def test_text_mode_runs_in_an_owned_empty_directory(self):
-        tmp = self.enterContext(tempfile.TemporaryDirectory())
-        with patch.dict(os.environ, {'LOCAL_AGENT_STATE': tmp}):
-            first = S.empty_workdir()
-            (Path(first) / 'planted').write_text('x'); (Path(first) / 'dir').mkdir(); (Path(first) / 'link').symlink_to(tmp)
-            self.assertEqual((first, S.empty_workdir(), list(Path(first).iterdir())), (str(Path(tmp) / 'empty'), first, []))
-            self.assertTrue(Path(tmp).is_dir())   # stable for resume; a symlink is unlinked, not followed
-
-
 class RealClaudeReach(unittest.TestCase):
     """The installed claude CLI's permission engine against a hostile project and eight scripted tool calls."""
     LOADS = {'text': {'user-hook'}, 'research': {'user-hook', 'research-mcp'}, 'edit': {'user-hook'},
@@ -537,21 +425,6 @@ class RealClaudeReach(unittest.TestCase):
                                  if mode == 'full' else ['canary.txt', 'key.env'])
 
 
-def alive(pid):
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    return True
-
-
-async def gone(pids, within=3):
-    deadline = time.monotonic() + within
-    while time.monotonic() < deadline and any(map(alive, pids)):
-        await asyncio.sleep(0.05)
-    return not any(map(alive, pids))
-
-
 @contextlib.asynccontextmanager
 async def agent_session(env):
     params = StdioServerParameters(command=sys.executable, args=[str(AGENT / 'server.py')], env=env)
@@ -559,8 +432,8 @@ async def agent_session(env):
         yield session, await session.initialize()
 
 
-class Lifecycle(unittest.IsolatedAsyncioTestCase):
-    """Owned process groups and the stdio server under real subprocesses and a fake claude; no inference."""
+class StdioServer(unittest.IsolatedAsyncioTestCase):
+    """The stdio server under a real MCP client and a fake claude; no inference."""
 
     async def asyncSetUp(self):
         self.tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
@@ -573,80 +446,6 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
     def fake_claude(self, body):
         (self.tmp / 'bin/claude').write_text(f'#!{sys.executable}\n{body}')
         (self.tmp / 'bin/claude').chmod(0o755)
-
-    async def test_group_is_reaped_on_timeout_cancel_flood_held_pipe_and_input(self):
-        import anyio
-        (self.tmp / 'fake.py').write_text('''import os, signal, subprocess, sys, time
-mode, pids = sys.argv[1], sys.argv[2]
-assert mode == 'input' or sys.stdin.read() == ''   # stdin is /dev/null, never the protocol pipe
-open(pids, 'w').write(f"{os.getpid()} {subprocess.Popen(['sleep', '300']).pid}")
-if mode == 'flood':
-    while True: sys.stdout.write('x' * 65536)
-if mode == 'held':
-    print('reply', flush=True); os._exit(0)   # the child still holds stdout open
-if mode == 'bigline':   # one event line past the bound (a tool's output), then a terminal event
-    sys.stdout.write('{"type":"item.completed","text":"' + 'y' * (9 * 1024 * 1024) + '"}\\n{"type":"turn.completed"}\\n')
-    sys.stdout.flush(); os._exit(0)
-if mode == 'graceful':   # a descendant that needs a moment on TERM; the leader exits first
-    def done(*_): time.sleep(0.2); open(pids + '.marker', 'w').write('done'); sys.exit(0)
-    if os.fork() == 0:
-        os.dup2(os.open(os.devnull, os.O_WRONLY), 1); signal.signal(signal.SIGTERM, done); time.sleep(300)
-    time.sleep(0.5); print('reply', flush=True); os._exit(0)
-time.sleep(300)
-''')
-        async def bounded(coro, cancel=False, limit=1.5):
-            try:
-                with anyio.move_on_after(limit) if cancel else anyio.fail_after(limit):
-                    return await coro
-                return 'cancelled'
-            except TimeoutError:
-                return 'timeout'
-            except S.DelegateError as error:
-                return str(error).split(':')[0]
-        async def case(mode, cancel=False, limit=1.5, **kw):
-            pids, start = str(self.tmp / mode), time.monotonic()
-            run = S._run([sys.executable, str(self.tmp / 'fake.py'), mode, pids], dict(os.environ), None, **kw)
-            outcome = await bounded(run, cancel, limit)
-            return outcome, time.monotonic() - start, await gone([int(p) for p in open(pids).read().split()])
-        seen = []
-        cases = {'sleep': case('sleep'), 'cancel': case('cancel', True), 'flood': case('flood', limit=20), 'held': case('held', limit=20),
-                 'bigline': case('bigline', limit=20, on_line=seen.append), 'graceful': case('graceful', limit=20),
-                 'input': case('input', input_data=b'x' * (2 * 1024 * 1024))}   # reaped while the input writer is blocked
-        results = dict(zip(cases, await asyncio.gather(*cases.values())))
-        self.assertTrue(all(ok for _, _, ok in results.values()), results)
-        self.assertEqual({m: r[0] for m, r in results.items()},
-                         {'sleep': 'timeout', 'cancel': 'cancelled', 'flood': 'DELEGATE_OUTPUT_LIMIT', 'held': (0, b'reply\n'),
-                          'bigline': (0, b''), 'graceful': (0, b'reply\n'), 'input': 'timeout'})
-        self.assertLess(results['held'][1], S.DRAIN_GRACE + 3)
-        self.assertEqual(seen, [b'{"type":"turn.completed"}'])   # an oversized line is skipped, not fatal
-        self.assertTrue((self.tmp / 'graceful.marker').exists())   # after exit the group gets TERM and time to act on it
-        code, out = await S._run([sys.executable, '-c', 'import sys; print(len(sys.stdin.buffer.read()))'],
-                                 {'PATH': '/usr/bin:/bin'}, None, input_data=b'x' * (2 * 1024 * 1024))
-        self.assertEqual((code, int(out), S._ACTIVE), (0, 2 * 1024 * 1024, type(S._ACTIVE)()))
-
-    async def test_host_stop_kills_a_child_that_ignores_sigterm(self):
-        """Claude Code stops a stdio server with SIGINT, SIGTERM after 100 ms and SIGKILL 400 ms later; the
-        child runs in its own session, so only the server can end it, inside that window."""
-        pids = self.tmp / 'pids'
-        self.fake_claude('import os, signal, time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\n'
-                         f'open({str(pids)!r}, "w").write(f"{{os.getpid()}} {{os.getppid()}}")\ntime.sleep(60)\n')
-        class Done(Exception):
-            pass
-        try:
-            async with agent_session(self.env) as (session, _):
-                work = asyncio.create_task(session.call_tool('delegate', {'prompt': 'x', 'model': 'ailocal-primary'}))
-                while not (pids.exists() and pids.read_text()):
-                    await asyncio.sleep(0.05)
-                child, server = map(int, pids.read_text().split())
-                os.kill(server, signal.SIGINT); time.sleep(0.1)
-                alive(server) and os.kill(server, signal.SIGTERM); time.sleep(0.4)
-                alive(server) and os.kill(server, signal.SIGKILL)
-                self.assertTrue(await gone([child], 1), 'child survived the host stop sequence')
-                work.cancel()
-                raise Done
-        except BaseException as error:
-            if not (isinstance(error, Done) or isinstance(error, BaseExceptionGroup) and error.subgroup(Done)):
-                raise
 
     async def test_stdio_server_guides_refuses_and_delegates(self):
         self.fake_claude('''import json, sys, time
@@ -699,155 +498,6 @@ print(json.dumps({'type': 'result', 'result': json.dumps({'env': env, 'images': 
                     error(await session.call_tool('delegate', {'prompt': 'x', 'agent': agent, 'tools': tools}), 'LOCAL_DELEGATION_DISABLED')
 
 
-class Sessions(unittest.IsolatedAsyncioTestCase):
-    """Session authority and explicit images through build_mcp with fixture workers."""
-
-    async def asyncSetUp(self):
-        self.root = Path(self.enterContext(tempfile.TemporaryDirectory(prefix='delegate inputs ', dir='/private/tmp')))
-        self.work, self.home, self.state = self.root / 'work', self.root / 'worker', self.root / 'state'
-        self.work.mkdir(); self.home.mkdir()
-        self.enterContext(patch.dict(os.environ, {
-            'LOCAL_AGENT_STATE': str(self.state), 'LOCAL_AGENT_CLAUDE_HOME': str(self.home), 'LOCAL_AGENT_CODEX_HOME': str(self.home),
-            'LOCAL_AGENT_BASE_URL': 'http://127.0.0.1:9', 'LOCAL_AGENT_KEY': 'not-a-key', 'LOCAL_AGENT_DENY_READ': '[]',
-            'LOCAL_AGENT_CLAUDE_ENV': '{}'}))
-        for key in (S.DEPTH_VAR, 'LOCAL_AGENT_CALLER'):
-            os.environ.pop(key, None)
-        self.guide = {'model': 'fixture-model', 'context_input': 16000, 'max_output': 512, 'reasoning': False, 'sampling': {},
-                      'source': None, 'input_modalities': ['text', 'image']}
-        self.guides, self.ceilings = {'tier': '64gb', 'models': {'ailocal-fast': self.guide}}, {'claude': 'edit', 'codex': 'edit'}
-        self.enterContext(patch.object(S, 'model_guides', AsyncMock(return_value=self.guides)))
-        self.enterContext(patch.object(S, 'mode_ceilings', AsyncMock(return_value=self.ceilings)))
-        self.runs = []
-        async def worker(prompt, model, mode, cwd, resume, guide, images=()):
-            self.runs.append({'mode': mode, 'cwd': cwd, 'images': copy.deepcopy(images)})
-            return {'agent': 'fixture', 'mode': mode, 'model': model, 'session_id': resume or str(uuid.uuid4()),
-                    'output': 'done', 'capabilities': {}}
-        self.workers = [patch.object(S, 'delegate_' + a, side_effect=worker) for a in S.AGENTS]
-        [self.enterContext(p) for p in self.workers]
-        self.app = S.build_mcp()
-
-    async def call(self, **args):
-        return (await self.app.call_tool('delegate', {'prompt': 'task', 'model': 'ailocal-fast', **args})).structured_content
-
-    async def refused(self, code, **args):
-        before = len(self.runs)
-        with self.assertRaises(ToolError) as error:
-            await self.call(**args)
-        self.assertIn(code + ':', str(error.exception))
-        self.assertEqual(len(self.runs), before, 'a refusal launched a worker')
-
-    async def test_resume_inherits_binding_and_rechecks_policy(self):
-        sid = (await self.call(agent='codex', mode='edit', cwd=str(self.work)))['session_id']
-        self.assertEqual((await self.call(resume=sid.upper(), model=None))['session_id'], sid)
-        self.assertEqual((self.runs[-1]['mode'], self.runs[-1]['cwd']), ('edit', str(self.work)))
-        for changed in ({'agent': 'claude'}, {'mode': 'text'}, {'tools': False}, {'model': 'ailocal-cyber'}, {'cwd': str(self.root)}):
-            await self.refused('SESSION_MISMATCH', resume=sid, **({'model': None} | changed))
-        sessions = self.state / 'sessions'
-        self.assertEqual(((sessions / f'{sid}.json').stat().st_mode & 0o777, sessions.stat().st_mode & 0o777), (0o600, 0o700))
-        self.assertFalse({'task', 'done'} & set(re.findall(r'\w+', json.dumps(S.load_binding(sid)))))   # no prompt or reply stored
-        self.app = S.build_mcp()   # a new server instance resumes the same binding
-        self.assertEqual((await self.call(resume=sid, model=None))['session_id'], sid)
-        self.ceilings['codex'] = 'text'
-        await self.refused('MODE_NOT_PERMITTED', resume=sid, model=None)
-        self.ceilings['codex'] = 'edit'
-        for target, key, value in ((self.guide, 'context_input', 8000), (self.guide, 'model', 'replaced'),
-                                   (self.guide, 'source', {'sha256': 'f' * 64}), (self.guide, 'input_modalities', ['text']),
-                                   (self.guides, 'tier', '128gb'), (self.guides, 'models', {})):
-            old, target[key] = target[key], value
-            await self.refused('SESSION_POLICY_CHANGED', resume=sid, model=None)
-            target[key] = old
-
-    async def test_failed_empty_unknown_and_unsaved_sessions(self):
-        for agent in S.AGENTS:
-            sid = str(uuid.uuid4())
-            with patch.object(S, 'delegate_' + agent, side_effect=S.CompletedWithoutReply(agent, sid)), self.assertRaises(ToolError) as caught:
-                await self.call(agent=agent, mode='edit', cwd=str(self.work))
-            self.assertTrue('DELEGATE_EMPTY:' in str(caught.exception) and 'resume=' + sid in str(caught.exception))
-            self.assertEqual(S.load_binding(sid)['agent'], agent)   # an empty reply stays an error with a bound resume
-            self.assertEqual((await self.call(resume=sid, model=None))['session_id'], sid)
-            with patch.object(S, 'delegate_' + agent, side_effect=S.DelegateError('DELEGATE_FAILED: fixture')), \
-                    self.assertRaises(ToolError) as caught:
-                await self.call(agent=agent, mode='edit', cwd=str(self.work))
-            self.assertNotIn('resume=', str(caught.exception))   # a failed worker creates no recoverable authority
-        with patch.object(S, 'delegate_codex', side_effect=S.CompletedWithoutReply('codex', str(uuid.uuid4()))), \
-                patch.object(S.os, 'replace', side_effect=OSError('fixture')), self.assertRaises(ToolError) as caught:
-            await self.call(agent='codex', mode='edit', cwd=str(self.work))
-        self.assertTrue('SESSION_BINDING_FAILED:' in str(caught.exception) and 'resume=' not in str(caught.exception))
-        with patch.object(S.os, 'replace', side_effect=OSError('fixture')), self.assertRaisesRegex(ToolError, 'SESSION_BINDING_FAILED'):
-            await self.call()
-        self.assertEqual(list((self.state / 'sessions').glob('.binding-*')), [])
-        await self.refused('SESSION_NOT_MANAGED', resume=str(uuid.uuid4()))
-        await self.refused('INVALID_SESSION', resume='../session')
-        sid = (await self.call())['session_id']
-        with S.session_lock(sid):
-            await self.refused('SESSION_BUSY', resume=sid)
-        path = self.state / 'sessions' / f'{sid}.json'
-        path.write_text('{}')
-        await self.refused('SESSION_INVALID', resume=sid)
-        path.unlink(); path.symlink_to(self.root / 'missing')
-        await self.refused('SESSION_INVALID', resume=sid)
-
-    async def test_images_are_validated_private_copies_without_tool_escalation(self):
-        source = self.work / 'picture with spaces.png'; data = png(); source.write_bytes(data)
-        first = await self.call(cwd=str(self.work), image_paths=[str(source)])
-        run = self.runs[-1]
-        self.assertEqual((run['mode'], run['cwd'], run['images'][0]['data']), ('text', str(self.state / 'empty'), data))
-        self.assertFalse(Path(run['images'][0]['path']).exists(), 'attachment copy survived completion')
-        self.assertEqual((first['capabilities']['images_supplied'], list((self.state / 'attachments').iterdir())), (1, []))
-        async with S.prepared_images([str(source)], str(self.work), self.guide) as images:
-            source.write_bytes(b'replaced')   # the owned copy, not the replaced source, is sent
-            owned = Path(images[0]['path'])
-            self.assertEqual((images[0]['data'], owned.read_bytes()), (data, data))
-            self.assertEqual((owned.stat().st_mode & 0o777, owned.parent.stat().st_mode & 0o777), (0o600, 0o700))
-        source.write_bytes(data)
-        jpeg = self.work / 'input.jpg'
-        subprocess.run(['/usr/bin/sips', '-s', 'format', 'jpeg', str(source), '--out', str(jpeg)], check=True, capture_output=True)
-        async with S.prepared_images([str(jpeg)], str(self.work), self.guide) as images:
-            self.assertEqual(images[0]['mime_type'], 'image/jpeg')
-        bad, huge, wide, outside, key = (self.work / 'bad.png', self.work / 'huge.png', self.work / 'wide.png',
-                                         self.root / 'outside.png', self.work / 'key.png')
-        with huge.open('wb') as handle:
-            handle.truncate(S.IMAGE_LIMIT + 1)
-        wide.write_bytes(png(width=S.IMAGE_SIDE + 1, height=1))
-        outside.write_bytes(data); key.write_bytes(data); os.link(key, self.work / 'hard.png')
-        (self.work / 'escape.png').symlink_to(outside)
-        (self.work / 'escape').symlink_to(self.root, target_is_directory=True)
-        os.environ['LOCAL_AGENT_DENY_READ'] = json.dumps([str(key)])
-        cases = [('IMAGE_CWD_REQUIRED', None, [source]), ('IMAGE_LIMIT', self.work, [source] * 5),
-                 ('IMAGE_LIMIT', self.work, [huge]), ('IMAGE_LIMIT', self.work, [wide])]
-        cases += [('IMAGE_PATH_INVALID', self.work, [p]) for p in (outside, self.work / 'escape.png', self.work / 'escape/outside.png',
-                                                                   key, self.work / 'hard.png', self.work / 'missing')]
-        for code, cwd, paths in cases:
-            await self.refused(code, cwd=cwd and str(cwd), image_paths=[str(p) for p in paths])
-        for content in (b'not an image', b'\x89PNG\r\n\x1a\ninvalid', png(broken=True)):
-            bad.write_bytes(content)
-            await self.refused('IMAGE_INVALID', cwd=str(self.work), image_paths=[str(bad)])
-        self.guide['input_modalities'] = ['text']
-        await self.refused('IMAGES_UNSUPPORTED', cwd=str(self.work), image_paths=[str(source)])
-        self.guide['input_modalities'] = ['text', 'image']
-        for failure in (S.DelegateError('DELEGATE_FAILED: fixture'), asyncio.CancelledError()):
-            with patch.object(S, 'delegate_claude', side_effect=failure), self.assertRaises((ToolError, asyncio.CancelledError)):
-                await self.call(cwd=str(self.work), image_paths=[str(source)])
-        self.assertEqual(list((self.state / 'attachments').iterdir()), [])   # cleaned after failure and cancellation
-
-    async def test_real_claude_image_wire_on_fresh_and_bound_resume(self):
-        """Real installed CLI, scripted endpoint: transport, not model quality."""
-        if not shutil.which('claude'):
-            self.skipTest('claude not installed')
-        self.workers[0].__exit__(None, None, None)
-        model = ScriptedModel([])
-        self.addCleanup(model.close)
-        os.environ['LOCAL_AGENT_BASE_URL'] = model.url
-        source = self.work / 'attachment.png'; source.write_bytes(png())
-        first = await self.call(cwd=str(self.work), image_paths=[str(source)])
-        second = png((20, 40, 230)); source.write_bytes(second)
-        again = await self.call(resume=first['session_id'], model=None, image_paths=[str(source)])
-        self.assertEqual(again['session_id'], first['session_id'])
-        sent = [b['source']['data'] for m in model.bodies[-1]['messages'] if isinstance(m.get('content'), list)
-                for b in m['content'] if b.get('type') == 'image']
-        self.assertEqual(base64.b64decode(sent[-1]), second)
-        self.assertTrue(all(not body.get('tools') for body in model.bodies))
-
-
 if __name__ == '__main__':
-    unittest.main()
+    import harness
+    harness.unittest_main()

@@ -1,4 +1,4 @@
-"""Which upstream release ailocal may adopt. docs/security.md "Version policy".
+"""Which upstream release ailocal may adopt. docs/architecture.md#version-policy.
 
 A candidate is the newest stable release whose publication is at least seven
 full days old. A younger release qualifies only when it contains the fix for an

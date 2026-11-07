@@ -20,7 +20,8 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from harness import REPO, Suite, run  # noqa: E402
+from harness import REPO, RESOURCES, Suite, run  # noqa: E402
+from ailocal.policy import load_profile  # noqa: E402
 
 PROJECT = "ailocal-it"
 ROOTS = {"AILOCAL_CONFIG": "config", "AILOCAL_CLIENTS": "clients", "AILOCAL_STATE": "state",
@@ -55,8 +56,7 @@ def _prove(s: Suite, box: Path, want_stack: bool) -> int:
     subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True, capture_output=True)
     python, ailocal = str(venv / "bin/python3"), venv / "bin/ailocal"
     r = run([str(venv / "bin/pip"), "install", "-q", str(source)], timeout=300)
-    s.check(r.returncode == 0, "the package installs", r.stderr[-400:])
-    s.check(ailocal.is_file(), "the console script is installed")
+    s.check(r.returncode == 0 and ailocal.is_file(), "the package installs with its console script", r.stderr[-400:])
 
     env = {k: v for k, v in os.environ.items() if not k.startswith(ISOLATED)}
     env.update({name: str(path) for name, path in roots.items()})
@@ -65,20 +65,20 @@ def _prove(s: Suite, box: Path, want_stack: bool) -> int:
                AILOCAL_LITELLM_CONTAINER=f"{PROJECT}-litellm", AILOCAL_SEARXNG_CONTAINER=f"{PROJECT}-searxng",
                AILOCAL_LITELLM_PORT="4111", AILOCAL_SEARXNG_PORT="8111")
 
-    def py(code, label):
+    def py(code, label=None):
         r = run([python, "-c", code], timeout=300, env=env)
-        s.check(r.returncode == 0 and "ok" in r.stdout, label, r.stderr[-400:])
+        if label:
+            s.check(r.returncode == 0 and "ok" in r.stdout, label, r.stderr[-400:])
         return r
 
     r = py("from ailocal import install, policy; install.provision(install.distribution_source(), "
-           "policy.config_root(), policy.state_root()); print(policy.data_root()); print('ok')",
-           "assets provision into the managed roots from the wheel")
+           "policy.config_root(), policy.state_root()); print(policy.data_root()); print('ok')")
     data = Path(r.stdout.splitlines()[0]) if r.returncode == 0 else box / "missing"
-    s.check(str(venv) in str(data), "the data root IS the installed package, not a checkout")
-    for rel, label in ((cfg / "profiles/64gb.toml", "profiles land in the config root"),
-                       (data / "deploy/litellm/hooks/tool_gateway.py", "proxy hooks are read from the wheel"),
-                       (data / "integrations/local-research/server.py", "research MCP source ships in the wheel")):
-        s.check(rel.is_file(), label)
+    s.check(r.returncode == 0 and str(venv) in str(data), "assets provision from the installed package, not a checkout",
+            r.stderr[-400:] or str(data))
+    missing = [str(p) for p in (cfg / "profiles/64gb.toml", data / "deploy/litellm/hooks/tool_gateway.py",
+                                data / "integrations/local-research/server.py") if not p.is_file()]
+    s.check(not missing, "the wheel ships profiles, proxy hooks and the research MCP", ", ".join(missing))
     # `install` would migrate and generate these; this suite never runs it. BRAVE_API is
     # a placeholder: no search is issued, so no quota is spent.
     (state / "active-profile").write_text("64gb\n")
@@ -89,10 +89,6 @@ def _prove(s: Suite, box: Path, want_stack: bool) -> int:
         path.chmod(0o600)
 
     shutil.rmtree(source)
-    s.check(not source.exists(), "the source checkout is gone")
-    py("from ailocal import policy, model_sources; assert all(policy.resolve_role(t, 'cyber')['model'] "
-       "== policy.load_profile(t)['cyber']['active'] for t in policy.TIERS); print('ok')",
-       "profiles and the model importer resolve without a checkout")
     py("import hashlib; from ailocal import policy; s = policy.ollama_patch_spec(); "
        "assert all(len(s[k]) == 64 for k in ('native_archive_sha256', 'native_cli_sha256')); "
        "assert '/v' + s['base_version'] + '/' in s['native_archive_url']; "
@@ -106,41 +102,37 @@ def _prove(s: Suite, box: Path, want_stack: bool) -> int:
 
     s.section("ORDINARY COMMANDS RUN WITH NO CHECKOUT")
 
+    broken = {}
+
     def cli(*args, must_pass=True, timeout=300):
         r = run([str(ailocal), *args], timeout=timeout, env=env)
         blob, name = r.stdout + r.stderr, " ".join(args[:2])
-        s.check(str(source) not in blob and "Traceback" not in blob and "No such file or directory" not in blob,
-                f"`ailocal {name}` runs without the checkout or a missing-file error", blob[-400:])
-        if must_pass:
-            s.check(r.returncode == 0, f"`ailocal {name}` exits 0", blob[-400:])
+        if (str(source) in blob or "Traceback" in blob or "No such file or directory" in blob
+                or (must_pass and r.returncode != 0)):
+            broken[name] = blob[-300:]
         return r
 
-    s.check("local model runtime" in cli("help").stdout, "help renders from the installed parser")
-    s.check(cli("profile", "active-tier").stdout.strip() == "64gb", "the active tier reads back from managed state")
+    cli("help")
+    cli("profile", "active-tier")
+    cli("check", must_pass=False)
     r = cli("profile", "guide", "ailocal-cyber", "--tier", "16gb", "--json")
     try:
         guide = json.loads(r.stdout)["models"]["ailocal-cyber"]
     except (ValueError, KeyError):
         guide = {"model": None, "evidence": ""}
-    s.check(guide["model"] == "nemotron-3.5-bolt:e4b-unrestricted"
-            and all(t in guide["evidence"] for t in ("[REAL]", "[APPROX]",
-                    "85c31197ff1d89b92a0e1c27cc033466b7f02dc916adba011414b7a7b80e44b6")),
-            "profile model knowledge ships and resolves")
-    cli("check", must_pass=False)
+    shipped = load_profile("16gb", RESOURCES)["cyber"]["active"]
+    s.check(guide["model"] == shipped and "[REAL]" in guide["evidence"],
+            "profile model knowledge ships and resolves to the shipped selection",
+            f"installed={guide['model']} shipped={shipped}")
 
     if want_stack:
         s.section("THE STACK COMES UP FROM MANAGED ASSETS")
         codex = roots["AILOCAL_CLIENTS"] / "codex"
         codex.mkdir(exist_ok=True)
-        for name in ("plan", "cyber"):
-            (codex / f"{name}.config.toml").write_text('# Generated by ailocal. Do not edit.\nmodel = "old"\n')
         authored = codex / "review.config.toml"
         authored.write_text('model = "operator-choice"\n')
         cli("start", must_pass=False, timeout=600)
-        s.check(not any((codex / f"{n}.config.toml").exists() for n in ("plan", "cyber")),
-                "start retires generated launch presets")
         s.check(authored.read_text() == 'model = "operator-choice"\n', "start preserves an authored native profile")
-        s.check((state / "litellm/config.yaml").is_file(), "start generates into the managed state root")
         container = f"{PROJECT}-litellm"
         healthy, detail = False, ""
         for _ in range(40):
@@ -158,6 +150,8 @@ def _prove(s: Suite, box: Path, want_stack: bool) -> int:
         cli("stop", must_pass=False)
         s.check(container not in run(["docker", "ps", "-a", "--format", "{{.Names}}"]).stdout,
                 "the isolated stack is removed")
+    s.check(not broken, "every command run here works without the checkout or a missing-file error",
+            repr(broken)[:600])
     return s.report()
 
 

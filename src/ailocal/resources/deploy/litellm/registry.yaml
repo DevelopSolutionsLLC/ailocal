@@ -419,7 +419,7 @@ model_classes:
   local_agentic:
     match_capabilities: [primary]
     # "*nemotron-3.5-bolt:*" (#87): the 16/32 GB primary, a Gemma 4 architecture that
-    # passed 3/3 injected-EAGAIN tool loops with 1/1 recovery on 2026-11-05 (docs/model-audit.md).
+    # passed 3/3 injected-EAGAIN tool loops with 1/1 recovery on 2026-11-05 (docs/maintenance.md#model-audit).
     # Its unrestricted Cyber alias is listed under local_cyber above, which is matched first.
     match_models: ["*qwen3-coder*", "*gemma4:*", "*qwen3.5:9b*", "*qwen3.5:4b*", "*nemotron-3.5-bolt:*"]
     supports_tools: true

@@ -97,4 +97,5 @@ class MeasurementContracts(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    from harness import unittest_main  # the script directory is on sys.path
+    unittest_main()

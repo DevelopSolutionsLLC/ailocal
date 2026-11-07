@@ -15,7 +15,7 @@ See NOTICE for what changed and why.
                             of them. A listener inside the MCP process dies when
                             Claude Code terminates that process at session end,
                             which is what made preview URLs refuse connections.
-                            See docs/adr/013-artifact-preview-lifetime.md.
+                            See docs/decisions.md, 013.
 
 Rendering boundary: the top-level document at `/` is a TRUSTED viewer we
 generate. Model-generated content is served separately at `/content` and framed
