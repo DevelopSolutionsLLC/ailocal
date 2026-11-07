@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Install: pinned native weights, config ownership, Ollama activation, loopback binding and
-teardown consent. Writes only temp roots and never reaches this machine's Docker or Ollama.
+"""Test install: weights, cfg ownership, Ollama, loopback, teardown consent.
+
+Writes only temp roots; never reaches this machine's Docker or Ollama.
 """
 import contextlib
 import io
@@ -39,8 +40,8 @@ def native_gguf():
                 return show(modelfile(json.loads(request.data)["model"]))
             return io.BytesIO(b'{"status":"success"}')
         return po(M.urllib.request, "urlopen", side_effect=answer)
-    # The publisher's pull carries its own projector (`wrong`); the reviewed one is pulled as its own
-    # tag, whose manifest lists it as model and projector, and the alias shows FROM, DRAFT, FROM.
+    # The publisher's pull has its own projector (`wrong`); the reviewed one
+    # is its own tag (model + projector); the alias shows FROM, DRAFT, FROM.
     trio = lambda alias: lambda m: (f"FROM {proj}\nFROM {proj}\n" if m == visual["projector_model"]  # noqa: E731
                                     else f"FROM {head}\n" if m == visual["draft_model"]
                                     else f"FROM {target}\nFROM {wrong}\n" if m == visual["model"] else alias)
@@ -80,7 +81,7 @@ def provenance():
         edited, keep = cfg / "profiles/a.toml", "a = 'operator'\n"
         edited.write_text(keep)
         survived = all(edited.read_text() == keep and "profiles/a.toml" in I.provision(src, cfg, state)["preserved"]
-                       for _ in range(2))  # the manifest records what shipped, so the edit survives repeatedly
+                       for _ in range(2))  # manifest records shipped → edit survives
         (cfg / "profiles/d.toml").write_text("d = 'operator'\n")
         for n in "cd":
             (src / f"profiles/{n}.toml").unlink()
@@ -117,7 +118,7 @@ def activation():
 
 def loopback():
     S.section("listening addresses (#103)")
-    # AILOCAL_BIND may move the proxy, which authenticates; nothing else may follow it.
+    # AILOCAL_BIND may move the proxy (it authenticates); nothing else follows.
     check('"${AILOCAL_BIND:-127.0.0.1}:${AILOCAL_LITELLM_PORT:-4000}:4000"'
           in (RESOURCES / "deploy/litellm/compose.yaml").read_text()
           and "127.0.0.1:${AILOCAL_SEARXNG_PORT:-8080}:8080" in (RESOURCES / "deploy/searxng/compose.yaml").read_text()
@@ -128,7 +129,7 @@ def loopback():
 def teardown():
     S.section("destructive commands need consent")
     from ailocal import clients, runtime
-    # Every removal is patched, so a regression that proceeds is recorded instead of touching this machine.
+    # Removals are patched: a regression is recorded, never run on this host.
     with po(runtime, "_confirm", return_value=False), po(runtime, "compose") as compose_call, \
             po(I, "remove_login_agents") as agents, po(clients, "remove_client_writes", return_value=[]) as writes, \
             quiet():

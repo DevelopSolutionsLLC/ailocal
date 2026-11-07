@@ -1,26 +1,15 @@
 #!/usr/bin/env python3
-"""
-local-artifacts — a local artifact renderer for Claude Code sessions that
-authenticate with an API key (e.g. ailocal's `claude-local`), where the hosted
-Artifact tool is not registered.
+"""Render artifacts locally for API-key Claude Code sessions (no Artifacts).
 
-Forked from xiagaohui/local-artifacts-for-claude-code @ ddb4796 (MIT).
-See NOTICE for what changed and why.
+Forked from xiagaohui/local-artifacts-for-claude-code @ ddb4796 (MIT), NOTICE.
 
     Claude Code --spawns--> this process   (one per session, stdio MCP)
                               `-- publish -> state file -> shared preview server
 
-    server.py --serve       ONE per machine, started on demand by the first
-                            publish, reused by every session, NOT a child of any
-                            of them. A listener inside the MCP process dies when
-                            Claude Code terminates that process at session end,
-                            which is what made preview URLs refuse connections.
-                            See docs/decisions.md, 013.
-
-Rendering boundary: the top-level document at `/` is a TRUSTED viewer we
-generate. Model-generated content is served separately at `/content` and framed
-inside `sandbox="allow-scripts"` (no allow-same-origin -> opaque origin) under a
-`connect-src 'none'` CSP. Scripts still run; they just cannot reach anything.
+`--serve` is one per machine, started on demand and parented to no session: a
+listener in the MCP process dies at session end (docs/decisions.md, 013).
+`/` is the trusted viewer; model content is served at `/content`, framed with
+`sandbox="allow-scripts"` (opaque origin) under `connect-src 'none'`.
 """
 
 import html
@@ -38,49 +27,22 @@ from pathlib import Path
 import architecture
 import mermaid_validate
 
-# ── Config ────────────────────────────────────────────────────────────────────
 PORT = int(os.environ.get("LOCAL_ARTIFACTS_PORT", "7891"))
 MAX_SIZE = 16 * 1024 * 1024  # 16 MiB
 
-# The preview server outlives the session that published to it, so it needs its
-# own way to die. It exits after this many seconds with no request, no publish
-# and no connected viewer. 0 disables the timeout. One shared ~25 MiB process is
-# the entire budget: every session reuses it instead of starting its own. Reaping
-# also bounds the one thing that does grow: [REAL] rendering Mermaid inlines a
-# 3.4 MB library per page and RSS climbs to a ~361 MiB plateau after ~60 renders
-# (allocator high-water, not a leak -- live allocations stay flat). See README.
-#
-# 30 minutes, not longer, because nothing is lost by reaping: [REAL] a cold
-# start costs 0.351s against 0.18s warm, so the next publish pays ~170ms and
-# transparently gets a fresh server. Nothing is lost by reaping *early* either,
-# because everything that constitutes use defers it -- an open tab holds an SSE
-# connection and blocks the reaper outright, any GET resets the clock, and so
-# does an incoming publish. What remains is the one case worth the wait: a
-# transcript URL reopened later with no tab still open and nothing republishing.
-# Half an hour covers the pauses inside a working session; past that the artifact
-# is still on disk under .artifacts/ and republishing brings it straight back.
+# Idle seconds (no request, publish or viewer) before the server exits; 0=never.
+# Bounds Mermaid RSS growth; a cold restart costs only ~170ms (see README).
 IDLE_EXIT = int(os.environ.get("LOCAL_ARTIFACTS_IDLE_EXIT", "1800"))  # 30 min
 
-# An open tab heals itself: when its EventSource drops -- which is exactly what a
-# reaped or replaced viewer looks like from the browser -- the page reloads after
-# this delay and reattaches to whatever is serving the port now. MUST match the
-# setTimeout in VIEWER_JS; test_autoopen.py asserts they agree.
-#
-# The presentation decision is built on it. A viewer restart is NOT on its own
-# evidence that the user needs a window: a tab that was already open comes back
-# by itself. Viewer identity/generation was therefore REJECTED as the signal --
-# it would open a second window on top of every tab that was about to recover.
+# Tab reload delay after its EventSource drops; must match VIEWER_JS's
+# setTimeout (test_autoopen.py). A self-healing tab needs no new window.
 VIEWER_RELOAD_MS = 3000
 
-# How long a publish waits for an existing tab to reattach before concluding
-# nobody is watching. Must exceed VIEWER_RELOAD_MS, or a self-healing tab is
-# still mid-reload when we sample and we open a window on top of it. Only paid
-# when no watcher is already connected -- see _needs_presentation().
+# Tab reattach wait; must exceed VIEWER_RELOAD_MS (see _needs_presentation).
 PRESENT_GRACE = float(os.environ.get("LOCAL_ARTIFACTS_PRESENT_GRACE",
                                      str(VIEWER_RELOAD_MS / 1000 + 1.5)))
 
-# State lives in a local-artifacts-owned XDG location. Never ~/.claude: that
-# tree belongs to Claude Code, and ailocal's invariants forbid touching it.
+# Own XDG state; never ~/.claude, which belongs to Claude Code.
 _xdg_state = os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state")
 STATE_DIR = Path(_xdg_state) / "local-artifacts"
 STATE_FILE = STATE_DIR / "state.json"
@@ -91,19 +53,8 @@ try:
 except OSError:
     pass
 
-# Approved root for file_path publishing.
-#
-# Claude Code spawns stdio MCP servers with cwd = the directory Claude Code was
-# launched in [REAL, probed]. One server process serves one session, which is
-# one project, so cwd-at-startup is both safe and practical: a file Claude just
-# wrote in the active project publishes, while ~/.ssh/notes.txt does not.
-# An explicit override wins when the operator sets one.
-# Precedence: explicit override, then Claude Code's supported project-root
-# contract, then cwd. [REAL] verified on 2.1.231: stdio MCP servers DO receive
-# CLAUDE_PROJECT_DIR, and it equals the directory Claude Code was launched in --
-# it is NOT the git root (probed from a subdirectory of a real repo). So this is
-# the same value cwd would give today, but it is the supported contract rather
-# than an inference, and it survives anything that changes the child's cwd.
+# Approved file_path root: override, then CLAUDE_PROJECT_DIR (launch dir, not
+# git root; verified 2.1.231), then cwd. One session = one project.
 def _resolve_root():
     for candidate in (os.environ.get("LOCAL_ARTIFACTS_ROOT"),
                       os.environ.get("CLAUDE_PROJECT_DIR")):
@@ -136,9 +87,7 @@ MERMAID_JS_PATH = VENDOR / "mermaid.min.js"
 
 
 def _vendor(path):
-    """Bundled libraries are read from disk by the TRUSTED server and inlined
-    into the page. Generated content never fetches them, which is what keeps the
-    zero-network boundary intact while still giving artifacts a real renderer."""
+    """Read a bundled library for inlining; generated content never fetches."""
     try:
         return path.read_text(encoding="utf-8")
     except Exception:
@@ -147,7 +96,6 @@ def _vendor(path):
 
 MARKED_JS = _vendor(MARKED_JS_PATH)
 
-# ── Shared state ──────────────────────────────────────────────────────────────
 _state: dict = {
     "title": "",
     "emoji": "\U0001F4C4",
@@ -161,20 +109,15 @@ _state_lock = threading.Lock()
 _sse_lock = threading.Lock()
 _http_error: str = ""
 _http_ready = threading.Event()   # set once bind succeeded OR failed
-# Outcome of the last presentation attempt, for `--diagnose`. The opener is a
-# detached Popen whose failure is otherwise invisible: [REAL] an investigation
-# into a real "it did not open" report could not establish whether the opener
-# had even been called, because nothing recorded it. Session-local and
-# in-memory: it describes THIS publisher's attempt, so writing it to the shared
-# state file would let concurrent sessions overwrite each other's answer.
+# Last presentation outcome for `--diagnose` (the opener fails invisibly).
+# In-memory: the shared state file would let sessions overwrite each other.
 _last_present: str = "not-attempted"
 _last_activity = time.time()      # serve mode: drives the idle reaper
 _content_mtime = 0.0              # serve mode: last CONTENT_FILE we ingested
 
 
 def _atomic_write(path: Path, text: str) -> None:
-    """Write 0600, atomically. The preview server reads these files from another
-    process, so a reader must never observe a partially written artifact."""
+    """Write 0600 atomically; another process reads these files."""
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(text, encoding="utf-8")
     try:
@@ -198,9 +141,7 @@ def _load_persisted_state():
 
 _load_persisted_state()
 
-# ── CSP ───────────────────────────────────────────────────────────────────────
-# The viewer is ours. It needs SSE (connect-src 'self') and must be able to
-# frame /content (frame-src 'self').
+# Trusted viewer: SSE (connect-src 'self') and framing /content.
 VIEWER_CSP = (
     "default-src 'none'; "
     "script-src 'unsafe-inline'; "
@@ -212,10 +153,8 @@ VIEWER_CSP = (
     "form-action 'none'"
 )
 
-# The artifact is untrusted. connect-src 'none' blocks fetch/XHR/WebSocket/
-# EventSource outright -- including no-cors requests, which are otherwise sent
-# for their side effects even though the response is opaque. That is what keeps
-# generated JS away from Ollama/Qdrant/LiteLLM on other loopback ports.
+# Untrusted artifact: connect-src 'none' blocks all fetches, even no-cors,
+# keeping generated JS off other loopback services.
 CONTENT_CSP = (
     "default-src 'none'; "
     "script-src 'unsafe-inline'; "
@@ -231,8 +170,6 @@ CONTENT_CSP = (
     "base-uri 'none'; "
     "frame-ancestors 'self'"
 )
-
-# ── Viewer (trusted, top-level) ───────────────────────────────────────────────
 
 VIEWER_PAGE = """<!DOCTYPE html>
 <html lang="en">
@@ -313,8 +250,6 @@ def build_viewer(state: dict) -> str:
     )
 
 
-# ── Artifact content (untrusted, framed) ──────────────────────────────────────
-
 MARKDOWN_PAGE = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -360,24 +295,15 @@ document.getElementById('_content').innerHTML =
 </html>"""
 
 
-#: Emitted into a Markdown page ONLY when it contains a Mermaid fence. The
-#: library is ~3.4 MB and a prose artifact must not pay for it: [REAL] the
-#: viewer's memory profile is flat for markdown /content and steps up only for
-#: Mermaid pages, so making every Markdown page carry Mermaid would regress it.
-#: startOnLoad is false because marked injects the content AFTER load; run()
-#: is Mermaid's documented entry point for content rendered later.
+#: Only for Markdown with a Mermaid fence (~3.4 MB). startOnLoad is false:
+#: marked injects after load, so run() renders it.
 MARKDOWN_MERMAID_TAIL = """<script>{mermaid_js}</script>
 <script>
 {mermaid_init}
 mermaid.run({{ querySelector: 'pre.mermaid' }});
 </script>"""
 
-#: A fenced Mermaid block inside Markdown. [REAL] the failure this exists for:
-#: a real session published `format="markdown"` whose body was prose plus a
-#: ```mermaid classDiagram fence, and the reader got the diagram SOURCE as a
-#: grey code block -- "no diagrams or anything". The routing was correct and the
-#: renderer simply had no Mermaid path. Tilde fences and an indented closing
-#: fence are both legal CommonMark, so both are matched.
+#: Mermaid fence in Markdown; tilde and indented closing fences are CommonMark.
 _MARKDOWN_MERMAID_FENCE = re.compile(
     r"^(?P<indent>[ ]{0,3})(?P<fence>`{3,}|~{3,})[ \t]*mermaid[ \t]*\r?\n"
     r"(?P<body>.*?)"
@@ -386,13 +312,10 @@ _MARKDOWN_MERMAID_FENCE = re.compile(
 
 
 def build_markdown_content(content: str) -> str:
-    """Markdown renders under the SAME untrusted boundary as HTML.
+    """Build Markdown content under the same untrusted boundary as HTML.
 
-    marked v4.3.0 passes raw HTML through and we do not sanitize it. That is a
-    deliberate, documented choice: sanitizing would break legitimate inline HTML
-    in Markdown, and the sandbox+CSP boundary already contains anything that
-    runs. json.dumps plus the '</' escape only keep the payload from breaking
-    out of the <script> string -- they are not a security control.
+    Raw HTML is not sanitized: the sandbox+CSP contains it. The '</' escape
+    only keeps the payload inside its <script> string; it is not a control.
     """
     content, fences = _inline_markdown_mermaid(content)
     escaped = json.dumps(content).replace("</", "<\\/")
@@ -409,13 +332,10 @@ def build_markdown_content(content: str) -> str:
 def _inline_markdown_mermaid(content: str) -> tuple[str, int]:
     """Rewrite ```mermaid fences into `<pre class="mermaid">` HTML blocks.
 
-    Done HERE rather than with a marked renderer override so the diagram source
-    passes through exactly the same normalisation as the `mermaid` format --
-    presentation stripping and label quoting, one owner for both. marked passes
-    raw HTML through untouched (see build_markdown_content), and the blank lines
-    keep it a CommonMark HTML block rather than a paragraph.
+    Here, not in marked, so fences share the `mermaid` format's normalisation.
 
-    Returns the rewritten Markdown and how many fences were converted.
+    Returns:
+        The rewritten Markdown and how many fences were converted.
     """
     n = 0
 
@@ -431,9 +351,7 @@ def _inline_markdown_mermaid(content: str) -> tuple[str, int]:
 
 
 def build_html_content(content: str) -> str:
-    """Model HTML is served as-is. No banner or SSE is injected into it -- both
-    live in the trusted viewer now, so this document stays exactly what the
-    model wrote and the sandbox does the containing."""
+    """Return model HTML as-is; the viewer and sandbox do the rest."""
     lo = content.lower()
     if "<body" in lo or "<!doctype" in lo or "<html" in lo:
         return content
@@ -471,12 +389,8 @@ body{{margin:0;background:var(--bg);color:var(--ink);
 </html>"""
 
 
-#: The ONE mapping from the canonical design tokens onto Mermaid's documented
-#: themeVariables, shared by the `mermaid` format and by Mermaid fences inside a
-#: `markdown` artifact. base + themeVariables is Mermaid's supported
-#: customisation path (mermaid.js.org/config/theming.html). Two copies of this
-#: block is how a Mermaid diagram and an ELK diagram stop looking like one
-#: product, so both pages format the same string.
+#: The one design-token → Mermaid themeVariables mapping, shared by both pages
+#: (mermaid.js.org/config/theming.html).
 MERMAID_INIT = """\
 // Mermaid reads the SAME canonical tokens as the architecture renderer.
 var _dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -519,23 +433,12 @@ def _mermaid_init(start_on_load: bool) -> str:
         sans_json=json.dumps(theme["typography"]["sans"]))
 
 
-#: Mermaid statements that carry PRESENTATION rather than meaning. The model is
-#: asked for semantics and supplies colour anyway: [REAL] 4 of 18 captured
-#: artifacts hard-coded fills, including `fill:#f9f` and `fill:#0f0`, which land
-#: as pale pastels on the dark canvas with light text over them and are
-#: unreadable. The `architecture` format already refuses model-authored geometry
-#: for the same reason; this is that rule applied to colour. `class` goes with
-#: `classDef` so no statement is left referencing a definition that was removed.
+#: Presentation statements; model fills are unreadable on the theme. `class`
+#: goes with `classDef` so nothing references a removed definition.
 _MERMAID_STYLE_STMT = re.compile(
     r"^[ \t]*(?:style|classDef|linkStyle|class)\b[^\n]*$", re.M)
 
-#: The same set MINUS `class`, for class diagrams. In a flowchart `class a,b x`
-#: applies a classDef; in a classDiagram `class Foo {` DECLARES the class, and
-#: stripping it deleted the declaration while leaving its `}` behind. [REAL] a
-#: ten-class diagram with members rendered as "Syntax error in text" -- the
-#: exact failure the label-quoting rule below exists to prevent, reintroduced by
-#: the colour rule. `style` and `classDef` stay stripped: both are presentation
-#: in either dialect.
+#: Same minus `class`: in a classDiagram `class Foo {` declares the class.
 _MERMAID_STYLE_STMT_CLASSDIAGRAM = re.compile(
     r"^[ \t]*(?:style|classDef|linkStyle)\b[^\n]*$", re.M)
 
@@ -556,9 +459,8 @@ def _is_class_diagram(source: str) -> bool:
 def strip_mermaid_presentation(source: str) -> tuple[str, int]:
     """Drop model-authored colour directives so the theme applies.
 
-    Returns the cleaned source and how many statements were removed. Semantics
-    -- nodes, edges, labels, subgraphs, directions and class declarations --
-    are untouched.
+    Returns:
+        The cleaned source and how many statements were removed.
     """
     pattern = (_MERMAID_STYLE_STMT_CLASSDIAGRAM if _is_class_diagram(source)
                else _MERMAID_STYLE_STMT)
@@ -570,18 +472,13 @@ def strip_mermaid_presentation(source: str) -> tuple[str, int]:
     return cleaned, n
 
 
-#: Square-bracket labels containing parentheses. Mermaid needs these quoted and
-#: the model does not quote them: [REAL] `Reviewers[Reviewer(s) Assigned]` in a
-#: captured artifact made the whole diagram render as "Syntax error in text",
-#: which is what the user sees instead of their flowchart. Quoting is a SYNTAX
-#: normalisation and changes no semantics -- the label text is identical. It is
-#: deliberately narrow: `((circle))` nodes and already-quoted labels are left
-#: alone, and nothing else about the source is rewritten.
+#: `[labels]` with parentheses, which Mermaid needs quoted; `((circle))` and
+#: quoted labels are left alone.
 _MERMAID_UNQUOTED_LABEL = re.compile(r'\[(?!")([^\[\]"\n]*[()][^\[\]"\n]*)\]')
 
 
 def normalise_mermaid_labels(source: str) -> tuple[str, int]:
-    """Quote `[label]` text containing parentheses. Returns source and count."""
+    """Quote `[label]` text containing parentheses; return source and count."""
     n = 0
     def q(m):
         nonlocal n
@@ -591,15 +488,12 @@ def normalise_mermaid_labels(source: str) -> tuple[str, int]:
 
 
 def build_mermaid_content(source: str) -> str:
-    """Mermaid runs INSIDE the sandboxed iframe, exactly like marked does for
-    Markdown: opaque origin, connect-src 'none'. The library is inlined from
-    vendor/ by this trusted process -- the page fetches nothing."""
+    """Build a Mermaid page for the sandboxed frame, library inlined."""
     js = _vendor(MERMAID_JS_PATH)
     if not js:
         return ("<!DOCTYPE html><html><body><p>mermaid.min.js is missing from "
                 "vendor/. Reinstall local-artifacts.</p></body></html>")
-    # Silently: this is a stdio MCP server and anything written to stdout
-    # corrupts the protocol frame.
+    # Silently: stdout is the MCP protocol channel.
     source, _dropped = strip_mermaid_presentation(source)
     source, _quoted = normalise_mermaid_labels(source)
     import architecture as _arch
@@ -613,19 +507,7 @@ def build_mermaid_content(source: str) -> str:
         border_light=theme["light"]["border"], border_dark=theme["dark"]["border"])
 
 
-#: The publish-time syntax gate. Normalisers have no opinion about grammar --
-#: [REAL] both returned ZERO changes on the corrupt payload that shipped a bomb
-#: icon to a user -- so the only thing that can reject invalid Mermaid is the
-#: Mermaid grammar itself. See mermaid_validate.py for why that means a browser.
-#:
-#: Validation runs on the NORMALISED source, because that is what the page
-#: renders; validating the raw source would describe a document that is never
-#: served.
-#:
-#: THREE outcomes, and the third is the point. "I could not check it" is NOT
-#: "it is fine": reporting an unvalidated diagram as a successful publish is the
-#: original defect, so UNAVAILABLE refuses too and says why. Only Mermaid is
-#: gated -- html, architecture and prose Markdown never call this.
+#: Grammar gate on the normalised (served) source; UNAVAILABLE refuses too.
 def _mermaid_verdict(source: str):
     normalised, _ = strip_mermaid_presentation(source)
     normalised, _ = normalise_mermaid_labels(normalised)
@@ -648,13 +530,7 @@ def _mermaid_refusal(result, where: str) -> str:
 
 
 def check_mermaid(text: str, fmt: str) -> str | None:
-    """Publish-time gate. Returns a model-facing message, or None to proceed.
-
-    Markdown is checked fence by fence -- a prose artifact with one broken
-    diagram is exactly as broken as a `mermaid` artifact, and bb15bec routed
-    both through the same normalisation for the same reason. Markdown with NO
-    fence starts no validator at all and costs nothing.
-    """
+    """Return a model-facing refusal, or None; Markdown checks each fence."""
     if fmt == "mermaid":
         result = _mermaid_verdict(text)
         if result.state == mermaid_validate.VALID:
@@ -675,12 +551,9 @@ def build_content_page(state: dict) -> str:
         return build_markdown_content(state.get("content", ""))
     if fmt == "mermaid":
         return build_mermaid_content(state.get("content", ""))
-    # `architecture` was already rendered to a complete static-SVG document at
-    # publish time, so by the time it is served it is just html.
+    # `architecture` was rendered to static SVG HTML at publish time.
     return build_html_content(state.get("content", ""))
 
-
-# ── SSE ───────────────────────────────────────────────────────────────────────
 
 def _notify_sse():
     ts = str(int(time.time()))
@@ -693,14 +566,8 @@ def _notify_sse():
             pass
 
 
-# ── HTTP ──────────────────────────────────────────────────────────────────────
-
 def _host_ok(host: str) -> bool:
-    """Reject DNS-rebinding-style Host headers, permit the URLs we emit.
-
-    A browser pointed at http://127.0.0.1:PORT sends exactly one of these. A
-    remote page that has rebound a name to 127.0.0.1 sends its own hostname, so
-    this is what stops it reading the artifact back."""
+    """Return whether Host is one we emit; blocks DNS-rebinding reads."""
     if not host:
         return False
     h = host.strip().lower()
@@ -719,10 +586,7 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass  # MCP speaks stdio; stdout must stay clean
 
-    # No do_POST at all. Publishing happens only in-process via _publish().
-    # Upstream's POST /publish accepted a cross-origin simple request with a
-    # forged Host and no auth; it was unused by the MCP path, so it is gone
-    # rather than patched.
+    # No do_POST: upstream's unauthenticated cross-origin publish is removed.
 
     def do_GET(self):
         global _last_activity
@@ -765,10 +629,7 @@ class Handler(BaseHTTPRequestHandler):
             s["http_error"] = _http_error
             s["port"] = PORT
             s["approved_root"] = str(APPROVED_ROOT)
-            # Watcher count is what a publisher needs to decide whether anyone is
-            # actually looking at this viewer. It is the same number the idle
-            # reaper uses, read from the same list under the same lock, so the
-            # two cannot disagree about whether the viewer is being watched.
+            # Same count, list and lock as the reaper: the two cannot disagree.
             with _sse_lock:
                 s["watchers"] = len(_sse_clients)
             self._send(200, "application/json; charset=utf-8",
@@ -854,13 +715,9 @@ def _run_http():
 
 
 def _watch_state(interval=0.25):
-    """Ingest artifacts published by OTHER processes.
+    """Ingest artifacts other processes publish via the 0600 state file.
 
-    This is the whole transport between a publishing session and the shared
-    preview server. It is deliberately a file, not an HTTP endpoint: upstream's
-    `POST /publish` was an unauthenticated cross-origin write and was removed in
-    the security audit (test_server.py section E pins it removed). Reading a
-    0600 file in the user's own state directory reintroduces no write surface.
+    A file, not an HTTP endpoint, so there is no write surface (test_server E).
     """
     global _content_mtime, _last_activity
     while True:
@@ -879,21 +736,13 @@ def _watch_state(interval=0.25):
             with _state_lock:
                 _state.update({k: saved.get(k, _state[k]) for k in _state})
             _content_mtime = mtime
-            # A publish is use. Do not rely on the publisher's /status probes to
-            # defer the reaper for us: that couples the idle policy to how
-            # ensure_preview_server happens to be implemented.
+            # A publish is use; do not rely on the publisher's /status probes.
             _last_activity = time.time()
             _notify_sse()
 
 
 def _idle_reaper():
-    """Exit once nobody is using this server.
-
-    A viewer with the page open holds an SSE connection, so an idle server is
-    one with no requests AND no watchers -- not merely one nobody has clicked
-    recently. Without this the process a session leaves behind would live until
-    reboot, which is the zombie the decoupling would otherwise trade for.
-    """
+    """Exit once there are no requests and no SSE watchers."""
     if IDLE_EXIT <= 0:
         return
     while True:
@@ -905,14 +754,7 @@ def _idle_reaper():
 
 
 def _probe(timeout=0.6):
-    """True if OUR preview server is already answering on PORT.
-
-    A 200 is not enough: some other local service could hold the port and
-    answer /status, and treating that as ours would report a successful publish
-    against a server that has never heard of the artifact. Require the response
-    to be our own JSON, so an unrecognised occupant falls through to the honest
-    "did not come up, set LOCAL_ARTIFACTS_PORT" error instead.
-    """
+    """Return whether OUR server answers on PORT: our JSON, not just a 200."""
     import urllib.request
     try:
         req = urllib.request.Request(f"http://127.0.0.1:{PORT}/status",
@@ -927,13 +769,7 @@ def _probe(timeout=0.6):
 
 
 def _await_ingest(artifact_id, published_at, timeout=3.0):
-    """Block until the shared server is serving the artifact we just wrote.
-
-    `publish()` returns a URL and opens a browser at it. Without this the tab
-    can open before the watcher has picked the state file up, so the user sees
-    the empty page and the success message describes this process's memory
-    rather than what the URL actually serves.
-    """
+    """Block until the shared server serves the artifact, before a tab opens."""
     import urllib.request
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -952,26 +788,18 @@ def _await_ingest(artifact_id, published_at, timeout=3.0):
 
 
 def ensure_preview_server(timeout=8.0):
-    """Guarantee a preview server owns PORT, without owning it ourselves.
+    """Ensure a preview server owns PORT, in its own session, not this process.
 
-    The listener must NOT live in this process. Claude Code terminates a stdio
-    MCP server when the session ends (MCP spec: close stdin, then SIGTERM, then
-    SIGKILL), so a listener parented to it dies with the session while the
-    preview_url stays in the transcript -- the measured cause of "refused to
-    connect". The server is therefore started in its own session and outlives
-    us. Concurrent sessions do not each get one: whoever loses the bind race
-    exits, and everybody reuses the winner.
+    The MCP process dies at session end; bind-race losers exit and reuse the
+    winner.
     """
     global _http_error
     if _probe():
         _http_error = ""
         return True
 
-    # The child is told the port and the state directory EXPLICITLY rather than
-    # inheriting them. Both are resolved at import time, and a caller that has
-    # since changed os.environ would otherwise hand us a server on a different
-    # port, reading a different state file -- and the state file IS the
-    # transport, so the two processes have to agree on it or nothing arrives.
+    # Pass import-time port and state dir explicitly: the state file is the
+    # transport, so both processes must agree on it.
     env = dict(os.environ,
                LOCAL_ARTIFACTS_PORT=str(PORT),
                XDG_STATE_HOME=str(STATE_DIR.parent))
@@ -980,8 +808,7 @@ def ensure_preview_server(timeout=8.0):
                          cwd=str(Path(__file__).resolve().parent), env=env,
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL,
-                         start_new_session=True)   # not in our process group:
-                                                   # our SIGTERM must not reach it
+                         start_new_session=True)   # immune to our SIGTERM
     except Exception as e:
         _http_error = f"cannot start the preview server ({e})."
         return False
@@ -1000,22 +827,13 @@ def ensure_preview_server(timeout=8.0):
 
 
 def auto_open_enabled():
-    """Whether a successful publish may open a window, and which switch decided.
+    """Return whether publish may open a window, and which switch decided.
+
+    ailocal's variable, then CLAUDE_CODE_ARTIFACT_AUTO_OPEN, then enabled; any
+    value but "0" enables, as upstream.
 
     Returns:
-        (enabled, source): `source` names the variable that decided, or
-        "default" when neither is set. Returned rather than logged so the
-        caller can report precedence without this function knowing about
-        diagnostics.
-
-    Precedence is ailocal's own variable first, then the official Claude Code
-    one, then enabled. That is the same shape as every other ailocal knob
-    (`AILOCAL_TOOL_SEARCH`, `LOCAL_ARTIFACTS_PORT`): the product-specific name
-    is the override and the general default sits under it. Honouring
-    CLAUDE_CODE_ARTIFACT_AUTO_OPEN at all is a compatibility obligation -- it
-    is Anthropic's documented flag for the hosted feature and upstream
-    local-artifacts mirrored it deliberately, so a user who sets it is entitled
-    to have it work here. Any value other than "0" enables, matching upstream.
+        (enabled, source); `source` is the deciding variable or "default".
     """
     for var in ("LOCAL_ARTIFACTS_AUTO_OPEN", "CLAUDE_CODE_ARTIFACT_AUTO_OPEN"):
         val = os.environ.get(var)
@@ -1025,7 +843,7 @@ def auto_open_enabled():
 
 
 def _watchers(timeout=0.6):
-    """Live viewer count from /status, or None if the server did not answer."""
+    """Return the live viewer count from /status, or None if no answer."""
     import urllib.request
     try:
         req = urllib.request.Request(f"http://127.0.0.1:{PORT}/status",
@@ -1037,29 +855,10 @@ def _watchers(timeout=0.6):
 
 
 def _needs_presentation(grace=None):
-    """True when no browser is watching this viewer, so publishing needs a window.
+    """Return True if no tab watches now or reattaches within PRESENT_GRACE.
 
-    Returns:
-        True if nothing reattached within the grace window.
-
-    THE SIGNAL, AND WHY IT IS NOT THE OBVIOUS ONE. `_opened_once` used to answer
-    this, and it was wrong: it tracked "this MCP session called the opener", but
-    the viewer is a separate process on a different lifetime that reaps after
-    IDLE_EXIT and is restarted by the next publish. [REAL] reproduced --
-    publish, reap the viewer, publish again: a brand-new viewer came up with no
-    tab attached and no window opened, because a flag from the previous viewer's
-    lifetime was still set.
-
-    A bare `watchers == 0` is not the fix either. An open tab drops its
-    EventSource whenever the viewer restarts, so it reads as zero watchers for
-    VIEWER_RELOAD_MS while it heals -- and opening then would put a second
-    window on top of a tab that was coming back on its own. Viewer
-    identity/generation fails the same way for the same reason.
-
-    So the question is asked over time, not instantaneously: is anyone watching
-    NOW, and if not, does anyone arrive within a window longer than the tab's own
-    reload delay. A live tab reattaches inside it; a closed one never does. The
-    wait is only paid when the fast path finds nobody.
+    Sampled over time: a healing tab reads zero watchers for VIEWER_RELOAD_MS,
+    and a session flag outlives the viewer it described.
     """
     if _watchers():
         return False                      # someone is already watching
@@ -1072,17 +871,11 @@ def _needs_presentation(grace=None):
 
 
 def _open_browser(url):
-    """Hand `url` to the OS default browser. Returns a diagnostic outcome string.
+    """Hand `url` to the OS default browser, never the validation Chrome.
 
     Returns:
         One of "opened", "disabled:<var>", "watched", "failed:<reason>" or
         "unsupported-platform". The caller records it; nothing here logs.
-
-    This is PRESENTATION and deliberately uses the OS default-browser mechanism.
-    It is not the browser Mermaid validation drives -- that one is an isolated
-    headless Chrome on a throwaway profile in mermaid_validate.py, and the two
-    must never be merged: validating in the user's browser would show them a
-    diagram we are still deciding to reject.
     """
     enabled, source = auto_open_enabled()
     if not enabled:
@@ -1098,14 +891,11 @@ def _open_browser(url):
         return f"failed:{type(e).__name__}"
 
 
-# ── Publish logic shared by MCP and tests ─────────────────────────────────────
-
 class PublishError(Exception):
     pass
 
 
-# Subresources the sandbox CSP will refuse to load. An <a href> is navigation,
-# not a subresource, so it is deliberately NOT matched here.
+# Subresources the CSP refuses; <a href> is navigation, so not matched.
 _SUBRESOURCE_PATTERNS = (
     re.compile(r"""<script[^>]*\ssrc\s*=\s*["']?\s*(https?:)?//([^"'\s>]+)""", re.I),
     re.compile(r"""<link[^>]*\shref\s*=\s*["']?\s*(https?:)?//([^"'\s>]+)""", re.I),
@@ -1116,15 +906,7 @@ _SUBRESOURCE_PATTERNS = (
 
 
 def external_subresources(content):
-    """Remote subresources the artifact will never be able to load.
-
-    [REAL] gemma4:26b-mlx answered "draw an architecture diagram" with a page
-    whose only content was a mermaid <script src> from cdn.jsdelivr.net and no
-    inline SVG. Under this CSP that page renders blank. Publishing it and
-    reporting success would be reporting a success that is not one, so the
-    reference is detected and the publish is refused with something the model
-    can act on.
-    """
+    """Return remote subresources the CSP blocks, so a blank page is refused."""
     found = []
     for pat in _SUBRESOURCE_PATTERNS:
         for m in pat.finditer(content or ""):
@@ -1135,14 +917,17 @@ def external_subresources(content):
 
 
 def resolve_input(content: str, file_path: str):
-    """Returns (content, format_hint). Raises PublishError with a plain reason."""
+    """Return (content, format_hint).
+
+    Raises:
+        PublishError: With a plain reason.
+    """
     if file_path and not content:
         try:
             p = Path(file_path).expanduser()
             if not p.is_absolute():
                 p = APPROVED_ROOT / p
-            # resolve() follows symlinks, so a link inside the root pointing
-            # outside it is caught by the containment check below.
+            # Follow symlinks so the containment check catches escaping links.
             p = p.resolve()
         except OSError as e:
             return None, f"cannot resolve path: {e}"
@@ -1181,9 +966,7 @@ def resolve_input(content: str, file_path: str):
 
 
 def slugify(text, fallback="artifact"):
-    """A filesystem-safe id. Deliberately conservative: lowercase, [a-z0-9-],
-    collapsed dashes, length-capped, and never empty, so an id can never escape
-    the artifact directory or collide with a dotfile."""
+    """Return a non-empty capped [a-z0-9-] id; cannot escape or be a dotfile."""
     out = []
     for ch in (text or "").lower():
         if ch.isalnum() and ch.isascii():
@@ -1199,13 +982,12 @@ def _source_path(artifact_id, fmt):
 
 
 def persist_source(artifact_id, fmt, source):
-    """Write the canonical SOURCE -- the semantic graph, the Mermaid text, the
-    HTML the model wrote -- not the rendered SVG. Rendered output is cache; the
-    source is what stays editable and reproducible.
+    """Write the canonical source, not rendered output (that is cache).
 
-    Returns (path, note). Never raises: a project that cannot be written to
-    (read-only mount, permissions) must still get a working preview, and the
-    tool result says so rather than pretending a file exists.
+    Never raises: an unwritable project still gets a preview, and says so.
+
+    Returns:
+        (path, note).
     """
     try:
         ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
@@ -1217,19 +999,9 @@ def persist_source(artifact_id, fmt, source):
 
 
 def resolve_artifact_id(title, artifact_id):
-    """One title maps to one artifact, deterministically.
+    """Map one title to one artifact id deterministically, across sessions.
 
-    An earlier version appended -2/-3 when a derived id already existed, but the
-    result depended on whether persisted state happened to be restored, so the
-    SAME action produced a different filename in a fresh session than in a warm
-    one. Predictability matters more here: a derived id always addresses the same
-    file, so regenerating a diagram across sessions updates it instead of
-    littering .artifacts/ with near-duplicates.
-
-    The trade-off, stated plainly: two genuinely different artifacts that share a
-    title share a file. That is why every result reports the artifact_id and
-    source_path it used, and why artifact_id is an explicit parameter -- passing
-    distinct ids is how you keep distinct artifacts apart.
+    Same-titled artifacts share a file; pass distinct `artifact_id`s to split.
     """
     if artifact_id and artifact_id.strip():
         return slugify(artifact_id)
@@ -1238,7 +1010,7 @@ def resolve_artifact_id(title, artifact_id):
 
 def publish(title, content="", file_path="", fmt="html", emoji="\U0001F4C4",
             artifact_id=""):
-    """Full publish path. Returns (ok: bool, message: str)."""
+    """Publish an artifact; return (ok, message)."""
     if not isinstance(title, str) or not title.strip():
         return False, "Publish failed: 'title' is required and must be a string."
     if fmt not in FORMATS:
@@ -1256,9 +1028,7 @@ def publish(title, content="", file_path="", fmt="html", emoji="\U0001F4C4",
     source_text, source_fmt = text, fmt
 
     if fmt == "architecture":
-        # The model supplies MEANING (nodes/groups/edges/kinds); ELK supplies
-        # geometry and the design system supplies presentation. What gets served
-        # is a complete static-SVG document with no script in it at all.
+        # Model supplies meaning, ELK geometry, tokens presentation; no script.
         try:
             spec = json.loads(text)
         except json.JSONDecodeError as e:
@@ -1273,8 +1043,7 @@ def publish(title, content="", file_path="", fmt="html", emoji="\U0001F4C4",
             return False, f"Publish failed: could not lay out the diagram ({e})."
         fmt = "html"
 
-    # Grammar gate BEFORE anything is persisted or served: a rejected
-    # artifact must leave no trace and must tell the MODEL, not the human.
+    # Gate before persisting: a rejection leaves no trace and tells the model.
     mermaid_err = check_mermaid(text, fmt)
     if mermaid_err:
         return False, mermaid_err
@@ -1297,22 +1066,15 @@ def publish(title, content="", file_path="", fmt="html", emoji="\U0001F4C4",
 
     aid = resolve_artifact_id(title, artifact_id)
 
-    # Persistence is automatic. [REAL] across the routing benchmark the model
-    # published substantial artifacts with content= every single time and never
-    # chose file_path, so leaving durability to the model's judgement left
-    # nothing behind when the session exited.
+    # Persist automatically: models always use content=, never file_path.
     src_path, src_note = persist_source(aid, source_fmt, source_text)
 
     now = time.strftime("%Y-%m-%d %H:%M:%S")
     _publish(title=title, emoji=emoji, content=text, fmt=fmt, published_at=now,
              artifact_id=aid)
 
-    # The viewer can die between coming up and ingesting this artifact -- it is
-    # shared and long-lived, so another session's reaper or a stray kill can land
-    # in exactly that window. Recover once (a fresh server reloads the state file
-    # at import, so it comes up already serving this artifact), and if that still
-    # fails, SAY so: reporting a preview_url nobody is listening on is the exact
-    # failure this whole design exists to remove.
+    # The shared viewer can die before ingest; recover once (a fresh server
+    # loads the state file), else say so rather than report a dead URL.
     preview_note = ""
     if not _await_ingest(aid, now):
         if not (ensure_preview_server() and _await_ingest(aid, now)):
@@ -1339,37 +1101,16 @@ def publish(title, content="", file_path="", fmt="html", emoji="\U0001F4C4",
     return True, "\n".join(lines)
 
 
-# ── MCP ───────────────────────────────────────────────────────────────────────
-
-# OPTIONAL, CLIENT-DEPENDENT, NOT RELIED UPON FOR CORRECTNESS.
-# [REAL] captured at the wire on Claude Code 2.1.231: a session's system prompt
-# contains no MCP or artifact text whatsoever, with tool search on and off, so
-# nothing here reaches the model on this client. It is kept short for clients
-# that do honour `initialize.instructions`, and deliberately does not restate
-# the routing contract -- that lives in TOOL_DESCRIPTION, which is proven
-# model-visible, and the format guidance lives in the skill. Three copies of one
-# policy is how they drift apart.
+# Not relied on: Claude Code 2.1.231 did not show it to the model. Routing
+# lives in TOOL_DESCRIPTION, format guidance in the skill.
 SERVER_INSTRUCTIONS = (
     "Renders and publishes local visual artifacts. Routing and format rules are "
     "carried by the mcp__artifact__publish tool description."
 )
 
 TOOL_DESCRIPTION = (
-    # The exact native name comes first. [REAL] with the longer name
-    # `mcp__local-artifacts__publish_artifact` the model emitted a well-formed
-    # tool_use that simply dropped the mandatory `mcp__` prefix in 3 of 18 runs.
-    # Plugin packaging was measured and REJECTED for making this worse: a
-    # plugin-provided server is namespaced mcp__plugin_<plugin>_<server>__<tool>.
-    #
-    # THIS STRING IS THE ROUTING CONTRACT. The MCP server's `instructions` are
-    # NOT delivered to the model on this client -- [REAL] captured at the wire,
-    # the system prompt contains no MCP or artifact text at all, with tool
-    # search on or off. Anything required for correct routing has to be here.
-    #
-    # The vocabulary line is measured, not decorative: at n=3 each, "Publish a
-    # flowchart", "Create a flowchart" and "Publish a diagram" scored 0/3 and
-    # returned fenced Mermaid instead, while "Publish a Mermaid diagram" and
-    # "Visualize ..." scored 3/3. The words that failed are now stated.
+    # The routing contract: server instructions never reach the model. Short
+    # exact name first (longer ones lost `mcp__`); verbs listed were measured.
     "Use mcp__artifact__publish to publish, create, draw, sketch, make, render, "
     "show, visualize or present a visual artifact: a flowchart, diagram, "
     "architecture or system diagram, class/relationship diagram, "
@@ -1378,21 +1119,13 @@ TOOL_DESCRIPTION = (
     "When the result is a visual artifact, CALL THIS TOOL instead of returning "
     "Mermaid, HTML or architecture JSON as a fenced code block -- an artifact "
     "only exists once the tool is called.\n"
-    # [REAL] the second measured vocabulary gap. "draw me a code architecture
-    # diagram of the classes and objects in this pipeline" -- an actual phrase a
-    # user typed -- and its neighbours routed 2/4 and 1/4, because the verbs
-    # draw/sketch/make were absent and "class relationships" named no listed
-    # noun. Stating the RULE as well as the words is what generalises past the
-    # next synonym nobody listed.
+    # State the rule, not just words, so it generalises to unlisted synonyms.
     "A visual verb (draw, sketch, make, render, show, diagram) asking for a "
     "picture of code, classes, objects, services or a process MEANS call this "
     "tool -- the user does not have to say \"publish\". Only return the source "
     "in your reply instead when they explicitly ask for the source, the raw "
     "Mermaid, or text.\n"
-    # Choose the FORM from the question, not a default. [REAL] the model
-    # reached for classDiagram even when asked for "architecture", producing a
-    # class inventory instead of a system view. One line here; the reasoning
-    # (scope, grouping, evidence) is Cadence's, not the renderer's.
+    # Form from the question: models defaulted to classDiagram for architecture.
     "Pick the format from what was asked: architecture/topology -> architecture; "
     "class or type relationships -> mermaid classDiagram; runtime interaction -> "
     "mermaid sequenceDiagram; process/control flow -> mermaid flowchart.\n"
@@ -1416,31 +1149,16 @@ TOOL_DESCRIPTION = (
 
 
 def build_mcp():
-    """Build the MCP server.
-
-    mcp 2.x renamed FastMCP to MCPServer and dropped the v1
-    @app.list_tools()/@app.call_tool() decorators the upstream project used;
-    the schema is derived from the annotations and Field descriptions below.
-    """
+    """Build the MCP server; mcp 2.x derives the schema from annotations."""
     from mcp.server.mcpserver import MCPServer
     from pydantic import Field
     from typing import Annotated, Literal
 
-    # Server instructions. With ToolSearch enabled Claude Code keeps these
-    # visible while tool SCHEMAS are deferred, so this is the routing signal
-    # that survives deferral -- and the documented place to say what the server
-    # is for and when to reach for it. Claude Code truncates at 2 KB, so the
-    # important semantics come first.
+    # Visible while ToolSearch defers schemas; truncated at 2 KB, so lead first.
     server = MCPServer(name="local-artifacts", instructions=SERVER_INSTRUCTIONS)
 
-    # Claude Code's ToolSearch defers most MCP schemas to keep the model's tool
-    # surface small -- measured here at 70 tools -> 23. That is exactly the
-    # pressure a local model buckles under, but the default deferral picked the
-    # WRONG tools: it deferred this one and kept 11 grepai tools eager.
-    # `anthropic/alwaysLoad` is the supported per-tool opt-out, declared by the
-    # server that owns the tool, so nothing in ailocal or the operator's config
-    # has to know about it. searchHint is what ToolSearch matches on when a tool
-    # IS deferred, so it is worth setting either way.
+    # `anthropic/alwaysLoad`: ToolSearch deferred this tool by default.
+    # searchHint is what ToolSearch matches if it is deferred anyway.
     @server.tool(name="publish", description=TOOL_DESCRIPTION,
                  structured_output=False,
                  meta={"anthropic/alwaysLoad": True,
@@ -1479,18 +1197,14 @@ def build_mcp():
 
 
 def start_http_thread():
-    """In-process listener. Used by the test suite, which drives publish() and
-    the HTTP surface inside one interpreter. Production uses `--serve` instead:
-    a listener in the MCP process dies with the session."""
+    """Start an in-process listener for tests; production uses `--serve`."""
     t = threading.Thread(target=_run_http, daemon=True)
     t.start()
     return t
 
 
 def serve_main():
-    """The shared preview server. One per machine, started on demand by the
-    first session that publishes, reused by every session after it, and gone
-    IDLE_EXIT seconds after the last viewer closes the tab."""
+    """Run the shared preview server until IDLE_EXIT after the last viewer."""
     try:
         srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     except OSError:
@@ -1507,10 +1221,7 @@ def serve_main():
 def diagnose_main():
     """Print why presentation would or would not open a window right now.
 
-    Answers the question the historical investigation could not: is the opener
-    disabled, is a tab already watching, or was it attempted and did it fail.
-    Reads the same signals publish() does, and prints no artifact content and no
-    environment VALUES -- only which variable decided.
+    Reads publish()'s signals; prints no content or env values, only names.
     """
     enabled, source = auto_open_enabled()
     watchers = _watchers()
@@ -1534,8 +1245,7 @@ if __name__ == "__main__":
         sys.exit(diagnose_main())
     if "--serve" in sys.argv:
         sys.exit(serve_main())
-    # MCP mode binds nothing. The preview server is started lazily by the first
-    # publish, so a session that never draws anything costs no process at all.
+    # MCP mode binds nothing; the first publish starts the preview server.
     try:
         build_mcp().run("stdio")
     except KeyboardInterrupt:

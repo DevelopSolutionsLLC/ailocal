@@ -1,7 +1,7 @@
-"""Shared mechanics for the test suites: reporting, module loading, temp dirs.
+"""Share test mechanics: reporting, module loading, temp dirs.
 
-Importing it points AILOCAL_DATA at the checkout's resources (unless already
-set) and puts the checkout's src/ first for this process and its children.
+Import sets AILOCAL_DATA (if unset) and puts the checkout's src/ first for
+this process and its children.
 """
 
 from __future__ import annotations
@@ -28,8 +28,7 @@ if str(REPO / "src") not in _pp.split(os.pathsep):
 
 _GREEN, _RED, _YELLOW, _RESET = "\033[32m", "\033[31m", "\033[33m", "\033[0m"
 
-#: Tests one suite (one component) may report. A suite past it fails, so the
-#: limit is enforced rather than remembered (#113).
+#: Max tests per suite; exceeding it fails, so the limit is enforced (#113).
 MAX_TESTS = 5
 
 
@@ -39,7 +38,7 @@ def _over_limit(count: int) -> str:
 
 
 class Suite:
-    """One PASS/FAIL/SKIP line per check; report() returns the exit status."""
+    """Print one PASS/FAIL/SKIP line per check; report() returns the status."""
 
     def __init__(self, title: str = "") -> None:
         self.failures: list[str] = []
@@ -84,7 +83,7 @@ class Suite:
 
 
 def unittest_main() -> None:
-    """unittest.main() with the per-component limit applied to the tests it ran."""
+    """Run unittest.main() with the per-suite limit applied."""
     import unittest
     result = unittest.main(exit=False).result
     if over := _over_limit(result.testsRun):

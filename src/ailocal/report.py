@@ -1,10 +1,4 @@
-"""The one set of terminal report helpers.
-
-Every command prints progress through these, on stdout, so a caller that
-captures one stream sees the whole report; three modules each carried a copy
-with its own stream policy, and a warning landed on stderr in one command and
-stdout in the next.
-"""
+"""Terminal report helpers; all on stdout so one captured stream is whole."""
 
 from __future__ import annotations
 
@@ -25,5 +19,5 @@ def dim(m):  print(f"  {_c('—', DIM)} {m}")
 def hdr(m):  print(f"\n{BOLD}{m}{RESET}")
 
 
-info = ok      # one spelling per concept: a confirmed step is `ok`
-skip = dim     # a step with nothing to do
+info = ok
+skip = dim

@@ -17,8 +17,7 @@ from pathlib import Path
 
 from . import policy
 
-#: Settings that exempt modules from the public checksum database; the build
-#: drops each and sets GOENV=off so a `go env -w` file cannot restore one (#78).
+#: Checksum-DB exemptions the build drops; GOENV=off blocks `go env -w` (#78).
 GO_SUMDB_EXEMPTIONS = ("GOSUMDB", "GONOSUMDB", "GONOSUMCHECK", "GOPRIVATE",
                        "GONOPROXY", "GOINSECURE", "GOFLAGS", "GOENV")
 
@@ -34,7 +33,7 @@ def _inventory(root: Path) -> dict[str, str]:
 
 
 def verify(path: Path) -> bool:
-    """Verify the complete owned payload, including its pinned build identity."""
+    """Verify the complete owned payload, including its pinned build id."""
     try:
         spec = policy.ollama_patch_spec()
         if path.parent.is_symlink() or any(p.is_symlink() for p in path.parent.rglob("*")):
@@ -54,7 +53,7 @@ def verify(path: Path) -> bool:
 
 
 def remove() -> tuple[list[str], list[str]]:
-    """Remove intact owned versions after services stop; preserve everything else."""
+    """Remove intact owned versions after services stop; keep all else."""
     removed, preserved = [], []
     root = policy.ollama_runtime_root()
     if root.is_symlink():
@@ -143,9 +142,7 @@ def _copy_payload(stock: Path, destination: Path) -> dict[str, str]:
     return _inventory(destination)
 
 
-#: Ollama's Developer ID team. The release tarball's CLI is pinned by hash;
-#: every Mach-O copied beside it must carry this signature (measured on
-#: v0.40.14: all 32 pass, a modified or other-team binary fails).
+#: Developer ID team every Mach-O beside the hash-pinned CLI must carry.
 OLLAMA_SIGNATURE = 'anchor apple generic and certificate leaf[subject.OU] = "3MU9H2V9Y9"'
 _MACHO = (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe")
 
@@ -163,7 +160,7 @@ def _verify_native_signatures(payload: Path, deadline: float) -> None:
 
 
 def _release_native_payload(spec: dict, work: Path, deadline: float) -> Path:
-    """Acquire the exact release tarball the ollama-binary cask installs, in build space."""
+    """Fetch the exact release tarball the ollama-binary cask installs."""
     print(f"  Fetching the pinned Ollama {spec['base_version']} native base", flush=True)
     archive = work / "native-base.tgz"
     _download(spec["native_archive_url"], archive, spec["native_archive_sha256"], deadline)
@@ -184,7 +181,7 @@ def _release_native_payload(spec: dict, work: Path, deadline: float) -> Path:
 
 
 def _cached_native_payload(root: Path, spec: dict) -> tuple[Path, dict] | None:
-    """Reuse intact owned native files for the exact source base, never a newer app's ABI."""
+    """Reuse intact owned native files for the exact source base only."""
     if root.is_symlink() or not root.is_dir():
         return None
     for child in sorted(root.iterdir(), reverse=True):
@@ -216,9 +213,7 @@ def _cached_native_payload(root: Path, spec: dict) -> tuple[Path, dict] | None:
 
 
 def _require_supported_go(toolchain: str) -> None:
-    """Refuse a toolchain outside the version policy: its standard library is
-    linked into the daemon, so an outdated point release ships its advisories
-    (docs/architecture.md#version-policy)."""
+    """Refuse a Go outside version policy; its stdlib links into the daemon."""
     from . import version_policy as vp
     from .checks import services
     m = re.search(r"\bgo(\d+(?:\.\d+)+)\b", toolchain)
@@ -234,7 +229,7 @@ def _require_supported_go(toolchain: str) -> None:
         raise RuntimeError(f"{why}; install it (brew upgrade go) and re-run")
 
 def prepare() -> Path:
-    """Build/test atomically; never switch a service or change the installed cask."""
+    """Build/test atomically; never switch a service or change the cask."""
     spec = policy.ollama_patch_spec()
     root = policy.ollama_runtime_root()
     target = root / spec["version"]
@@ -243,8 +238,7 @@ def prepare() -> Path:
         if verify(binary):
             return binary
         raise RuntimeError(f"Existing owned Ollama runtime failed integrity checks: {target}")
-    # The product supports macOS on Apple Silicon only (AGENTS.md); this is the
-    # one place that states it in code, as a precondition of a native build.
+    # macOS on Apple Silicon only (AGENTS.md); native-build precondition.
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise RuntimeError("The reviewed Ollama patch supports macOS arm64 only")
     missing = [name for name in ("go", "git", "codesign") if not shutil.which(name)]
@@ -260,9 +254,7 @@ def prepare() -> Path:
                          "vendor_binary_sha256": (parent_receipt.get("native_origin") or {}).get(
                              "vendor_binary_sha256", parent_receipt.get("stock_sha256"))}
     else:
-        # The ollama-binary cask installs the pinned release tarball unmodified;
-        # its CLI hash proves which one, and the payload signatures are checked
-        # after copying. Any other installed Ollama fetches the pinned tarball.
+        # Cask = unmodified pinned tarball (CLI hash proves it); else fetch it.
         stock = Path(policy.stock_ollama_binary()).resolve()
         if stock.is_file() and _sha(stock) == spec["native_cli_sha256"]:
             native_origin = {"kind": "signed-vendor-cask", "path": str(stock.parent),
@@ -324,15 +316,11 @@ def prepare() -> Path:
         _run(["git", "apply", str(stop_patch)], deadline, cwd=source)
         _run(["git", "apply", "--check", str(qwen35_patch)], deadline, cwd=source)
         _run(["git", "apply", str(qwen35_patch)], deadline, cwd=source)
-        # Vendor tests must neither import fixtures into the operator's store
-        # nor contact their serving daemon. Keep test state inside this build.
+        # Keep vendor test state in this build, off the operator's store/daemon.
         test_models = work / "test-models"
         test_models.mkdir()
-        # Go's module and build caches default to ~/go and the user cache
-        # directory, where they outlive the build and no receipt names them.
-        # Keep them in this build's temporary space; -modcacherw lets it be removed.
-        # A user's go-env file or GONOSUMDB/GOPRIVATE/GOINSECURE would exempt
-        # modules from the public checksum database; this build allows none (#78).
+        # Go caches stay in build space (-modcacherw allows removal); no
+        # checksum-DB exemption from user go-env or GONOSUMDB etc. (#78).
         env = {k: v for k, v in os.environ.items() if k not in GO_SUMDB_EXEMPTIONS}
         env.update(CGO_ENABLED="1", GOOS="darwin", GOARCH="arm64", GOENV="off",
                    GOSUMDB="sum.golang.org",
@@ -366,10 +354,8 @@ def prepare() -> Path:
         history_test = payload / "qwen35-history.test"
         _run(["go", "test", "-c", "-o", str(history_test), "./model/renderers"],
              deadline, cwd=source, env=env)
-        # Run upstream reference cases too. Optional tokenizer/model parity
-        # tests may skip; the three required history regressions may not.
-        # The suite reads `testdata/` relative to its package, as `go test`
-        # runs it; from any other directory two fixture tests fail on open.
+        # Parity tests may skip; the three history regressions may not.
+        # Run from the package dir: the suite opens `testdata/` relatively.
         history_result = _run([str(history_test), "-test.v", "-test.timeout=60s"],
                               deadline, cwd=source / "model" / "renderers", env=env)
         if any(f"--- SKIP: {name}" in history_result or f"--- PASS: {name}" not in history_result for name in (

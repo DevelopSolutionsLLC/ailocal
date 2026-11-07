@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Proxy hooks as the image loads them: import, reasoning-effort transport, tool-result
-identity and the reasoning loop guard. Runs inside the LiteLLM container via
-tests/in-container.sh; reads /app paths only and talks to a fake Ollama on 127.0.0.1.
+"""Test proxy hooks as the LiteLLM image loads them, inside the container.
+
+Import, reasoning-effort transport, tool-result identity, loop guard. Via
+tests/in-container.sh; reads /app only; fake Ollama on 127.0.0.1.
 """
 import asyncio
 import json
@@ -16,10 +17,9 @@ HOOKS = "/app/config/hooks"
 suite = Suite("gateway (in the proxy image)")
 check = suite.check
 
-# ── hooks import ────────────────────────────────────────────────────────
-# A registered-but-unimportable callback takes the container down at boot, and a
-# sibling import that works on the host fails under LiteLLM's loader (by path,
-# hooks dir not on sys.path). Each runs in a fresh isolated interpreter to match it.
+# hooks import
+# An unimportable callback kills boot; LiteLLM loads by path (hooks dir not on
+# sys.path), so each import runs in a fresh isolated interpreter.
 suite.section("HOOKS IMPORT (LiteLLM loader semantics)")
 _LOADER = """
 import importlib.util, sys
@@ -41,7 +41,7 @@ check(not failed, "every registered hook imports by path, as LiteLLM loads it (b
 cr = load_module("capability_registry", f"{HOOKS}/capability_registry.py")
 router = load_module("reasoning_router", f"{HOOKS}/reasoning_router.py")
 
-# ── reasoning effort and tool identity at the Ollama boundary ──────────
+# reasoning effort and tool identity at the Ollama boundary
 import litellm  # noqa: E402
 
 suite.section("OLLAMA BOUNDARY (fake backend)")
@@ -90,9 +90,9 @@ try:
     check(got == want, "reasoning effort reaches Ollama as think on both routes; explicit think:false wins",
           str(got))
 
-    # #84: Ollama's Gemma4Renderer names a tool result from tool_name, else by the
-    # call id; LiteLLM 1.106.5 sends neither, so the model read "response:unknown".
-    load_module("startup", f"{HOOKS}/startup.py")  # installs the tool-identity patch in-process
+    # #84: Gemma4Renderer names a tool result by tool_name or call id; LiteLLM
+    # 1.106.5 sent neither, so the model read "response:unknown".
+    load_module("startup", f"{HOOKS}/startup.py")  # tool-identity patch
     loop = [{"role": "user", "content": "read both"},
             {"role": "assistant", "content": "", "tool_calls": [
                 {"id": "call_a", "type": "function", "function": {"name": "Read", "arguments": '{"path": "a"}'}},
@@ -112,7 +112,7 @@ finally:
     server.shutdown()
     server.server_close()
 
-# ── reasoning loop guard (#68, #69) ─────────────────────────────────────
+# reasoning loop guard (#68, #69)
 suite.section("REASONING LOOP GUARD")
 guard_mod = load_module("reasoning_loop_guard", f"{HOOKS}/reasoning_loop_guard.py")
 gemma = cr.Registry()

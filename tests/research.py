@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""Research MCP: the network boundary, the Brave key and budget, cited answers, and client
-registration. Staged search/model backends on loopback; no paid queries; temp state only."""
+"""Test the research MCP: network boundary, Brave budget, answers, registration.
+
+Staged loopback backends; no paid queries; temp state only.
+"""
 import asyncio, contextlib, io, json, socket, subprocess, sys, tempfile, threading
 import unittest
 from pathlib import Path
@@ -25,7 +27,7 @@ BRAVE_KEY = 'fixture-brave-key'
 
 
 class Backend:
-    """One HTTP server playing SearXNG (/config, /search), Brave (/brave) and the model."""
+    """Serve SearXNG (/config, /search), Brave (/brave) and the model."""
     def __init__(self):
         self.brave, self.prompt = [], None
         self.answer = 'Supported by the supplied evidence [S1].'
@@ -63,7 +65,7 @@ class Backend:
 
 
 def connection(raw, *addresses):
-    """Pinned DNS answers plus one canned HTTP response, for transport.request."""
+    """Fake pinned DNS answers and one canned response for transport.request."""
     class Writer:
         def write(self, data): pass
         async def drain(self): pass
@@ -116,7 +118,7 @@ class Search(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(T.ResearchError, 'PRIVATE_ADDRESS'):
             await T.request(self.url, public=True)
         loop = asyncio.get_running_loop()
-        # DNS is resolved once and the connection pinned to that answer (no rebinding); TLS still names the host.
+        # DNS pinned once (no rebinding); TLS still names the host.
         resolve, connect = connection(b'HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok', '8.8.8.8', '127.0.0.1')
         with patch.object(loop, 'getaddrinfo', resolve), patch('transport.asyncio.open_connection', connect):
             await T.request('https://docs.example.org/page', public=True)
@@ -155,7 +157,7 @@ class Provisioning(unittest.TestCase):
     def test_registration_writes_only_the_given_home_and_never_displaces_a_foreign_server(self):
         cj = self.root / '.claude.json'
         def native(args, **kwargs):   # `claude mcp add-json`, which owns the write
-            # Without CLAUDE_CONFIG_DIR the native CLI writes the hosted client's real home.
+            # Without CLAUDE_CONFIG_DIR the CLI writes the hosted home.
             self.assertEqual((args[:6], kwargs['env']['CLAUDE_CONFIG_DIR']),
                              (['claude', 'mcp', 'add-json', '--scope', 'user', 'research'], str(self.root)))
             data = json.loads(cj.read_text())
@@ -168,7 +170,7 @@ class Provisioning(unittest.TestCase):
             cj.write_text('{}')
             self.assertTrue(C.provision_local_research(self.root))
             self.assertEqual(json.loads(cj.read_text())['mcpServers']['research'], launcher.registration())
-            # A file it cannot parse, or a `research` entry it did not write, is refused untouched.
+            # Unparseable file or foreign `research` entry → refused untouched.
             for original in ('{broken', json.dumps({'mcpServers': {'research': {'command': 'foreign'}}})):
                 cj.write_text(original)
                 self.assertFalse(C.provision_local_research(self.root))

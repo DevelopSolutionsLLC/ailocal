@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-"""The regression gate: every suite, one run. Usage: python3 tests/gate.py [--full]
+"""Run every suite once: the regression gate.
 
-Several suites need the running proxy image, so a suite that cannot run fails;
-nothing is skipped to a green result.
+Usage: python3 tests/gate.py [--full]. A suite that cannot run fails;
+nothing is skipped to green.
 """
 
 from __future__ import annotations
 
-import ast
 import os
 import pathlib
 import re
@@ -41,9 +40,10 @@ def _refuse(summary: str, remedy: str) -> None:
 
 
 def _preconditions(repo: pathlib.Path) -> None:
-    """Refuse states a later suite would silently repair, so a rerun cannot
-    turn a real failure green: a stale install, stale generated config, and a
-    missing local-agent runtime (each once passed only on rerun)."""
+    """Refuse states a later suite would silently repair, greening a rerun.
+
+    Stale install, stale generated cfg, missing local-agent runtime.
+    """
     from ailocal import policy as P
     from ailocal.checks.config import check_generated_in_sync
     from ailocal.checks.install_parity import REMEDIATION, compare
@@ -97,7 +97,7 @@ def _suites(full: bool) -> list:
             ("generation is a fixed point", _fixed_point),
             ("litellm runtime matches the validated version", _version_current),
             ("shell parses (bash -n, zsh -n) and passes ShellCheck", _shell_clean),
-            ("all python modules parse", _python_parses),
+            ("python parses at 3.11 and meets standard §8a (ruff)", _ruff_clean),
             ("the repository root holds only project concepts", _root_is_clean),
         ]),
     ]
@@ -108,7 +108,7 @@ def _suites(full: bool) -> list:
 
 
 def _fixed_point(repo: pathlib.Path) -> tuple[int, str]:
-    """The generated config is the deployed config; a second run must not change it."""
+    """Check the generated cfg is deployed and a second run changes nothing."""
     from ailocal import policy as P
     generated = P.state_root() / "litellm" / "config.yaml"
     before = generated.read_bytes() if generated.is_file() else b""
@@ -125,8 +125,7 @@ def _version_current(repo: pathlib.Path) -> tuple[int, str]:
 
 
 def _shell_clean(repo: pathlib.Path) -> tuple[int, str]:
-    """bash -n and zsh -n on every script; ShellCheck (warning+) on bash only,
-    since it does not implement zsh."""
+    """Run bash -n/zsh -n on all scripts; ShellCheck bash only (no zsh)."""
     if not shutil.which("shellcheck"):
         return 1, "shellcheck is required: brew install shellcheck"
     bad = []
@@ -146,19 +145,17 @@ def _shell_clean(repo: pathlib.Path) -> tuple[int, str]:
     return (1, "\n".join(bad)) if bad else (0, "")
 
 
-def _python_parses(repo: pathlib.Path) -> tuple[int, str]:
-    bad = []
-    for f in sorted([*repo.glob("src/**/*.py"), *repo.glob("tests/**/*.py")]):
-        try:
-            ast.parse(f.read_text(encoding="utf-8"))
-        except SyntaxError as exc:
-            bad.append(f"{f}: {exc}")
-    return (1, "\n".join(bad)) if bad else (0, "")
+def _ruff_clean(repo: pathlib.Path) -> tuple[int, str]:
+    """Parse at the requires-python floor; enforce standard §8a docstrings."""
+    if not shutil.which("ruff"):
+        return 1, "ruff is required: pipx install ruff"
+    r = subprocess.run(["ruff", "check", "--output-format", "concise", "src", "tests"],
+                       capture_output=True, text=True, cwd=repo)
+    return r.returncode, r.stdout.strip()
 
 
 def _root_is_clean(repo: pathlib.Path) -> tuple[int, str]:
-    """Nothing generated is tracked (the index, so a staged change is judged)
-    and the suites left no untracked file in the checkout."""
+    """Check nothing generated is indexed and suites left no untracked file."""
     tracked = subprocess.run(["git", "ls-files"], cwd=repo, capture_output=True, text=True)
     if tracked.returncode:
         return 1, "could not list the tracked root"

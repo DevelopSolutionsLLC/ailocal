@@ -45,3 +45,19 @@ ailocal = ["resources/**/__pycache__/*", "resources/**/*.pyc"]
 where = ["src"]
 include = ["ailocal*"]
 exclude = ["ailocal.resources*"]
+
+# Standard §8a: Google docstrings, comments and docstrings ≤ 80 columns. D1 is off:
+# docstrings go on public API by judgement, not on every definition.
+[tool.ruff]
+required-version = ">=0.17.3"
+extend-exclude = ["dist", "build"]
+
+[tool.ruff.lint]
+select = ["D", "W505"]
+ignore = ["D1"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.pycodestyle]
+max-doc-length = 80

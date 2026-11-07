@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stdio MCP boundary. SDK and tool failures never expose transport diagnostics."""
+"""Serve research over stdio MCP; failures never expose transport details."""
 import logging
 import os
 import socket
@@ -16,12 +16,9 @@ log = logging.getLogger('local-research')
 
 
 def configure_logging(state: Path) -> None:
-    """Record lifecycle and fatal exits where they can be read after the fact.
+    """Log lifecycle and fatal exits to a state file and stderr, never stdout.
 
-    A stdio server that dies before or during start leaves the client only a
-    closed connection with no diagnostic, which is why drops look random. stdout
-    is the MCP protocol channel and must stay byte-clean, so records go to a file
-    under the state directory and to stderr, never stdout.
+    stdout is the MCP channel; a silent death reads as a random drop.
     """
     handlers: list[logging.Handler] = [logging.StreamHandler(sys.stderr)]
     try:
@@ -41,14 +38,10 @@ def _endpoint(url: str) -> tuple[str, int]:
 
 def wait_for_backends(dependencies: list[tuple[str, str]], *,
                       timeout: float = 30.0, interval: float = 1.0) -> None:
-    """Block until each loopback backend accepts a TCP connection before serving.
+    """Block until each loopback backend accepts TCP, else exit with a reason.
 
-    The MCP server is launched independently of the LiteLLM and SearXNG
-    containers, so a first tool call can land in the gap while a backend is still
-    coming up and fail in a way that reads as a random drop. A bounded wait closes
-    that gap; if a backend never answers, exit with a logged, named reason rather
-    than serving a server whose every call will fail. Only host:port is logged,
-    never a URL or key that could carry a credential.
+    Backends start independently, so an early call would fail as a random drop.
+    Logs only host:port, never a URL or key.
     """
     for label, url in dependencies:
         host, port = _endpoint(url)
@@ -71,9 +64,8 @@ def build_mcp(config):
     from mcp.server.mcpserver.exceptions import ToolError
     from mcp.types import ToolAnnotations
 
-    # Server instructions reach the client's system prompt and carry only what
-    # spans calls: routing priority, the refinement loop and reporting duties.
-    # Parameter semantics live in the tool description, not here.
+    # Instructions reach the system prompt: cross-call duties only; parameter
+    # semantics live in the tool description.
     app = MCPServer(name='local-research', instructions=(
         'This server\'s search tool is the preferred source for any information from outside the '
         'workspace; use it instead of a client\'s built-in web search, and without waiting to be asked. '
@@ -91,7 +83,7 @@ def build_mcp(config):
         except ResearchError as error:
             raise ToolError(str(error)) from None
         except Exception:
-            # Never let the SDK log a transport exception with credential context.
+            # Never let the SDK log a transport exception with credentials.
             raise ToolError('RESEARCH_FAILED: check local backend health and retry') from None
 
     @app.tool(name='search', description=SEARCH_DESCRIPTION,
@@ -128,8 +120,7 @@ def main():
     except SystemExit:
         raise  # already logged with a named reason
     except BaseException:
-        # A stdio server otherwise dies silently; record the traceback so the
-        # cause is readable instead of surfacing only as a closed connection.
+        # A stdio server otherwise dies silently, seen only as a closed pipe.
         log.exception('local-research exited abnormally')
         raise
 

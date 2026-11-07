@@ -1,15 +1,10 @@
-"""Docker Desktop: the settings ailocal recommends, checked, applied and restored.
+"""Check, apply and restore the Docker Desktop settings ailocal recommends.
 
-The ledger is data (resources/deploy/docker-desktop/settings.toml). A personal
-install has no documented write path: admin-settings.json is Docker Business
-only, and the `docker desktop` CLI (4.98.0) toggles Model Runner alone. So the
-undocumented settings-store.json is written only while Docker Desktop is
-stopped, and every value is read back through the backend's effective settings
-afterwards; a value that did not take is rolled back, never kept.
-
-Memory, disk and every unlisted setting are the operator's and never written.
-The originals are recorded once in a receipt, and `restore` (also run by
-teardown) puts back each one the operator has not changed since.
+No documented write path exists for personal installs (admin-settings.json is
+Business only; the CLI toggles Model Runner alone), so the undocumented
+settings-store.json is written only while stopped, then read back; a value that
+did not take is rolled back. Unlisted settings are never written; originals
+are recorded once and `restore` puts back those the operator has not changed.
 """
 
 from __future__ import annotations
@@ -29,13 +24,13 @@ from .report import dim, ok, step, warn
 
 STORE = Path.home() / "Library/Group Containers/group.com.docker/settings-store.json"
 BACKEND = Path.home() / "Library/Containers/com.docker.docker/Data/backend.sock"
-#: Outlives ailocal's disposable state, so teardown after a reinstall still restores.
+#: Outlives disposable state, so teardown after a reinstall still restores.
 RECEIPT = Path.home() / "Library/LaunchAgents/com.ailocal.docker-desktop.restore.json"
 GUI_PATH = "Docker Desktop > Settings"
 
 
 def recommended() -> list[tuple[tuple[str, ...], str, object, str]]:
-    """(backend path, settings-store key, recommended value, why) per ledger entry."""
+    """Return (backend path, store key, value, why) per ledger entry."""
     path = policy.data_root() / "deploy/docker-desktop/settings.toml"
     with open(path, "rb") as fh:
         entries = tomllib.load(fh)["setting"]
@@ -54,7 +49,7 @@ class _UnixHTTP(http.client.HTTPConnection):
 
 
 def effective(timeout: float = 5) -> dict | None:
-    """Docker Desktop's effective settings, or None when its backend is down."""
+    """Return effective settings, or None when the backend is down."""
     if not BACKEND.is_socket():
         return None
     try:
@@ -74,7 +69,7 @@ def _value(settings: dict, path: tuple[str, ...]):
 
 
 def drift(settings: dict) -> list[tuple[str, object, object, str]]:
-    """(settings-store key, effective value, recommended value, why) per difference."""
+    """Return (store key, effective, recommended, why) per difference."""
     return [(key, _value(settings, path), want, why) for path, key, want, why in recommended()
             if _value(settings, path) != want]
 

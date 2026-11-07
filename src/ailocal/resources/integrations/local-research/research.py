@@ -17,13 +17,9 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from brave import ENDPOINT, Brave, Ledger, summary
 from transport import SECRET_PARAMETERS, ResearchError, allowed, hostname, request
 
-# Each preset is a bounded plan. `native` engines speak their own API and are
-# bound to a host; `broad` engines take web query syntax; `communities` are
-# reached by site narrowing. [REAL] 2026-10-18: Yahoo honoured site: on reddit,
-# HN, Stack Exchange, lobste.rs and community.openai.com; Yep mostly ignored it,
-# so it narrows only explicitly requested sites, where off-site results are
-# filtered anyway. Hacker News search is AND-only: a sentence returned 0
-# results and three keywords 26.
+# Bounded plans: `native` = host-bound API, `broad` = web syntax, `communities`
+# = site narrowing. Yep ignores site: (2026-10-18), so it narrows only explicit
+# sites; HN search is AND-only.
 PRESETS = {
     'web': {'native': [], 'broad': ['yahoo', 'yep'], 'communities': []},
     'forums': {'native': ['hackernews'], 'broad': [],
@@ -48,9 +44,7 @@ MAX_BRAVE_PER_CALL = 2
 MAX_SOURCES = 12
 THIN_SOURCES = 5
 SEARCH_DEADLINE = 45
-# Identical calls a session may make: the second is served with a warning, later
-# ones are refused so a looping caller gets a definite signal instead of the
-# same cached result indefinitely.
+# Second identical call warns, later ones are refused: a definite loop signal.
 REPEAT_LIMIT = 2
 SEARCH_DESCRIPTION = (
     'Search external sources (the web, technical forums, code hosts and academic indexes) and return '
@@ -202,7 +196,7 @@ def plain(value):
 
 
 def relevant_excerpt(text, question):
-    """Spend the page budget on matching passages, not a long table of contents."""
+    """Spend the page budget on matching passages, not a table of contents."""
     if len(text) <= 8000:
         return text
     words = set(re.findall(r'[a-z0-9_]{3,}', question.lower())) - {
@@ -240,11 +234,10 @@ def page_excerpt(value, question):
 
 
 def keywords(query):
-    """At most three distinctive terms, in query order, for AND-only native search APIs.
+    """Return ≤ 3 distinctive terms, in query order, for AND-only search APIs.
 
-    Technical tokens (acronyms, mixed case, digits) rank first, then longer
-    words; ordinary short words are the most likely to over-constrain an AND
-    match without narrowing the topic.
+    Technical tokens rank first, then longer words; short words over-constrain
+    an AND match without narrowing the topic.
     """
     terms = list(dict.fromkeys(t for t in re.findall(r"[\w][\w./+#-]*", query) if t.lower() not in STOPWORDS))
     def rank(item):
@@ -256,7 +249,7 @@ def keywords(query):
 
 
 def identity(url):
-    """Duplicate URLs differ only by www., a trailing slash or tracking parameters."""
+    """Return a URL key ignoring www., a trailing slash and tracking params."""
     p = urlsplit(url)
     host = p.hostname.removeprefix('www.')
     query = urlencode([(k, v) for k, v in parse_qsl(p.query) if not k.lower().startswith('utm_')])
@@ -318,18 +311,18 @@ class Research:
         return result
 
     def plan(self, query, sites, preset, names):
-        """Stage-one attempts: (engines, query, site, form). Bounded by construction."""
+        """Return bounded stage-one attempts: (engines, query, site, form)."""
         spec = PRESETS[preset]
         attempts = []
         for engine in spec['native'] + [e for e, h in NATIVE_HOSTS.items()
                                         if sites and any(allowed(h, [s]) for s in sites)]:
             host = NATIVE_HOSTS.get(engine)
-            # A host-bound API cannot return anything inside an unrelated site scope.
+            # A host-bound API returns nothing inside an unrelated site scope.
             if engine in names and (not sites or not host or any(allowed(host, [s]) for s in sites)):
                 if not any(a[0] == [engine] for a in attempts):
                     attempts.append(([engine], query, None, 'original'))
-        # One request per engine and site, so one provider failing never hides
-        # another. Yahoo first: if the cap truncates, the weaker narrower goes.
+        # One request per engine and site, so one failure never hides another;
+        # Yahoo first, so a truncating cap drops the weaker narrower.
         for engine in ('yahoo', 'yep'):
             if engine in names:
                 for site in sites or ([] if spec['broad'] or engine == 'yep' else spec['communities']):
@@ -391,7 +384,7 @@ class Research:
                     continue
                 key = identity(url)
                 if key in records:
-                    # The same page from several providers keeps every attribution.
+                    # Same page from several providers keeps every attribution.
                     records[key]['engines'] = sorted(set(records[key]['engines']) | set(matched))
                     continue
                 host = urlsplit(url).hostname
@@ -449,7 +442,7 @@ class Research:
         for site in (sites or [None])[:MAX_BRAVE_PER_CALL] if early else []:
             await run_brave(query, site, 'requested')
 
-        # Stage two, at most once: reformulate empty AND-only APIs, then fill gaps.
+        # Stage two, at most once: reformulate empty AND-only APIs, fill gaps.
         retry = [(e, keywords(q)) for (e, q, site, form), n in zip(stage_one, counts)
                  if n == 0 and site is None and e[0] not in ('yahoo', 'yep') and keywords(q) not in ('', q)]
         if retry:

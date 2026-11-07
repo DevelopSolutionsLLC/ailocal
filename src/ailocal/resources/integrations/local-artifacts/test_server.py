@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Direct tests for local-artifacts. Run: .venv/bin/python test_server.py"""
+"""Test local-artifacts directly; run: .venv/bin/python test_server.py."""
 import importlib.util, json, os, shutil, socket, subprocess, sys, tempfile, time, urllib.request, urllib.error
 from pathlib import Path
 
@@ -184,10 +184,7 @@ check("raw <script> in markdown IS present in source (contained, not sanitized)"
 check("prose Markdown does NOT carry the 3.4 MB Mermaid library",
       "mermaid.initialize" not in page)
 
-# [REAL] the reported failure: a real session published format="markdown" whose
-# body was prose plus a ```mermaid classDiagram fence, and the viewer showed the
-# diagram SOURCE as a grey code block. Routing was correct; the renderer had no
-# Mermaid path at all.
+# Markdown with a ```mermaid fence must render the diagram, not its source.
 srv.publish(title="MD+Mermaid", fmt="markdown", content=(
     "# Title\n\nSome prose.\n\n```mermaid\nclassDiagram\n"
     "    class ShowRoot {\n        +Path root\n    }\n"
@@ -227,10 +224,8 @@ _, _, p2 = get("/content")
 check("same URL serves updated content", "two" in p2 and "two" not in p1)
 _, _, v = get("/")
 check("banner reflects new title", "V2" in v)
-# Presentation is decided per publish, not once per session: the `_opened_once`
-# flag this used to assert outlived the viewer it described, which was the bug.
-# The lifecycle contract lives in test_autoopen.py; this only checks that every
-# publish leaves a diagnosable outcome behind.
+# Presentation is per publish (contract in test_autoopen.py); only check that
+# each publish records a diagnosable outcome.
 check("presentation outcome is recorded for diagnosis",
       srv._last_present.startswith(("opened", "watched", "disabled:",
                                     "failed:", "not-attempted",

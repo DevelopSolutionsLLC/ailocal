@@ -1,15 +1,8 @@
 #!/usr/bin/env python3
-"""test_autoopen.py — presentation lifecycle: when a publish opens a window.
+"""Test when a publish opens a window, via real publishes and a recording shim.
 
-These are BEHAVIOURAL tests. They run real publishes against a real preview
-server on an isolated port and state dir, and assert on what the opener actually
-received -- not on the text of server.py. The opener is replaced with a shim
-that records argv to a file, so no test ever launches the user's browser.
-
-TIMING. The opener is a detached subprocess.Popen: it returns before the child
-has written anything. Every assertion therefore waits for the shim's file rather
-than reading it immediately. [REAL] the investigation that produced these tests
-initially reported a false "never opened" for exactly this reason.
+The opener is a detached Popen, so assertions wait for the shim's file;
+reading it at once reports a false "never opened".
 """
 import json
 import os
@@ -32,10 +25,10 @@ def check(name, cond, detail=""):
         failures.append(name)
 
 
-# ── harness ───────────────────────────────────────────────────────────────────
+# harness
 
 def make_shim(tmp):
-    """A stand-in for `open`/`xdg-open` that records instead of launching."""
+    """Write a stand-in for `open`/`xdg-open` that records, never launches."""
     shim_dir = Path(tmp) / "shim"
     shim_dir.mkdir(parents=True, exist_ok=True)
     for name in ("open", "xdg-open", "cmd"):
@@ -46,7 +39,7 @@ def make_shim(tmp):
 
 
 def opened(log, wait=2.5):
-    """How many times the opener ran, waiting out the async Popen first."""
+    """Return how often the opener ran, waiting out the async Popen first."""
     deadline = time.time() + wait
     while time.time() < deadline:
         if Path(log).exists() and Path(log).read_text().strip():
@@ -59,11 +52,9 @@ def opened(log, wait=2.5):
 
 
 def fresh_server_module(tmp, shim, env_extra=None):
-    """Import server.py in a subprocess-free way is not possible (module globals
-    are per-process), so each scenario runs as its own child process."""
+    """Run a scenario in its own process: server.py globals are per-process."""
     env = dict(os.environ)
-    # The approved root otherwise falls back to cwd -- this package directory --
-    # and every run leaves .artifacts/ inside the checkout.
+    # Else the approved root is cwd and runs litter the checkout w/ .artifacts/.
     env.pop("CLAUDE_PROJECT_DIR", None)
     root = Path(tmp) / "root"
     root.mkdir(exist_ok=True)
@@ -92,26 +83,19 @@ def run_scenario(script, tmp, shim, env_extra=None, timeout=120):
     return p, log
 
 
-#: The viewer this suite starts is identified by the PORT IT OWNS, never by a
-#: pattern match on the command line. `pkill -f "server.py --serve"` would match
-#: a real viewer serving a developer's own artifact in a concurrent session and
-#: kill it -- the gate must not reach outside the processes it created.
+#: Viewers are killed by owned port, never `pkill -f`: that hits real viewers.
 DEFAULT_PORT = 7891
 
 
 def _viewer_pid(port):
-    """PID listening on `port`, or None. The only handle this suite kills by."""
+    """Return the PID listening on `port`, or None; the only kill handle."""
     out = subprocess.run(["lsof", "-t", f"-iTCP:{port}", "-sTCP:LISTEN"],
                          capture_output=True, text=True).stdout.split()
     return int(out[0]) if out else None
 
 
 def kill_viewers():
-    """Terminate ONLY the viewer bound to this suite's own port.
-
-    Refuses to touch the default port outright, so a misconfigured
-    TEST_AUTOOPEN_PORT cannot turn this into the broad kill it replaced.
-    """
+    """Terminate only the viewer on this suite's port; never the default."""
     if PORT == DEFAULT_PORT:
         raise SystemExit(
             f"refusing to run: TEST_AUTOOPEN_PORT is the default {DEFAULT_PORT}, "
@@ -143,7 +127,7 @@ def pub(**kw):
 """
 
 
-# ── cases ─────────────────────────────────────────────────────────────────────
+# cases
 
 def case_a_first_publish(tmp, shim):
     p, log = run_scenario(PRELUDE + """
@@ -157,7 +141,7 @@ time.sleep(1.5)
 
 
 def case_b_repeat_publish_while_watched(tmp, shim):
-    """A watcher is present, so the second publish must not open anything."""
+    """Check a second publish w/ a watcher present opens nothing."""
     p, log = run_scenario(PRELUDE + """
 import threading, urllib.request
 ok, _ = pub(title="a", content="# a", fmt="markdown")
@@ -179,7 +163,7 @@ time.sleep(1.0)
 
 
 def case_c_viewer_reaped(tmp, shim):
-    """THE REGRESSION. Viewer replaced mid-session, no tab -> must open again."""
+    """Check a viewer replaced mid-session w/ no tab opens again."""
     p, log = run_scenario(PRELUDE + """
 import subprocess, signal
 ok, _ = pub(title="a", content="# a", fmt="markdown")
@@ -206,7 +190,7 @@ time.sleep(1.5)
 
 
 def case_d_transient_disconnect(tmp, shim):
-    """A tab that drops and heals must NOT earn a second window."""
+    """Check a tab that drops and heals earns no second window."""
     p, log = run_scenario(PRELUDE + """
 import threading, urllib.request
 stop = threading.Event()
@@ -244,7 +228,7 @@ time.sleep(1.0)
 
 
 def case_f_validator_unavailable(tmp, shim):
-    """No Chrome -> Mermaid must be refused, and nothing may open."""
+    """Check no Chrome → Mermaid is refused and nothing opens."""
     p, log = run_scenario(PRELUDE + """
 import mermaid_validate
 mermaid_validate.find_chrome = lambda: None
@@ -289,7 +273,7 @@ time.sleep(1.5)
 
 
 def case_precedence():
-    """Env precedence, exercised directly against the decision function."""
+    """Check env precedence directly against the decision function."""
     import importlib
     sys.path.insert(0, str(HERE))
     os.environ.setdefault("LOCAL_ARTIFACTS_PORT", str(PORT))

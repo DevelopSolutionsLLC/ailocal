@@ -1,8 +1,7 @@
 """Metered Brave requests behind one cross-process allowance ledger.
 
-SearXNG's braveapi engine discards Brave's response headers, so this is the
-only path that can observe the provider's quota window. Every metered request
-is reserved here before it is sent and settled from its outcome afterwards.
+SearXNG's braveapi drops Brave's headers, so only this path sees the quota.
+Each request is reserved before sending and settled from its outcome.
 """
 from __future__ import annotations
 
@@ -29,12 +28,10 @@ def _iso(value):
 
 
 def parse_headers(headers: dict, now: float) -> dict | None:
-    """Return the longest quota window, or None when Brave sent no usable headers.
+    """Return the longest quota window, or None without usable headers.
 
-    Brave sends one comma-separated value per window, e.g. Limit `50, 0`,
-    Policy `50;w=1, 0;w=2678400`, Remaining `49, 0`, Reset `1, 1120380`.
-    A monthly limit of 0 means no monthly cap, so its remaining value says
-    nothing about usage.
+    One comma-separated value per window, e.g. Policy `50;w=1, 0;w=2678400`.
+    A monthly limit of 0 means no cap; its remaining value says nothing.
     """
     try:
         limits = [int(v) for v in headers['x-ratelimit-limit'].split(',')]
@@ -88,11 +85,10 @@ class Ledger:
 
     @staticmethod
     def _period(obs, now):
-        """(start, end, known). Unknown periods count conservatively."""
+        """Return (start, end, known); unknown periods count conservatively."""
         if obs.get('reset_at') and obs['reset_at'] > now:
             return obs['reset_at'] - obs['window'], obs['reset_at'], True
-        # The previous window ended at its reset; never count from before it,
-        # and never from further back than the longest window.
+        # Count from the last reset, never beyond the longest window.
         start = max(obs.get('reset_at') or 0, now - LONGEST_WINDOW)
         return start, None, False
 
@@ -118,12 +114,11 @@ class Ledger:
             elif known and obs['limit'] > 0 and self._account_left(db, obs) <= 0:
                 refusal = 'BRAVE_ACCOUNT_LIMIT'
             elif not known and obs.get('headers_missing_at') is not None and obs['headers_missing_at'] > now - LONGEST_WINDOW:
-                # A billed response arrived without quota headers: the period
-                # cannot be established, so no further metered request is safe.
+                # Billed w/o quota headers: period unknown, so stop metering.
                 refusal = 'BRAVE_QUOTA_UNKNOWN'
             elif not known and db.execute("SELECT COUNT(*) FROM requests WHERE state = 'reserved' AND at > ?",
                                           (now - ESTABLISHING_SECONDS,)).fetchone()[0]:
-                # One request establishes an unknown period; concurrent sessions wait for it.
+                # One request learns an unknown period; other sessions wait.
                 refusal = 'BRAVE_QUOTA_ESTABLISHING'
             else:
                 refusal = None
@@ -139,7 +134,7 @@ class Ledger:
             db.close()
 
     def _account_left(self, db, obs):
-        """Account-wide allowance left when Brave reports a monthly cap."""
+        """Return the account-wide allowance left under a monthly cap."""
         used = obs['limit'] - obs['remaining']
         since = db.execute("SELECT COUNT(*) FROM requests WHERE at > ? AND state IN ('reserved', 'billed', 'unknown')",
                            (obs['observed_at'],)).fetchone()[0]
@@ -147,7 +142,7 @@ class Ledger:
 
     def settle(self, grant: Grant, status: int | None, headers: dict | None = None,
                error_code: str | None = None, now: float | None = None) -> None:
-        """Brave bills only non-error responses; a lost response stays counted."""
+        """Settle a grant: Brave bills non-error responses; lost ones count."""
         now = time.time() if now is None else now
         if status is None:
             state = 'unknown'
@@ -200,8 +195,7 @@ class Ledger:
             report['period_basis'] = ('unknown: no current Brave quota observation; counted conservatively '
                                       'over the longest possible window')
         if refused_until > now:
-            # Brave's own refusal is the one account-wide fact a prepaid key
-            # exposes: it covers every consumer of the key, not just this ledger.
+            # Brave's refusal is a prepaid key's only account-wide fact.
             report['account_remaining'] = 0
             report['account_basis'] = (f'Brave refused a request for quota, usage limit or prepaid balance; '
                                        f'no metered request until {_iso(refused_until)}')
@@ -210,8 +204,7 @@ class Ledger:
             report['account_basis'] = 'Brave X-RateLimit headers at quota_observed_at minus requests counted since'
         else:
             report['account_remaining'] = 'unknown'
-            # Prepaid keys report a monthly limit of 0: spending is bounded by the
-            # dollar balance and usage limit, which only the dashboard shows.
+            # Prepaid keys report limit 0; only the dashboard shows the balance.
             report['account_basis'] = ('Brave reports no request quota for this key (prepaid plans are billed '
                                        'from a credit balance) and publishes no balance API; the Brave dashboard '
                                        'shows the balance, and other consumers of the key are not visible here'
@@ -220,7 +213,7 @@ class Ledger:
 
 
 def summary(report: dict, used: int, refusal: str | None) -> str:
-    """One line for the research summary; never claims account-wide remaining it cannot know."""
+    """Return one summary line; never claim an unknowable account remaining."""
     if report.get('counted_this_period') is None:
         return 'Brave: not used; the allowance ledger is unavailable.'
     head = f'Brave: {used} used this call' if used else 'Brave: not used this call'
@@ -252,7 +245,7 @@ class Brave:
         return bool(self.key)
 
     async def search(self, query: str, result_filter: str = 'web') -> list[dict]:
-        """One metered request, reserved first. Raises ResearchError with a refusal code."""
+        """Make one reserved, metered request; refusals raise ResearchError."""
         if not self.key:
             raise ResearchError('BRAVE_NOT_CONFIGURED')
         if self.session_used >= self.session_cap:

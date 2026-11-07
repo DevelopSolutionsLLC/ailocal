@@ -1,29 +1,9 @@
-"""Is the package `ailocal` executes the package under test?
+"""Check the pipx-installed package `ailocal` runs is the checkout under test.
 
-Two execution paths exist and only one of them is what production runs:
-
-    tests/*            import src/ailocal from the CHECKOUT (harness.py sets
-                       sys.path and PYTHONPATH together)
-    `ailocal ...`      runs the PIPX-INSTALLED package, always
-
-Nothing compared them, so a green gate said nothing about the code
-`ailocal start` would execute. [REAL] that divergence silently reverted a
-committed settings.json line: the repository held the new generator, the
-installed package held the old one, `ailocal start` ran the old one, and the
-only symptom was `generation --check` reporting drift — which reads like a
-stale checkout, not a stale install.
-
-This is deliberately a CONTENT comparison, not a version or commit comparison.
-Nothing embeds git metadata in the package, `version` does not change on every
-edit, and adding build metadata to answer "is this the same code" would be a
-larger mechanism than the question deserves. After a correct
-`pipx install --force .` the two trees are byte-identical, so their digests are
-the whole answer.
-
-PACKAGE drift is not GENERATED-CONFIG drift. `generation --check` owns the
-second: whether the generated files match what the current generator would
-write. This owns the first: whether the generator that will run is the one that
-was tested. Both can fail independently and they have different remedies.
+tests/* import the checkout; `ailocal ...` runs the installed package, so a
+green gate proves nothing about the latter. Compared by content digest: the
+package embeds no git metadata and `version` does not move per edit.
+Package drift ≠ generated-cfg drift (`generation --check`): other remedy.
 """
 
 from __future__ import annotations
@@ -34,23 +14,18 @@ import pathlib
 import shutil
 import subprocess
 
-#: Build artefacts, not shipped source: present on one side or the other
-#: depending on whether anything has imported the tree yet.
+#: Build artefacts: present on either side depending on prior imports.
 _SKIP_DIRS = {"__pycache__"}
 _SKIP_SUFFIXES = {".pyc", ".pyo"}
 
-#: The supported way back to parity. It ENDS with `ailocal start` on purpose:
-#: `pipx install --force` recreates the venv and detaches the running
-#: container's bind mount (AGENTS.md), so reinstalling alone leaves the stack
-#: serving the config it booted with.
+#: Ends w/ `ailocal start`: reinstall detaches the container's bind mount.
 REMEDIATION = "pipx install --force . && ailocal start"
 
 
 def fingerprint(package_root: pathlib.Path | str) -> str:
-    """Content digest of a package tree: every shipped file, path AND bytes.
+    """Return a digest of every shipped file's path and bytes.
 
-    Paths are hashed as well as contents so that adding or removing a file is a
-    change even when no surviving file's bytes moved.
+    Paths are hashed so adding or removing a file is a change.
     """
     root = pathlib.Path(package_root)
     digest = hashlib.sha256()
@@ -68,11 +43,9 @@ def fingerprint(package_root: pathlib.Path | str) -> str:
 
 
 def installed_root() -> pathlib.Path | None:
-    """Where the `ailocal` command's own interpreter imports the package from.
+    """Return where the `ailocal` command's interpreter imports the package.
 
-    Asked of that interpreter rather than guessed from a path, because the
-    console script is what production runs and it is the only authority on
-    which environment answers for it.
+    Asked of that interpreter, the only authority on what production runs.
     """
     exe = shutil.which("ailocal")
     if not exe:
@@ -80,12 +53,8 @@ def installed_root() -> pathlib.Path | None:
     python = pathlib.Path(exe).resolve().parent / "python"
     if not python.exists():
         return None
-    # PYTHONPATH MUST NOT REACH THIS SUBPROCESS. The gate runs with
-    # PYTHONPATH=src so the suites import the checkout; inherited here, the
-    # installed interpreter would import the CHECKOUT too, report its path, and
-    # the comparison would trivially succeed against itself — a parity check
-    # that can never fail. [REAL] this happened, and the acceptance run caught
-    # it: a drifted checkout sailed through the precondition.
+    # Drop the gate's PYTHONPATH=src, else this imports the checkout and the
+    # parity check compares the checkout with itself and can never fail.
     env = {k: v for k, v in os.environ.items()
            if k not in ("PYTHONPATH", "PYTHONHOME")}
     try:
@@ -100,11 +69,9 @@ def installed_root() -> pathlib.Path | None:
 
 
 def compare(repo: pathlib.Path) -> tuple[bool, str]:
-    """`(in_parity, explanation)` for the checkout at `repo`.
+    """Return `(in_parity, explanation)` for the checkout at `repo`.
 
-    Fails CLOSED on an absent or unreadable installation: "cannot tell" must
-    not read as "fine" in a check whose entire purpose is to stop a runtime
-    claim from resting on an assumption.
+    Fails closed on an absent or unreadable install: "cannot tell" ≠ "fine".
     """
     checkout = pathlib.Path(repo) / "src" / "ailocal"
     if not checkout.is_dir():

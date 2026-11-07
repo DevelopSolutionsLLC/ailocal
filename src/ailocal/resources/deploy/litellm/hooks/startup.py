@@ -1,20 +1,7 @@
-"""startup.py — proxy patches applied at import, before the first request.
+"""Proxy patches applied once at import, before the first request.
 
-Four corrections that share one lifecycle: they run when LiteLLM imports this
-module during config load, mutate proxy state once, and observe no request. None
-implements a request callback. `proxy_handler_instance` is a no-op CustomLogger
-that exists only because a `litellm_settings.callbacks` entry is what makes
-LiteLLM import the file.
-
-  model_registrar       restore context-window validation for local deployments
-  compat_routes         serve the client compatibility probes LiteLLM lacks
-  stream_log_guard      backport a missing type guard in Anthropic success logging
-  ollama_tool_identity  keep tool-result names and tool-call ids on ollama_chat
-
-Each reports its status on one boot line via print(), not log.info(): the proxy
-filters third-party loggers, so print is what survives to `docker logs` and tells
-an operator which corrections are live. Nothing here may raise — a failure must
-degrade one correction, never take the container down.
+Each reports one boot line via print() (the proxy filters third-party loggers)
+and never raises: a failure degrades one correction, never the container.
 """
 
 import logging
@@ -26,34 +13,22 @@ from litellm.integrations.custom_logger import CustomLogger
 
 log = logging.getLogger("startup")
 
-#: The GENERATED config — generation.py writes it to $AILOCAL_STATE and Compose
-#: mounts it at /app/generated. It is NOT in the authored /app/config mount.
+#: The generated config, mounted at /app/generated (not authored /app/config).
 CONFIG_PATH = os.environ.get("AILOCAL_CONFIG_PATH", "/app/generated/config.yaml")
 
 
 def _say(msg):
-    """One boot line, visible in `docker logs`."""
+    """Print one boot line, visible in `docker logs`."""
     print(msg, flush=True)
 
 
-# ── model registration ──────────────────────────────────────────────────────
-# LiteLLM does not register context limits for locally added deployments: it
-# stores model_info under the provider-stripped key while the router's pre-call
-# check looks it up WITH the provider prefix. The lookup raises, the router
-# swallows it, and the whole max_input_tokens validation block is skipped — so an
-# oversized prompt is forwarded unvalidated and silently truncated. The config's
-# own `model_info:` block cannot fix this: the router merges it after the lookup
-# that throws.
-#
-# Registering under the exact prefixed key keeps pre-call admission active.
-# Public litellm namespace only, no vendored patch; the key is whatever
-# `litellm_params.model` says, verbatim, so nothing is provider-specific.
-# DELETE when the self-check below reports every model "already mapped".
+# LiteLLM stores local model_info under the provider-stripped key, the router
+# looks it up prefixed, and max_input_tokens validation is silently skipped.
+# Register under the exact prefixed key. DELETE when all are "already mapped".
 
 
 def _load_model_list():
-    """The generated model_list. generation.py owns that file, so new
-    capabilities are picked up with no change here."""
+    """Return the generated model_list, or [] if unreadable."""
     try:
         import yaml
 
@@ -66,17 +41,15 @@ def _load_model_list():
 
 
 def _has_exact_key(model_key):
-    """True if the EXACT key is present in litellm.model_cost.
+    """Return whether the exact key is in litellm.model_cost.
 
-    Deliberately not `litellm.get_model_info(model_key)`: that helper falls back
-    to the prefix-stripped key, so it reports success for models the router still
-    cannot resolve. The router needs the prefixed key itself.
+    Not get_model_info: it falls back to the stripped key the router cannot use.
     """
     return model_key in litellm.model_cost
 
 
 def _router_can_resolve(model_key):
-    """Replicate the router's own lookup from outside, for the self-check."""
+    """Replicate the router's own lookup, for the self-check."""
     try:
         litellm.get_model_info(model=model_key)
         return model_key in litellm.model_cost
@@ -87,21 +60,17 @@ def _router_can_resolve(model_key):
 def _cost_entry(model_key, model_info):
     """Build a cost-map entry from the deployment's own model_info block.
 
-    litellm_provider is derived from the key's prefix so the entry survives
-    LiteLLM's provider-match filtering (_check_provider_match drops entries whose
-    provider disagrees with the resolved one)."""
+    litellm_provider (from the key prefix) survives _check_provider_match.
+    """
     provider = model_key.split("/", 1)[0] if "/" in model_key else None
     entry = {
-        # Local backends are free; explicit zeros keep cost tracking coherent
-        # rather than leaving the fields absent.
         "input_cost_per_token": model_info.get("input_cost_per_token", 0),
         "output_cost_per_token": model_info.get("output_cost_per_token", 0),
         "mode": model_info.get("mode", "chat"),
     }
     if provider:
         entry["litellm_provider"] = provider
-    # These two are the whole point: the admission check compares counted input
-    # tokens against them.
+    # The admission check compares counted input tokens against these.
     for field in ("max_input_tokens", "max_output_tokens", "max_tokens"):
         if model_info.get(field) is not None:
             entry[field] = model_info[field]
@@ -109,8 +78,11 @@ def _cost_entry(model_key, model_info):
 
 
 def register_local_models():
-    """Inject every configured deployment LiteLLM cannot already map, then
-    verify. Returns (registered, already_mapped, failed)."""
+    """Inject every deployment LiteLLM cannot already map, then verify.
+
+    Returns:
+        (registered, already_mapped, failed) model keys.
+    """
     registered, already, failed = [], [], []
 
     for deployment in _load_model_list():
@@ -121,13 +93,11 @@ def register_local_models():
         if _has_exact_key(model_key):
             already.append(model_key)
             continue
-        # Assign directly rather than via litellm.register_model(): that helper is
-        # what strips the provider prefix, which is the defect being worked around.
+        # Not register_model(): it strips the prefix, the defect worked around.
         litellm.model_cost[model_key] = _cost_entry(
             model_key, deployment.get("model_info") or {})
         registered.append(model_key)
 
-    # Invalidate LiteLLM's case-insensitive lookup cache so the new keys are seen.
     try:
         from litellm.utils import _invalidate_model_cost_lowercase_map
 
@@ -135,8 +105,7 @@ def register_local_models():
     except Exception:  # noqa: BLE001 - private helper; absence is not fatal
         pass
 
-    # get_model_info is LRU-cached; clear it or a lookup made before this
-    # injection keeps returning the stale prefix-stripped answer.
+    # get_model_info is LRU-cached; clear stale prefix-stripped answers.
     try:
         from litellm.utils import _cached_get_model_info
 
@@ -144,9 +113,7 @@ def register_local_models():
     except Exception:  # noqa: BLE001 - private helper; absence is not fatal
         pass
 
-    # Fail LOUDLY rather than silently losing context-window validation if
-    # LiteLLM's internals shift. Re-runs the real lookup, not a dict membership
-    # test, because the lookup is what the router actually performs.
+    # Fail loudly via the router's real lookup if LiteLLM internals shift.
     for model_key in registered:
         if not _router_can_resolve(model_key):
             failed.append(model_key)
@@ -167,45 +134,26 @@ def register_local_models():
     return registered, already, failed
 
 
-# ── client compatibility routes ─────────────────────────────────────────────
-# Claude Code is pointed here through ANTHROPIC_BASE_URL and sends auxiliary
-# probes built against the shape of api.anthropic.com. LiteLLM has no such route,
-# so it 404s:
-#
-#     INFO: 172.18.0.1:58848 - "HEAD /api/hello HTTP/1.1" 404 Not Found
-#
-# Only the client's HEAD call site reads ANTHROPIC_BASE_URL and reaches here;
-# GET is served anyway because it costs nothing.
-#
-# HONEST SCOPE: this removes the 404. The call site discards its result, so the
-# route is NOT proven to silence any particular in-terminal warning.
-#
-# CONSTRAINTS: no model invocation, no router lookup, no backend call, and no
-# auth dependency — it is a pre-credential reachability probe answered with a
-# fixed empty 200. Not a redirect to /health/liveliness: a probe answer must not
-# be confused with real health state. Touches nothing under /v1/*.
+# Claude Code probes api.anthropic.com-shaped routes LiteLLM 404s. Answer with
+# a fixed empty 200: no auth, no backend, not health state, nothing under /v1.
 
-#: Path -> methods. Keep this table tiny and boring: every entry is a static 200
-#: with an empty body, and anything needing real logic does not belong here.
+#: Path -> methods; every entry is a static empty 200, nothing with logic.
 COMPAT_ROUTES = {
     "/api/hello": ["GET", "HEAD"],
 }
 
 
 def _empty_ok():
-    """Endpoint body. Fixed 200, no content, no side effects."""
+    """Return a fixed empty 200 with no side effects."""
     from fastapi import Response
 
     return Response(status_code=200)
 
 
 def _get_app():
-    """The running proxy's FastAPI app, or None.
+    """Return the running proxy's FastAPI app, or None.
 
-    Prefer the already-imported module: LiteLLM loads callbacks from its own
-    startup path, so `litellm.proxy.proxy_server` is normally in sys.modules and
-    this is a dict lookup. The import fallback covers the standalone case (the
-    gate's hook-importability check), where nothing has imported the proxy yet.
+    Imports the proxy only when standalone (the gate's importability check).
     """
     mod = sys.modules.get("litellm.proxy.proxy_server")
     if mod is None:
@@ -220,11 +168,9 @@ def _get_app():
 
 
 def register_compat_routes():
-    """Add the compatibility routes to the proxy app. Returns the paths added.
+    """Add the compatibility routes; return the paths added.
 
-    Never raises: a failure must not take the proxy down over a probe endpoint.
-    It logs at ERROR, because a silent no-op would leave the 404 in place with
-    nothing to say so.
+    Never raises; logs at ERROR so a no-op does not hide the remaining 404.
     """
     app = _get_app()
     if app is None:
@@ -235,8 +181,7 @@ def register_compat_routes():
     added = []
     for path, methods in COMPAT_ROUTES.items():
         if path in existing:
-            # Either we already ran, or LiteLLM grew its own implementation.
-            # Both mean: leave it alone. Self-retiring by construction.
+            # Ours already, or LiteLLM grew one: self-retiring.
             log.info("compat_routes: %s already registered, leaving it alone", path)
             continue
         try:
@@ -250,36 +195,17 @@ def register_compat_routes():
     return added
 
 
-# ── Anthropic streaming success-logging guard ───────────────────────────────
-# UPSTREAM BUG, present in LiteLLM 1.93.0 and 1.94.1 (see BerriAI/litellm#27091
-# for the earlier patch to the same method). The websearch path hands a fake
-# stream iterator to _handle_anthropic_messages_response_logging, which
-# validates it as an AnthropicResponse and raises. Non-blocking — the client
-# still gets the stream — but it emits an ERROR traceback per request, which
-# buries real errors.
-#
-# REPRO, no client involved:
-#     POST /v1/messages  stream: true  tools: [{"type": "web_search_20250305",
-#                                               "name": "web_search"}]
-#       -> 3 x "Success_Call Error: 1 validation error for AnthropicResponse"
-#     the same request with stream: false -> 0 errors
-#
-# SELF-RETIRING: no-ops if the installed method already handles the type. DELETE
-# this section once the repro above is clean with the module removed from
-# `litellm_settings.callbacks`.
+# Upstream bug (LiteLLM ≥ 1.93; cf. BerriAI/litellm#27091): websearch streams
+# hand a fake iterator to success logging, which raises an ERROR per request.
+# Repro: streamed /v1/messages w/ web_search tool. DELETE when clean w/o this.
 
 PATCH_MARKER = "_ailocal_fake_stream_guard"
 
 
 def _fake_stream_types():
-    """The iterator classes the websearch path can hand to success logging.
+    """Return the fake-stream iterator classes success logging can receive.
 
-    Imported defensively: a LiteLLM refactor may move or remove them. A missing
-    class means there is nothing to guard against, not an error worth breaking
-    the proxy over. [REAL] 1.105.1 moved the module from
-    `experimental_pass_through` to `pass_through` while the bug it guards still
-    reproduced (3 validation errors per request); importing only the old path
-    turned the guard into a silent no-op. Both locations are tried.
+    Both module paths are tried: 1.105.1 moved it while the bug persisted.
     """
     import importlib
 
@@ -299,7 +225,7 @@ def _fake_stream_types():
 
 
 def apply_stream_log_guard():
-    """Install the guard. Idempotent; returns a short status string for tests."""
+    """Install the guard idempotently; return a short status string."""
     try:
         from litellm.litellm_core_utils.litellm_logging import Logging as LiteLLMLogging
     except Exception as exc:  # noqa: BLE001
@@ -316,9 +242,7 @@ def apply_stream_log_guard():
         return "skipped: no fake-stream types to guard"
 
     def patched(self, result, *args, **kwargs):
-        # The one added line of behaviour: hand back a fake stream iterator
-        # untouched, exactly as upstream already does for ModelResponse. Placed
-        # BEFORE the original so the pydantic validation is never reached.
+        # Before the original, so pydantic validation is never reached.
         if isinstance(result, types):
             return result
         return target(self, result, *args, **kwargs)
@@ -329,27 +253,9 @@ def apply_stream_log_guard():
     return "patched"
 
 
-# ── Ollama tool-result identity ─────────────────────────────────────────────
-# UPSTREAM GAP, LiteLLM 1.106.5: OllamaChatConfig.transform_request rebuilds each
-# message from a fixed key set. A tool result keeps `tool_call_id` but gets no
-# `tool_name`, and an assistant tool call loses its `id`. Ollama 0.40.14's
-# Gemma4Renderer (gemma4, gemma4-small, gemma4-large, gemma4-nemotron) names a
-# result from `tool_name`, else from the call whose `id` equals `tool_call_id`,
-# else "unknown" — so every Gemma-family tool result reached the model as
-# `response:unknown{…}` (#84). Every route converges here: /v1/messages and
-# /v1/responses are translated to chat messages before this transform runs.
-# BerriAI/litellm#49278 forwards the id (only in 1.109.0-rc.1 as of 2026-11-05);
-# nothing upstream sets `tool_name`.
-#
-# REPRO, no model: litellm.completion(model="ollama_chat/x", messages=[user,
-#   assistant tool_calls=[{id:"c1", function:{name:"Read"}}], tool tool_call_id
-#   "c1"]) against a capture server -> the tool message has no tool_name and the
-#   assistant call has no id.
-#
-# Adds only those two provider fields, copied from the request's own assistant
-# calls. Never invents a name, never changes content; a result whose id matches
-# no call is left as LiteLLM built it. SELF-RETIRING per half: the boot check
-# reports what upstream already forwards. DELETE when it reports both.
+# LiteLLM 1.106.5's Ollama transform drops `tool_name` and call `id`, so Gemma4
+# renders results as `response:unknown` (#84; id fix: BerriAI/litellm#49278).
+# Copies both from the request's own calls; DELETE when upstream forwards both.
 
 TOOL_IDENTITY_MARKER = "_ailocal_tool_identity"
 _IDENTITY_FIXTURE = [
@@ -362,18 +268,17 @@ _IDENTITY_FIXTURE = [
 
 
 def _plain(value):
-    """A message or tool call as a dict, the way the transform itself reads it."""
+    """Return a message or tool call as a dict, as the transform reads it."""
     if hasattr(value, "model_dump"):
         return value.model_dump(exclude_none=True)
     return value if isinstance(value, dict) else {}
 
 
 def add_tool_identity(messages, request):
-    """Set `tool_name` and tool-call `id` on a transformed Ollama request, in place.
+    """Set `tool_name` and tool-call `id` on a transformed request, in place.
 
-    The transform emits one message per input message, in order, and one call per
-    function-typed input call; anything else means the shape changed upstream,
-    and the request is left exactly as built.
+    Any shape other than one message per input (and one call per function call)
+    means upstream changed; the request is then left as built.
     """
     sent = request.get("messages") if isinstance(request, dict) else None
     if not isinstance(sent, list) or len(sent) != len(messages):
@@ -403,7 +308,7 @@ def add_tool_identity(messages, request):
 
 
 def _upstream_forwards(target, config_cls):
-    """(tool_name, id) that the unpatched transform already emits, or None."""
+    """Return which of (tool_name, id) upstream already emits, or None."""
     try:
         out = target(config_cls(), "fixture", [dict(m) for m in _IDENTITY_FIXTURE], {}, {}, {})
         sent = out["messages"]
@@ -414,7 +319,7 @@ def _upstream_forwards(target, config_cls):
 
 
 def apply_ollama_tool_identity():
-    """Install the correction. Idempotent; returns a short status string for tests."""
+    """Install the correction idempotently; return a short status string."""
     try:
         from litellm.llms.ollama.chat.transformation import OllamaChatConfig
     except Exception as exc:  # noqa: BLE001
@@ -447,15 +352,10 @@ def apply_ollama_tool_identity():
 
 
 class ProxyStartup(CustomLogger):
-    """Registration vehicle only. The corrections above are applied at import;
-    listing this in litellm_settings.callbacks is what triggers that import, and
-    it means the gate's hook-import check covers them. Observes no request."""
+    """Registration vehicle only: a callbacks entry is what triggers import."""
 
 
-# ── run, in dependency order ────────────────────────────────────────────────
-# Registration must precede traffic. LiteLLM loads callbacks during config load,
-# before the server accepts requests, and Starlette resolves app.routes per
-# request — so a route added here is served from the first request onward.
+# Callbacks load before traffic, so these apply from the first request.
 REGISTERED, ALREADY_MAPPED, FAILED = register_local_models()
 COMPAT_REGISTERED = register_compat_routes()
 if COMPAT_REGISTERED:

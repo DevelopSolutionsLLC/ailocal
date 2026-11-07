@@ -1,5 +1,4 @@
-"""Primitives every module shares: one implementation each, so two commands
-cannot disagree about a file's digest, a reachable host or a wait."""
+"""Shared primitives, one implementation each so commands cannot disagree."""
 
 from __future__ import annotations
 
@@ -13,9 +12,10 @@ from typing import Callable
 
 
 class Unreachable(OSError):
-    """A bounded transport call produced no HTTP answer (DNS, TLS, refused,
-    timeout). An OSError, so a caller that handles the transport generically
-    keeps handling it."""
+    """A bounded transport call got no HTTP answer (DNS, TLS, refused, timeout).
+
+    An OSError, so generic transport handlers keep catching it.
+    """
 
 
 def sha256_file(path: Path) -> str:
@@ -25,14 +25,15 @@ def sha256_file(path: Path) -> str:
 
 def fetch(url: str, *, payload: dict | None = None, headers: dict | None = None,
           method: str | None = None, timeout: float = 20) -> tuple[int, bytes]:
-    """`(status, body)` for one bounded request. An HTTP error status is an
-    answer and is returned with its body; only a transport failure raises
-    Unreachable. The caller decides what a 404 means."""
+    """Return `(status, body)` for one bounded request.
+
+    An HTTP error status is an answer and is returned; only a transport
+    failure raises Unreachable.
+    """
     data = json.dumps(payload).encode() if payload is not None else None
     hdrs = dict(headers or {})
     if data is not None:
         hdrs.setdefault("Content-Type", "application/json")
-    # A plain GET travels as the bare URL, the form every caller used before.
     request = (url if data is None and not hdrs and method is None
                else urllib.request.Request(url, data=data, headers=hdrs, method=method))
     try:
@@ -46,8 +47,10 @@ def fetch(url: str, *, payload: dict | None = None, headers: dict | None = None,
 
 def wait_until(predicate: Callable[[], bool], attempts: int, delay: float,
                on_wait: Callable[[int], None] | None = None) -> bool:
-    """Poll `predicate` up to `attempts` times, `delay` seconds apart; one final
-    check after the last sleep. `on_wait(attempt)` runs before each sleep."""
+    """Poll `predicate` `attempts` times, `delay` s apart, plus a final check.
+
+    `on_wait(attempt)` runs before each sleep.
+    """
     for attempt in range(attempts):
         if predicate():
             return True

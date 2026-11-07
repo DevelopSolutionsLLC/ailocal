@@ -1,20 +1,9 @@
-"""Which upstream release ailocal may adopt. docs/architecture.md#version-policy.
+"""Upstream release adoption policy; docs/architecture.md#version-policy.
 
-A candidate is the newest stable release whose publication is at least seven
-full days old. A younger release qualifies only when it contains the fix for an
-advisory that affects the declared version: a security fix may not wait a week.
-Publication evidence is the publisher's release record (GitHub `published_at`),
-never a commit or build time.
-
-The rule replaces a count ("two releases behind"), which a fast release train
-turns into an arbitrary age and a slow one into a vulnerable pin: [REAL]
-2026-11-02 it proposed go1.27.1 over go1.27.3 with 14 stdlib advisories open
-against it (DevelopSolutionsLLC/cadence#134). The age is the defence against a
-compromised release, which is usually withdrawn within days: [REAL] 2026-10-22
-LiteLLM 1.107.0 shipped a credential stealer (BerriAI/litellm#47826).
-
-For Go, "supported" is exact: the newest point release of one of the two
-supported minor lines, which is what go.dev/dl/?mode=json lists.
+Candidate: newest stable release published ≥ 7 days ago (GitHub
+`published_at`); younger only if it fixes an advisory against the declared
+version. The age defends against compromised releases, usually withdrawn in
+days. Go "supported": newest point release of a line go.dev/dl lists.
 """
 
 from __future__ import annotations
@@ -39,13 +28,13 @@ def key(version: str) -> tuple[int, ...]:
 
 
 def stable(version: str) -> str:
-    """The numeric version of a stable tag, or "" for a pre-release or anything else."""
+    """Return a stable tag's numeric version, or "" for anything else."""
     m = _STABLE.fullmatch(version.strip())
     return m.group(1) if m else ""
 
 
 def from_github(releases: list) -> list[Release]:
-    """Stable, published GitHub releases, newest first."""
+    """Return stable, published GitHub releases, newest first."""
     out = {}
     for r in releases if isinstance(releases, list) else []:
         if not isinstance(r, dict) or r.get("prerelease") or r.get("draft"):
@@ -67,7 +56,7 @@ def age(release: Release, now: datetime | None = None) -> timedelta | None:
 
 
 def fixes(version: str, fixed: list[str]) -> bool:
-    """Whether `version` contains any of the advisory fix versions in `fixed`."""
+    """Return whether `version` contains any advisory fix version in `fixed`."""
     have = key(version)
     for f in fixed:
         v = stable(f.split()[-1].lstrip(">=")) if f else ""
@@ -77,10 +66,11 @@ def fixes(version: str, fixed: list[str]) -> bool:
 
 
 def candidate(releases: list[Release], fixed: list[str] = (), now: datetime | None = None) -> tuple[str, str]:
-    """(version, why) of the release the policy adopts, or ("", why) when none qualifies.
+    """Return (version, why) of the adopted release, or ("", why) if none.
 
-    `releases` newest first; `fixed` lists the fix versions of advisories that
-    affect the declared version, which admit a younger release."""
+    `releases` newest first; `fixed` holds fix versions of advisories against
+    the declared version, which admit a younger release.
+    """
     for r in releases:
         a = age(r, now)
         if a is None:
@@ -93,7 +83,7 @@ def candidate(releases: list[Release], fixed: list[str] = (), now: datetime | No
 
 
 def go_supported(version: str, listing: list) -> tuple[bool, str]:
-    """Whether a Go toolchain is the newest point release of a supported line."""
+    """Return whether a Go toolchain is the newest point of a supported line."""
     current = [stable(str(r.get("version", "")).removeprefix("go"))
                for r in listing if isinstance(r, dict) and r.get("stable")]
     current = [v for v in current if v]

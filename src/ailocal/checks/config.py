@@ -1,9 +1,7 @@
-"""Deterministic checks: source, generated and deployed configuration.
+"""Deterministic checks of source, generated and deployed configuration.
 
-Every check answers from files on disk, so this layer of `ailocal check` runs with the
-stack stopped. Docker is consulted only to compare the mounted config against
-the repository copy; when it is absent that check reports BLOCKED and the rest
-of validation continues.
+Files only, so it runs w/ the stack stopped. Docker is used only for mount
+drift; absent, that check is BLOCKED and the rest continue.
 """
 
 from __future__ import annotations
@@ -21,10 +19,10 @@ from . import BLOCKED, FAIL, PASS, SKIP, WARN, CheckResult
 from ailocal import policy as P
 
 
-# ── source configuration ────────────────────────────────────────────────────
+# source configuration
 
 def check_active_tier() -> CheckResult:
-    """Fail closed: an unresolvable tier must never fall through to a default."""
+    """Fail closed: an unresolvable tier never falls through to a default."""
     try:
         tier = P.resolve_active_tier()
     except Exception as exc:
@@ -35,7 +33,7 @@ def check_active_tier() -> CheckResult:
 
 
 def check_profiles_parse() -> list[CheckResult]:
-    """Every tier must load under the one constrained parser."""
+    """Check every tier loads under the one constrained parser."""
     out = []
     for tier in P.TIERS:
         try:
@@ -64,7 +62,7 @@ def check_capabilities_declare_backends(tier: str | None = None) -> list[CheckRe
 
 
 def check_client_mappings() -> list[CheckResult]:
-    """Every clients.toml mapping must target a capability this tier defines."""
+    """Check each clients.toml mapping targets a capability the tier defines."""
     tier = P.resolve_active_tier()
     profile = P.load_profile(tier)
     known = set(P.enabled_roles(tier, _data=profile))
@@ -85,10 +83,10 @@ def check_client_mappings() -> list[CheckResult]:
     return out
 
 
-# ── generated state ─────────────────────────────────────────────────────────
+# generated state
 
 def check_generated_present() -> list[CheckResult]:
-    """Every generated artefact exists, in the home its consumer reads it from."""
+    """Check every generated artefact exists where its consumer reads it."""
     state, cfg = P.state_root(), P.deployed_client_root()
     expected = [state / "litellm" / "capabilities.json",
                 state / "litellm" / "config.yaml",
@@ -106,8 +104,9 @@ def check_generated_present() -> list[CheckResult]:
 
 
 def _model_names(cfg: pathlib.Path) -> list[str]:
-    """Declared model_name values. Commented examples are documentation: the
-    config carries a disabled cloud-fallback block that names raw backend tags.
+    """Return declared model_name values, skipping commented examples.
+
+    The cfg carries a disabled cloud-fallback block naming raw backend tags.
     """
     out = []
     for ln in cfg.read_text().splitlines():
@@ -133,7 +132,7 @@ def check_alias_uniqueness() -> CheckResult:
 
 
 def check_no_raw_backend_tags() -> CheckResult:
-    """Clients must reach models through ailocal-<capability>, never a raw tag."""
+    """Check clients reach models via ailocal-<capability>, never a raw tag."""
     cfg = P.state_root() / "litellm" / "config.yaml"
     if not cfg.is_file():
         return CheckResult("raw-tags", FAIL, "generated config.yaml is missing")
@@ -145,10 +144,10 @@ def check_no_raw_backend_tags() -> CheckResult:
                        remediation=None if not raw else "ailocal start")
 
 
-# ── deployed client state ───────────────────────────────────────────────────
+# deployed client state
 
 def check_codex_no_mcp() -> CheckResult:
-    """The bundled research entry must match the public launcher contract."""
+    """Check the bundled research entry matches the public launcher contract."""
     out = []
     path = P.deployed_client_root() / "codex" / "config.toml"
     if path.is_file():
@@ -166,11 +165,10 @@ def check_codex_no_mcp() -> CheckResult:
 
 
 def check_local_artifacts() -> CheckResult:
-    """The bundled artifact capability is registered and its runtime exists.
+    """Check the artifact capability is registered and its runtime exists.
 
-    Both halves are needed to draw: a registration pointing at an interpreter
-    that is gone fails at the first tool call, inside the model's turn, where
-    the user sees "no such tool" rather than a broken install.
+    A registration w/o its interpreter fails mid-turn as "no such tool", not
+    as a broken install.
     """
     cj = P.deployed_client_root() / "claude" / ".claude.json"
     if not cj.is_file():
@@ -198,10 +196,10 @@ def check_local_artifacts() -> CheckResult:
                        "claude-local can publish artifacts locally")
 
 
-# ── deployed container state ────────────────────────────────────────────────
+# deployed container state
 
 def check_mount_drift() -> CheckResult:
-    """Container must run this repo's config.yaml; Docker absent is BLOCKED."""
+    """Check the container runs this repo's config.yaml; no Docker → BLOCKED."""
     from . import services as S
     if not S.docker_available():
         return CheckResult("mount-drift", BLOCKED,
@@ -223,10 +221,10 @@ def check_mount_drift() -> CheckResult:
                        remediation=None if ok else "ailocal start")
 
 
-# ── compose source layout ───────────────────────────────────────────────────
+# compose source layout
 
 def check_compose_layout() -> list[CheckResult]:
-    """deploy/ is canonical; a root compose file means two competing stacks."""
+    """Check deploy/ is canonical; a root compose file means rival stacks."""
     out = []
     root_compose = [p for p in (P.data_root() / "docker-compose.yml", P.data_root() / "docker-compose.yaml")
                     if p.exists()]
@@ -253,8 +251,9 @@ def check_compose_layout() -> list[CheckResult]:
 
 
 def _compose_env() -> dict:
-    """Compose interpolates AILOCAL_SEARXNG_SETTINGS, which runtime.py exports
-    after rendering. Point at the same rendered file so `config` can resolve.
+    """Return env pointing AILOCAL_SEARXNG_SETTINGS at runtime.py's render.
+
+    Compose interpolates it; w/o it `config` cannot resolve.
     """
     return {**os.environ, "DOCKER_CLI_HINTS": "false",
             "AILOCAL_SEARXNG_SETTINGS": os.environ.get(
@@ -263,7 +262,7 @@ def _compose_env() -> dict:
 
 
 def _compose_json() -> dict | None:
-    """The merged compose configuration, or None when Docker cannot render it."""
+    """Return the merged compose cfg, or None when Docker cannot render it."""
     import subprocess
     try:
         r = subprocess.run(
@@ -284,9 +283,9 @@ def _compose_json() -> dict | None:
 
 
 def check_compose_config() -> list[CheckResult]:
-    """Compose validity, one project, shared network, and api_base agreement.
+    """Check compose validity, one project, shared network, api_base agreement.
 
-    Service discovery breaks silently if the services land on different networks.
+    Service discovery breaks silently across different networks.
     """
     doc = _compose_json()
     if doc is None:
@@ -321,7 +320,7 @@ def check_compose_config() -> list[CheckResult]:
 
 
 def check_client_slots() -> list[CheckResult]:
-    """Client slot assignments, from the rule policy owns."""
+    """Check client slot assignments against the rule policy owns."""
     try:
         problems = P.slot_problems()
     except P.ProfileError as exc:
@@ -336,7 +335,7 @@ def check_client_slots() -> list[CheckResult]:
 
 
 def check_generated_in_sync() -> CheckResult:
-    """Regeneration is a fixed point; drift means a hand edit. Active tier only."""
+    """Check regeneration is a fixed point; drift means a hand edit."""
     import subprocess
     try:
         r = subprocess.run([sys.executable, "-m", "ailocal.generation", "--check"],
@@ -345,8 +344,7 @@ def check_generated_in_sync() -> CheckResult:
         return CheckResult("generated-sync", BLOCKED,
                            "cannot check generated drift", str(exc))
     if r.returncode in (126, 127):
-        # The generator itself could not run (a missing tool, not drift).
-        # Reporting FAIL here would blame the configuration for a broken host.
+        # Generator could not run: a broken host, not cfg drift → not FAIL.
         return CheckResult("generated-sync", BLOCKED,
                            "cannot check generated drift: the generator did not run",
                            (r.stdout + r.stderr).strip()[-200:] or f"exit {r.returncode}")
@@ -360,16 +358,15 @@ def check_generated_in_sync() -> CheckResult:
 
 
 def _guide_hook_bytes() -> tuple[int | None, int | None]:
-    """(launch-default payload, model-unspecified payload) of Claude's guide hook."""
+    """Return Claude guide-hook bytes: (launch default, model unspecified)."""
     from ailocal import guidance
     return guidance.launch_default_hook_bytes()
 
 
 def _scratchpad_hook_bytes(tool: str) -> int | None:
-    """Context the shared scratchpad hook adds in `tool`'s root, from its shipped source.
+    """Return context bytes the scratchpad hook adds in `tool`'s root.
 
-    Computed, not run: running it creates a directory. The directory name holds the
-    client's session id, a 36-character UUID in both clients.
+    Computed, not run: running creates a dir named by the 36-char session UUID.
     """
     try:
         source = (P.data_root() / "clients" / "scratchpad-hook.sh").read_text()
@@ -383,16 +380,11 @@ def _scratchpad_hook_bytes(tool: str) -> int | None:
 
 
 def check_instruction_budget() -> list[CheckResult]:
-    """Always-on startup context in ailocal's client roots fits the published budget.
+    """Check always-on startup context in client roots fits the budget.
 
-    ailocal writes no CLAUDE.md or AGENTS.md and needs none; another tool may.
-    Whoever wrote one, a file past `instruction_max_bytes` degrades the local
-    models (#39), so it is reported here rather than trusted to its writer. The
-    hooks ailocal registers count too, because each client adds their output to
-    the same context: the scratchpad hook in both roots and, in Claude's, the
-    guide hook, whose output depends on whether the event names a model. The
-    larger of those cases is compared with the budget (#60). A warning, not a
-    failure: the file is not ailocal's to rewrite.
+    Context past `instruction_max_bytes` degrades local models (#39), whoever
+    wrote it; registered hook output counts, worst guide-hook case (#60).
+    Warning only: another tool's file is not ailocal's to rewrite.
     """
     out = []
     budgets = P.instruction_budgets(tier=P.resolve_active_tier())
@@ -433,7 +425,7 @@ def check_instruction_budget() -> list[CheckResult]:
 
 
 def deterministic_checks(tier: str | None = None) -> list[CheckResult]:
-    """The configuration layer of `ailocal check`. No live service calls."""
+    """Run the configuration layer of `ailocal check`; no live service calls."""
     results: list[CheckResult] = [check_active_tier()]
     results += check_profiles_parse()
     results += check_capabilities_declare_backends(tier)

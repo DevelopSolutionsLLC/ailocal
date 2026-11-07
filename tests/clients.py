@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Co-owned client configuration: what ailocal writes into a file another owner shares, and what it removes.
+"""Test what ailocal writes into, and removes from, co-owned client cfg.
 
 Writes only temp roots.
 """
@@ -46,7 +46,7 @@ def vscode() -> None:
 
 
 def _native_mcp(calls: list):
-    """Stand-in for `claude mcp` / `codex mcp`, writing only where CLAUDE_CONFIG_DIR/CODEX_HOME point."""
+    """Fake `claude mcp`/`codex mcp`, writing only under the configured root."""
     def fake(command, **kwargs):
         var = "CLAUDE_CONFIG_DIR" if command[0] == "claude" else "CODEX_HOME"
         calls.append((command, kwargs["env"][var]))
@@ -101,7 +101,7 @@ def copilot_mcp() -> None:
 
 
 def agent_mcp() -> None:
-    # ailocal once registered local-agent in the HOSTED roots, which outlived its uninstall.
+    # local-agent was once registered in hosted roots and outlived uninstall.
     S.section("AGENT MCP: LOCAL ROOTS ONLY, HOSTED BYTE-IDENTICAL")
     with temp_dir() as root:
         hosted, local = root / "hosted", root / "local"
@@ -151,8 +151,8 @@ def agent_mcp() -> None:
 
 
 def codex() -> None:
-    # Dropping [hooks.state] re-armed "Hooks need review" after every `ailocal start`; a DOTALL `.*`
-    # once captured the rest of the file, writing later tables twice.
+    # Dropped [hooks.state] re-armed "Hooks need review" each start; a DOTALL
+    # `.*` once captured the rest of the file, writing later tables twice.
     S.section("CODEX CONFIG.TOML: CO-OWNED RECORDS SURVIVE REGENERATION")
     T = 'model = "ailocal-primary"\n\n[model_providers.ailocal]\nname = "x"\n'
     tpl = T + '\n[mcp_servers.research]\ncommand = "ailocal"\n'

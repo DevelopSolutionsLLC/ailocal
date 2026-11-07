@@ -1,7 +1,6 @@
-"""Live runtime checks: containers, proxy, Ollama, search.
+"""Live runtime checks: containers, proxy, Ollama, search; every call bounded.
 
-One implementation per primitive, and every call is bounded. Nothing here is
-deterministic; what can be decided without a running stack belongs in config.py.
+What can be decided w/o a running stack belongs in config.py.
 """
 
 from __future__ import annotations
@@ -17,9 +16,7 @@ import urllib.request
 from .. import policy, runtime
 from . import BLOCKED, FAIL, PASS, WARN, CheckResult
 
-# One timeout policy. Callers may tighten or extend it for a specific call, but
-# no call may opt out: an unbounded request in a validator is how a diagnostic
-# turns into a hang.
+# Callers may adjust a timeout but never drop it: unbounded → a hung check.
 CONNECT_TIMEOUT = 5      # reachability and metadata
 INSPECT_TIMEOUT = 15     # docker / ollama subprocesses
 GENERATE_TIMEOUT = 120   # one bounded model response
@@ -35,7 +32,7 @@ class Unreachable(Exception):
 
 def http_json(url: str, *, token: str | None = None, payload: dict | None = None,
               timeout: int = CONNECT_TIMEOUT) -> dict:
-    """One bounded HTTP/JSON call. Raises Unreachable rather than hanging."""
+    """Make one bounded HTTP/JSON call; raise Unreachable rather than hang."""
     from ailocal import primitives
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     try:
@@ -64,23 +61,16 @@ def _key_from(text: str, var: str) -> str:
 
 
 def master_key() -> str:
-    """The LiteLLM master key. Nothing outside this module resolves credentials.
+    """Return the LiteLLM master key; only this module resolves credentials.
 
-    Order matters: clients/env.sh carries ANTHROPIC_API_KEY and OPENAI_API_KEY
-    for the CLIENTS, which are not necessarily the master key. An unrecognised
-    key sends LiteLLM to a key database that does not exist here, and the fault
-    surfaces as "No connected db" rather than as a credential error.
+    Order matters: env.sh's client keys need not be the master key, and a wrong
+    key surfaces as "No connected db", not as a credential error.
     """
-    # The generated environment holds the master key; clients/env.sh is an
-    # installed asset. Neither is found by walking up from this file once the
-    # package is installed.
     from .. import environment
     dotenv = environment.generated_file()
     env_sh = policy.data_root() / "clients" / "env.sh"
     files = {p: p.read_text() for p in (dotenv, env_sh) if p.is_file()}
-    # (variable, files to search) in strict precedence order. The environment
-    # outranks every file for the master key AND for both client keys, so a
-    # shell-exported OPENAI_API_KEY still wins over an installed env.sh.
+    # (variable, files) in precedence order; the env outranks every file.
     for var, paths in (("LITELLM_MASTER_KEY", (dotenv, env_sh)),
                        ("ANTHROPIC_API_KEY", ()), ("OPENAI_API_KEY", ()),
                        ("ANTHROPIC_API_KEY", (env_sh,)),
@@ -95,7 +85,7 @@ def master_key() -> str:
 
 
 def proxy_healthy(timeout: int = CONNECT_TIMEOUT) -> bool:
-    """Bare reachability, for callers that want a boolean rather than a report."""
+    """Return bare proxy reachability, for callers that want a boolean."""
     try:
         http_json(f"{PROXY}/health/liveliness", timeout=timeout)
         return True
@@ -113,14 +103,14 @@ def _run(cmd: list[str], timeout: int = INSPECT_TIMEOUT, *,
         return subprocess.CompletedProcess(cmd, 124, "", f"timed out after {timeout}s")
 
 
-# ── docker ──────────────────────────────────────────────────────────────────
+# docker
 
 def docker_available() -> bool:
     return _run(["docker", "info", "--format", "{{.ServerVersion}}"]).returncode == 0
 
 
 def container_state(name: str = CONTAINER) -> tuple[str, str]:
-    """(state, health). state is 'absent' when Docker cannot see the container."""
+    """Return (state, health); state is 'absent' if Docker cannot see it."""
     r = _run(["docker", "inspect", "-f",
               "{{.State.Status}}\t{{if .State.Health}}{{.State.Health.Status}}{{end}}",
               name])
@@ -137,11 +127,10 @@ def container_file(path: str, name: str = CONTAINER) -> str | None:
 
 
 def check_litellm_version(name: str = CONTAINER) -> CheckResult:
-    """The RUNNING LiteLLM must be the one that was validated.
+    """Check the running LiteLLM is the validated one; unverifiable fails.
 
-    `main-stable` floats, so the tag is not evidence; the installed distribution
-    metadata is (litellm exposes no __version__). An unverifiable version is a
-    failure, not a pass."""
+    `main-stable` floats, so read the dist metadata (no __version__), not tag.
+    """
     expected = _run(["docker", "exec", name, "printenv",
                      "AILOCAL_LITELLM_VERSION"]).stdout.strip()
     if not expected:
@@ -171,10 +160,10 @@ def check_litellm_version(name: str = CONTAINER) -> CheckResult:
                        f"LiteLLM {actual} (matches the validated version)")
 
 
-# ── ollama ──────────────────────────────────────────────────────────────────
+# ollama
 
 def ollama_installed() -> set[str]:
-    """Installed model tags. Empty set when the daemon is unreachable."""
+    """Return installed model tags; empty when the daemon is unreachable."""
     try:
         doc = http_json(f"{OLLAMA}/api/tags")
     except Unreachable:
@@ -183,7 +172,7 @@ def ollama_installed() -> set[str]:
 
 
 def ollama_loaded() -> set[str]:
-    """Models currently resident."""
+    """Return models currently resident."""
     try:
         doc = http_json(f"{OLLAMA}/api/ps")
     except Unreachable:
@@ -191,7 +180,7 @@ def ollama_loaded() -> set[str]:
     return {m.get("name", "") for m in doc.get("models") or []}
 
 
-# ── proxy ───────────────────────────────────────────────────────────────────
+# proxy
 
 def served_aliases(token: str) -> set[str]:
     doc = http_json(f"{PROXY}/v1/models", token=token)
@@ -199,7 +188,7 @@ def served_aliases(token: str) -> set[str]:
 
 
 def model_info(token: str) -> dict[str, dict]:
-    """alias -> its advertised parameters."""
+    """Return alias → its advertised parameters."""
     doc = http_json(f"{PROXY}/model/info", token=token)
     out = {}
     for entry in doc.get("data") or []:
@@ -209,7 +198,7 @@ def model_info(token: str) -> dict[str, dict]:
     return out
 
 
-# ── checks ──────────────────────────────────────────────────────────────────
+# checks
 
 def check_docker() -> CheckResult:
     if docker_available():
@@ -234,44 +223,21 @@ def check_container(name: str = CONTAINER) -> CheckResult:
 
 
 def check_config_mount(name: str = CONTAINER) -> CheckResult:
-    """The container can still SEE the hooks it was started with.
+    """Check the container can still see the hooks it started with.
 
-    `/app/config` is bind-mounted from the INSTALLED package's resources
-    directory. Reinstalling the package — `pipx install --force`, an upgrade,
-    anything that recreates the venv — replaces that directory, and the running
-    container keeps holding the old inode, which is now empty.
-
-    [REAL] Observed here: after a reinstall, `docker exec ... ls /app/config`
-    returned nothing while `docker ps` said "Up 20 minutes (healthy)" and
-    /health/liveliness answered 200. Python had already imported the hooks at
-    boot, so the proxy kept serving from memory — and nothing anywhere said that
-    the files behind tool filtering, system transport and tool repair were gone.
-    The next restart would have loaded an empty callback list instead.
-
-    Cheap and deterministic: one `ls`.
-
-    Remediation is `ailocal start`, not a raw `docker restart`. [REAL] both were
-    measured repairing this exact state, but `ailocal start` is the canonical
-    command, it is already what README's upgrade line tells a user to run after
-    pipx, and it also reconciles a compose or generated-config change that a
-    bare container restart would miss. Nobody should need to know the
-    container's name, or that this is a Docker inode problem, to repair it.
+    A reinstall replaces the bind-mounted resources dir; the container keeps
+    the old, empty inode and stays healthy from memory until restart. Fix is
+    `ailocal start`, which also reconciles compose/generated-cfg changes.
     """
-    # A stopped container has no mount to inspect and check_container is already
-    # reporting that. Skipping here keeps this off the path the validator suite
-    # exercises, where the proxy is deliberately stopped and restarted, and
-    # avoids paying a `docker exec` to rediscover something already said.
+    # Stopped: check_container already reports it; skip the `docker exec`.
     state, _ = container_state(name)
     if state != "running":
         return CheckResult("config-mount", PASS,
                            f"skipped — {name} is {state}")
 
     r = _run(["docker", "exec", name, "ls", "/app/config/hooks"])
-    # A replaced mount shows up two ways depending on when it is caught: an
-    # empty listing, or `ls` failing outright with "No such file or directory".
-    # Both are the same fault, so both must FAIL. WARN is kept for a genuinely
-    # inconclusive result — docker unreachable, exec refused — where
-    # check_container is the one that should be speaking.
+    # Empty listing or "No such file" are the same fault → FAIL; WARN only
+    # when inconclusive (docker unreachable, exec refused).
     gone = ("no such file" in (r.stderr or "").lower()
             or "no such file" in (r.stdout or "").lower())
     if r.returncode != 0 and not gone:
@@ -311,10 +277,9 @@ def check_aliases(token: str, expected: list[str]) -> list[CheckResult]:
 
 
 def check_geometry(token: str, expected: dict[str, int]) -> list[CheckResult]:
-    """Advertised max_input_tokens must match the profile.
+    """Check advertised max_input_tokens matches the profile.
 
-    Clients trust the advertisement over the model's real limit, so a proxy on
-    stale config silently gives them the wrong window.
+    Clients trust the advertisement over the model's real limit.
     """
     try:
         info = model_info(token)
@@ -352,9 +317,10 @@ MANAGED_OLLAMA = pathlib.Path.home() / "Library/LaunchAgents/com.ailocal.ollama.
 
 
 def _listener_executable() -> str:
-    """The resolved executable of the process listening on :11434. lsof's txt
-    entry names the file the kernel mapped, so a symlinked CLI reports its
-    target and a daemon whose file was since deleted still reports the old path."""
+    """Return the resolved executable of the process listening on :11434.
+
+    lsof's txt entry is the mapped file: symlink target, or a deleted path.
+    """
     try:
         pid = subprocess.run(["lsof", "-nP", "-tiTCP:11434", "-sTCP:LISTEN"], capture_output=True,
                              text=True, timeout=INSPECT_TIMEOUT).stdout.split()
@@ -368,11 +334,10 @@ def _listener_executable() -> str:
 
 
 def check_managed_ollama_runtime() -> CheckResult:
-    """The daemon on :11434 runs the selected binary through com.ailocal.ollama.
+    """Check :11434 runs the selected binary via com.ailocal.ollama.
 
-    `Ollama responding` stays green after the binary under a running daemon is
-    deleted (an app removed for the cask): resident models answer, every new
-    load fails with `llama-server binary not found`."""
+    A deleted binary still serves resident models; new loads then fail.
+    """
     import plistlib
     fix = "ailocal install"
     try:
@@ -397,7 +362,7 @@ def check_managed_ollama_runtime() -> CheckResult:
 
 
 def check_selected_ollama_runtime() -> CheckResult:
-    """Check the explicit patched selection, including the actual daemon identity."""
+    """Check the explicit patched selection, incl. the daemon identity."""
     try:
         policy.ollama_binary()  # includes owned payload integrity verification
         expected = policy.ollama_patch_spec()["version"]
@@ -412,8 +377,7 @@ def check_selected_ollama_runtime() -> CheckResult:
 
 
 def check_generation(token: str, alias: str) -> CheckResult:
-    """One bounded model response on `alias`, the resolved fast capability. The
-    only call here that loads a model."""
+    """Check one bounded response on `alias`; the only call loading a model."""
     try:
         doc = http_json(f"{PROXY}/v1/chat/completions", token=token, payload={
             "model": alias, "temperature": 0,
@@ -431,16 +395,14 @@ def check_generation(token: str, alias: str) -> CheckResult:
     return CheckResult("generation", PASS, f"{alias} answered ({content.strip()[:40]})")
 
 
-#: The one SearXNG query any DEFAULT check may issue. `!wp` restricts dispatch
-#: to Wikipedia, which costs nothing. A bare query fans out to every enabled
-#: general-web engine, and an optional token-backed engine such as github code
-#: consumes its owner's quota. A local health check must never consume one.
+#: Default checks' only query: `!wp` hits free Wikipedia; a bare query fans
+#: out to every engine, incl. token-backed ones that spend quota.
 FREE_ENGINE_QUERY = "!wp test"
 FREE_ENGINE_NAME = "wikipedia"
 
 
 def _searxng_state() -> CheckResult | None:
-    """Container-state guard shared by the search checks. None means running."""
+    """Guard search checks on container state; None means running."""
     state, _ = container_state("ailocal-searxng")
     if state == "absent":
         return CheckResult("searxng", WARN, "SearXNG container not present",
@@ -452,11 +414,9 @@ def _searxng_state() -> CheckResult | None:
 
 
 def check_searxng() -> CheckResult:
-    """Reachability and JSON-API health, WITHOUT dispatching any engine.
+    """Check reachability and JSON-API health w/o dispatching any engine.
 
-    /config is served by SearXNG itself and queries nothing, so this costs no
-    external request. Search is optional: unavailable search degrades, it does
-    not fail.
+    /config queries nothing. Search is optional: unavailable degrades.
     """
     guard = _searxng_state()
     if guard is not None:
@@ -475,11 +435,9 @@ def check_searxng() -> CheckResult:
 
 
 def check_searxng_query() -> CheckResult:
-    """One real search, pinned to a free engine, and PROVE only that engine ran.
+    """Run one search pinned to a free engine and prove only that engine ran.
 
-    Asserting on the returned engine names is the point: a configuration change
-    that re-enables federation would otherwise silently start spending external
-    quota on every smoke run.
+    Else re-enabled federation would silently spend quota on every smoke run.
     """
     guard = _searxng_state()
     if guard is not None:
@@ -513,11 +471,10 @@ def check_searxng_query() -> CheckResult:
 
 
 def check_brave_key_configured() -> CheckResult:
-    """Report where Brave can be spent, WITHOUT spending a query or printing the key.
+    """Report where Brave can be spent w/o spending a query or printing the key.
 
-    Brave is spent only through the research MCP's budget ledger. A rendered
-    SearXNG settings file that still names braveapi is a stale render: an
-    uncounted path to the same allowance, until `ailocal start` rewrites it.
+    Only the research MCP's ledger may spend Brave; a SearXNG render naming
+    braveapi is stale, an uncounted path until `ailocal start` rewrites it.
     """
     override = os.environ.get("AILOCAL_SEARXNG_SETTINGS")
     # The state root has one owner; do not re-derive it here.
@@ -533,11 +490,10 @@ def check_brave_key_configured() -> CheckResult:
 
 
 def check_searxng_external() -> CheckResult:
-    """OPT-IN ONLY. A federated search that reaches paid engines.
+    """Run a federated search reaching paid engines; opt-in only.
 
-    Reached exclusively through `ailocal check --external-search`. Never call
-    this from doctor, smoke's default path, the gate, install validation or any
-    stress loop: each call reaches every enabled external engine.
+    Only via `ailocal check --external-search`; never from doctor, smoke, the
+    gate, install validation or a loop.
     """
     guard = _searxng_state()
     if guard is not None:
@@ -560,7 +516,7 @@ def check_searxng_external() -> CheckResult:
 
 
 def check_search_tool_registered() -> CheckResult:
-    """LiteLLM must have registered searxng-search at boot.
+    """Check LiteLLM registered searxng-search at boot.
 
     A misplaced search_tools block leaves the proxy healthy but search absent.
     """
@@ -576,10 +532,9 @@ def check_search_tool_registered() -> CheckResult:
 
 
 def check_context_window(token: str, alias: str | None = None) -> CheckResult:
-    """An oversized prompt must be rejected, not silently truncated.
+    """Check an oversized prompt is rejected, not silently truncated.
 
-    Without enforcement the request returns 200 with a garbage answer, so this
-    is worth the one large bounded request it costs.
+    Unenforced, it returns 200 w/ a garbage answer.
     """
     roles = {"ailocal-" + role: cfg
              for role, cfg in policy.effective_summary()["roles"].items()
@@ -589,9 +544,8 @@ def check_context_window(token: str, alias: str | None = None) -> CheckResult:
     if alias not in roles:
         return CheckResult("context-window", FAIL,
                            "context-window probe has no enabled selected capability")
-    # Each repeated ' x' is one token for the proxy's admission tokenizer.
-    # Derive the request from the selected limit; a disabled completion role
-    # must not turn an admission check into a missing-model request.
+    # Each ' x' is one admission token. Size from the selected limit so a
+    # disabled completion role is not a missing-model request.
     filler = " x" * (roles[alias]["max_input_tokens"] + 128)
     try:
         doc = http_json(f"{PROXY}/v1/chat/completions", token=token, payload={
@@ -611,14 +565,11 @@ def check_context_window(token: str, alias: str | None = None) -> CheckResult:
                        "ailocal start")
 
 
-# ── container supply chain ──────────────────────────────────────────────────
-# What a vulnerability scanner does not answer: is every declared image pinned
-# to an immutable digest, does the RUNNING image match the DECLARED one, and is
-# the service reachable off-host. Editing a compose file restarts nothing, so a
-# repository can look patched while the old image keeps serving.
+# container supply chain: digest pins, running = declared, loopback only.
+# Editing compose restarts nothing, so a repo can look patched yet serve old.
 
 def declared_images() -> list[str]:
-    """Image references from the compose files, in declaration order."""
+    """Return image references from the compose files, in declaration order."""
     out = []
     for compose in sorted(policy.data_root().glob("deploy/*/compose.yaml")):
         for line in compose.read_text().splitlines():
@@ -641,7 +592,7 @@ def check_pinned(images: list[str]) -> list[CheckResult]:
 
 
 def _running_digest(repo: str) -> tuple[str, str]:
-    """(container name, running repo digest) for this installation's `repo`."""
+    """Return (container name, running repo digest) for this install's repo."""
     for cid in _running_containers():
         image = _run(["docker", "inspect", cid,
                       "--format", "{{.Config.Image}}"]).stdout.strip()
@@ -661,7 +612,7 @@ def _running_digest(repo: str) -> tuple[str, str]:
 
 
 def check_no_drift(images: list[str]) -> list[CheckResult]:
-    """The running digest must be the declared one. They diverge silently."""
+    """Check the running digest is the declared one; they diverge silently."""
     out = []
     for image in images:
         if "@sha256:" not in image:
@@ -686,16 +637,17 @@ def check_no_drift(images: list[str]) -> list[CheckResult]:
 
 
 def _running_containers() -> list[str]:
-    """Let Compose resolve ownership, including project and environment overrides."""
+    """List this install's containers; Compose resolves overrides."""
     from ailocal import runtime
     return _run(runtime.compose_argv(["ps", "-q", "--status", "running", "--orphans=false"]),
                 env=runtime.compose_env()).stdout.split()
 
 
 def check_loopback() -> list[CheckResult]:
-    """Published ports of this installation's containers only. The proxy may
-    leave loopback when `ailocal bind` says so, reported as a warning each time
-    so it is never on by accident; anything else off-host is a failure."""
+    """Check this install's published ports stay on loopback.
+
+    The proxy may leave it via `ailocal bind` (warned each run); else FAIL.
+    """
     from ailocal import environment
     from ailocal.runtime import _bind_matches
     bind = environment.bind()
@@ -732,11 +684,10 @@ def check_loopback() -> list[CheckResult]:
 
 
 def check_provenance(images: list[str]) -> list[CheckResult]:
-    """A digest proves the bytes did not change, not who published them.
+    """Check publisher signatures; a digest proves bytes, not who published.
 
-    Missing cosign degrades the report; it is never installed automatically.
-    `cosign triangulate` must NOT be used to prove existence — it only computes
-    the expected .sig tag from the digest and succeeds for unsigned images.
+    Missing cosign degrades; never auto-installed. `cosign triangulate` cannot
+    prove existence: it succeeds for unsigned images.
     """
     if not shutil.which("cosign"):
         return [CheckResult("provenance", WARN,
@@ -750,8 +701,7 @@ def check_provenance(images: list[str]) -> list[CheckResult]:
             out.append(CheckResult("provenance", WARN,
                                    f"{repo}: publisher signs nothing for this digest"))
         elif "Signatures for an image" in tree:
-            # Presence is not validity: a real assertion needs the publisher's
-            # identity, which upstream does not document for these images.
+            # Presence ≠ validity: upstream documents no signer identity.
             out.append(CheckResult("provenance", PASS,
                                    f"{repo}: signature published for this digest "
                                    "(identity policy not configured)"))
@@ -761,22 +711,18 @@ def check_provenance(images: list[str]) -> list[CheckResult]:
     return out
 
 
-#: Upstream discovery per repository. Qdrant belongs to another product and is
-#: deliberately absent.
 def check_updates(images: list[str]) -> list[CheckResult]:
-    """Discovery only. Never pulls over a running service, never rewrites a pin.
+    """Discover upstream versions; never pull, never rewrite a pin.
 
-    Digest inequality alone does not mean "behind": the LiteLLM pin tracks
-    main-stable, which runs AHEAD of the newest tagged release, so a digest-only
-    comparison proposes a downgrade as an update. Compare versions where a
-    version is knowable."""
+    Compare versions where knowable: main-stable runs ahead of the newest tag,
+    so digest inequality alone would propose a downgrade. Qdrant: not ours.
+    """
     out = []
     for image in images:
         ref, cur = (image.split("@", 1) + [""])[:2]
         repo = ref.split(":", 1)[0]
         if repo == "ghcr.io/berriai/litellm":
-            # `releases/latest` is the newest release whatever its age; the version
-            # policy (version_policy.py) is what may be adopted (#106).
+            # Newest release, any age; version_policy.py decides (#106).
             from .. import audit, update, version_policy as vp
             try:
                 listing = http_json("https://api.github.com/repos/BerriAI/"
@@ -795,8 +741,7 @@ def check_updates(images: list[str]) -> list[CheckResult]:
             newest = f"v{chosen}" if chosen else ""
             candidate = f"{repo}:{newest}"
         elif repo == "searxng/searxng":
-            # Rolling `latest`, no semver releases — which is exactly why it
-            # must stay digest-pinned.
+            # Rolling `latest`, no semver: hence the digest pin.
             newest, candidate = "latest", "searxng/searxng:latest"
         else:
             out.append(CheckResult("update", BLOCKED,

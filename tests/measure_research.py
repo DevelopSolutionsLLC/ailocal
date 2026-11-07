@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Live local research measurements, JSON lines for human review. Out of the gate.
+"""Measure live local research as JSON lines for human review; not gated.
 
-    python3 tests/measure_research.py [--quick]           # answer quality through the real MCP server
-    python3 tests/measure_research.py --routing [--runs N]  # does the model pick search from the schemas?
+    python3 tests/measure_research.py [--quick]   # answer quality, real MCP
+    python3 tests/measure_research.py --routing [--runs N]  # schema routing
 
 Needs the research runtime (the `mcp` package) and a running stack. No hosted or
 Brave queries; --routing stages retrieval and never executes a tool.
@@ -29,7 +29,7 @@ QUESTIONS = [
     ("Does GitHub REST code search require authentication?", ["docs.github.com"]),
     ("What does Python asyncio.wait_for do when its timeout expires?", ["docs.python.org"]),
 ]
-# (expected_search, acceptable presets or None, prompt); no prompt names a tool, preset or site.
+# (expected_search, presets or None, prompt); no prompt names a tool or site.
 PROMPTS = [
     (True, {"forums"}, "Search the forums online for challenges people face developing cybersecurity tools with AI"),
     (True, {"forums"}, "What do developers on Reddit and Hacker News think about Bun vs Node in production?"),
@@ -71,7 +71,7 @@ async def routing(runs):
     app = build_mcp(cfg)
     tools = [{"type": "function", "function": {"name": "mcp__research__" + t.name, "description": t.description,
                                                "parameters": t.input_schema}} for t in await app.list_tools()]
-    # Repository-tool stand-ins, so the repository negative control has a correct target.
+    # Repository-tool stand-ins: the repository negative control needs a target.
     for name, text, arg in (("Read", "Read a file from the local repository.", "file_path"),
                             ("Grep", "Search file contents in the local repository with a regular expression.",
                              "pattern")):

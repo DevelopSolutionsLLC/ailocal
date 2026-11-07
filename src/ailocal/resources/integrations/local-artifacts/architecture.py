@@ -1,11 +1,7 @@
-"""architecture.py — structured architecture diagrams.
+"""Render architecture JSON → validate → size → ELK (node) → static SVG.
 
-    architecture JSON  ->  validate  ->  size  ->  ELK (node)  ->  SVG
-
-The model supplies MEANING: nodes, groups, edges, labels, semantic kinds.
-This module supplies GEOMETRY and PRESENTATION: sizes, coordinates, routing,
-typography, colour. The model never writes a coordinate, and the emitted
-artifact contains no script at all -- it is static SVG.
+The model supplies meaning; this module owns geometry and presentation, so
+the model never writes a coordinate and the artifact holds no script.
 """
 
 import json
@@ -26,16 +22,11 @@ EDGE_KINDS = ("request", "inference", "tool", "data", "dependency", "default")
 
 
 class SpecError(Exception):
-    """A malformed specification. The message is shown to the model."""
+    """A malformed specification; the message is shown to the model."""
 
 
-# ── text metrics ──────────────────────────────────────────────────────────────
-# Sizing and rendering MUST agree, so both go through these. Advances are
-# deliberate over-estimates: too wide only adds whitespace, too narrow overflows
-# the node, and overflow is the defect this whole module exists to remove.
-# Advances are deliberate over-estimates: too wide only adds whitespace, too
-# narrow overflows the node, and overflow is the defect this module exists to
-# remove. Sizes come from the theme so the renderer has one source.
+# Sizing and rendering share these. Advances over-estimate: too wide only adds
+# whitespace, too narrow overflows the node.
 def _typo(k, d):
     import tokens as _t
     return _t.load()["typography"].get(k, d)
@@ -53,8 +44,7 @@ def _w(text, px, adv):
 
 
 def node_size(n):
-    """Card geometry. The type label is its own row (C4: an element states its
-    type), and the accent rail eats a few px on the left."""
+    """Return card (width, height); the type label is its own row (C4)."""
     title = _w(n["label"], TITLE_PX, TITLE_ADV)
     sub = _w(n.get("subtitle"), SUB_PX, SUB_ADV)
     badge = _w(n.get("badge"), BADGE_PX, BADGE_ADV) + 16
@@ -70,8 +60,6 @@ def node_size(n):
         height += 20.0
     return round(width), round(height)
 
-
-# ── validation ────────────────────────────────────────────────────────────────
 
 def _text(v, field, required=True):
     if v is None or v == "":
@@ -89,7 +77,7 @@ def _text(v, field, required=True):
 
 
 def validate(spec):
-    """Returns (nodes, groups, edges, meta). Raises SpecError with a fixable message."""
+    """Return (nodes, groups, edges, meta); raise SpecError with a fix."""
     if not isinstance(spec, dict):
         raise SpecError("the architecture spec must be a JSON object.")
 
@@ -144,10 +132,7 @@ def validate(spec):
             if grp not in groups:
                 raise SpecError(f"node '{nid}' refers to group '{grp}', which is not "
                                 f"declared in 'groups'.")
-        # Membership may be declared from either end. [REAL] asked for an
-        # architecture diagram, gemma4:26b-mlx used groups[].nodes rather than
-        # nodes[].group; accepting only one form silently produced a diagram
-        # with no boundaries at all.
+        # Membership from either end: models use groups[].nodes too.
         if grp is None:
             for gid_, g_ in groups.items():
                 if nid in g_["members"]:
@@ -199,8 +184,6 @@ def validate(spec):
         raise SpecError("'direction' must be 'RIGHT' or 'DOWN'.")
     return nodes, groups, edges, meta
 
-
-# ── layout ────────────────────────────────────────────────────────────────────
 
 def run_layout(nodes, groups, edges, meta):
     used_groups = [g for g in groups if any(n["group"] == g for n in nodes.values())]
@@ -263,19 +246,9 @@ def _elk_edge(e):
     return d
 
 
-# ── design system ─────────────────────────────────────────────────────────────
-# Every colour, typeface and measurement comes from the DTCG token files via
-# tokens.load(). Colour VALUES are generated from a pinned @carbon/themes
-# release; ailocal owns which semantic role each one serves. The renderer sees
-# semantic names only and never learns that a value came from blue.60.
-# The model supplies semantics only.
-#
-# C4's notation guidance drives two rules here (c4model.com/diagrams/notation):
-#   "every element must explicitly state its type", and be legible in black and
-#   white / to colourblind readers. So KIND IS RENDERED AS A TEXT LABEL and
-#   colour is only an accent -- which is also why runtime and model may sit in
-#   the same hue family without becoming ambiguous. Edge kinds carry a dash
-#   pattern for the same redundancy, and every diagram gets a key.
+# All design values come from DTCG tokens; the renderer sees semantic names.
+# C4 (c4model.com/diagrams/notation): kind is a text label, colour only an
+# accent, so diagrams survive greyscale and colourblind reading.
 
 import tokens as _tokens
 
@@ -328,12 +301,7 @@ svg.diagram{display:block;width:100%;height:auto}
 .n-title{fill:var(--ink);font-weight:600}
 """
 for _k in ACCENTS:
-    # The accent belongs to the GEOMETRY -- the rail, the line, the arrowhead --
-    # not to the label text. Small text set in a mid-saturation hue on the canvas
-    # measured 3-5:1 and read as unreadable; the same text in --ink is 14:1 and
-    # the colour coding survives on the shapes, with the legend and the printed
-    # TYPE label carrying the mapping. This is also why the diagram stays legible
-    # in greyscale.
+    # Accent on shapes, never text: hued small text measured 3-5:1 contrast.
     CSS += (f".rail-{_k}{{fill:var(--a-{_k})}}\n"
             f".type-{_k}{{fill:var(--muted);letter-spacing:.09em}}\n"
             f".ek-{_k}{{stroke:var(--a-{_k});fill:none}}\n"
@@ -353,12 +321,8 @@ def esc(t):
             .replace(">", "&gt;").replace('"', "&quot;"))
 
 
-# ── SVG ───────────────────────────────────────────────────────────────────────
-
 def _rounded_path(pts, r=9):
-    """Orthogonal polyline with rounded corners. ELK gives axis-aligned bend
-    points, so each corner is a quarter turn we can soften without changing the
-    route it computed."""
+    """Return an orthogonal SVG path with corners softened, route unchanged."""
     if len(pts) < 2:
         return ""
     d = [f"M {pts[0][0]:.1f} {pts[0][1]:.1f}"]
@@ -376,9 +340,7 @@ def _rounded_path(pts, r=9):
 
 
 def render_svg(nodes, groups, edges, meta, laid):
-    """Semantics in, presentation out. Neutral card + accent rail + explicit type
-    label, per C4's rule that an element states its type and that notation must
-    survive black-and-white printing."""
+    """Render laid-out semantics as SVG: card, accent rail, type label."""
     pos = {n["id"]: n for n in laid["nodes"]}
     W, H = laid["width"], laid["height"]
     used_kinds, used_edges = [], []
@@ -499,7 +461,7 @@ def render_svg(nodes, groups, edges, meta, laid):
 
 
 def build(spec):
-    """Full pipeline. Raises SpecError with a message the model can act on."""
+    """Run the full pipeline; raise SpecError with an actionable message."""
     nodes, groups, edges, meta = validate(spec)
     laid = run_layout(nodes, groups, edges, meta)
     return render_svg(nodes, groups, edges, meta, laid)

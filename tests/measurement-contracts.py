@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""The two measurement-driver contracts whose failure records a wrong number as evidence:
-which runner produced it, and how much of a prompt the cache really served. Fixtures only,
-no model loads. The drivers are tests/measure_*.py, not product code, so only these earn a test.
+"""Test the two measurement contracts whose failure records a wrong number.
+
+Which runner produced it, and how much prompt the cache served. Fixtures
+only; drivers are tests/measure_*.py, so only these earn a test.
 """
 import contextlib
 import io
@@ -23,20 +24,20 @@ class MeasurementContracts(unittest.TestCase):
             self.assertEqual(geometry.engine_of("model"), "mlx")
             self.assertRaises(RuntimeError, geometry.engine_of, "model:other")
 
-    def test_cache_reuse_counts_only_uncached_tokens(self):  # prompt_eval_count includes cached tokens
+    def test_cache_reuse_counts_only_uncached_tokens(self):  # count incl. cache
         cold = {"prompt_eval_count": 1000, "prompt_eval_duration": 30e9, "response": "x"}
         warm = {"prompt_eval_count": 1010, "prompt_eval_duration": 3e9}
         with tempfile.TemporaryDirectory() as tmp:
             log = Path(tmp) / "ollama.err.log"
             log.write_text("prompt eval time = 100.0 ms / 500 tokens\n")
-            # The API field first; else the newest request the server logged after the cold turn.
+            # API field first; else the newest request logged after cold turn.
             for response, appended, expect in (({**warm, "prompt_eval_cached_count": 1000}, "", 1 - 10 / 1010),
                                                (warm, "prompt eval time = 20.0 ms / 20 tokens\n", 1 - 20 / 1010)):
                 turns = iter([cold, response])
 
                 def generate(*_, **__):
                     turn = next(turns)
-                    if turn is response:  # the warm request is logged after the cold turn's offset
+                    if turn is response:  # warm request logged after cold offset
                         log.write_text(log.read_text() + appended)
                     return turn
                 with (patch.object(cache, "generate", side_effect=generate),

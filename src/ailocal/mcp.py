@@ -22,9 +22,10 @@ def agent_registration() -> dict:
 
 
 def agent_environment() -> dict:
-    """Env for the local-agent server: the loopback proxy, its key and the two
-    isolated client roots the delegated CLIs run under. Hosted configs are never
-    read here -- only the ailocal-owned deployed roots are named."""
+    """Build local-agent env: loopback proxy, its key, isolated client roots.
+
+    Hosted configs are never read; only ailocal-owned deployed roots are named.
+    """
     endpoint = runtime.proxy_url().rstrip('/')
     parsed = urlsplit(endpoint)
     try:
@@ -41,11 +42,10 @@ def agent_environment() -> dict:
                 'LOCAL_AGENT_CLAUDE_HOME': str(roots / 'claude'),
                 'LOCAL_AGENT_CODEX_HOME': str(roots / 'codex'),
                 'LOCAL_AGENT_CLAUDE_ENV': json.dumps(claude_launch_environment()),
-                # Every file that can hold the proxy key; a delegated child is
-                # denied reads of them (the sandbox otherwise reads most paths).
+                # Files holding the proxy key, else readable in the sandbox.
                 'LOCAL_AGENT_DENY_READ': json.dumps([str(p) for p in (
                     environment.user_file(), environment.generated_file())]),
-                # Research mode starts this server, as claude-local registers it.
+                # Research mode starts this server as claude-local does.
                 'LOCAL_AGENT_RESEARCH_MCP': json.dumps(registration()),
                 'LOCAL_AGENT_DEFAULT_MODEL': 'ailocal-cyber',
                 'LOCAL_AGENT_STATE': str(policy.state_root() / 'local-agent')})
@@ -53,8 +53,7 @@ def agent_environment() -> dict:
 
 
 def claude_launch_environment() -> dict:
-    """What claude-local sets besides URL, key and config root: the built-in
-    slots from client policy plus its timeout and context switches."""
+    """Return claude-local env beyond URL, key, root: slots, timeouts, ctx."""
     from .generation import SLOT_ENV, mn
     roles = policy.enabled_roles(policy.active_tier())
     slots = (policy.load_client_policy().get('claude') or {}).get('slots', {})
@@ -90,7 +89,7 @@ def launch_environment(enable_answer: bool = False) -> dict:
                 'LOCAL_RESEARCH_ENABLE_ANSWER': '1' if enable_answer else '0',
                 'LOCAL_RESEARCH_INPUT_CHARS': str(chars),
                 'LOCAL_RESEARCH_OUTPUT_TOKENS': str(min(800, cfg['max_output'])),
-                # The user's allowance per Brave billing period, not the provider's.
+                # The user's allowance per Brave billing period.
                 'LOCAL_RESEARCH_BRAVE_BUDGET': str(brave_budget()),
                 'LOCAL_RESEARCH_BRAVE_KEY': runtime.env_value('BRAVE_API')})
     return env
@@ -133,8 +132,7 @@ def main(argv: list[str]) -> int:
                   file=sys.stderr)
             return 1
     if argv == ['agent-policy']:
-        # Read by the agent server on every delegate, so an operator who lowers
-        # a ceiling does not have to restart a long-lived MCP process.
+        # Read per delegate, so a lowered ceiling needs no MCP server restart.
         try:
             print(json.dumps({'ceilings': policy.delegate_ceilings()}))
         except policy.ProfileError as error:

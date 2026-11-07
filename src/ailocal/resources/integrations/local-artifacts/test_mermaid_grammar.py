@@ -1,24 +1,16 @@
 #!/usr/bin/env python3
-"""The AUTHORITATIVE half: real Mermaid 11.17.2, real Chrome.
+"""Test Mermaid verdicts against real Mermaid 11.17.2 in real Chrome.
 
-FULL, not CORE -- it launches a browser per fixture. The control flow that
-consumes these verdicts is asserted cheaply in test_mermaid_validate.py, which
-also runs ONE real parse so a green CORE cannot mean this path is dead.
-
-Every ACCEPT here is proved by the grammar, never by inspecting normaliser
-output. That distinction is the whole point: the old suite asserted
-`"class Router {" in cd_out` and passed while the payload that reached a user
-did not parse at all.
+FULL suite: a browser per fixture. Every accept is proved by the grammar, never
+by inspecting normaliser output.
 """
 import importlib.util, os, sys, tempfile, time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-# Publishing writes .artifacts/ under the approved root, which defaults to cwd.
-# Point it at a throwaway dir BEFORE server.py is imported (it resolves the root
-# at import time), or the suite litters the checkout it is testing -- which the
-# install-parity and root-cleanliness gates then correctly reject.
+# Set before importing server.py (resolved at import), or .artifacts/ lands
+# in the checkout.
 _ARTIFACT_ROOT = tempfile.mkdtemp(prefix="la-testroot-")
 os.environ["LOCAL_ARTIFACTS_ROOT"] = _ARTIFACT_ROOT
 spec = importlib.util.spec_from_file_location("srv", HERE / "server.py")
@@ -39,8 +31,7 @@ if not V.available():
 def valid(src):
     return V.parse(src).state == V.VALID
 
-# [REAL] recovered from the claude-local transcript that produced the bomb icon,
-# not retyped from the chat: gemma4:26b-mlx corrupted one member mid-token.
+# Recovered verbatim from a transcript: a member corrupted mid-token.
 CORRUPT_LINE = "+render_nodes(ctx: Episode%} -> list[dict]"
 FIXED_LINE   = "+render_nodes(ctx: EpisodeContext) list[dict]"
 RECOVERED = """classDiagram
@@ -113,11 +104,7 @@ check("unquoted paren label is genuinely invalid", not valid(raw_paren))
 check("normalisation is what makes it valid",
       valid(srv.normalise_mermaid_labels(raw_paren)[0]))
 
-# ── negative control ──────────────────────────────────────────────────────────
-# `->` is not a classDiagram relationship operator. Every string assertion the
-# old suite made still holds -- both declarations survive the colour stripper,
-# braces balance, the classDef is gone, an edge line is present -- and the
-# diagram is still dead on arrival.
+# Negative control: passes every string check, yet `->` is invalid here.
 DECOY = """classDiagram
     class Router {
         -routes: dict
@@ -137,7 +124,6 @@ check("negative control: old-style string assertions all PASS",
       and "+dispatch(req)" in out and "<<abstract>>" in out)
 check("negative control: but the grammar REJECTS it", not valid(out))
 
-# ── end to end, through publish() ─────────────────────────────────────────────
 ok, msg = srv.publish(title="Grammar Corrupt", content=RECOVERED % CORRUPT_LINE, fmt="mermaid")
 check("publish() REFUSES the real corrupt payload", ok is False, msg)
 ok, msg = srv.publish(title="Grammar Fixed", content=RECOVERED % FIXED_LINE, fmt="mermaid")
@@ -151,7 +137,6 @@ ok, msg = srv.publish(title="Grammar MD OK",
                       fmt="markdown")
 check("markdown WITH a valid fence still publishes (bb15bec intact)", ok is True, msg)
 
-# ── browser isolation and cleanup ─────────────────────────────────────────────
 tmp = Path(tempfile.gettempdir())
 def profiles():
     return {p for p in tmp.glob("mermaid-validate-profile-*")}

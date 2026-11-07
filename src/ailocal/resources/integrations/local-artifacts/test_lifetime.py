@@ -1,16 +1,8 @@
 #!/usr/bin/env python3
 """Preview-server lifetime: the artifact must outlive the session that drew it.
 
-The defect this suite pins was measured, not guessed. The HTTP listener used to
-be a daemon thread inside the MCP stdio process. Claude Code terminates that
-process when the session ends (MCP spec: close stdin, then SIGTERM, then
-SIGKILL), so every `preview_url` in a transcript started refusing connections
-the moment its session ended -- while the artifact itself sat on disk, intact
-and unreachable. Reproduced from live state: content written at 13:56, nothing
-listening on 7891, `Connection refused`.
-
-So these tests spawn REAL processes and kill them. An in-process server would
-prove nothing here: the whole failure was about process boundaries.
+Clients kill the MCP process at session end, so the viewer must not live in
+it. Tests spawn and kill real processes: the contract is a process boundary.
 """
 import json, os, shutil, subprocess, sys, tempfile, time, urllib.error, urllib.request
 from pathlib import Path
@@ -46,8 +38,7 @@ def listener_pids():
     return sorted({l.split()[1] for l in r.stdout.splitlines()[1:]})
 
 
-# One publish, in its own process, which then EXITS -- exactly what a finishing
-# Claude Code session does to its MCP server.
+# Publish in a process that then exits, as a finishing session does.
 PUBLISHER = """
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location('s', sys.argv[1])
@@ -139,9 +130,8 @@ try:
     time.sleep(0.5)
 
     print("\n=== E: process ownership ===")
-    # start_new_session=True is the whole reason the viewer survives. Killing the
-    # publisher's entire PROCESS GROUP is what proves it: a viewer in that group
-    # would die here, and this is precisely what Claude Code does at session end.
+    # Kill the publisher's whole process group, as session end does; the
+    # viewer survives only via start_new_session.
     holder = subprocess.Popen(
         [sys.executable, "-c",
          "import importlib.util,sys,time;"
@@ -162,8 +152,7 @@ try:
           listener_pids() == owner_before, str(listener_pids()))
     check("and it still serves", get("/")[0] == 200)
 
-    # Truly concurrent publishers, started together with no server running: the
-    # bind race must produce exactly one survivor, not one viewer per publisher.
+    # Concurrent publishers, no server: the bind race must leave one viewer.
     for pid in listener_pids():
         subprocess.run(["kill", pid], capture_output=True)
     time.sleep(0.5)
@@ -209,8 +198,7 @@ try:
           str(listener_pids()))
 
     print("\n=== G: reaping never breaks the next publish ===")
-    # The full cycle the idle timeout has to survive:
-    #   publish -> served -> idle exit -> publish again -> served again.
+    # publish → served → idle exit → publish → served.
     code, _ = get("/")
     check("nothing is listening once it reaped", code != 200, str(code))
     rc, out, err = publish("Revived", "<h1>back from the dead</h1>")
@@ -226,10 +214,8 @@ try:
           str(list((ROOT / ".artifacts").glob("*"))[:5]))
 
     print("\n=== H: the viewer dying mid-publish is recovered or reported ===")
-    # This window -- server up, then gone before it ingests -- is real (the viewer
-    # is shared, so another session's reaper can land in it) but not reachable by
-    # timing from outside. Inject the failure instead: the control flow under test
-    # is publish()'s, and it is the same flow a real death would drive.
+    # Server dies before ingest (another session's reaper); untimeable, so
+    # inject the failure into publish()'s flow.
     import importlib.util
     for k, v in ENV.items():
         os.environ[k] = v

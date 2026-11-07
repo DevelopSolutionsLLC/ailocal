@@ -1,18 +1,8 @@
-"""clients.py — deploying the isolated client homes.
+"""Deploy the isolated client homes.
 
-ailocal provisions an isolated home per client under the config root and owns
-the files it ships there. It does NOT own the directories: a user or another
-tool may add content, and `install_managed_dir` is the contract that survives —
-foreign files and foreign symlinks are left alone, a marked external block
-inside a file ailocal also writes is carried across the overwrite, and only
-names in ailocal's own manifest are ever pruned.
-
-The three clients do not share a config format, so nothing here is generalised
-into a templating engine. What they do share — backups, the managed-directory
-contract, the shell sourcing, the key — lives once, at the top.
-
-Hosted Claude and Codex roots are never written. Public documentation MCPs are
-Cadence's to register (servers.yaml), in hosted and local roots alike.
+ailocal owns the files it ships, not the directories: foreign files and
+symlinks are left alone, marked external blocks survive overwrites, and only
+manifest names are pruned. Hosted Claude/Codex roots are never written.
 """
 from __future__ import annotations
 
@@ -32,21 +22,8 @@ from . import policy, runtime
 BACKUP_KEEP = int(os.environ.get("BACKUP_KEEP", "5"))
 TARGETS = ("vscode", "codex", "claude")
 
-#: The three first-class clients are OPTIONAL CONSUMERS of the local proxy, not
-#: dependencies of it: the runtime serves every one of them and needs none. So
-#: each carries how to detect it and the exact supported command to get it, and
-#: `ailocal clients` with no argument configures only the ones that are here.
-#: ailocal does not install a client for you — same rule as PREREQUISITES in
-#: install.py, for the same reason.
-#:
-#: Commands verified against the vendors' own current documentation and against
-#: `brew info` (August 2026):
-#:   Claude Code  code.claude.com/docs/en/quickstart — Homebrew cask, or
-#:                curl -fsSL https://claude.ai/install.sh | bash
-#:   Codex CLI    Homebrew cask, or npm i -g @openai/codex
-#:   VS Code      Homebrew cask. Copilot Chat ships IN VS Code; there is no
-#:                separate extension to install and no subscription needed —
-#:                the connector serves BYOK models.
+#: Optional consumers, never installed by ailocal; install commands verified
+#: against vendor docs and `brew info` (August 2026).
 CLIENTS: dict[str, tuple[str, str]] = {
     "claude": ("Claude Code", "brew install --cask claude-code"),
     "codex":  ("Codex CLI",   "brew install --cask codex"),
@@ -55,13 +32,10 @@ CLIENTS: dict[str, tuple[str, str]] = {
 
 
 def present(name: str) -> bool:
-    """Is this client on the machine? Detection is the client's own artefact.
+    """Return whether this client is on the machine.
 
-    VS Code is present when its `code` CLI is on PATH or its application bundle
-    is intact. The `code` CLI without a user directory is an installation that
-    has never been launched, which install_vscode reports precisely. A user
-    directory alone is NOT presence: it survives deleting the app, and counting
-    it reported a removed VS Code as installed but unconfigured.
+    VS Code: `code` on PATH or an intact app bundle. A user directory alone is
+    not presence: it survives deleting the app.
     """
     if name == "vscode":
         return shutil.which("code") is not None or _vscode_app() is not None
@@ -80,33 +54,19 @@ def report_missing(names) -> None:
     print("  Install any of them, then re-run: ailocal clients")
 
 
-#: The registration name in the roots ailocal owns. NOT `local-agent`: that name
-#: is the hosted alias Cadence declares and owns, and Cadence drops a declared
-#: name from every client it is not scoped to, so sharing it would make the two
-#: products remove each other's entry. The same split as `research` (local) and
-#: `local-research` (hosted).
+#: Not `local-agent`: Cadence owns that hosted name and drops it from clients it
+#: is not scoped to, so sharing it would make each product remove the other's.
 AGENT_MCP = "agent"
-#: The name ailocal registered before it stopped writing hosted roots. Removal
-#: condition: 0.18, two minor releases after hosted roots stopped being written.
+#: Former registration name. Removal condition: 0.18.
 LEGACY_AGENT_MCP = "local-agent"
 
 
 def provision_local_agent(names=("claude", "codex")) -> bool:
     """Register the agent MCP in claude-local and codex-local, and nowhere else.
 
-    The hosted roots are not ailocal's: hosted registration of this server is
-    Cadence's `local-agent` declaration, which carries an owner marker its
-    uninstall can prove. ailocal registered `local-agent` in both hosted and
-    local roots with no marker, so deleting ailocal's roots left two hosted
-    entries pointing at a removed command.
-
-    Registration goes through the native CLIs with the local root selected
-    (CLAUDE_CONFIG_DIR / CODEX_HOME); a same-name server of a different shape is
-    preserved and reported. A `local-agent` entry in a LOCAL root that has
-    ailocal's exact shape is ailocal's former registration and is removed the
-    same way. Uninstalling is deleting the local roots; the interpreter under
-    state_root/local-agent is the only residual and `ailocal clients`
-    reprovisions it.
+    Hosted roots belong to Cadence's `local-agent` declaration. Registration
+    uses the native CLIs; a same-name server of another shape is preserved and
+    reported, and a local `local-agent` entry of ailocal's shape is removed.
     """
     src = policy.data_root() / "integrations/local-agent"
     if not (src / "server.py").is_file():
@@ -180,16 +140,11 @@ VSCODE_PROVIDER_NAME = "ailocal"
 COPILOT_GUIDE_START = "<!-- ailocal:model-guidance:start -->"
 COPILOT_GUIDE_END = "<!-- ailocal:model-guidance:end -->"
 
-#: One canonical proxy URL for every host client, owned by runtime. It is
-#: 127.0.0.1 and not `localhost` on purpose: Docker publishes the port on IPv4
-#: only, `localhost` on macOS also resolves to ::1, and a client whose runtime
-#: tries ::1 first gets a bare connection refusal. Docker's own
-#: host.docker.internal is a different question and is not affected.
+#: 127.0.0.1, not `localhost`: Docker publishes IPv4 only, and macOS resolves
+#: `localhost` to ::1 too, so a client trying ::1 first is refused.
 BASE_URL = os.environ.get("AILOCAL_BASE_URL") or runtime.proxy_url()
 
-#: Literal marker pair another tool appends into files ailocal also writes. The
-#: strings are fixed because that tool writes them; ailocal only has to
-#: recognise and carry the block, and works unchanged if nothing writes one.
+#: Fixed markers another tool writes into files ailocal also writes; carried.
 OVERLAY_START = "<!-- cadence:start -->"
 OVERLAY_END = "<!-- cadence:end -->"
 MANIFEST_NAME = ".ailocal-managed"
@@ -202,7 +157,7 @@ from .report import BOLD, GREEN, RESET, YELLOW, info, skip, step, warn  # noqa: 
 
 
 def _code(*args, timeout: int = 120) -> str | None:
-    """Run the VS Code CLI. None means it is not usable at all."""
+    """Run the VS Code CLI; None means it is not usable at all."""
     if not shutil.which("code"):
         return None
     try:
@@ -221,11 +176,8 @@ def _sh(*args, timeout: int = 900) -> int:
         return 1
 
 
-# ── shared mechanics ────────────────────────────────────────────────────────
-
 def backup(path: Path) -> bool:
-    """Timestamped copy, keeping the newest BACKUP_KEEP: rollback only ever
-    reaches for a recent one, and unpruned copies turn the roots into landfill."""
+    """Make a timestamped copy, keeping only the newest BACKUP_KEEP."""
     if not path.is_file():
         return False
     dest = path.with_name(f"{path.name}.bak.{datetime.now():%Y%m%d_%H%M%S}")
@@ -237,28 +189,19 @@ def backup(path: Path) -> bool:
     return True
 
 
-#: Files ailocal shipped BEFORE the manifest existed, named here because that is
-#: the only ownership proof available for them. `prompts/` was written with a
-#: plain copy, so retirement cannot ask a manifest what we wrote; declaring the
-#: exact names keeps the removal provable and leaves anything else alone.
-#: Removal condition, with retire_managed_dir's manifest path: 0.18, two minor
-#: releases after the agents, commands and prompts stopped shipping (v0.12).
+#: Pre-manifest files; naming them is the only ownership proof.
+#: Removal condition: 0.18.
 RETIRED_UNMANAGED = {"prompts": ("analyze-repo.md", "local-build.md")}
 
 
 def retire_managed_dir(dst: Path) -> None:
-    """Remove a directory ailocal used to ship and no longer does.
+    """Remove a directory ailocal no longer ships.
 
-    install_managed_dir() prunes by manifest, but only for directories it is
-    still called for. A tree that stops being shipped is never visited again, so
-    it sits on every already-installed machine forever — which is what the
-    planner/implementer/reviewer agents and the local-build commands would have
-    done. Ownership is proved the same way it is proved during install: the
-    manifest names what we wrote, and nothing else is touched, so a user's own
-    file in the same directory survives and keeps the directory alive.
+    Only manifest names are removed; a user's own file survives and keeps the
+    directory alive.
     """
     if not dst.is_dir() or dst.is_symlink():
-        return                            # nothing shipped here, or not ours to walk
+        return
     manifest = dst / MANIFEST_NAME
     names = (manifest.read_text().split() if manifest.is_file()
              else list(RETIRED_UNMANAGED.get(dst.name, ())))
@@ -266,7 +209,7 @@ def retire_managed_dir(dst: Path) -> None:
     for name in names:
         target = dst / name
         if target.is_symlink() or not target.exists():
-            continue                      # someone else's link, or already gone
+            continue                      # someone else's link
         if target.is_dir():
             shutil.rmtree(target, ignore_errors=True)
         else:
@@ -274,7 +217,7 @@ def retire_managed_dir(dst: Path) -> None:
         removed = True
     manifest.unlink(missing_ok=True)
     try:
-        dst.rmdir()                       # only when empty: ours, emptied, or left empty
+        dst.rmdir()                       # only when empty
         info(f"retired {dst}")
     except OSError:
         if removed:
@@ -286,8 +229,7 @@ def install_managed_dir(src: Path, dst: Path) -> None:
     dst.mkdir(parents=True, exist_ok=True)
     manifest = dst / MANIFEST_NAME
 
-    # Prune what we shipped before and no longer ship. Only ever names in OUR
-    # manifest, and never something that is now someone else's symlink.
+    # Prune only our manifest names, never someone else's symlink.
     if manifest.is_file():
         for name in manifest.read_text().split():
             target = dst / name
@@ -307,8 +249,7 @@ def install_managed_dir(src: Path, dst: Path) -> None:
             shutil.copytree(entry, target)
             continue
 
-        # Carry any marked block already present, so overwriting our file does
-        # not silently drop what another tool appended.
+        # Carry another tool's marked block across the overwrite.
         carried = ""
         if target.is_file() and not target.is_symlink():
             text = target.read_text(encoding="utf-8", errors="replace")
@@ -317,8 +258,7 @@ def install_managed_dir(src: Path, dst: Path) -> None:
                 end = text.index(OVERLAY_END) + len(OVERLAY_END)
                 carried = text[start:end]
 
-        # Never write THROUGH a symlink: that edits the linked file in its own
-        # repository.
+        # Never write through a symlink: it edits the linked file in its repo.
         if target.is_symlink():
             target.unlink()
         shutil.copyfile(entry, target)
@@ -337,8 +277,6 @@ def _master_key() -> str:
     return key
 
 
-# ── the shell entry points ──────────────────────────────────────────────────
-
 _CONFIGURE_LINE = (
     '[[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/ailocal/configure.zsh" ]] && '
     'source "${XDG_CONFIG_HOME:-$HOME/.config}/ailocal/configure.zsh"'
@@ -350,21 +288,19 @@ _FINALIZE_LINE = (
 
 
 def ensure_shell_sourcing() -> None:
-    """The client home, the wrapper env, and two idempotent ~/.zshrc lines.
+    """Deploy the client home and add two idempotent ~/.zshrc lines.
 
-    Those two marker-commented lines are the ONLY footprint ailocal leaves in
-    the user's rc file; `ailocal clients --remove` takes them out again."""
+    Those marker lines are ailocal's only rc footprint; `--remove` drops them.
+    """
     step(f"Setting up {policy.deployed_client_root()}")
     cfg = policy.deployed_client_root()
     cfg.mkdir(parents=True, exist_ok=True)
     cfg.chmod(0o700)
 
-    # NO KEY PROJECTION HERE: env.sh reads the canonical generated file, one
-    # owner and nothing to keep in sync.
+    # No key projection: env.sh reads the canonical generated file.
     data = policy.data_root()
     shutil.copyfile(data / "clients" / "finalize.zsh", cfg / "finalize.zsh")
-    # Client-invoked hooks: the client execs these, so the deployed copy must be
-    # executable regardless of the mode the source carries.
+    # The client execs these hooks: executable whatever the source mode.
     for hook in ("scratchpad-hook.sh", "compact-hook.sh"):
         shutil.copyfile(data / "clients" / hook, cfg / hook)
         (cfg / hook).chmod(0o755)
@@ -372,8 +308,7 @@ def ensure_shell_sourcing() -> None:
 
     rc = Path(os.environ.get("ZDOTDIR") or Path.home()) / ".zshrc"
     if not rc.exists():
-        # A bare Mac has no rc file yet; skipping injection would leave the
-        # wrappers permanently unavailable.
+        # No rc file yet: skipping would leave the wrappers unavailable.
         rc.touch()
         info(f"Created {rc} (none existed)")
     text = rc.read_text(encoding="utf-8")
@@ -395,28 +330,17 @@ def ensure_shell_sourcing() -> None:
         info("Appended ailocal-finalize to the end of ~/.zshrc")
 
 
-# ── VS Code / Copilot Chat ──────────────────────────────────────────────────
-#
-#: Added to settings.json ONLY if absent, so the user's own choices and their
-#: comments survive.
-#:
-#: Every key here must be REQUIRED for a local model to answer in VS Code.
-#: ailocal is not a VS Code policy manager: auto-approve, auto-accept delays and
-#: agent-behaviour toggles are the user's preferences, not connectivity, and a
-#: tool that quietly writes them is a tool nobody can reason about.
-#: inactivityTimeout is the one that earns its place — a 26B model cold-loads
-#: tens of GB emitting no tokens, which trips the connector's 60s default.
+#: Added only if absent. Only keys REQUIRED for a local model to answer; user
+#: preferences (auto-approve, agent toggles) are not ailocal's to write.
 RECOMMENDED_SETTINGS = {
-    # Paired with the instruction files ailocal deploys; without the location
-    # the deployed files are dead weight.
+    # Without the location the deployed instruction files are dead weight.
     "github.copilot.chat.codeGeneration.useInstructionFiles": True,
     "chat.instructionsFilesLocations": {"~/.copilot/instructions": True},
 }
 
 
 def _vscode_app() -> Path | None:
-    """The VS Code bundle, only if it is a real one: an emptied `.app` directory
-    is what a partial uninstall or an interrupted self-update leaves behind."""
+    """Return the VS Code bundle, unless only an emptied `.app` remains."""
     for apps in (Path("/Applications"), Path.home() / "Applications"):
         bundle = apps / "Visual Studio Code.app"
         if (bundle / "Contents/Info.plist").is_file():
@@ -425,7 +349,7 @@ def _vscode_app() -> Path | None:
 
 
 def _vscode_user_dir() -> Path | None:
-    """AILOCAL_VSCODE_USER overrides the search, so tests isolate VS Code without changing HOME."""
+    """Return the VS Code user dir; AILOCAL_VSCODE_USER overrides for tests."""
     if os.environ.get("AILOCAL_VSCODE_USER"):
         return Path(os.environ["AILOCAL_VSCODE_USER"])
     for candidate in (Path.home() / "Library/Application Support/Code/User",
@@ -460,7 +384,7 @@ def _write_json(path: Path, data, indent) -> None:
 
 
 def vscode_owned(group) -> bool:
-    """ailocal's native group, or the retired connector group aimed at this proxy."""
+    """Return whether a group is ailocal's or the retired one for this proxy."""
     return isinstance(group, dict) and (
         (group.get("vendor") == VSCODE_VENDOR and group.get("name") == VSCODE_PROVIDER_NAME)
         or (group.get("vendor") == "litellm-connector" and group.get("name") == "LiteLLM"
@@ -468,10 +392,9 @@ def vscode_owned(group) -> bool:
 
 
 def vscode_provider_document(existing: list, models: dict) -> list:
-    """Native BYOK projection; preserve foreign groups and the stored key reference.
+    """Project native BYOK groups, keeping foreign groups and the key reference.
 
-    Explicit models retain each alias's exact geometry. Discovery through
-    /v1/models alone does not supply reliable context/output limits.
+    Explicit models carry exact geometry; /v1/models does not supply limits.
     """
     if not isinstance(existing, list) or any(not isinstance(g, dict) for g in existing):
         raise ValueError("chatLanguageModels.json must be an array of provider objects")
@@ -483,7 +406,7 @@ def vscode_provider_document(existing: list, models: dict) -> list:
         group["apiKey"] = keys[0]
     for role, info in models.items():
         if role == "completion":
-            continue  # FIM is an API capability, not a chat/agent picker model.
+            continue  # FIM is an API capability, not a picker model.
         geometry = policy.geometry(info.get("context_input"), info.get("max_output"))
         model = {"id": "ailocal-" + role,
                  "name": policy.capability_description(info, info.get("guidance", {})),
@@ -504,7 +427,7 @@ def vscode_provider_document(existing: list, models: dict) -> list:
 
 
 def _provider_group(models_json: Path, dry: bool) -> None:
-    """Configure native Custom Endpoint without reading or writing secret values."""
+    """Configure native Custom Endpoint without touching secret values."""
     try:
         existing = json.loads(models_json.read_text(encoding="utf-8")) or []
     except FileNotFoundError:
@@ -520,8 +443,7 @@ def _provider_group(models_json: Path, dry: bool) -> None:
     if merged[-1].get("apiKey"):
         info("native Custom Endpoint configured; API key reference preserved")
     else:
-        # The instruction itself is printed once, by target_vscode, so this only
-        # reports the state it found.
+        # target_vscode prints the instruction once.
         print(f"  {BOLD}{YELLOW}ACTION NEEDED{RESET} provider written, but no API "
               "key is initialized yet (see below).")
 
@@ -534,8 +456,7 @@ def _ensure_recommended(settings_json: Path) -> None:
         info("recommended Copilot settings already present")
         return
     backup(settings_json)
-    # Textual insertion, not a reparse: a user's comments and formatting are
-    # worth more than tidy output, and only absent keys are added.
+    # Textual insertion, not a reparse, so user comments and format survive.
     if "{" not in text:
         text = "{}"
     i = text.index("{")
@@ -544,11 +465,7 @@ def _ensure_recommended(settings_json: Path) -> None:
     info(f"recommended Copilot settings added: {', '.join(missing)}")
 
 
-#: install_vscode's three outcomes. ABSENT and FAILED are BOTH non-zero, so a
-#: caller that only asks "did this work?" keeps the old answer — but they are
-#: distinct, because "there is no VS Code here" is an expected end state and "a
-#: write into the user directory blew up" is a defect the caller must not
-#: silently swallow.
+#: ABSENT (expected end state) and FAILED (a defect) are both non-zero.
 VSCODE_OK = 0
 VSCODE_FAILED = 1
 VSCODE_ABSENT = 2
@@ -557,9 +474,8 @@ VSCODE_ABSENT = 2
 def install_vscode(argv: list[str]) -> int:
     """Configure VS Code for the local stack without hand-editing the UI.
 
-    Returns VSCODE_OK, VSCODE_ABSENT (no VS Code, or never launched so it has
-    no user directory yet) or VSCODE_FAILED (VS Code is here and configuring it
-    did not work).
+    Returns:
+        VSCODE_OK, VSCODE_ABSENT (missing or never launched) or VSCODE_FAILED.
     """
     dry = "--dry-run" in argv
     user_dir = _vscode_user_dir()
@@ -580,9 +496,7 @@ def install_vscode(argv: list[str]) -> int:
              "to a build that includes it, then run ailocal clients vscode.")
         return VSCODE_FAILED
 
-    # A user directory that cannot be written is a real failure and says so.
-    # Reporting it as absence would send the caller down the "you have no VS
-    # Code" path for an editor that is sitting right there, half-configured.
+    # An unwritable user dir is FAILED, never reported as absence.
     try:
         _provider_group(user_dir / "chatLanguageModels.json", dry)
         if not dry:
@@ -602,12 +516,8 @@ def install_vscode(argv: list[str]) -> int:
     return VSCODE_OK
 
 
-#: SHA-256 of each head (the text before the model-guidance block) ailocal has
-#: written into the Copilot instruction file, other than the current rendering,
-#: from c73ea03, which introduced the block. Recomputed from git history, so a
-#: head matching one is provably ailocal's output: teardown removes it and
-#: generation rewrites it. tests/clients.py recomputes the set from history and
-#: fails when a rendering is missing (#108).
+#: SHA-256 of past Copilot instruction heads; a match is provably ailocal's.
+#: tests/clients.py recomputes the set from git history (#108).
 RETIRED_COPILOT_HEADS = frozenset({
     "88df9fba7fbcae78e1f0c194a249902ecd2a324f453319c01b7bea48f2259807",  # c73ea03
 })
@@ -619,7 +529,7 @@ def copilot_instructions_path() -> Path:
 
 
 def copilot_instructions_head() -> str:
-    """The protocol file plus the shared checklist, as written before the guidance block."""
+    """Return the protocol file plus shared checklist (pre-guidance head)."""
     data = policy.data_root()
     return ((data / "clients/copilot/ailocal.instructions.md").read_text(encoding="utf-8")
             + _CLAUDE_ONLY.sub("", (data / "clients/claude/references/build-checklist.md")
@@ -631,11 +541,10 @@ def copilot_instructions_text(models=None) -> str:
 
 
 def copilot_instructions_owned(text: str) -> bool:
-    """ailocal wrote this file's head, in this release or an earlier one.
+    """Return whether ailocal wrote this head, in this or an earlier release.
 
-    Comparing with the current head alone made every earlier release's file
-    'not provably ailocal's': an upgrade never refreshed it and teardown left
-    it behind with a retired role table (#108)."""
+    Past heads count too, so upgrades refresh and teardown removes them (#108).
+    """
     import hashlib
     head = text.split("\n\n" + COPILOT_GUIDE_START, 1)[0]
     if head == copilot_instructions_head():
@@ -648,15 +557,13 @@ def _copilot_instructions() -> None:
     dest = target.parent
     dest.mkdir(parents=True, exist_ok=True)
     target.write_text(copilot_instructions_text(), encoding="utf-8")
-    # ONE instruction file: session-primer.md loaded beside this one on every
-    # turn and stated the terminal protocol twice. Removal condition for this
-    # unlink: 0.18, two minor releases after the file stopped shipping.
+    # One instruction file; the primer duplicated it. Removal condition: 0.18.
     (dest / "session-primer.md").unlink(missing_ok=True)
     info("Copilot instruction files deployed to ~/.copilot/instructions/")
 
 
 def copilot_model_guidance(models=None) -> str:
-    """Profile-owned advice in native instructions, available without MCP."""
+    """Render profile-owned advice as native instructions, usable w/o MCP."""
     if models is None:
         from . import generation
         models = generation.load_models_yaml(policy.profile_path(policy.active_tier()))
@@ -686,22 +593,11 @@ def copilot_model_guidance(models=None) -> str:
     return "\n".join(lines) + "\n"
 
 
-
-# WHY THIS TEMPLATE IS MERGED AND NEVER OVERWRITTEN. The live
-# chatLanguageModels.json carries an `apiKey` field that is not a key but a
-# reference into VS Code's SecretStorage — `"${input:chat.lm.secret.-3031591c}"`.
-# The VALUE is Keychain-backed and no script can write it, so overwriting the
-# file would silently discard a key the user entered by hand and cannot restore
-# except through the UI. The shipped template therefore omits `apiKey` entirely
-# and the installer preserves whatever reference is already there.
+# Merged, never overwritten: `apiKey` is a SecretStorage reference no script
+# can recreate, so overwriting would discard a key entered by hand.
 def target_vscode() -> None:
     step("Configuring VS Code Copilot Chat")
-    # install_vscode's failure is the answer, not a warning to walk past: with no
-    # VS Code there is nothing to read ~/.copilot/instructions, and printing the
-    # "enter your key in SecretStorage" ritual for absent software is an
-    # instruction the user cannot carry out. A CONFIGURATION FAILURE is a
-    # different thing and is not filed under the same silence: it is said out
-    # loud, because VS Code is here and half-configured.
+    # Absent → silent (no key ritual for missing software); failure → loud.
     outcome = install_vscode([])
     if outcome == VSCODE_ABSENT:
         return
@@ -710,11 +606,7 @@ def target_vscode() -> None:
              "key step are skipped. Fix the above, then: ailocal clients vscode")
         return
     _copilot_instructions()
-    # One ritual, worded once. VS Code keeps model API keys in SecretStorage and
-    # exposes no supported way for another program to write there — not through
-    # the connector (no key-import command, no URI handler, no env var) and not
-    # through the `code` CLI. So this is the VS Code boundary, not a step ailocal
-    # forgot, and it says so rather than reading as a failure.
+    # Nothing supported writes VS Code SecretStorage: a boundary, not a bug.
     print("\n  ONE MANUAL STEP — VS Code keeps model keys in its own encrypted")
     print("  storage, which no supported interface lets ailocal write.")
     print("    grep LITELLM_MASTER_KEY ~/.local/state/ailocal/env")
@@ -724,15 +616,8 @@ def target_vscode() -> None:
     print("  Launcher: `ailocal-code [path]` opens VS Code in the profile configured above.")
 
 
-# ── Codex CLI ───────────────────────────────────────────────────────────────
-
-#: SHA-256 of every AGENTS.md ailocal has written into the codex root: the
-#: codex template plus the shared build checklist (claude-only blocks removed),
-#: one digest per distinct rendering from e890d0e, which introduced the
-#: rendering, to 50b677f, the last change before ailocal stopped writing it.
-#: Recomputed from git history, so a file matching one of these is provably
-#: ailocal's own output and nobody's edit. Removal condition: 0.18, two minor
-#: releases after ailocal stopped writing the file (50b677f).
+#: SHA-256 of every codex AGENTS.md rendering ailocal wrote (from git history);
+#: a match is provably ailocal's. Removal condition: 0.18.
 RETIRED_CODEX_INSTRUCTIONS = frozenset({
     "cd9d7186d5404430e2d5b3870861a28d30f32a2864dd252b84ae73ad864f1c8d",  # e890d0e
     "b68953f1b74959c61453cd038c9391cb37d3785e643b7f3f7365a7ebff3f1c54",  # 553ecf2
@@ -749,9 +634,8 @@ RETIRED_CODEX_INSTRUCTIONS = frozenset({
 def retire_codex_instructions(path: Path) -> bool:
     """Remove the codex root's AGENTS.md only when ailocal provably wrote it.
 
-    Byte identity with a known rendering is the only proof available: the file
-    never carried an owner header. Anything else -- Cadence's composition, an
-    operator's edit, a symlink -- is someone else's and stays."""
+    Byte identity is the only proof: the file never had an owner header.
+    """
     if path.is_symlink() or not path.is_file():
         return False
     from .primitives import sha256_file
@@ -764,18 +648,14 @@ def retire_codex_instructions(path: Path) -> bool:
 
 
 def target_codex() -> None:
-    """CODEX_HOME for the codex-local wrapper. ~/.codex is NEVER touched."""
+    """Set up CODEX_HOME for the codex-local wrapper; never touch ~/.codex."""
     home = policy.deployed_client_root() / "codex"
     home.mkdir(parents=True, exist_ok=True)
     step(f"Installing Codex config ({home})")
     data = policy.data_root()
 
-    # config.toml and the model catalog are written
-    # here by generation, not copied here by this function.
-
-    # No instruction-policy file, matching target_claude: composing client
-    # instruction policy is outside ailocal's ownership, and Cadence composes
-    # this exact path, so both writing it made each install overwrite the other.
+    # config.toml and the catalog come from generation. Instruction policy is
+    # Cadence's: both writing AGENTS.md made each install overwrite the other.
     retire_codex_instructions(home / "AGENTS.md")
     retire_managed_dir(home / "prompts")
     research = provision_mcp_runtime(data / 'integrations/local-research', 'local-research')
@@ -791,16 +671,13 @@ def target_codex() -> None:
     print("  Launch with: codex-local exec 'say ok'  (source ~/.zshrc first)")
 
 
-
-# ── Bundled local artifact capability ───────────────────────────────────────
-
 def _artifact_source() -> Path:
-    """The component ships inside the package, like deploy/ and clients/."""
+    """Return the bundled artifact component directory."""
     return policy.data_root() / "integrations/local-artifacts"
 
 
 def provision_mcp_runtime(src: Path, name: str) -> Path | None:
-    """One runtime lifecycle for bundled MCP components, separate from core."""
+    """Provision a bundled MCP component's own venv, separate from core."""
     venv = policy.state_root() / name / '.venv'
     py = venv / 'bin/python'
     req = src / 'requirements.txt'
@@ -822,13 +699,8 @@ def provision_mcp_runtime(src: Path, name: str) -> Path | None:
 def provision_local_artifacts(home: Path) -> bool:
     """Install the bundled artifact MCP for claude-local and register it.
 
-    ailocal stays standard-library-only: the component needs `mcp`, so it gets
-    its OWN interpreter in the state root and runs as a subprocess, exactly as
-    LiteLLM runs as a container. Nothing here is imported by ailocal.
-
-    Registration MERGES into .claude.json. That file still belongs to the user
-    -- github, grepai and anything else they added must survive -- so this
-    writes one key and leaves the rest alone.
+    The component needs `mcp`, so it gets its own interpreter: ailocal stays
+    stdlib-only. Registration merges one key; user servers survive.
     """
     src = _artifact_source()
     if not (src / "server.py").is_file():
@@ -839,7 +711,6 @@ def provision_local_artifacts(home: Path) -> bool:
     if py is None:
         return False
 
-    # MCP registration, merged.
     cj = home / ".claude.json"
     try:
         data = json.loads(cj.read_text()) if cj.is_file() else {}
@@ -856,7 +727,6 @@ def provision_local_artifacts(home: Path) -> bool:
     else:
         skip("artifact MCP already registered")
 
-    # The routing skill travels with the component.
     skill_src = src / "skill" / "SKILL.md"
     if skill_src.is_file():
         dst = home / "skills" / "local-artifact"
@@ -891,8 +761,7 @@ def provision_local_research(home: Path) -> bool:
     if provision_mcp_runtime(src, 'local-research') is None:
         return False
     if existing != entry:
-        # Native registration owns the write. Explicit isolation is essential:
-        # default user scope would otherwise change the hosted client's home.
+        # Native write, isolated: default user scope would hit the hosted home.
         try:
             result = subprocess.run(
                 ['claude', 'mcp', 'add-json', '--scope', 'user', 'research', json.dumps(entry)],
@@ -908,11 +777,11 @@ def provision_local_research(home: Path) -> bool:
 
 
 def _provision_vscode_mcp(mcp_json: Path, name: str, component: str) -> bool:
-    """Use VS Code's native registration for its Local harness.
+    """Register an MCP via VS Code's native CLI for its Local harness.
 
-    VS Code launched from the Dock inherits launchd's minimal PATH, so the entry
-    names the launcher absolutely. A server of the same name that is not this
-    launcher is someone else's and is left in place."""
+    The launcher path is absolute: a Dock launch inherits launchd's minimal
+    PATH. A same-name server that is not this launcher is left in place.
+    """
     launcher = shutil.which('ailocal')
     if not launcher:
         warn(f'ailocal is not on PATH; VS Code {name} MCP not registered')
@@ -931,7 +800,6 @@ def _provision_vscode_mcp(mcp_json: Path, name: str, component: str) -> bool:
     if provision_mcp_runtime(policy.data_root() / 'integrations' / component, component) is None:
         return False
     if existing != entry:
-        # VS Code's own CLI owns the write and the file format.
         _code('--add-mcp', json.dumps({'name': name, **entry}))
         try:
             written = json.loads(mcp_json.read_text(encoding='utf-8'))['servers'][name]
@@ -953,10 +821,10 @@ def provision_vscode_agent(mcp_json: Path) -> bool:
 
 
 def provision_copilot_mcp() -> bool:
-    """Portable Copilot scope, in addition to the Local harness's profile file.
+    """Register research and agent in Copilot's portable global scope.
 
-    Public JSON format, no secrets or VS Code input variables. Preserve foreign
-    servers and operator options; update only our executable and arguments.
+    No secrets or input variables; foreign servers and operator options are
+    kept, only our command and args are updated.
     """
     path = policy.client_mcp_path('copilot', local=False)
     launcher = shutil.which('ailocal')
@@ -992,36 +860,24 @@ def provision_copilot_mcp() -> bool:
         return False
 
 
-# ── Claude Code ─────────────────────────────────────────────────────────────
-
 def target_claude() -> None:
-    """CLAUDE_CONFIG_DIR for the claude-local wrapper. ~/.claude is NEVER touched.
+    """Set up CLAUDE_CONFIG_DIR for claude-local; never touch ~/.claude.
 
-    No instruction-policy file is written into this root: ailocal publishes the
-    integration contract and stops there. Composing client instruction policy is
-    outside its ownership, and writing one here would fight whatever composes
-    this root.
+    No instruction-policy file: composing it is not ailocal's to own.
     """
     home = policy.deployed_client_root() / "claude"
     home.mkdir(parents=True, exist_ok=True)
     step(f"Installing Claude Code config ({home})")
 
-    # settings.json is written here by generation; it carries no secret, because
-    # the key reaches Claude through the claude-local wrapper's process-scoped
-    # env, never through a file.
-    # NO agents OR commands: a local runtime ships no software-engineering
-    # roles (measured: native Claude matched or beat them). What ailocal
-    # uniquely knows reaches the model through the model-guide hooks and the
-    # capability catalog. The two retirements remove what earlier releases
-    # shipped here (removal condition: 0.18, with RETIRED_UNMANAGED).
+    # settings.json comes from generation; no secret (key is process env).
+    # No agents or commands ship. Removal condition: 0.18, w/ RETIRED_UNMANAGED.
     retire_managed_dir(home / "agents")
     retire_managed_dir(home / "commands")
     install_managed_dir(policy.data_root() / "clients/claude/references",
                         home / "references")
     info(f"{home}/references written (external overlays preserved)")
 
-    # .claude.json holds this root's MCP registrations and real session state:
-    # seed onboarding only when absent, never rewrite.
+    # .claude.json holds real session state: seed only when absent.
     claude_json = home / ".claude.json"
     if claude_json.exists():
         skip(f"{claude_json} already exists — left untouched")
@@ -1038,31 +894,15 @@ def target_claude() -> None:
 
     step("LSP baseline (ailocal-owned minimum)")
     lsp_baseline(home, "claude-local")
-    # ~/.claude IS NOT PROVISIONED HERE, deliberately. This used to also run
-    # against the hosted root ("claude (cloud)", carried forward from
-    # install-clients.sh). No product requirement justified it: hosted Claude
-    # never traverses ailocal, and plugin state is PER CONFIG ROOT, so
-    # claude-local is fully functional from the root above alone. What the call
-    # did do was write state into a client ailocal does not own, which then
-    # outlived `ailocal teardown`. Hosted plugins belong to the user, via
-    # `/plugin`; Cadence reports which are missing per root.
+    # Never ~/.claude: plugin state is per root; the hosted root is the user's.
     info("language servers: ailocal enables the PLUGIN for a server you already "
          "have, in its OWN root only — it never installs a language ecosystem "
          "and never touches ~/.claude")
 
 
-#: language -> (official plugin, server binary, the command that installs it).
-#:
-#: ailocal enables the PLUGIN; the BINARY belongs to its own ecosystem and is
-#: never installed here. A language whose binary is absent is skipped with the
-#: command to fix it — enabling a plugin with no server behind it would advertise
-#: a capability that cannot answer, which is the thing this function exists to
-#: prevent.
-#:
-#: Identifiers are the marketplace's own, verified against `claude-plugins-official`.
-#: There is deliberately NO shell entry: the marketplace publishes 13 LSP plugins
-#: and none is bash, so a bash-language-server on PATH is unreachable from Claude
-#: Code. Shell is covered by ShellCheck, which is static analysis, not LSP.
+#: language -> (plugin, server binary, its install command). ailocal enables
+#: plugins only; a missing binary is skipped so no LSP is advertised unanswered.
+#: No shell entry: `claude-plugins-official` publishes no bash LSP plugin.
 LSP_PLUGINS = (
     ("Python",     "pyright-lsp",    "pyright-langserver",
      "npm i -g pyright"),
@@ -1079,25 +919,10 @@ MARKETPLACE_SOURCE = "anthropics/claude-plugins-official"
 
 
 def lsp_baseline(root: Path, label: str) -> None:
-    """The local-client compatibility baseline ailocal owns.
+    """Install and enable LSP plugins in an isolated Claude root.
 
-    The LSP tool is built into Claude Code and needs no enabling; ENABLE_LSP_TOOL
-    was the gate before 2.0.74 and settings.json no longer writes it. What the
-    tool still needs is a language server behind it, which is what a plugin
-    provides — without this an ailocal-only machine advertises a capability that
-    cannot answer.
-
-    PLUGIN STATE IS PER CONFIG ROOT, not global. [REAL] a fresh CLAUDE_CONFIG_DIR
-    reports "No marketplaces configured" and "No plugins installed" while
-    ~/.claude has four; each root carries its own plugins/cache, its own
-    installed_plugins.json and its own marketplace clone. So writing
-    `enabledPlugins` alone would be a lie on a fresh root: the plugin must first
-    be INSTALLED into that root. This runs the official `claude plugin` CLI per
-    root rather than reimplementing any of that state.
-
-    THE ISOLATED ROOT ONLY. Callers must not point this at ~/.claude: the hosted
-    client is the user's, it does not traverse ailocal, and per-root plugin state
-    means provisioning it buys claude-local nothing.
+    Plugin state is per config root, so each plugin is installed into `root`
+    via the official `claude plugin` CLI. Never point this at ~/.claude.
     """
     if not shutil.which("claude"):
         return skip(f"claude not on PATH — no LSP baseline ({label})")
@@ -1115,12 +940,9 @@ def lsp_baseline(root: Path, label: str) -> None:
         return r.returncode, r.stdout
 
     def enabled(listing: str, plugin: str) -> bool:
-        """Is `plugin` present AND enabled in this root's listing?
+        """Return whether `plugin` is present and enabled in `listing`.
 
-        Reads the plugin's whole block, up to the next entry — NOT a fixed number
-        of lines. `claude plugin list` gained a `Version:` line, which pushed
-        `Status: enabled` out of a hard-coded three-line window, so an enabled
-        plugin read as disabled and was "repaired" on every run.
+        Reads the plugin's whole block, not a fixed line count.
         """
         if plugin not in listing:
             return False
@@ -1140,11 +962,7 @@ def lsp_baseline(root: Path, label: str) -> None:
     if not wanted:
         return
 
-    # A FRESH config root knows no marketplaces at all, so `marketplace update`
-    # fails with "not found" and the install can never succeed. Registering it
-    # first is what makes this work on a machine that has never run Claude Code;
-    # `add` on a root that already has it is a no-op, and it takes the OWNER/REPO
-    # source form, not the bare marketplace name.
+    # A fresh root knows no marketplace: `add` (OWNER/REPO form) before update.
     listing = claude("plugin", "list")[1]
     if any(not enabled(listing, plugin) for _l, plugin, _b, _c in wanted):
         if MARKETPLACE not in claude("plugin", "marketplace", "list")[1]:
@@ -1158,13 +976,8 @@ def lsp_baseline(root: Path, label: str) -> None:
             info(f"{lang} LSP already present and enabled ({label})")
             continue
         claude("plugin", "install", plugin)
-        # VERIFY THE STATE, DO NOT TRUST THE EXIT CODE. [REAL] `plugin install`
-        # now enables what it installs, and `plugin enable` on an
-        # already-enabled plugin exits 1 ("already enabled"). The old
-        # `install == 0 and enable == 0` chain therefore reported failure on a
-        # correctly provisioned FRESH root — the exact path it was written for.
-        # A live session on this root can also race the plugin-state write, so
-        # re-read rather than infer, once, before enabling explicitly.
+        # Verify state, not exit codes: `enable` on an enabled plugin exits 1,
+        # and a live session can race the write.
         if not enabled(claude("plugin", "list")[1], plugin):
             claude("plugin", "enable", plugin)
         if enabled(claude("plugin", "list")[1], plugin):
@@ -1174,19 +987,17 @@ def lsp_baseline(root: Path, label: str) -> None:
             warn(f"  If a live 'claude' session has {root} open, close it.")
 
 
-# ── entry point ─────────────────────────────────────────────────────────────
-
 _TARGETS = {"vscode": target_vscode, "codex": target_codex, "claude": target_claude}
 
 
 def remove_client_writes(dry: bool = False) -> list[str]:
-    """Reverse every write `ailocal clients` makes OUTSIDE ailocal's own roots, each
-    on proof it is ailocal's: the two marker lines in ~/.zshrc, the Copilot
-    instruction file that begins with the shipped head, the `research`/`agent`
-    MCP entries whose command is the ailocal launcher (Copilot global scope and
-    VS Code), VS Code's owned provider group, and the recommended settings still
-    at their shipped value. What the proof does not cover is reported and left.
-    Returns one line per action; `dry` reports without writing."""
+    """Reverse each write outside ailocal's roots that is provably ailocal's.
+
+    Unproven items are reported and left; `dry` reports without writing.
+
+    Returns:
+        One line per action.
+    """
     verb = "would remove" if dry else "removed"
     lines: list[str] = []
 
@@ -1287,18 +1098,10 @@ def main(argv: list[str]) -> int:
             print(f"  ✗ Unknown target: {name!r}. Valid: "
                   f"{'  '.join(TARGETS)}  all", file=sys.stderr)
             return 1
-    # `all` is the EXPLICIT form of "every supported client", and it is a named
-    # request like any other: it configures the full list whether or not each
-    # client is on this machine. It is deliberately not what an EMPTY argv
-    # means — that stays "configure what I have".
+    # `all` names every client, present or not; empty argv = "what I have".
     if "all" in selected:
         selected = list(TARGETS)
-    # NAMED is a request and is honoured whether or not the client is here:
-    # writing a client home before installing the client is a legitimate order
-    # to do things in, and refusing it would break `ailocal clients codex` on a
-    # machine where Codex arrives next. UNNAMED is a question — "configure what
-    # I have" — so it answers with the clients actually present and names the
-    # rest instead of provisioning for software that does not exist.
+    # Named → honoured even if absent (configure before install is valid).
     if selected:
         for name in selected:
             if not present(name):
@@ -1321,13 +1124,12 @@ def main(argv: list[str]) -> int:
         print("No files, extensions, plugins or MCP registrations were changed.")
         return 0
 
-    # Every derived artifact first: deploying from stale generated state is how
-    # a client ends up configured for a profile that is no longer active.
+    # Regenerate first, or a client is configured for an inactive profile.
     from . import generation
     if generation.main([]):
         return 1
 
-    _master_key()                 # the precondition: no key, no client to configure
+    _master_key()                 # no key, no client to configure
     ensure_shell_sourcing()
     # Only bundled integrations are provisioned here, never a global MCP sync.
     for name in selected:

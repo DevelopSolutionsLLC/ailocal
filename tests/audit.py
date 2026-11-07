@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Advisory audit and release selection, offline: a fake fetcher stands in for OSV,
-the registries and GitHub. Writes nothing.
+"""Test advisory audit and release selection offline; writes nothing.
+
+A fake fetcher stands in for OSV, the registries and GitHub.
 """
 import sys
 from datetime import datetime, timedelta, timezone
@@ -16,7 +17,14 @@ check = S.check
 
 
 def fetcher(osv=None, status=None, github=None, down=()):
-    """osv: package -> vulns; status: URL fragment -> HTTP status; github: repo -> advisories; down: fragments that fail."""
+    """Fake fetcher.
+
+    Args:
+        osv: package → vulns.
+        status: URL fragment → HTTP status.
+        github: repo → advisories.
+        down: URL fragments that fail.
+    """
     osv, status, github = osv or {}, status or {}, github or {}
 
     def fetch(url, body=None):
