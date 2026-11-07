@@ -80,6 +80,7 @@ def _suites(full: bool) -> list:
         ("SUITES", [
             ("policy: fail-closed profiles, hosted roots, output ceiling, secrets, bind", [py, "tests/policy.py"]),
             ("clients: generation, targets, co-owned config", [py, "tests/clients.py"]),
+            ("launchers: claude-local and codex-local env, failure, scope", [py, "tests/launchers.py"]),
             ("install: model provenance, owned config, launchd, teardown", [py, "tests/install.py"]),
             ("audit and update reporting", [py, "tests/audit.py"]),
             ("patched Ollama runtime", [py, "tests/ollama-patch.py"]),
