@@ -1058,7 +1058,7 @@ def remove_client_writes(dry: bool = False) -> list[str]:
                 existing = json.loads(models.read_text(encoding="utf-8")) or []
                 owned = [g for g in existing if isinstance(g, dict) and vscode_owned(g)]
             except ValueError:
-                owned, existing = [], None
+                owned, existing = [], []
                 lines.append(f"KEPT {models}: not parseable")
             if owned:
                 if not dry:

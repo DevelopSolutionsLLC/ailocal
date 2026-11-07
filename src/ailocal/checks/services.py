@@ -728,6 +728,7 @@ def check_updates(images: list[str]) -> list[CheckResult]:
     for image in images:
         ref, cur = (image.split("@", 1) + [""])[:2]
         repo = ref.split(":", 1)[0]
+        why = ""
         if repo == "ghcr.io/berriai/litellm":
             # Newest release, any age; version_policy.py decides (#106).
             from .. import audit, update, version_policy as vp

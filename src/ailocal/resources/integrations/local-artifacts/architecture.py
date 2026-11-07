@@ -262,7 +262,7 @@ THEME = _tokens.load()
 
 TYPO = THEME["typography"]
 GEO = THEME["geometry"]
-EDGE_KINDS = THEME["edge_kinds"]
+EDGE_STYLES = THEME["edge_kinds"]
 TYPE_LABELS = THEME["type_labels"]
 ACCENTS = tuple(THEME["light"]["accent"])
 
@@ -377,7 +377,7 @@ def render_svg(nodes: Mapping[str, Mapping[str, Any]], groups: Mapping[str, Mapp
         le = next((x for x in laid["edges"] if x["id"] == e["id"]), None)
         if not le or len(le["points"]) < 2:
             continue
-        spec = EDGE_KINDS.get(e["kind"], EDGE_KINDS["default"])
+        spec = EDGE_STYLES.get(e["kind"], EDGE_STYLES["default"])
         acc = accent_for(spec["accent"])
         if e["kind"] not in used_edges:
             used_edges.append(e["kind"])
@@ -390,7 +390,7 @@ def render_svg(nodes: Mapping[str, Mapping[str, Any]], groups: Mapping[str, Mapp
         le = next((x for x in laid["edges"] if x["id"] == e["id"]), None)
         if not le or not le.get("label") or not e["label"]:
             continue
-        acc = accent_for(EDGE_KINDS.get(e["kind"], EDGE_KINDS["default"])["accent"])
+        acc = accent_for(EDGE_STYLES.get(e["kind"], EDGE_STYLES["default"])["accent"])
         lb = le["label"]
         tw = _w(e["label"], ELABEL_PX, ELABEL_ADV)
         cx, cy = lb["x"] + lb["width"] / 2, lb["y"] + lb["height"] / 2
@@ -448,7 +448,7 @@ def render_svg(nodes: Mapping[str, Mapping[str, Any]], groups: Mapping[str, Mapp
                       f'style="border-left-color:var(--a-{acc})"></span>'
                       f'{esc(TYPE_LABELS.get(k, k) or k)}</span>')
     for k in used_edges:
-        spec = EDGE_KINDS.get(k, EDGE_KINDS["default"])
+        spec = EDGE_STYLES.get(k, EDGE_STYLES["default"])
         acc = accent_for(spec["accent"])
         style = "dashed" if spec["dash"] != "none" else "solid"
         legend.append(f'<span class="item"><span class="sw" '

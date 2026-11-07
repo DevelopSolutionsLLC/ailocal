@@ -27,6 +27,7 @@ def load(env: dict[str, str], port: int) -> ModuleType:
     old = dict(os.environ)
     os.environ.clear(); os.environ.update(e)
     spec = importlib.util.spec_from_file_location(f"srv{port}", str(HERE / "server.py"))
+    assert spec is not None and spec.loader is not None
     m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
     os.environ.clear(); os.environ.update(old)
     return m

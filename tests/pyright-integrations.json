@@ -1,0 +1,10 @@
+// Each integration is its own execution root: `python server.py` puts the
+// script's directory on sys.path, so sibling imports resolve from there.
+{
+  "exclude": ["**/__pycache__"],
+  "executionEnvironments": [
+    {"root": "../src/ailocal/resources/integrations/local-agent"},
+    {"root": "../src/ailocal/resources/integrations/local-artifacts"},
+    {"root": "../src/ailocal/resources/integrations/local-research"}
+  ]
+}

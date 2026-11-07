@@ -9,6 +9,7 @@ days. Go "supported": newest point release of a line go.dev/dl lists.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -33,7 +34,7 @@ def stable(version: str) -> str:
     return m.group(1) if m else ""
 
 
-def from_github(releases: list) -> list[Release]:
+def from_github(releases: object) -> list[Release]:
     """Return stable, published GitHub releases, newest first."""
     out = {}
     for r in releases if isinstance(releases, list) else []:
@@ -55,7 +56,7 @@ def age(release: Release, now: datetime | None = None) -> timedelta | None:
     return (now or datetime.now(timezone.utc)) - when
 
 
-def fixes(version: str, fixed: list[str]) -> bool:
+def fixes(version: str, fixed: Sequence[str]) -> bool:
     """Return whether `version` contains any advisory fix version in `fixed`."""
     have = key(version)
     for f in fixed:
@@ -65,7 +66,7 @@ def fixes(version: str, fixed: list[str]) -> bool:
     return False
 
 
-def candidate(releases: list[Release], fixed: list[str] = (), now: datetime | None = None) -> tuple[str, str]:
+def candidate(releases: list[Release], fixed: Sequence[str] = (), now: datetime | None = None) -> tuple[str, str]:
     """Return (version, why) of the adopted release, or ("", why) if none.
 
     `releases` newest first; `fixed` holds fix versions of advisories against

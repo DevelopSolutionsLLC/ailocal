@@ -57,13 +57,14 @@ ART = ("<!doctype html><html><head><meta charset=utf-8></head><body><h1>probe</h
 spec = importlib.util.spec_from_file_location("srv", str(Path(__file__).parent / "server.py"))
 os.environ.update(LOCAL_ARTIFACTS_PORT=str(PORT), XDG_STATE_HOME=str(STATE),
                   LOCAL_ARTIFACTS_AUTO_OPEN="0", LOCAL_ARTIFACTS_ROOT=str(STATE))
+assert spec is not None and spec.loader is not None
 srv = importlib.util.module_from_spec(spec); spec.loader.exec_module(srv)
 srv.start_http_thread(); srv._http_ready.wait(5)
 ok, msg = srv.publish(title="Boundary probe", content=ART); assert ok, msg
 
 # control server: identical bytes, no CSP
 class Ctrl(http.server.BaseHTTPRequestHandler):
-    def log_message(self, *a: object) -> None: pass
+    def log_message(self, format: str, *args: object) -> None: pass
     def do_GET(self) -> None:
         b = ART.encode()
         self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8")

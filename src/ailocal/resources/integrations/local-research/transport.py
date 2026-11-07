@@ -80,12 +80,12 @@ async def _request(url: str, public: bool, sites: list[str], payload: dict | Non
         port = parts.port or (443 if parts.scheme == 'https' else 80)
         addresses = await asyncio.get_running_loop().getaddrinfo(
             host, port, type=socket.SOCK_STREAM)
-        if not addresses or (public and any(not public_address(a[4][0]) for a in addresses)):
+        if not addresses or (public and any(not public_address(str(a[4][0])) for a in addresses)):
             raise ResearchError('PRIVATE_ADDRESS_REFUSED: source must resolve only to public addresses')
         address = addresses[0]
         tls = ssl.create_default_context() if parts.scheme == 'https' else None
         reader, writer = await asyncio.open_connection(
-            address[4][0], port, family=address[0], ssl=tls,
+            str(address[4][0]), port, family=address[0], ssl=tls,
             server_hostname=host if tls else None, limit=65536)
         try:
             target = (parts.path or '/') + ('?' + parts.query if parts.query else '')

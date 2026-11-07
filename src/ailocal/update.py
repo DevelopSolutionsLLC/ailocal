@@ -203,9 +203,8 @@ def _ollama(mode: str) -> Component:
     c.available = newest if c.position > 0 else ""
     c.notes += position_notes(c, why)
     mine = next((r for r in vp.from_github(releases) if r.version == spec["base_version"]), None)
-    young = mine and (vp.age(mine) or vp.MIN_AGE) < vp.MIN_AGE
-    if young:
-        when = vp.age(mine)
+    when = vp.age(mine) if mine else None
+    if mine and when and when < vp.MIN_AGE:
         c.notes.append(f"the declared base was published {mine.published_at[:10]} and is eligible under the "
                        f"seven-day rule from {(datetime.now(timezone.utc) - when + vp.MIN_AGE):%Y-%m-%d}")
     if c.state == AVAILABLE:

@@ -65,3 +65,15 @@ convention = "google"
 
 [tool.ruff.lint.pycodestyle]
 max-doc-length = 80
+
+# Integrations run in their own provisioned venvs (provision_mcp_runtime), so
+# tests/gate.py checks each there with tests/pyright-integrations.json.
+[tool.pyright]
+include = ["src"]
+exclude = ["src/ailocal/resources/integrations", "**/__pycache__"]
+venvPath = "."
+venv = ".venv"
+# The hooks import litellm, fastapi and yaml from the proxy image, not the host.
+executionEnvironments = [
+    { root = "src/ailocal/resources/deploy/litellm/hooks", reportMissingImports = "none", reportMissingModuleSource = "none" },
+]

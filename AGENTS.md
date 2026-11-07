@@ -50,6 +50,8 @@ The gate refuses to run when the installed package or the generated files are st
 
 ShellCheck is required and runs at `warning` severity; the gate fails without it (`brew install shellcheck`). `.zsh` is covered by `zsh -n` instead — ShellCheck does not implement zsh.
 
+Pyright is required and runs in its default `standard` mode; the gate fails without it (`npm i -g pyright`, or point `AILOCAL_PYRIGHT` at one). `src` is checked against the venv running the gate and each bundled integration against its own provisioned runtime, with `tests/pyright-integrations.json`; the LiteLLM hooks import litellm from the proxy image, so only their missing-import reports are off (`[tool.pyright]` in `pyproject.toml`).
+
 These suites are deliberately OUT of the gate because they take minutes, not seconds:
 
 ```sh

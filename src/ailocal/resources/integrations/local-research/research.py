@@ -186,9 +186,9 @@ class Text(HTMLParser):
             if key and len(self.sections) < 100:
                 self.sections.append((key, ' '.join(' '.join(self.parts[start:]).split())[:16000]))
 
-    def handle_data(self, value: str) -> None:
+    def handle_data(self, data: str) -> None:
         if not self.hidden:
-            self.parts.append(value)
+            self.parts.append(data)
 
 
 def plain(value: str) -> str:
@@ -253,7 +253,7 @@ def keywords(query: str) -> str:
 def identity(url: str) -> tuple[str, str, str]:
     """Return a URL key ignoring www., a trailing slash and tracking params."""
     p = urlsplit(url)
-    host = p.hostname.removeprefix('www.')
+    host = (p.hostname or '').removeprefix('www.')
     query = urlencode([(k, v) for k, v in parse_qsl(p.query) if not k.lower().startswith('utm_')])
     return (host, p.path.rstrip('/') or '/', query)
 
@@ -387,14 +387,14 @@ class Research:
                     warnings.append('UNEXPECTED_ENGINE_RESULTS_DROPPED')
                     continue
                 url = clean_url(item.get('url', ''))
-                if not url or not allowed(urlsplit(url).hostname, scope):
+                host = urlsplit(url).hostname if url else None
+                if not url or not host or not allowed(host, scope):
                     continue
                 key = identity(url)
                 if key in records:
                     # Same page from several providers keeps every attribution.
                     records[key]['engines'] = sorted(set(records[key]['engines']) | set(matched))
                     continue
-                host = urlsplit(url).hostname
                 record = {'title': plain(str(item.get('title', '')))[:300], 'url': url,
                           'snippet': plain(str(item.get('content', '')))[:1200], 'engines': matched,
                           'evidence': 'search_snippet', 'read': 'not_read', '_order': (rank, index)}
