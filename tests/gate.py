@@ -24,7 +24,7 @@ RES = "src/ailocal/resources"
 os.environ.setdefault("AILOCAL_PY", sys.executable)
 SLOW_S = int(os.environ.get("AILOCAL_GATE_SLOW_S", "10"))
 ROOT_ALLOWED = {".gitignore", "AGENTS.md", "CHANGELOG.md", "LICENSE",
-                "README.md", "RELEASING.md", "pyproject.toml",
+                "README.md", "pyproject.toml",
                 "docs", "src", "tests"}
 
 
@@ -78,9 +78,9 @@ def _suites(full: bool) -> list:
     py = sys.executable
     suites = [
         ("SUITES", [
-            ("policy: profiles, geometry, environment ownership", [py, "tests/policy.py"]),
+            ("policy: profiles, budgets, environment ownership", [py, "tests/policy.py"]),
             ("clients: generation, targets, co-owned config", [py, "tests/clients.py"]),
-            ("install: provisioning, provenance, parity, idempotence", [py, "tests/install.py"]),
+            ("install: provisioning, provenance, launchd, teardown", [py, "tests/install.py"]),
             ("audit and update reporting", [py, "tests/audit.py"]),
             ("patched Ollama runtime", [py, "tests/ollama-patch.py"]),
             ("gateway: tool repair, re-streaming, probe routes", [py, "tests/gateway.py"]),

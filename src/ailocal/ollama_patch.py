@@ -218,7 +218,7 @@ def _cached_native_payload(root: Path, spec: dict) -> tuple[Path, dict] | None:
 def _require_supported_go(toolchain: str) -> None:
     """Refuse a toolchain outside the version policy: its standard library is
     linked into the daemon, so an outdated point release ships its advisories
-    (docs/security.md "Version policy")."""
+    (docs/architecture.md#version-policy)."""
     from . import version_policy as vp
     from .checks import services
     m = re.search(r"\bgo(\d+(?:\.\d+)+)\b", toolchain)

@@ -7,7 +7,7 @@ import pathlib
 import subprocess
 import sys
 
-import harness  # noqa: F401  (puts the checkout's src/ on sys.path)
+from harness import Suite
 from ailocal import policy
 
 SRC = pathlib.Path(__file__).resolve().parent.parent / "src/ailocal/resources/integrations/local-artifacts"
@@ -18,23 +18,18 @@ FULL = ["test_browser.py", "test_mermaid_grammar.py"]
 
 
 def main() -> int:
+    s = Suite()
     py = policy.state_root() / "local-artifacts/.venv/bin/python"
-    if not py.is_file():
-        print(f"  FAIL  artifact runtime missing ({py}); run: ailocal clients claude")
-        return 1
+    if not py.is_file():  # a precondition, not a test: --full already reports ten
+        s.check(False, "the artifact runtime is provisioned", f"{py} missing; run: ailocal clients claude")
+        return s.report()
     # No browser tab, and preview servers reap themselves seconds after the run.
     env = dict(os.environ, LOCAL_ARTIFACTS_AUTO_OPEN="0", LOCAL_ARTIFACTS_IDLE_EXIT="5")
-    failed = []
     for name in CORE + (FULL if "--full" in sys.argv else []):
         r = subprocess.run([str(py), str(SRC / name)], cwd=SRC, env=env,
                            capture_output=True, text=True, timeout=900)
-        print(f"  {'PASS' if r.returncode == 0 else 'FAIL'}  {name}")
-        if r.returncode:
-            failed.append(name)
-            print("        " + (r.stdout + r.stderr).strip().replace("\n", "\n        "))
-    print(f"\n  {len(failed)} failed" if failed else "\n  all passed")
-    return 1 if failed else 0
-
+        s.check(r.returncode == 0, name, (r.stdout + r.stderr).strip().replace("\n", "\n        "))
+    return s.report()
 
 if __name__ == "__main__":
     sys.exit(main())

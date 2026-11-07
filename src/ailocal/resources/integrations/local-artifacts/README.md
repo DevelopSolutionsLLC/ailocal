@@ -31,7 +31,7 @@ terminates a stdio MCP server when the session ends — the MCP spec has the cli
 close stdin, then `SIGTERM`, then `SIGKILL` — so a listener living inside it dies
 with the session while the `preview_url` stays in the transcript. That was the
 measured cause of "127.0.0.1 refused to connect": the artifact was still on disk,
-just unreachable. See [ADR 013](../../../../../docs/adr/013-artifact-preview-lifetime.md).
+just unreachable. See [ADR 013](../../../../../docs/decisions.md (013)).
 
 Sessions never each start their own server: whoever loses the bind race exits, and
 everyone reuses the winner.
@@ -150,7 +150,7 @@ tool. `ailocal check` reports whether both halves are in place.
 
 There is **no standalone installer here** and you should not create one: a second artifact
 server registered against the same config would compete for the same tool name and port. See
-[ADR 011](../../../../../docs/adr/011-bundled-artifacts.md) for why this is bundled.
+[ADR 011](../../../../../docs/decisions.md (011)) for why this is bundled.
 
 Provisioning touches exactly two things inside the config dir — `mcpServers.artifact` in `.claude.json`, and `skills/local-artifact/SKILL.md`. It **never writes `settings.json`**, so a generator that owns `settings.json` (ailocal's, for example) can rewrite it freely without losing this.
 

@@ -23,9 +23,9 @@ Two words, one meaning each: a **role** is a section of a profile (`[primary]`, 
 
 Cadence's shared policy (principal-engineer voice, evidence labels, version safety, the weekly audit) and its `repository-intelligence`, `tool-maintenance`, `security-review` and `work-tracking` skills apply; never copy their rules into shipped client instructions. Trace every change client → protocol → proxy → provider/tool, and keep deterministic checks apart from model-dependent evaluations.
 
-Before changing dependencies, install behaviour, skills or MCP integration, read [AI development maintenance](docs/maintenance.md); weekly maintenance starts there with `cadence doctor`. An old workaround is a hypothesis to revalidate against current upstream releases and issues, not a permanent limitation.
+Before changing dependencies, install behaviour, skills or MCP integration, read [maintenance](docs/maintenance.md#keeping-the-stack-current); weekly maintenance starts there with `cadence doctor`. An old workaround is a hypothesis to revalidate against current upstream releases and issues, not a permanent limitation.
 
-Every image is pinned by digest and every model source by the SHA-256 of its weight blob, and the gate fails on drift; a native recipe's unpinned projector and metadata layers are the limit that remains ([docs/security.md](docs/security.md#model-artifacts)). The audit each component needs, and the incident that justifies the lag, are in [docs/security.md](docs/security.md#supply-chain).
+Every image is pinned by digest and every model source by the SHA-256 of its weight blob, and the gate fails on drift; a native recipe's unpinned projector and metadata layers are the limit that remains ([architecture](docs/architecture.md#model-artifacts)). The audit each component needs and the version policy are in [architecture](docs/architecture.md#supply-chain).
 
 ```sh
 python3 -m venv .venv && . .venv/bin/activate
@@ -100,11 +100,11 @@ Only `src/`, `tests/`, `docs/` and project metadata. No generated artifact is ev
 
 - Never hand-edit or commit a generated file. Edit the profile.
 - Chat backends follow the model-format rule in [docs/maintenance.md](docs/maintenance.md#model-format): originals or calibrated/QAT builds only, GGUF by default, MLX only with recorded same-model evidence.
-- Every model selection is one structured Ollama identity, `<family>:<size>[-unrestricted][-calibrated][-it][-base][-qat][-mtp]`, never `:latest`, never a repository URL and never a quantization token (the source hash pins that); a library tag whose own name carries one is imported natively under the structured name, and every native import drops the pull's own manifest so `ollama list` shows one name per selection. `policy.selection_name_error` owns the rule; `tests/policy.py` enforces it ([docs/architecture.md#model-names](docs/architecture.md#model-names)).
+- Every model selection is one structured Ollama identity, `<family>:<size>[-unrestricted][-calibrated][-it][-base][-qat][-mtp]`, never `:latest`, never a repository URL and never a quantization token (the source hash pins that); a library tag whose own name carries one is imported natively under the structured name, and every native import drops the pull's own manifest so `ollama list` shows one name per selection. `policy.selection_name_error` owns the rule; `tests/policy.py` enforces it ([architecture](docs/architecture.md#model-names)).
 - One capability is one `model_list` entry named `ailocal-<capability>`, never a raw model tag.
 - Geometry is derived, never restated: `num_ctx = context_input + max_output`, `num_predict = max_output`, `max_input_tokens = context_input`.
 - Claude Code's process-wide context and output variables are projected from the launch-default role. They cannot describe the smaller background slots; `settings.json` lists those limits rather than implying parity.
-- ailocal stores no conversation history and never summarises or rewrites a client's history. Delegation stores only session identity and permission bindings; native clients own transcripts. See [docs/architecture.md](docs/architecture.md).
+- ailocal stores no conversation history and never summarises or rewrites a client's history. Delegation stores only session identity and permission bindings; native clients own transcripts. See [architecture](docs/architecture.md#context-and-compaction).
 - ailocal provisions inference and bundled runtime integrations inside roots it owns, plus its explicitly configured VS Code/Copilot provider and bundled MCP entries. It never writes hosted Claude or Codex roots. Public documentation MCPs are Cadence's, which registers them in hosted and local roots alike.
 - ailocal installs no language server. It enables the official plugin for a server already on PATH, in its own root only.
 - Codex research MCP dispatch is measured on Codex 0.163.0 through the local proxy. Other MCP servers require their own evidence before registration.
@@ -117,7 +117,7 @@ Edit the canonical source, never a derived file. Run the smallest relevant check
 
 Commits carry one identity — the configured human author — with no assistant attribution trailers or session identifiers. Never push without asking.
 
-Releases follow [RELEASING.md](RELEASING.md): from v0.9.0 the published interface is a contract, and a tag lands only on a commit whose built artifact was tested.
+Releases follow [maintenance](docs/maintenance.md#releasing): from v0.9.0 the published interface is a contract, and a tag lands only on a commit whose built artifact was tested.
 
 ## Markdown formatting
 

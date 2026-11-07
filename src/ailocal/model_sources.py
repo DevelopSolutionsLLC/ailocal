@@ -158,7 +158,7 @@ def _native_matches(shown: dict, source: dict) -> bool:
     drafts = ([str(root / ("sha256-" + source["draft_sha256"]))]
               if "draft_sha256" in source else [])
     # A declared projector must be the second FROM. An undeclared one is the
-    # source tag's own and stays unpinned (docs/security.md, model artifacts).
+    # source tag's own and stays unpinned (docs/architecture.md#model-artifacts).
     froms = [str(root / ("sha256-" + source["sha256"]))]
     if "projector_sha256" in source:
         froms.append(str(root / ("sha256-" + source["projector_sha256"])))

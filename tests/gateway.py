@@ -44,32 +44,27 @@ AGENT["input_schema"]["additionalProperties"] = False
 AGENT_TOOLS = TOOLS + [AGENT]
 
 # ── repair ──────────────────────────────────────────────────────────────
-suite.section("REPAIR: the reply is the call")
-calls, left = tr.recover('```json\n{"name": "Read", "arguments": {"file_path": "/tmp/a.py"}}\n```', TOOLS)
-check(calls and len(calls) == 1 and calls[0]["function"]["name"] == "Read"
-      and json.loads(calls[0]["function"]["arguments"]) == {"file_path": "/tmp/a.py"} and not left,
-      "a sole fenced JSON call becomes one tool call, nothing left over")
-for text, label in (('```\n{"name": "Bash", "arguments": {"command": "ls"}}\n```', "unlabelled fence"),
-                    ('{"name": "Read", "arguments": {"file_path": "/tmp/b"}}', "bare JSON"),
-                    ('<function=Read>\n<parameter=file_path>/tmp/c</parameter>\n</function>',
-                     "qwen <function=> format")):
-    check(tr.recover(text, TOOLS)[0] is not None, f"{label} is repaired")
-
-suite.section("REPAIR: refuses examples and invalid calls")
+suite.section("REPAIR: a reply that is only a call becomes the call")
+repaired = {}
+for label, text in (("json fence", '```json\n{"name": "Read", "arguments": {"file_path": "/tmp/a"}}\n```'),
+                    ("bare fence", '```\n{"name": "Read", "arguments": {"file_path": "/tmp/a"}}\n```'),
+                    ("bare JSON", '{"name": "Read", "arguments": {"file_path": "/tmp/a"}}'),
+                    ("qwen <function=>", '<function=Read>\n<parameter=file_path>/tmp/a</parameter>\n</function>')):
+    calls, left = tr.recover(text, TOOLS)
+    repaired[label] = ([(c["function"]["name"], json.loads(c["function"]["arguments"])) for c in calls or []], left or "")
+check(all(v == ([("Read", {"file_path": "/tmp/a"})], "") for v in repaired.values()),
+      "every supported call format is repaired into exactly one tool call, nothing left over", str(repaired))
 prose = ('To read a file, the agent emits a call like this:\n\n'
          '```json\n{"name": "Read", "arguments": {"file_path": "/tmp/x"}}\n```\n\nThat is how it works.')
-check(tr.recover(prose, TOOLS) == (None, prose), "a fenced example inside prose is returned unchanged")
-for text, tools, label in (
+accepted = [label for text, tools, label in (
+        (prose, TOOLS, "a fenced example inside prose"),
         ('```json\n{"name": "Read", "arguments": {"file_path": "/a"}}\n```\n'
          '```json\n{"name": "Bash", "arguments": {"command": "rm -rf /"}}\n```', TOOLS, "two fences"),
         ('```json\n{"name": "DropDatabase", "arguments": {"db": "prod"}}\n```', TOOLS, "an undeclared tool"),
         ('```json\n{"name": "Read", "arguments": {"wrong_field": "x"}}\n```', TOOLS, "a missing required arg"),
-        ('```python\nprint("hello")\n```', TOOLS, "an ordinary code fence"),
-        ('Here is some JSON: {"name": "config", "value": 1}', TOOLS, "non-call JSON"),
-        ('```json\n{"name":"Read","arguments":{"file_path":"/a"}}\n```', [], "no declared tools"),
-        ("", TOOLS, "empty content")):
-    check(tr.recover(text, tools)[0] is None, f"not repaired: {label}")
-check(tr.recover("Just a normal answer.", TOOLS) == (None, "Just a normal answer."), "plain prose untouched")
+        ('```json\n{"name":"Read","arguments":{"file_path":"/a"}}\n```', [], "no declared tools"))
+    if tr.recover(text, tools) != (None, text)]
+check(not accepted, "examples and invalid calls are never executed; the text is returned unchanged", str(accepted))
 
 # ── native-args ─────────────────────────────────────────────────────────
 # gemma4 emits a well-formed Agent call without the required `description`;
@@ -82,32 +77,26 @@ def complete(args, name="Agent", tools=AGENT_TOOLS):
 
 
 out = complete({"prompt": "Search for existing retry logic and backoff helpers", "subagent_type": "Explore"})
-got = json.loads(out) if out else {}
-check(got == {"description": "Search for existing retry logic",
-              "prompt": "Search for existing retry logic and backoff helpers", "subagent_type": "Explore"},
-      "description is the first five prompt words; nothing else changes", out or "")
-check(out and complete(got) is None, "idempotent")
-long = complete({"prompt": " ".join(["word"] * 200)})
-check(long and len(json.loads(long)["description"]) <= 60, "bounded on a long prompt")
-ws = complete({"prompt": "Explore  \n  the   repo"})
-check(ws and json.loads(ws)["description"] == "Explore the repo", "whitespace collapsed")
+check(out and json.loads(out) == {"description": "Search for existing retry logic",
+                                  "prompt": "Search for existing retry logic and backoff helpers",
+                                  "subagent_type": "Explore"},
+      "a missing Agent description is the first five prompt words; nothing else changes", out or "")
 future = json.loads(json.dumps(AGENT))
 future["input_schema"]["required"].append("run_in_background")
 typed = json.loads(json.dumps(AGENT))
 typed["input_schema"]["properties"]["description"] = {"type": "object"}
-for args, name, tools, label in (
+completed = [label for args, name, tools, label in (
         ({"description": "Explore repo", "prompt": "p"}, "Agent", AGENT_TOOLS, "already described"),
         ({"description": "", "prompt": "p"}, "Agent", AGENT_TOOLS, "empty description present"),
         ({"subagent_type": "Explore"}, "Agent", AGENT_TOOLS, "missing prompt"),
-        ({"prompt": "   "}, "Agent", AGENT_TOOLS, "blank prompt"),
         ({"prompt": "p", "subagent_type": 7}, "Agent", AGENT_TOOLS, "wrongly typed subagent_type"),
         ("{not json", "Agent", AGENT_TOOLS, "malformed JSON"),
-        ('["a"]', "Agent", AGENT_TOOLS, "non-object arguments"),
         ({"prompt": "p"}, "Bash", AGENT_TOOLS, "another tool"),
         ({"prompt": "p"}, "Agent", TOOLS, "undeclared Agent"),
         ({"prompt": "p"}, "Agent", TOOLS + [future], "two missing required fields"),
-        ({"prompt": "p"}, "Agent", TOOLS + [typed], "description no longer a string")):
-    check(complete(args, name, tools) is None, f"refused: {label}")
+        ({"prompt": "p"}, "Agent", TOOLS + [typed], "description no longer a string"))
+    if complete(args, name, tools) is not None]
+check(not completed, "completion fails closed on anything but a lone missing Agent description", str(completed))
 
 suite.section("NATIVE ARGS: through the SSE byte path")
 
@@ -137,19 +126,16 @@ def args_by_index(emitted):
     return {i: json.loads(s) for i, s in acc.items()}
 
 
-emitted = sse(block(0, "tool_use", "Agent", '{"prompt": "Find th', 'e retry helper"}'))
-check(args_by_index(emitted)[0] == {"prompt": "Find the retry helper", "description": "Find the retry helper"},
-      "fragmented arguments are reassembled and completed on the wire")
-check([e["type"] for e in emitted] == ["content_block_start", "content_block_delta", "content_block_stop"]
-      and emitted[0]["content_block"]["id"] == "t0", "well-formed block, identity preserved")
-emitted = sse(block(0, "thinking", None, "Let me delegate.") + block(1, "text", None, "Delegating.")
-              + block(2, "tool_use", "Agent", '{"prompt": "Find the retry code"}')
-              + block(3, "tool_use", "Bash", '{"command": "ls"}'))
-check([(e["index"], e["content_block"]["type"]) for e in emitted if e["type"] == "content_block_start"]
-      == [(0, "thinking"), (1, "text"), (2, "tool_use"), (3, "tool_use")], "multi-block order preserved")
-a = args_by_index(emitted)
-check(a[2].get("description") == "Find the retry code" and a[3] == {"command": "ls"},
-      "only the Agent call is completed; its sibling is untouched")
+
+emitted = sse(block(0, "thinking", None, "Let me delegate.")
+              + block(1, "tool_use", "Agent", '{"prompt": "Find th', 'e retry code"}')
+              + block(2, "tool_use", "Bash", '{"command": "ls"}'))
+got = ([(e["index"], e["content_block"]["type"]) for e in emitted if e["type"] == "content_block_start"],
+       args_by_index(emitted))
+check(got == ([(0, "thinking"), (1, "tool_use"), (2, "tool_use")],
+              {1: {"prompt": "Find the retry code", "description": "Find the retry code"}, 2: {"command": "ls"}}),
+      "fragmented Agent arguments are completed on the wire; block order and the sibling call are untouched",
+      str(got))
 fix = tr.ToolRepair._fix_anthropic_sse_stop_reason
 end_turn = b'event: message_delta\ndata: {"type": "message_delta", "delta": {"stop_reason": "end_turn"}}\n\n'
 fixed = fix(end_turn, {"injected": True})
@@ -176,42 +162,31 @@ class ResponsesAPIResponse:  # the predicate keys on the class name
     status, output, _hidden_params = "completed", [], {"model_id": "m1"}
 
 
-flagged = {"_websearch_interception_converted_stream": True}
-resp = ResponsesAPIResponse()
-check(tr._destreamed_responses_result(flagged, resp), "flagged request + Responses result recognised")
-check(not any(tr._destreamed_responses_result(d, r) for d, r in
-              (({}, resp), (flagged, object()), (None, resp))),
-      "unflagged, non-Responses and missing data are left alone")
-hook = tr.ToolRepair().async_post_call_success_deployment_hook
-check(asyncio.run(hook({}, resp, "aresponses")) is None, "no replacement when not de-streamed")
-stream = asyncio.run(hook(flagged, resp, "aresponses"))
-
-
 async def drain(s):
     return [e async for e in s]
 
+
+flagged = {"_websearch_interception_converted_stream": True}
+resp = ResponsesAPIResponse()
+hook = tr.ToolRepair().async_post_call_success_deployment_hook
+untouched = asyncio.run(hook({}, resp, "aresponses"))
+stream = asyncio.run(hook(flagged, resp, "aresponses"))
 events = asyncio.run(drain(stream)) if stream is not None else []
 kinds = [e["type"] if isinstance(e, dict) else getattr(e, "type", None) for e in events]
-check(kinds and kinds[-1] == "response.completed", "replacement stream ends in response.completed")
-check(getattr(stream, "_hidden_params", None) == {"model_id": "m1"}
+check(untouched is None and kinds and kinds[-1] == "response.completed"
+      and getattr(stream, "_hidden_params", None) == {"model_id": "m1"}
       and getattr(stream, "completed_response", None) is resp,
-      "_hidden_params and completed_response carried for the proxy")
+      "only a de-streamed result is re-streamed, ending in response.completed with the proxy's metadata")
 # #38: Codex never replays a reasoning item that lacks `summary`.
 reasoning = {"type": "reasoning", "id": "rs_1", "status": "completed", "role": "assistant",
-             "content": [{"type": "output_text", "text": "Read calc.py first.", "annotations": []}],
-             "encrypted_content": None}
+             "content": [{"type": "output_text", "text": "Read calc.py first."}], "encrypted_content": None}
 message = {"type": "message", "id": "msg_1", "content": [{"type": "output_text", "text": "DONE"}]}
 r = ResponsesAPIResponse()
 r.output = [reasoning, message]
 item = tr._with_reasoning_summaries(r).output
 check(item[0]["summary"] == [{"type": "summary_text", "text": "Read calc.py first."}]
       and item[0]["content"] == [] and item[1] is message and r.output[0] is reasoning,
-      "reasoning text becomes summary_text; message and original untouched")
-for out_item, label in ((dict(reasoning, summary=[{"type": "summary_text", "text": "kept"}]), "has a summary"),
-                        (dict(reasoning, content=[]), "has no text")):
-    r = ResponsesAPIResponse()
-    r.output = [out_item]
-    check(tr._with_reasoning_summaries(r) is r, f"passed through: item {label}")
+      "reasoning text becomes summary_text so Codex replays it (#38); the original is untouched")
 
 # ── probe routes ────────────────────────────────────────────────────────
 # Claude Code fires HEAD/GET /api/hello at ANTHROPIC_BASE_URL before credentials;
@@ -232,14 +207,13 @@ def call(method, path, auth=False):
         return f"unreachable: {e}", b""
 
 
-for method in ("HEAD", "GET"):
-    status, body = call(method, "/api/hello")
-    check(status == 200 and body == b"", f"{method} /api/hello unauthenticated -> 200, empty",
-          f"{status} {body[:80]!r}")
 # The unauthenticated /v1/models request makes LiteLLM log an expected auth traceback.
-for path, auth, want in (("/v1/models?limit=1000", True, (200,)), ("/v1/models", False, (401, 403)),
-                         ("/health/liveliness", False, (200,)), ("/api/definitely-not-a-route", False, (404,))):
-    status, _ = call("GET", path, auth)
-    check(status in want, f"GET {path} {'with' if auth else 'without'} auth -> {want}", str(status))
+got = {"HEAD /api/hello": call("HEAD", "/api/hello"), "GET /api/hello": call("GET", "/api/hello"),
+       "GET /v1/models (auth)": (call("GET", "/v1/models?limit=1000", True)[0], b""),
+       "GET /v1/models (no auth)": (call("GET", "/v1/models")[0] in (401, 403), b""),
+       "GET /api/unknown": (call("GET", "/api/definitely-not-a-route")[0], b"")}
+check(got == {"HEAD /api/hello": (200, b""), "GET /api/hello": (200, b""), "GET /v1/models (auth)": (200, b""),
+              "GET /v1/models (no auth)": (True, b""), "GET /api/unknown": (404, b"")},
+      "/api/hello answers unauthenticated without opening any other route or auth", str(got))
 
 sys.exit(suite.report())

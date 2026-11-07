@@ -1,13 +1,14 @@
 # Changelog
 
-Release policy and the meaning of each bump: [RELEASING.md](RELEASING.md).
+Release policy and the meaning of each bump: [docs/maintenance.md](docs/maintenance.md#releasing).
 
 ## v0.16.0 (unreleased, minor) — one primary chat role
 
 ### Changed
 
+- Each test suite is one component and reports at most 10 tests; `tests/harness.py` fails a suite over the limit. The suites went from about 780 checks to under 120, keeping end-to-end, fail-closed, security-boundary and incident regressions. The documentation is four documents and a 63-line README (was 223): `docs/guide.md` (claude-local and troubleshooting), `docs/architecture.md` (security), `docs/maintenance.md` (releasing and the model audit) and `docs/decisions.md` (every ADR), replacing sixteen files (#113).
 - The 128gb tier's Claude instruction budget is 8,192 bytes (`claude.instruction_max_bytes_by_tier` in `clients.toml`), published in the integration contract and used by `ailocal check`; every other tier and Codex keep 4,096. Measured 2026-11-07 with gemma4:26b-qat-mtp through claude-local: about 8.2 KB of always-on instructions kept every fix and scope trial correct, as 4.6 KB did, so the 128gb Claude root no longer warns (#47, ADR 017).
-- **One version policy** (#106, [docs/security.md](docs/security.md)): `ailocal update` proposes the newest stable release at least seven days past publication, or a younger one only when it fixes an advisory against the declared version, instead of the third-newest release (Ollama) or the newest whatever its age (LiteLLM, which reported a release hours old). The patched-Ollama build refuses a Go toolchain that is not the newest point release of a supported line. The update report's schema is 3.
+- **One version policy** (#106, [docs/architecture.md](docs/architecture.md#version-policy)): `ailocal update` proposes the newest stable release at least seven days past publication, or a younger one only when it fixes an advisory against the declared version, instead of the third-newest release (Ollama) or the newest whatever its age (LiteLLM, which reported a release hours old). The patched-Ollama build refuses a Go toolchain that is not the newest point release of a supported line. The update report's schema is 3.
 - `codex-local` enables Codex's active-turn idle-sleep prevention (`prevent_idle_sleep`), matching hosted Codex; display sleep and screen savers are unaffected (#105).
 - Every model selection, on every tier, carries one structured name, `<family>:<size>[-unrestricted][-calibrated][-it][-base][-qat][-mtp]`, with no quantization token: the source hash pins the quantization, a library tag whose own name carries one is imported natively under the structured name, and every native import now drops the pull's own manifest (library tags included) so `ollama list` shows one name per selection. `policy.selection_name_error` owns the rule and a profile that breaks it fails closed (`PROFILE_SCHEMA_INVALID`). The 64/128 GB cyber alias becomes `gemma4:26b-unrestricted-qat-mtp`; `ailocal install --upgrade-models` adopts the shipped names (#93).
 - The 16gb and 32gb profiles return to Qwen3.5 on stock Ollama 0.40.14: 16 GB serves `qwen3.5:4b-mtp` (the library Q4_K_M build, weights hash-pinned) at 96K with `qwen3.5:4b-unrestricted-mtp` for cyber; 32 GB serves `qwen3.5:9b-calibrated-mtp` at 160K with `qwen3.5:9b-unrestricted-mtp`. Thinking off and greedy sampling: measured 2026-11-05 on the 128 GB host, Qwen3.5 4B 78.7% HumanEval+ (77/93 on the 93 problems Nemotron scored 81/93 on), Qwen3.5 9B 84.8% (85/93), every tool loop and injected-failure recovery passed; greedy closed the 4B's gap that chose Nemotron in #87. No role needs the patched runtime. Memory figures are mapped-weight estimates from the 128 GB host (docs/model-audit.md) (#93).
@@ -87,7 +88,7 @@ Release policy and the meaning of each bump: [RELEASING.md](RELEASING.md).
 ### Breaking
 
 - Delegation resumes require a session binding created by this implementation. Unknown or legacy session IDs are refused; start a fresh delegation to migrate. A resumed call inherits its original worker, model, mode and directory, and refuses conflicting choices or changed execution policy.
-- The integration contract moves to schema 3 to publish local instruction-file budgets. Upgrade Cadence to a build with schema-3 support before regenerating its local client instructions; older builds refuse those targets. The instruction-file budget does not change model context or output limits. See [ADR 017](docs/adr/017-instruction-budget.md).
+- The integration contract moves to schema 3 to publish local instruction-file budgets. Upgrade Cadence to a build with schema-3 support before regenerating its local client instructions; older builds refuse those targets. The instruction-file budget does not change model context or output limits. See [ADR 017](docs/decisions.md#017-local-client-roots-publish-an-instruction-budget-delegated-denials-are-reported).
 
 ### Fixed
 
@@ -243,7 +244,7 @@ pipx install --force . && ailocal start && ailocal clients claude
 
 `ailocal start` pulls the new image; `ailocal clients claude` provisions artifacts and re-writes the wrapper. Existing profiles and configuration are untouched.
 
-**Nothing breaks.** CLI commands, configuration layout and profile behaviour are unchanged. The two behavioural changes are `claude-local` defaults, both per-process and both reversible with an environment variable, documented in [docs/claude-local.md](docs/claude-local.md).
+**Nothing breaks.** CLI commands, configuration layout and profile behaviour are unchanged. The two behavioural changes are `claude-local` defaults, both per-process and both reversible with an environment variable, documented in [docs/guide.md](docs/guide.md#defaults-and-claude-local-variables).
 
 ## v0.12.0 — `ailocal install --reset-config`
 

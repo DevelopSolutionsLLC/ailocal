@@ -1,153 +1,47 @@
 # ailocal
 
-**Run Claude Code, Codex CLI and VS Code Copilot Chat against local models on your Mac.**
+Run Claude Code, Codex CLI and VS Code Copilot Chat against local models on your Mac. ailocal serves models through Ollama behind an OpenAI- and Anthropic-compatible proxy on `127.0.0.1:4000`, picks models that fit your memory, verifies every download against a pinned hash, and configures each supported client it finds. Nothing leaves your machine unless the agent searches the web or a public documentation service.
 
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE) [![Platform](https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-lightgrey.svg)]() [![Memory](https://img.shields.io/badge/memory-16%20GB%20minimum-lightgrey.svg)]()
-
-| Your tool | What you run |
-|---|---|
-| Claude Code | `claude-local` |
-| Codex CLI | `codex-local` |
-| VS Code | the `ailocal` models in Copilot Chat |
-
-Local models, local data, one configuration.
-
-## What ailocal does
-
-ailocal serves models through Ollama, fronts them with an OpenAI- and Anthropic-compatible API on `127.0.0.1:4000`, and configures every supported client it finds. It measures your Mac, picks models that fit its memory, verifies every download against a pinned hash, and writes the client configuration for you. Nothing leaves your machine unless the agent calls web search or a vendor's public documentation service.
-
-ailocal installs no software of its own. You install the prerequisites and whichever clients you want; every client is optional, and one you do not have is left alone.
-
-**Requirements:** macOS on Apple Silicon, 16 GB unified memory minimum, Docker Desktop, Ollama and ripgrep.
+**Requirements:** macOS on Apple Silicon, 16 GB unified memory, [Homebrew](https://brew.sh). Allow 10–55 GB for models, depending on tier.
 
 ## Install
 
-### 1. Prerequisites
-
-Install [Homebrew](https://brew.sh) if you do not have it, then:
-
 ```bash
-brew install --cask docker-desktop ollama-binary
-brew install pipx ripgrep
-```
-
-Local models are told to search with `rg`; macOS ships no ripgrep, and the copies Claude Code and Codex bundle are not on your `PATH`, so install it.
-
-Recommended: `brew install cosign`. `ailocal check` uses it to look up the publisher signature of each pinned image; without it the digest pin still holds and the check reports one warning.
-
-`ollama-binary` is Ollama's official command-line release with no menu-bar app; ailocal runs its server under launchd. If you installed the `ollama-app` cask, switch with `brew uninstall --cask ollama-app && brew install --cask ollama-binary`, then re-run `ailocal install`, which restarts the managed server on the new binary; the two casks conflict, and your models stay in the shared store. Install refuses while `/Applications/Ollama.app` exists: the app runs its own server on `:11434`.
-
-Open Docker Desktop once from your Applications folder; it needs one manual launch. `pipx` brings its own Python; you do not install Python or manage a virtual environment.
-
-ailocal keeps the Ollama server available, but models load when first requested rather than at login.
-
-The cross-tier Ollama parallel-request default is 1. On a host where two slots have been measured, set `AILOCAL_OLLAMA_NUM_PARALLEL=2` in `~/.config/ailocal/.env.local` and run `ailocal install --yes` to make the selected value durable in both Ollama launch agents.
-
-Language servers are optional and only matter for Claude Code. Install the ones for languages you work in and ailocal enables the matching plugin:
-
-```bash
-npm i -g pyright                                    # Python
-npm i -g typescript-language-server typescript      # TypeScript/JavaScript
-brew install gopls                                  # Go
-xcode-select --install                              # C/C++ (clangd); with Go, also for `--ollama-patch`
-```
-
-### 2. Clients (optional)
-
-```bash
-brew install --cask claude-code           # Claude Code
-brew install --cask codex                 # Codex CLI
-brew install --cask visual-studio-code    # VS Code Copilot Chat
-```
-
-Open VS Code once after installing it; it creates its settings folder on first launch. ailocal also works with no client at all: any OpenAI- or Anthropic-compatible app can use the local API directly.
-
-### 3. ailocal
-
-```bash
+brew install --cask docker-desktop ollama-binary     # open Docker Desktop once afterwards
+brew install pipx ripgrep cosign
+brew install --cask claude-code codex visual-studio-code   # any you want; open VS Code once
 pipx install git+https://github.com/DevelopSolutionsLLC/ailocal.git@v0.15.1
 ailocal install
+ailocal check                                        # success: CHECK: OK on the last line
 ```
 
-That is the only install path. The tag is the current release; the same wheel is attached to [the release](https://github.com/DevelopSolutionsLLC/ailocal/releases/latest) for download and verification.
+`ailocal install` asks before touching client configuration, is safe to re-run, and refuses while `/Applications/Ollama.app` exists. Optional language servers for Claude Code are in the [guide](docs/guide.md#what-a-local-session-gets).
 
-`ailocal install` detects your memory tier, pulls and verifies the models, runs stock Ollama (the reviewed native runtime is built only for `--ollama-patch` or a role that declares it, and needs Go and Xcode's command-line tools), starts the services, configures the clients it finds, and ends with `ailocal check`. It asks before touching any client configuration and exits nonzero with the fixing commands if validation fails. Allow 10 to 55 GB of model storage depending on your tier. It is safe to re-run.
-
-### 4. Verify
+## Use
 
 ```bash
-ailocal check
+claude-local        # Claude Code against your local models (open a new terminal first)
+codex-local         # Codex CLI against your local models
 ```
 
-Success is `CHECK: OK` on the last line. The **Clients** group shows what ailocal did with each supported client: `✓` configured, `—` not installed and left alone, `⚠` advisory with the fixing command on the next line.
+**VS Code** keeps API keys where no other program can write them, so paste the key once:
 
-## Use it
+1. `grep LITELLM_MASTER_KEY ~/.local/state/ailocal/env`
+2. In Copilot Chat: model picker → **Manage Language Models** → **ailocal**.
+3. Paste the key; the `ailocal-*` models appear immediately.
 
-Open a new terminal, then:
-
-```bash
-claude-local        # Claude Code, against your local models
-codex-local         # Codex CLI, against your local models
-```
-
-In either client, `/model` lists exactly the enabled `ailocal-*` capabilities with the same labels: `ailocal-primary` (the chat model, with the tier's thinking mode), `ailocal-fast` on 64 and 128 GB (the same model with thinking off), `ailocal-cyber` and `ailocal-completion`. Each selection carries its own context window and reasoning default. `codex-local` runs commands in Codex's `workspace-write` sandbox without approval prompts: writes stay in the workspace and commands get no network; `codex-local --sandbox danger-full-access` lifts that for one session. Installed a client later? Run `ailocal clients`.
-
-### VS Code: paste the key once
-
-VS Code keeps model API keys in its own encrypted storage, which no other program can write, so this one step is yours:
-
-```bash
-grep LITELLM_MASTER_KEY ~/.local/state/ailocal/env
-```
-
-In Copilot Chat open the model picker, choose **Manage Language Models**, select **ailocal** and paste the key. The `ailocal-*` chat models appear immediately. Until then `ailocal check` reports `API key not initialized` and repeats these steps.
-
-ailocal uses VS Code's built-in [Custom Endpoint provider](https://code.visualstudio.com/docs/agent-customization/language-models) and installs no extension. Copilot Chat needs no subscription for this. The bundled `research` and `agent` MCP servers are registered for VS Code and in [Copilot's portable scope](https://code.visualstudio.com/docs/agents/reference/mcp-configuration); foreign entries are preserved.
-
-## Everyday commands
-
-| Command | What it does |
+| Command | Does |
 |---|---|
-| `ailocal install` | set everything up; safe to re-run |
-| `ailocal install --upgrade-models` | adopt the shipped models in every tier, keeping your context and output budgets; originals are backed up |
-| `ailocal install --reset-config` | take every shipped default, backing up your edits first |
-| `ailocal start` / `ailocal stop` | bring the models and proxy up or down |
-| `ailocal status` | what is loaded right now |
-| `ailocal check` | is everything configured and working, end to end |
-| `ailocal clients` | configure the supported clients you have installed |
-| `ailocal bind lan` / `local` / `status` | let the proxy listen on every interface, or on this machine only (the default); applies on the next `ailocal start` |
-| `ailocal docker check` / `apply` / `restore` | compare Docker Desktop's settings with ailocal's [recommendations](src/ailocal/resources/deploy/docker-desktop/settings.toml) (telemetry, updates, extensions, MCP Toolkit, localhost port binding); `apply` restarts Docker Desktop, records the originals, and `restore` or `ailocal teardown` puts them back. Memory and disk are never changed |
-| `ailocal update --json` | which pinned images have newer candidates |
-| `ailocal audit` | are the pinned versions still free of advisories; nonzero when one is affected or yanked |
-
-To upgrade ailocal itself, install the new release tag with `pipx install --force`, then `ailocal start`. That regenerates the runtime; it does not change Ollama, models or pinned service images on its own.
-
-### Pinning Homebrew packages
-
-ailocal holds its dependencies at validated versions, roughly two releases behind the newest. Homebrew has no minimum-age setting, so hold a version with a pin; `brew upgrade` skips pinned packages.
-
-```bash
-brew pin --cask codex claude-code@latest ollama-binary   # what ailocal is measured against
-brew pin pipx
-```
-
-To move a pinned package: unpin, upgrade, run `ailocal check`, pin again. Docker Desktop and VS Code ignore cask pins and update themselves; turn off automatic updates in each app. `brew upgrade --cask ollama-binary` replaces the files under the running server; the `com.ailocal.ollama-watch` agent restarts it on the new version, within five minutes at worst. ailocal pins its service images by digest, so Docker Desktop updates never change LiteLLM or SearXNG.
-
-## Supported clients
-
-| Client | Status |
-|---|---|
-| Claude Code | Fully supported: tools, web search, language servers, local artifacts |
-| Codex CLI | Supported: interactive and `exec` sessions, tools, file edits, web search, research MCP (measured on 0.163.0) |
-| VS Code Copilot Chat | Supported for chat and inline completion |
-
-Any other OpenAI- or Anthropic-compatible app works against `http://127.0.0.1:4000` with the key in `~/.local/state/ailocal/env`. To reach it from another machine, `ailocal bind lan` then `ailocal start`: only the proxy opens, the master key is the only protection, and `ailocal check` says so until `ailocal bind local` closes it again. Ollama and SearXNG never leave loopback.
-
-Local models are capable everyday assistants, not frontier models. Expect strong routine work; do not expect hosted Opus or GPT on the hardest problems.
-
-## Your Mac's profile
-
-ailocal measures your memory and chooses a profile. You do not need to think about this to install or use it.
+| `ailocal install` | set up or repair everything; `--upgrade-models` adopts new shipped models, `--reset-config` takes all shipped defaults |
+| `ailocal start` / `stop` | bring the models and proxy up or down |
+| `ailocal status` | what is loaded now |
+| `ailocal check` | verify the whole installation end to end |
+| `ailocal clients` | configure clients installed later; `--remove` reverses it |
+| `ailocal profile use <tier>` | override the detected tier, then `ailocal start` |
+| `ailocal bind lan` / `local` | expose the proxy on the network, or not (default `local`) |
+| `ailocal docker check` / `apply` / `restore` | compare or apply ailocal's Docker Desktop settings |
+| `ailocal update --json` / `ailocal audit` | newer pinned-image candidates / advisories against the pins |
+| `ailocal teardown` | remove ailocal, keeping models and profiles |
 
 | Memory | Main model | Context window | Models on disk |
 |---|---|---|---|
@@ -156,68 +50,14 @@ ailocal measures your memory and chooses a profile. You do not need to think abo
 | 64 GB | `gemma4:26b-qat-mtp` | 192K | ~37 GB |
 | 128 GB | `gemma4:26b-qat-mtp` | 256K | ~37 GB |
 
-Windows are totals including each role's output reserve (K = 1,024 tokens). `fast` shares the main model and its window; a long conversation compacts in the client before it reaches that window. The 0.15 role names (`ailocal-architecture`, `ailocal-implementation`, `ailocal-review`, and `ailocal-fast` on 16/32 GB) still route to `ailocal-primary` in 0.16 and are removed in 0.17.
-
-Every backend follows one [model-format rule](docs/maintenance.md#model-format): official or author-published builds, GGUF by default, MLX only with a same-model comparison on real hardware. Each model is a `name:tag` Ollama identity created from a hash-pinned source; nothing is converted. Every profile also exposes **Cyber** as `ailocal-cyber`, a separate unrestricted model with its own guide that releases its memory sooner when idle. What was measured, what failed and what remains unverified is in the [model audit](docs/model-audit.md).
-
-To override the detected tier: `ailocal profile use 32gb`, then `ailocal start`. To change a model or its sampling, edit the file in `~/.config/ailocal/profiles/` and run `ailocal start`; your edits survive upgrades, and `ailocal install --upgrade-models` adopts new shipped models without discarding your budgets.
-
-## What a local session gets
-
-**Sleep during active work.** `codex-local` holds Codex's own idle-sleep assertion for each running turn, as hosted Codex does; Claude Code holds its own while it works. The display can still sleep, and closing the lid still sleeps the Mac.
-
-**Web search.** `claude-local` searches the live web through ailocal's own SearXNG instance and answers with sources. Claude Code may show "0 searches" on a sourced answer; that counter tracks Anthropic-hosted search, which never runs here. A Brave Search key is optional and used only by the research server within a budget: set `BRAVE_API` in `~/.config/ailocal/.env.local`, then `ailocal clients claude`. Details and limits are in [the architecture](docs/architecture.md#local-research).
-
-**Research MCP.** Requests that need documentation, discussion, projects or papers route to the bundled `search` tool. Results carry provider attribution and are indexed snippets, not page reads. See [ADR 014](docs/adr/014-local-research.md).
-
-**Artifacts.** The hosted `Artifact` tool is unavailable to a local session, so ailocal ships a local renderer. Ask for a diagram, page or report; the result opens from `127.0.0.1` in a sandboxed page that cannot reach the network, and its source is written to `.artifacts/` in your project. `html`, `markdown` and `mermaid` need nothing; `architecture` diagrams need `node` on PATH. See [ADR 011](docs/adr/011-bundled-artifacts.md).
-
-**Language servers.** ailocal enables the official Claude Code LSP plugin for each language whose server you already have, in ailocal's own root only. Install a server, re-run `ailocal clients claude`, and the plugin follows.
-
-| Language | Server binary | Install with |
-|---|---|---|
-| Python | `pyright-langserver` | `npm i -g pyright` |
-| TypeScript | `typescript-language-server` | `npm i -g typescript-language-server typescript` |
-| Go | `gopls` | `brew install gopls` |
-| C/C++ | `clangd` | `xcode-select --install` |
-
-**Model guidance and delegation.** Each profile carries a guide for every selected backend; Codex receives it with the selected model and Claude Code on session start and model switches. A hosted Claude or Codex session can delegate a bounded task to a local worker through the bundled `agent` MCP when Cadence declares it, in `text`, `research`, `edit` or `full` mode under a ceiling you set. The contract, including resume, image input and what a child can and cannot touch, is in [the architecture](docs/architecture.md#delegation).
-
-A thinking-mode Qwen turn can end with reasoning and no final reply. ailocal reports that as a failure rather than switching models silently; see [troubleshooting](docs/troubleshooting.md#a-thinking-mode-turn-ends-with-no-reply).
-
-## Defaults
-
-| | Default | Change it with |
-|---|---|---|
-| Inference | Ollama, via LiteLLM on `127.0.0.1:4000` | — |
-| Profile | chosen from your Mac's memory | `ailocal profile use <tier>`, or edit `~/.config/ailocal/profiles/` |
-| LiteLLM and SearXNG | pinned by digest; versions reported by `ailocal check` | a deliberate upgrade, then the gate |
-| Tool search (`claude-local`) | on (`ENABLE_TOOL_SEARCH=true`) | `AILOCAL_TOOL_SEARCH=…` |
-| Native Workflow (`claude-local`) | off | `AILOCAL_NATIVE_WORKFLOWS=1` |
-| Local artifacts | on, bundled | — |
-| Web search | ailocal's own SearXNG, keyless | `BRAVE_API` adds budgeted Brave to research |
-| Hosted Claude/Codex settings | never written; documentation MCPs come from Cadence | native client configuration |
-
-Every `claude-local` variable is process-scoped: set it inline for one session. The full table is in [docs/claude-local.md](docs/claude-local.md#configuration).
-
-`ailocal teardown` removes ailocal's containers, login agents, logs, owned patched runtimes and the client entries it wrote outside its roots, and keeps your models and profiles; `ailocal clients --remove` reverses the client entries alone. The one-release shim for the former app startup override is described in [maintenance](docs/maintenance.md#legacy-app-startup-override).
-
 ## Documentation
 
-| Document | Purpose |
-|---|---|
-| [docs/architecture.md](docs/architecture.md) | how the pieces fit, what an install writes, geometry, delegation |
-| [docs/claude-local.md](docs/claude-local.md) | what claude-local is, tool search, Workflow, every variable |
-| [docs/troubleshooting.md](docs/troubleshooting.md) | symptoms and fixes |
-| [docs/security.md](docs/security.md) | trust boundaries, secrets, supply chain |
-| [docs/maintenance.md](docs/maintenance.md) | keeping the stack current, the model-format rule, evidence |
-| [docs/model-audit.md](docs/model-audit.md) | what was measured for each shipped model |
-| [docs/adr/](docs/adr/) | the decisions and why |
-| [CHANGELOG.md](CHANGELOG.md) · [RELEASING.md](RELEASING.md) | what changed in each release, and how one is cut |
-| [AGENTS.md](AGENTS.md) | developing and validating ailocal |
+- [docs/guide.md](docs/guide.md): clients, VS Code, profiles, variables, pinning, removal, troubleshooting
+- [docs/architecture.md](docs/architecture.md): how it works, what an install writes, security
+- [docs/maintenance.md](docs/maintenance.md): keeping the stack current, model rules, the model audit, releasing
+- [docs/decisions.md](docs/decisions.md): the design decisions and the alternatives rejected
+- [AGENTS.md](AGENTS.md): developing ailocal · [CHANGELOG.md](CHANGELOG.md): what changed
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
-
-Developed and maintained by Victor T. Chevalier for DevelopSolutions, LLC.
+Apache-2.0, see [LICENSE](LICENSE). Maintained by Victor T. Chevalier for DevelopSolutions, LLC.

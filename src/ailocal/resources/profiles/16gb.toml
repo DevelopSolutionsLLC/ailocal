@@ -11,7 +11,7 @@
 # on cost time and no accuracy on this tier. This tier declares no [fast]: that
 # role is the primary with thinking off, and every client surface that names
 # it resolves to primary (policy.OPTIONAL_ROLES). Identities and evidence:
-# docs/model-audit.md, "16/32 GB: Qwen3.5 returns on stock Ollama".
+# docs/maintenance.md#model-audit.
 #
 # Geometry follows the one rule in docs/architecture.md#geometry: admission is
 # bounded by memory up to the backend's native window, and compaction is the

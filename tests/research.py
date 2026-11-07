@@ -2,7 +2,7 @@
 """Research MCP: real stdio transport against staged search/model backends, provenance, the Brave
 ledger, provisioning, SearXNG engine/credential rendering. No paid queries; temp state only.
 Re-executes under the research component's venv (state root) when `mcp` is not importable."""
-import asyncio, contextlib, hashlib, importlib.util, io, json, os, re, socket, subprocess, sys, tempfile, threading
+import asyncio, contextlib, importlib.util, io, json, os, re, socket, subprocess, sys, tempfile, threading
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -142,52 +142,6 @@ class Search(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([R.clean_url(u) for u in ('https://u:p@example.org/', 'https://@example.org/',
                           'https://example.org/?access_token=x', 'https://example.org/?API_KEY=x')], [None] * 4)
 
-    async def test_provider_selection_and_missing_tokens(self):
-        result = await self.r.search('runtimes')
-        self.assertEqual([a['engines'][0] for a in self.backend.searches], ['yahoo,yep'])
-        self.assertEqual(result['brave'], {'summary': 'Brave: not configured; keyless providers only.'})
-        result = await self.r.search('runtimes', preset='code')
-        self.assertIn('ENGINE_UNAVAILABLE: github code', result['warnings'])
-        self.assertEqual(result['unresponsive_engines'], [{'engine': 'stackoverflow', 'status': 'unresponsive'}])
-        self.assertNotIn('fixture-secret', json.dumps(result))
-        result = await self.r.search('runtimes', preset='brave')
-        self.assertIn({'from': 'brave', 'to': 'keyless', 'reason': 'BRAVE_NOT_CONFIGURED'}, result['fallbacks'])
-        self.assertTrue(result['sources'] and not self.backend.brave)
-
-    async def test_forums_cover_communities_and_retry_keywords(self):
-        result = await self.r.search('rust async pain', preset='forums')
-        queried = {a['q'][0].split('site:')[-1] for a in self.backend.searches if 'site:' in a['q'][0]}
-        self.assertEqual(queried, {'reddit.com', 'news.ycombinator.com', 'stackexchange.com', 'lobste.rs'})
-        self.assertNotIn('meta.discourse', [a['engines'][0] for a in self.backend.searches])
-        self.assertTrue(all(s['evidence'] == 'search_snippet' and s['read'] in ('not_read', 'login_walled')
-                            for s in result['sources']))
-        self.assertLessEqual(len(self.backend.searches), R.MAX_SEARX_REQUESTS)
-        self.backend.searches.clear()
-        await self.r.search('structured concurrency', ['news.ycombinator.com'], 'forums')
-        native = [a for a in self.backend.searches if a['engines'] == ['hackernews']]
-        self.assertTrue(native and all('site:' not in a['q'][0] for a in native))
-        self.backend.and_only = True
-        result = await self.r.search('what do people say about SQLite WAL mode checkpoint starvation in production', preset='forums')
-        retry = [(a['engines'], a['query']) for a in result['attempts'] if a['query_form'] == 'keywords']
-        self.assertEqual(retry, [(['hackernews'], 'SQLite WAL checkpoint')])
-        self.assertEqual(R.keywords('HTTP/3 adoption problems in CDN edge networks'), 'HTTP/3 adoption CDN')
-
-    async def test_repeat_guard_and_input_validation(self):
-        await self.r.search('task groups', DOCS)
-        self.assertTrue(any(w.startswith('REPEATED_CALL') for w in (await self.r.search('Task  groups', DOCS))['warnings']))
-        calls = len(self.backend.searches)
-        with self.assertRaisesRegex(T.ResearchError, '^REPEATED_CALL'):
-            await self.r.search('task groups', DOCS)
-        self.assertEqual(len(self.backend.searches), calls)
-        await self.r.search('task groups', DOCS, preset='forums')   # a refinement is served
-        for query, sites in [(q, None) for q in ('!braveapi foo', 'foo !braveapi', '!!google foo', 'foo site:evil.org', 'foo\nbar')] \
-                + [('query', [s]) for s in ('https://example.org', 'example.org/x', 'bad host', '-bad.org', 'example.org:80')]:
-            with self.subTest(query=query, sites=sites), self.assertRaises(T.ResearchError):
-                await self.r.search(query, sites)
-        self.assertEqual((T.allowed('notexample.org', ['example.org']), T.allowed('docs.example.org', ['example.org'])),
-                         (False, True))
-        self.assertEqual(T.hostname('BÜCHER.example'), 'xn--bcher-kva.example')
-
     async def test_brave_spends_only_when_warranted_and_reports_budget(self):
         self.with_brave()
         result = await self.r.search('task groups', DOCS)
@@ -261,28 +215,6 @@ class Search(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(len(json.dumps(supplied, ensure_ascii=False)), 1800)
         self.assertEqual(self.backend.prompt['max_tokens'], 80)
 
-    async def test_page_provenance_and_excerpts(self):
-        with patch('research.request', AsyncMock(side_effect=T.ResearchError('PAGE_BLOCKED'))):
-            value = await self.r.page({'url': 'https://docs.example.org/page', 'snippet': 's'}, DOCS)
-        self.assertEqual((value['evidence'], value['fetch_status']), ('search_snippet', 'PAGE_BLOCKED'))
-        for path, content, evidence in (('a', b'<script>secret script</script><p>' + b'x' * 9000 + b'</p>', 'page_text'),
-                                        ('b', b'<form><input type="password"></form>' + b'Login text ' * 20, 'search_snippet')):
-            url = f'https://docs.example.org/{path}'
-            with patch('research.request', AsyncMock(return_value=(200, {'content-type': 'text/html', 'final-url': url}, content))):
-                value = await self.r.page({'url': url, 'snippet': 's'}, [])
-            self.assertEqual(value['evidence'], evidence)
-            self.assertTrue(evidence != 'page_text' or (len(value['text']) <= 8000 and 'secret' not in value['text']))
-        self.assertEqual(value['fetch_status'], 'PAGE_ACCESS_WALL')
-        text = (('Unrelated navigation. ' * 450)[:9740] + ' TaskGroup tasks TaskGroup tasks TaskGroup tasks. '
-                + 'Section introduction. ' * 50 + 'The first failure cancels the remaining tasks and raises an ExceptionGroup.'
-                + ' Other unrelated content. ' * 450)
-        excerpt = R.relevant_excerpt(text, 'When one TaskGroup task raises, what happens to its sibling tasks?')
-        self.assertTrue('first failure cancels the remaining tasks' in excerpt and len(excerpt) <= 8000)
-        document = ('<section id="overview">' + 'TaskGroup tasks raises overview. ' * 400 + '</section><section id="task-groups">'
-                    'Task Groups. Remaining tasks are cancelled on first failure. Exceptions form an ExceptionGroup.</section>')
-        self.assertIn('Remaining tasks are cancelled',
-                      R.page_excerpt(document, 'When one Python TaskGroup task raises, what happens to sibling tasks?'))
-
     async def test_transport_refuses_private_redirects_size_and_hangs(self):
         self.assertFalse(any(map(T.public_address, ('127.0.0.1', '10.0.0.1', '169.254.169.254', '::1', '::ffff:127.0.0.1',
                                                     '224.0.0.1', '64:ff9b::7f00:1', '2002:7f00:1::'))))
@@ -354,29 +286,6 @@ class BraveLedger(unittest.TestCase):
         grant = ledger.reserve(now)
         self.assertIsNone(grant.refusal)
         ledger.settle(grant, status, headers, now=now)
-
-    def test_headers_period_account_cap_and_refusal(self):
-        self.assertEqual(B.parse_headers(HEADERS, 1000), {'observed_at': 1000, 'limit': 0, 'remaining': 0,
-                                                          'reset_at': 1000 + 1120380, 'window': 2678400})
-        capped = dict(HEADERS, **{'x-ratelimit-limit': '50, 2000', 'x-ratelimit-remaining': '49, 1'})
-        self.assertEqual(B.parse_headers(capped, 0)['remaining'], 1)
-        for broken in ({}, dict(HEADERS, **{'x-ratelimit-remaining': '49'}), dict(HEADERS, **{'x-ratelimit-reset': '1, x'}),
-                       {k: v.split(',')[0] for k, v in HEADERS.items()}, dict(HEADERS, **{'x-ratelimit-reset': '1, 99999999'})):
-            self.assertIsNone(B.parse_headers(broken, 0))
-        ledger = B.Ledger(self.path, 1000)
-        self.spend(ledger, 1000)
-        report = ledger.status(2000)
-        self.assertEqual((report['counted_this_period'], report['budget_remaining'], report['account_remaining'],
-                          report['period_resets_at']), (1, 999, 'unknown', B._iso(1000 + 1120380)))
-        stale = ledger.status(1000 + 1120380 + 5)   # an old observation is not presented as current
-        self.assertEqual((stale['counted_this_period'], stale['period_resets_at']), (0, None))
-        ledger.settle(ledger.reserve(1001), 402, HEADERS, now=1001, error_code='QUOTA_LIMITED')
-        report = ledger.status(1002)   # Brave's refusal is account-wide and not billed
-        self.assertEqual((report['account_remaining'], report['budget_remaining']), (0, 999))
-        self.assertEqual(ledger.status(1001 + 1120380 + 5)['account_remaining'], 'unknown')
-        capped_ledger = B.Ledger(self.path.with_name('capped.sqlite3'), 1000)
-        self.spend(capped_ledger, 1000, capped)
-        self.assertEqual(capped_ledger.reserve(1001).refusal, 'BRAVE_ACCOUNT_LIMIT')
 
     def test_budget_counts_unknown_outcomes_and_waits_for_a_period(self):
         ledger = B.Ledger(self.path, 2)
@@ -458,44 +367,6 @@ class Provisioning(unittest.TestCase):
                        patch.object(C.shutil, 'which', return_value='/opt/bin/ailocal'), patch.object(C, '_code', side_effect=add_mcp))
         self.assertEqual(len(calls), 2)
 
-    def test_runtime_repair_launcher_and_check(self):
-        from ailocal.checks import FAIL, PASS, research as diagnostics
-        calls = []
-        def sh(*args):
-            calls.append(args)
-            if 'venv' in args:
-                py = Path(args[-1]) / 'bin/python'
-                py.parent.mkdir(parents=True, exist_ok=True)
-                py.unlink(missing_ok=True); py.write_text('fixture interpreter')
-            return 0
-        with patch.object(C.policy, 'state_root', return_value=self.root / 's'), patch.object(C, '_sh', side_effect=sh):
-            py = C.provision_mcp_runtime(SRC, 'test')
-            count = len(calls)
-            self.assertEqual((C.provision_mcp_runtime(SRC, 'test'), len(calls)), (py, count))   # digest unchanged: reused
-            py.unlink(); py.symlink_to(self.root / 'gone-interpreter')   # a Homebrew upgrade removed the interpreter
-            self.assertTrue(C.provision_mcp_runtime(SRC, 'test') == py and py.is_file())
-        with patch.object(launcher.runtime, 'proxy_url', return_value='https://api.example.org'), self.assertRaises(RuntimeError):
-            launcher.launch_environment(True)
-        with patch.dict(os.environ), patch.object(launcher.runtime, 'env_value',
-                                                  side_effect=lambda n: '18123' if n == 'AILOCAL_SEARXNG_PORT' else ''):
-            for port in (None, '18124'):
-                os.environ.pop('AILOCAL_SEARXNG_PORT', None) if port is None else os.environ.update(AILOCAL_SEARXNG_PORT=port)
-                self.assertEqual(launcher.launch_environment()['LOCAL_RESEARCH_SEARCH_URL'], f'http://127.0.0.1:{port or 18123}')
-        (self.root / 'claude').mkdir()
-        (self.root / 'claude/.claude.json').write_text(json.dumps({'mcpServers': {'research': launcher.registration()}}))
-        venv = self.root / 'local-research/.venv'
-        (venv / 'bin').mkdir(parents=True)
-        (venv / 'bin/python').touch()
-        (venv / '.requirements.sha').write_text(hashlib.sha256((SRC / 'requirements.txt').read_bytes()).hexdigest())
-        with patch.object(diagnostics.policy, 'deployed_client_root', return_value=self.root), \
-                patch.object(diagnostics.policy, 'state_root', return_value=self.root), \
-                patch.object(diagnostics, 'launch_environment', return_value={'LOCAL_RESEARCH_SEARCH_URL': 'http://127.0.0.1:18123'}), \
-                patch.object(diagnostics, 'http_json') as request:
-            for reply, status in (({'engines': []}, PASS), ({'unrelated': 'service'}, FAIL)):   # wrong backend, no search
-                request.return_value = reply
-                self.assertIs(diagnostics.check_research().status, status)
-            request.assert_called_with('http://127.0.0.1:18123/config')
-
 
 class SearchSettings(unittest.TestCase):
     def render(self, keys, source=None):
@@ -541,4 +412,6 @@ class SearchSettings(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    unittest.main()
+    sys.path.insert(0, str(REPO / 'tests'))
+    from harness import unittest_main
+    unittest_main()

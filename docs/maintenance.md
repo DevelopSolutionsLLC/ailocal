@@ -1,149 +1,281 @@
-# AI development maintenance
+# Maintenance
 
-Operational procedure for ailocal maintainers changing dependencies, installation, skills, or client/tool integrations. Keep it aligned with the actual commands and contracts; findings and unfinished work belong in GitHub issues, not a parallel local tracker. Cadence supplies shared engineering procedures; ailocal owns its runtime and published integration contract.
+For maintainers changing dependencies, installation, models, skills or client/tool integrations, and for cutting a release. Findings and unfinished work go in GitHub issues, never a local tracker. Cadence supplies the shared procedures (`tool-maintenance`, `security-review`, `work-tracking`); ailocal owns its runtime and integration contract.
 
-## Discover before changing
+## Keeping the stack current
 
-1. Inspect the worktree and installed source. Preserve operator configuration, credentials, and unrelated edits. A matching version string does not prove checkout/installed parity.
-2. Run `ailocal update --json` for this machine, or add `--upstream-only` for repository-only discovery. Use `cadence update --check --json` separately when Cadence-owned tooling is affected. Neither command authorizes upgrades.
-3. Run `ailocal audit` to check every pin against live advisories. `ailocal check` proves the running image matches its declared digest; only the audit says whether that digest is still safe. It audits the running Ollama base and reports each container's running digest beside the declaration, and records every run at `~/.local/state/ailocal/audit/local.json`, which the integration contract publishes so `cadence audit --local` merges it into the machine-wide weekly audit; a record older than a week is unverified there. Results are `clean`, `affected`, `yanked` or `unverified`; `unverified` means a source could not answer and is never read as clean. Each advisory with `NO FIXED RELEASE` needs triage against this deployment (reachability, binding, preconditions), because no upgrade removes it; an advisory whose OSV range is unbounded while its GitHub advisory bounds it below the pinned version is database staleness, and the triage records that. The audit needs a network and stays out of the gate; `tests/audit.py` covers it offline.
-4. For each affected component, consult its official current documentation, stable releases, security advisories, and open and recently closed issues. Search the exact version and the behavior we rely on: Apple Silicon/Python compatibility, streaming completion, tool-call names and arguments, deferred discovery, search interception, authentication, and persistence across restart. Record source links and the date checked in the issue or PR.
-5. Read the underlying issue and fix, not just its title or closed status. Confirm that the fix is included in the candidate artifact. No matching issues is not proof of compatibility; failed discovery is unknown, not current.
-6. Inventory coverage gaps explicitly. The current update reporter covers service images and reports incomplete discovery for bundled browser libraries and ailocal itself; it does not establish Ollama, model, or client freshness. Check those upstreams separately when in scope. Do not silently add model downloads, paid probes, or unrelated upgrades to a rebuild.
+**Discover before changing.**
 
-## Weekly maintenance
+1. Inspect the worktree and the installed source; preserve operator configuration, credentials and unrelated edits. A matching version string does not prove checkout/installed parity.
+2. `ailocal update --json` (or `--upstream-only`) lists newer candidates under the [version policy](architecture.md#version-policy); `cadence update --check --json` covers Cadence-owned tooling. Neither authorizes an upgrade. The reporter covers service images only; check Ollama, models and clients separately.
+3. `ailocal audit` checks every pin against live advisories: `clean`, `affected`, `yanked` or `unverified` (a source could not answer; never read as clean). It records each run at `~/.local/state/ailocal/audit/local.json` for `cadence audit --local`; a record older than a week is unverified there. An advisory with `NO FIXED RELEASE` needs reachability triage; an OSV range that is unbounded while the GitHub advisory bounds it below the pin is database staleness, recorded as such.
+4. For each affected component read the official documentation, stable releases, advisories, and open and recently closed issues for the exact version and the behaviour we rely on (streaming completion, tool-call names and arguments, deferred discovery, search interception, authentication, persistence). Read the fix, not the issue title; confirm it is in the candidate. No matching issue is not proof of compatibility. Record links and the date checked in the issue or PR.
 
-Start an invoked weekly maintenance run with `cadence doctor` and `ailocal audit`, then use the discovery commands above for the components in scope. Report authentication, instruction-authority and index failures separately from application health; a registered tool or a failed upstream lookup is not evidence of a working or current installation. Use `cadence repair --dry-run` to inspect a proposed Cadence repair before changing shared client configuration. GitHub authentication failure prevents durable tracking, not local engineering work.
+**Weekly.** Start with `cadence doctor` and `ailocal audit`, then discovery for the components in scope. Report authentication, instruction-authority and index failures separately from application health. For every retained Ollama patch, check the upstream issue and released source: retain it with dated evidence, or validate the native replacement and remove the patch and its adapter together. A candidate release or clean version check alone does not justify changing a pin. Nothing here schedules jobs or updates applications.
 
-Review the applications, native runtime, clients and bundled integrations ailocal actually uses, following their existing ownership and validation procedures. For every retained Ollama patch, check the upstream issue, released source and exact checkpoint support; either retain it with dated evidence or validate the supported native replacement and remove the superseded patch and adapter together. Keep the last validated runtime available until promotion succeeds. A candidate release or clean version check alone does not justify changing a pin.
+**Security review of a candidate.** Cover the whole toolchain, not ailocal's empty dependency list: installed versions and container digests, MCP venvs, editor extensions, vendored JavaScript, plugins, native libraries and interpreters. Scan the running image ID with a fresh database (`trivy image --image-src docker --scanners vuln --format json IMAGE_ID`, sequentially, recording `trivy --version`), compare with a live OSV query and the publisher's advisories, and establish reachability for each match. Signatures prove publisher identity, not safe dependencies. An audit is dated evidence, never certification.
 
-Run the affected checks and record actual outcomes and coverage limits before promoting a change. Installer changes require ownership, restoration, interrupted-operation and reinstall checks; dependency/model changes require the native validation listed below. This procedure and `AGENTS.md` do not schedule jobs, update applications automatically or constitute a completed weekly audit.
+**Choose the smallest integration.** Native client capability, then a configured maintained dependency, then a narrow adapter for a demonstrated unmet requirement. Before adopting an MCP package, inspect its license, provenance, dependency graph, releases, advisories, permissions, network destinations and tools. Keep dependencies pinned by version and integrity/digest; an install must never fetch a moving branch or promote `latest`. A server useful without a local runtime belongs to Cadence, not ailocal.
 
-## Choose the smallest supported integration
-
-Security review covers the complete toolchain, including prerequisites and optional integrations, rather than only ailocal's empty Python dependency list. Capture actual installed versions and container digests, enumerate installed MCP virtual environments and enabled editor extensions, and include vendored JavaScript, plugins, native inference libraries and runtime interpreters. Use publisher advisories for native applications as well as an installed-package scan: package databases can miss vulnerabilities in desktop applications and binaries. Check the scanner itself against its publisher's advisories before using it.
-
-For containers, scan the actual running image ID with a fresh database, for example `trivy image --image-src docker --scanners vuln --format json IMAGE_ID`; record `trivy --version`, which includes database timestamps. Run image scans sequentially when sharing the filesystem cache, since concurrent scans can fail to acquire its lock. Retain all severities and fixed-version information; repeated records for multiple environments or package copies are not distinct vulnerabilities. Compare the scan with a live OSV package-version query and the publisher's current advisories, which may be newer than the scanner database. A filesystem scan that detects no dependency manifests provides no dependency coverage.
-
-For each match, establish whether the affected code path exists in this deployment and what an attacker would need to reach it. Loopback binding reduces exposure but does not fix outbound TLS trust failures or malicious input from a local client. Signatures prove publisher identity/integrity under the chosen verification policy; they do not prove safe dependencies. Verify an upgrade candidate's exact digest, rescan it, and run the affected behavioral checks before changing the pin. Keep unavailable scans and opaque remote-service dependencies explicitly unverified. An audit is dated evidence, never certification that a codebase has no security defects.
-
-Prefer native client capability, then a configured maintained dependency, then a narrow adapter for a demonstrated unmet requirement. Before adopting an MCP package, inspect its license, published artifact/provenance, dependency graph, release history, advisories, permissions, network destinations, and enabled tools. Source review and dependency scans are partial evidence, not a certification of trust.
-
-Keep reviewed dependencies pinned by version and integrity/digest. An automatic check may identify newer candidates; an ordinary install/build must not fetch an unreviewed moving branch or silently promote `latest`. Keep rollback references and preserve authored configuration. Use supported executable interfaces instead of importing a dependency's private implementation or copying its source into ailocal without a maintenance reason.
-
-ailocal owns inference, the SearXNG backend, provider credentials and registration of its bundled integrations. It writes no hosted Claude or Codex root. Cross-client MCP registration, public documentation servers included, belongs to Cadence or explicit native client configuration: a server that is useful without a local runtime is Cadence's. Publish integration facts through the existing versioned contract rather than making another product read ailocal's private environment or generated files. A search-only consumer must not require a running language model.
-
-## Validate the actual affected path
+**Validate the affected path.**
 
 | Change | Required evidence |
 |---|---|
-| Package, Python, installer, or resource layout | Build/install the artifact; run `tests/installed-runtime.py`; check reinstall idempotence, credential preservation, and owned-file removal. A temporary-root test is not a pristine-machine install. |
-| LiteLLM or client integration | Real request through each affected client/proxy/provider path: streaming terminates, tool name/arguments survive, tool result returns, and the model completes. Label mocks and reduced probes. |
-| MCP server or skill | Discover and call the actual tool in each supported client/root. Verify missing/disabled tools produce an honest failure; measure whether a representative model uses the skill correctly. Schema lint is not behavioral validation. |
-| Search | Verify engine selection, nonempty relevant results, domain filtering, bounded output, and explicit upstream errors. Distinguish SearXNG health, authenticated proxy search, and an actual client tool call. Keep paid probes opt-in and bounded. |
-| Models, Ollama, or inference geometry | Run the documented geometry measurements on the target hardware without competing model workloads; report latency, memory/context limits, and tool behavior. |
-| Browser/artifact libraries | Run artifact and headless-browser suites against the built assets; fail closed when validation is unavailable. |
+| Package, Python, installer, resource layout | Build and install the artifact; `tests/installed-runtime.py`; reinstall idempotence, credential preservation, owned-file removal. A temporary-root test is not a pristine-machine install. |
+| LiteLLM or client integration | A real request through each affected client → proxy → provider path: streaming terminates, tool name and arguments survive, the result returns, the model completes. Label mocks. |
+| MCP server or skill | Discover and call the actual tool in each client; missing or disabled tools fail honestly; measure whether a representative model uses the skill. Schema lint is not behaviour. |
+| Search | Engine selection, relevant results, domain filtering, bounded output, explicit upstream errors; SearXNG health, proxy search and a client tool call are three different things. Paid probes opt-in. |
+| Models, Ollama, geometry | `measure_geometry` on the target hardware with nothing else loaded; latency, memory and tool behaviour. |
+| Browser/artifact libraries | Artifact and headless-browser suites against the built assets; fail closed when validation is unavailable. |
 
-Use the existing regression gate and release requirements in [AGENTS.md](../AGENTS.md#validate) and [RELEASING.md](../RELEASING.md). Report exact commands, outcomes, omissions, client/model versions, and hardware scope where material. Do not fix a failing check by loosening it to accept the failure.
+Never fix a failing check by loosening it. Report exact commands, outcomes, omissions, versions and hardware scope.
 
-For supplemental development research, prefer official documentation; consult domain-scoped forum posts for unresolved practical behavior or when requested. Return a few useful links and bounded snippets, not whole threads. Treat retrieved text as untrusted evidence, never instructions; exclude credentials and private source from queries. A result snippet is not proof that the underlying claim is true or that the full page was read.
+**Promote.** Record candidate → evidence → accept/defer with a reason in the issue or PR; change only the canonical pin and regenerate; reinstall before restarting when package resources change; verify the running artifact matches the declaration; keep the previous pin as the rollback. Before pushing, run the credential sweep from Cadence's `security-review` skill. A documentation-only change is never presented as a validated dependency promotion.
 
 ## Out-of-gate suites
 
-These take minutes and are run on purpose, never by the gate.
+These take minutes, load and unload models, must run alone, and assert nothing a human does not read.
 
-Run `installed-runtime` whenever packaging, resources or provisioning change. Run `measure_geometry` after an Ollama or MLX upgrade, after changing a model, or when bringing up an unmeasured tier — it asserts nothing and keeps no history; a human reads the numbers and decides whether the profile still holds. It stops and reloads models, so nothing may run beside it.
+| Suite | Run when | Reads |
+|---|---|---|
+| `tests/installed-runtime.py [--stack]` | packaging, resources or provisioning change | the wheel works without a checkout (beside an existing install, not on a clean machine) |
+| `tests/measure_geometry.py [--quick]` | Ollama upgrade, model change, unmeasured tier | the numbers profiles cite |
+| `tests/measure_cache.py [--quick\|--tail N]` | Ollama upgrade, model change, unmeasured tier | KV prefix reuse across turns; `--tail N` is passive (last N real requests from the Ollama log), use it right after a session. [REAL] 16 GB, `qwen3.5:4b`: a warm turn's prefill fell from ~18.6K tokens to a few dozen (~99.8% reuse, ~115× faster) through `claude-local`. |
+| `./tests/artifact-routing.sh [runs]` | the artifact tool description, `alwaysLoad`/`searchHint` or the routing contract changes | an aggregate rate at which a real model calls the tool; the wording itself is asserted in-gate by `test_routing_contract.py` |
+| `tests/measure_agentic.py`, `measure_refusals.py`, `measure_sampling.py` | evaluating a model or prompt | decode and tool plumbing; benign-refusal baseline (16 prompts, inspired by XSTest, not the benchmark); five scored function tasks |
 
-Run `measure_cache` to confirm the KV prefix cache is actually reused across turns — the lever that keeps agent prefill off the critical path on Apple Silicon. On a 16 GB host [REAL] the active probe on `qwen3.5:4b` collapsed a warm turn's prefill from ~18.6K tokens to a few dozen (~99.8% reuse, ~115× faster prefill), end to end through the `claude-local` path; a regression that silently turns every turn cold (an engine upgrade, a new hybrid/recurrent model, interleaving background requests evicting the single 16 GB slot) is invisible without it. The default active probe stops and reloads the probed model, so it may not run beside another inference suite; `--tail N` is passive — it summarises the last N real requests from the Ollama log and runs no inference, so use it right after a `claude-local`/`codex-local` session. Run it after an Ollama or MLX upgrade, after changing a model, or when bringing up an unmeasured tier. `--tier 64gb` measures the GGUF `gemma4:26b-qat-mtp` path (HISTORICAL figures below were taken on `gemma4:26b-mlx`), whose reuse is unmeasured on 16 GB hardware. Like `measure_geometry` it asserts nothing and keeps no history.
+The measurement drivers default to a 900-second wall-clock budget (`--time-budget`), one repetition, and release their models on exit; a timeout is an incomplete result, never a quality score. `measurement-contracts.py` checks the drivers in-gate with fixtures.
 
-Run `artifact-routing` whenever the artifact tool's description, its `alwaysLoad`/`searchHint` metadata, or the routing contract in `server.py` changes. It MEASURES a stochastic model and reports a rate; what the description actually SAYS is asserted deterministically by `test_routing_contract.py`, which is in the gate and needs no inference. Keep the two apart when reading a result: [REAL] gemma4:26b-mlx returned fenced Mermaid for a phrase the description already names verbatim, then quoted the rule back correctly once corrected. That is a model-dependent routing miss, and adding synonyms does not fix it. It spends minutes of local inference and asserts an AGGREGATE rate rather than per-phrase, because sampling variance at n=3 is larger than the effect.
+## Evaluating a model
 
-## Local model evaluation
-
-Dated measurements from the MLX-era selections and the rollout of the patched runtime are kept in the [model audit](model-audit.md#earlier-evidence-2026-10-22-to-2026-10-26); this section states the method.
-
-Each hardware profile's `model_guidance` table is keyed by the exact backend tag, once per backend even when several capability aliases share its weights. `policy.py` resolves that knowledge alongside the selected capability's actual geometry and thinking mode. Codex's native model catalog, Claude's native `SessionStart`/`PostModelSwitch` context hooks and the agent MCP's `model_guide` tool consume that same view. The MCP reads the public `ailocal profile guide --json` command on each call so a long-running server does not cache an old tier. A custom backend with no matching entry reports missing guidance explicitly. Do not reintroduce a proxy persona injector, write model facts into client templates, or silently apply one checkpoint's empirical results to another.
-
-Claude's [PostModelSwitch hook](https://code.claude.com/docs/en/hooks#postmodelswitch) requires 2.1.251 and delivers context with the next request after a switch. The hook carries the always-on part of the guide: the selected model's limits, prompting advice and limitations. Quantization, inference preset, MTP draft depth and evaluation evidence stay in `model_guide` and `ailocal profile guide <alias>`, which return the full guide on demand (#60). If `SessionStart` omits the model, the hook prints one line of limits per alias, says the active model was unspecified and points to `model_guide`; it never guesses the launch default after resume. [REAL client, APPROX inference] Claude 2.1.308 omitted the model during a bounded headless startup, so only instructing a lookup left the chosen guide out of that request. [Codex supports MCP initialization instructions](https://developers.openai.com/codex/mcp#supported-mcp-features); the agent server tells callers to consult the guide before delegating. Availability and deterministic delivery checks establish transport, not model obedience or improved task accuracy. Keep advice short, include primary sources and label unmeasured recommendations separately from observed results.
-
-Current 16/32 GB Cyber defaults use one native, weight-hash-pinned Heretic Nemotron 3.5 Bolt E4B GGUF with NVIDIA's DFlash draft and the publisher's f16 projector, each pinned by SHA-256 (#87); 64/128 GB Cyber pins an unrestricted Gemma 4 26B QAT GGUF. Native recipes pull the published assets, verify target and declared head and projector hashes, and select built-in rendering/parsing without converting tensors. The exact models, revisions and measured draft depths are recorded in the profiles and [model audit](model-audit.md).
-
-Edited operator profiles can still select historical commit-pinned MLX snapshots. For that retained path, the installer retrieves only model assets, verifies Git/LFS hashes and invokes native `ollama create` with the daemon's `OLLAMA_MODELS` directory; a subsequent `ollama show` must succeed. Remove this adapter if native upstream pull supports those snapshots directly. Installation checks every selected backend, including already installed models, with the documented empty-message `/api/chat` load request: 120-second timeout, 2K context and one-second residency. A completed load is required before success; no generated tokens or full-profile geometry are measured. Failed source imports retain verified assets; an existing model that cannot load fails without repeating an unchanged download/import. Snapshot source copies are removed only after a successful load.
-
-Coding/decode measurements use `/api/chat`, matching the provider protocol, and decode pilots request 128 tokens. Older `/api/generate` measurements are a different path; do not compare their timing as a controlled speed improvement. A timeout yields an incomplete result, never a coding-quality score. The [upstream Qwen generate/thinking issue](https://github.com/ollama/ollama/issues/14793) is another reason to test the actual chat path rather than infer chat behavior from generation requests. Tests on the 64 GB host do not validate smaller-tier hardware headroom.
-
-Do not copy one Qwen preset across sizes or modes. [Qwen3.5 2B](https://huggingface.co/Qwen/Qwen3.5-2B#best-practices) recommends temperature 1/top-p 1/presence penalty 2 for non-thinking text. [Qwen3.8 27B](https://huggingface.co/Qwen/Qwen3.8-27B) uses temperature 1/top-p 0.95/top-k 20/presence penalty 0 with thinking. The opt-in candidate measurements carry their own presets; `--no-think` is deliberately a mode-only ablation, not automatic retuning. Fixed sampling in the benign refusal contrast set is a controlled baseline rather than each vendor's optimum.
-
-Codex compaction follows from the catalog window alone; the rule and its evidence are in [architecture](architecture.md#context-and-compaction-who-owns-what). Revalidate it on each Codex upgrade.
-
-Profiles declare Ollama's `repeat_penalty`, not `repetition_penalty`. LiteLLM 1.106.0 rejects the standard `presence_penalty` argument unless `allowed_openai_params` explicitly includes it; the generator emits that documented allowlist when the profile declares the option. The installed-SDK transport suite checks the actual outgoing Ollama options, including zero-valued options, with a fake backend. This proves transport, not model quality.
-
-Model promotion needs evidence on the target hardware and the complete client → LiteLLM → Ollama path. Record exact model digests, quantization, actual `/api/ps` runner, Ollama/proxy versions, thinking and sampling settings, and context/output limits. Compare successful coding tasks per elapsed time alongside latency, memory pressure and swap; decoding tokens per second alone does not establish coding quality. On a 64 GB laptop, run one candidate at a time with room for macOS, Docker and the client, and test modest contexts before the full advertised window. A model's weight size is not its peak working set.
-
-Start with a bounded pilot: one repetition for scored tasks, three short decode samples and three tool rounds. Monitor progress, latency and swap; set a wall-clock limit on the batch and each subprocess. Keep an evaluation session within 30 minutes unless a specific longer follow-through test is requested. One deliberately long prefill can establish feasibility; do not repeat it across a matrix once it already exceeds the interactive latency budget. Report timeouts, truncation and omitted work explicitly. Expand a pilot only when an unresolved decision justifies the added cost.
-
-`python3 tests/measure_agentic.py --quick` checks direct-provider decode plumbing for the active model at 32K context; omit `--quick` for three tool rounds. More models, larger contexts and expensive cold/warm prefill require explicit `--models`, `--context` and `--prefill` arguments. `python3 tests/measure_geometry.py --quick` measures profile geometry. Both load/reload models and must run alone. Neither substitutes for held-out repository tasks through each affected client.
-
-`python3 tests/measure_refusals.py --list-prompts` previews 16 benign prompts without inference. `python3 tests/measure_refusals.py --models MODEL OTHER --repeats 3` records a fixed non-thinking baseline with exact identities and ungraded answers. Review refusal, relevance and correctness manually; empty or truncated output is not automatically a refusal. This original safe-only contrast set is inspired by [XSTest](https://github.com/paul-rottger/xstest), not the published benchmark, and cannot establish universally unrestricted behavior. It sends no tools and never executes generated text. Inference stays outside the regression gate; `measurement-contracts.py` checks the drivers using fixtures.
-
-The geometry, agentic, refusal and coding commands default to a 900-second wall-clock budget, including blocked I/O and subprocesses; `--time-budget` makes a different budget explicit. Refusal and coding pilots default to one repetition. Refusal pilots can select complete pairs with `--cases`, for example `--cases language`. On completion, interruption or failure, each driver releases its selected candidates with a bounded cleanup request. Timeouts are incomplete measurements, not model-quality scores.
-
-Keep client instructions as the initial prompt baseline. Test any short repair prompt against the same held-out tasks with and without it, counting its token cost and regressions. Distinguish behavioral instructions from model prewarming (`keep_alive`) and prefix-cache reuse: warming changes startup cost, not model capability. Do not promote a persona or proxy-wide system prompt without evidence that the complete client path improves.
-
-`python3 tests/measure_sampling.py --model MODEL --settings candidate --reps 1 --json /tmp/baseline.json` scores five function tasks using the candidate's own sampling and thinking mode. Repeat with `--prompt-file /path/to/prompt.txt` to measure a proposed system prompt. `--context` and `--max-output` make reduced pilots explicit; the records retain answers, exact model identity, token counts, stop reason and elapsed time. This executes generated code in timed subprocesses and measures direct Ollama, not client instruction delivery or repository-scale coding. A single repetition is exploratory; perfect scores on both sides provide no evidence to add a prompt.
-
-Use `--no-think` for a controlled native-thinking ablation, keeping the other parameters fixed. It does not edit model defaults or install a system prompt. A faster short-function result does not establish that disabling thinking improves complex coding.
+- **Path.** Measure through `/api/chat`, matching the provider protocol; older `/api/generate` timings are a different path. Promotion needs evidence on the target hardware and the complete client → LiteLLM → Ollama path, recording digests, quantization, the `/api/ps` runner, Ollama and proxy versions, thinking and sampling, and limits. Coding success per elapsed time matters more than tokens per second. A 64 GB host does not validate smaller-tier headroom.
+- **Budget.** Start with a bounded pilot (one repetition, three decode samples, three tool rounds), monitor swap, cap each subprocess, and keep a session under 30 minutes. Expand only when a decision needs it.
+- **Presets.** Do not copy one Qwen preset across sizes or modes; each candidate carries its own, and `--no-think` is a mode-only ablation. Profiles declare Ollama's `repeat_penalty`, not `repetition_penalty`; LiteLLM 1.106.0 rejects `presence_penalty` unless the generator emits it in `allowed_openai_params`, which it does when the profile declares it.
+- **Prompts.** Client instructions are the baseline. A repair prompt is tested against the same held-out tasks with and without it, counting its token cost. Warming (`keep_alive`) and prefix-cache reuse change startup cost, not capability. No proxy-wide persona without evidence on the complete client path.
+- **Guidance.** Each profile's `model_guidance` is keyed by exact backend name and consumed by Codex's catalog, Claude's `SessionStart`/`PostModelSwitch` hooks and the agent MCP's `model_guide` (which reads `ailocal profile guide --json` per call). The hook carries limits, prompting advice and limitations; quantization, preset, draft depth and evidence stay in `model_guide` (#60). If `SessionStart` omits the model, the hook prints one line per alias and never guesses. [REAL client, APPROX inference] Claude 2.1.308 omitted the model on a headless startup. Never write model facts into client templates or apply one checkpoint's results to another.
+- **Load check.** Install verifies every selected backend with an empty-message `/api/chat` load (120 s timeout, 2K context, one-second residency); no tokens or full-window geometry are measured. Failed imports keep verified assets.
 
 ## Model format
 
-The rule for every chat backend a profile selects:
+The rule for every chat backend a profile selects; `tests/policy.py` enforces the MLX clause.
 
-1. **Require evidence beyond format conversion.** Prefer originals — an official Ollama library tag or the model author's own ollama.com build — or documented optimized builds: calibrated NVFP4 carrying `global_scale`, vendor quantization-aware-trained (QAT) checkpoints, or calibrated GGUF with working MTP. A prebuilt GGUF served through Ollama's native Hugging Face registry is eligible when its exact identity, calibration/MTP evidence and actual native trial are recorded. If client compatibility requires a built-in renderer/parser, declare the native pull/create recipe and expected weight SHA-256 in `source`; the importer checks the daemon's source blob and records the recipe plus resulting manifest. A separate native MTP head uses the paired `draft_model`/`draft_sha256` fields. The importer verifies the pulled head, attaches it through Ollama's native `draft_files`, then requires the expected `DRAFT` line and a successful load before recording the receipt. The source can be a published native target or an HF GGUF; the head can be standalone or already attached to a native source manifest. Pulls allow up to one hour per artifact; large public downloads need no account. No tensor conversion or client-history rewrite is involved. Changing formats alone is not an enhancement. Calibration preserves weight fidelity; it is not additional training data. See the [dated model audit](model-audit.md).
-2. **GGUF is the default.** The GGUF runner honours `OLLAMA_KV_CACHE_TYPE=q8_0`. No shipped chat role declares the patched runtime (#87); a Qwen3.5 selection must, for the thinking-mode history renderer fix ([ADR 016](adr/016-qwen-reasoning-history.md)). The 16/32 GB primary is the one shipped MLX selection: Ollama's library `nemotron-3.5-bolt:e4b` resolves to MLX NVFP4 on Apple Silicon, and its guidance records the bounded same-model GGUF comparison that selection rests on.
-3. **MLX only on evidence.** An MLX build (a plain `-mlx` tag, NVFP4 or MXFP) is selected only when a same-model GGUF comparison on the same machine shows it at least as fast and at least as faithful to a higher-precision reference. Record that measurement in the tag's `model_guidance` evidence as a `[REAL]` sentence containing the phrase `same-model GGUF comparison`; `tests/policy.py` fails any MLX selection without it. A plain conversion is never assumed to win.
+1. **Require evidence beyond format conversion.** Prefer originals (an official Ollama library tag or the author's own build) or documented optimized builds: calibrated NVFP4 with `global_scale`, vendor QAT checkpoints, or calibrated GGUF with working MTP. A prebuilt GGUF through Ollama's native Hugging Face registry is eligible when its identity, calibration/MTP evidence and native trial are recorded. When a built-in renderer/parser is required, `source` declares the native pull/create recipe and expected weight SHA-256; a separate MTP head uses `draft_model`/`draft_sha256` and is attached through `draft_files`, then the importer requires the `DRAFT` line and a successful load. No tensor conversion. Changing format alone is not an enhancement.
+2. **GGUF is the default.** The GGUF runner honours `OLLAMA_KV_CACHE_TYPE=q8_0`. No shipped chat role declares the patched runtime.
+3. **MLX only on evidence.** An MLX build (`-mlx`, NVFP4, MXFP) is selected only when a same-model GGUF comparison on the same machine shows it at least as fast and as faithful to a higher-precision reference, recorded in the tag's `model_guidance` evidence as a `[REAL]` sentence containing `same-model GGUF comparison`.
+
+Edited operator profiles may still select historical commit-pinned MLX snapshots: the installer fetches only model assets, verifies Git/LFS hashes and runs native `ollama create`; remove this adapter when upstream pull supports those snapshots.
 
 ### Inline completion
 
-Shipped autocomplete defaults select the official GGUF base tags: `qwen2.5-coder:1.5b-base` on 16/32 GB and `qwen2.5-coder:3b-base` on 64/128 GB. Two measured reasons:
+Shipped completion selects the official base GGUF tags, `qwen2.5-coder:1.5b-base` (16/32 GB) and `qwen2.5-coder:3b-base` (64/128 GB):
 
-- **The proxy needs the base template.** LiteLLM v1.106.2 drops `suffix` on `/v1/completions` ([BerriAI/litellm#6900](https://github.com/BerriAI/litellm/issues/6900)) and forwards no `raw` flag, so a proxy client sends a FIM-formatted prompt, which `ollama_chat` delivers as a chat message. The base tags' template passes a message through unchanged; the instruct tags (`qwen2.5-coder:1.5b`, `:3b`) wrap it in a user turn and infill fails.
-- **MLX buys nothing here.** The pinned Ollama [MLX runner](https://github.com/ollama/ollama/blob/v0.40.8/mlxrunner/model/architectures/architectures.go) has no Qwen2 loader, and mlx-community conversions panic at load without `quantization.mode` ([ollama#19135](https://github.com/ollama/ollama/issues/19135)). A reviewed loader patch and a first-party mxfp8 import worked, but decoded slower at twice the footprint with no fidelity gain, so they were removed rather than shipped.
+- **The proxy needs the base template.** LiteLLM v1.106.2 drops `suffix` on `/v1/completions` ([BerriAI/litellm#6900](https://github.com/BerriAI/litellm/issues/6900)) and forwards no `raw` flag, so the FIM-formatted prompt arrives as a chat message; the base template passes it through, the instruct template wraps it and infill fails.
+- **MLX buys nothing.** The pinned MLX runner has no Qwen2 loader and mlx-community conversions panic without `quantization.mode` ([ollama#19135](https://github.com/ollama/ollama/issues/19135)); a reviewed loader patch with an mxfp8 import decoded slower at twice the footprint.
 
-[REAL 2026-10-26, MacBook Air M4 16 GB, under memory pressure with 11 GB of swap in use; Ollama `0.40.8-ailocal.18631.3`, plus `.4` for the MLX row] 80 held-out single-line infills from `src/`, then 10 executable FIM cases whose prefix + middle + suffix must pass their asserts, temperature 0. "native" sends `suffix` to `/api/generate`; "proxy path" sends the FIM-formatted prompt as a chat message, as LiteLLM does.
+[REAL 2026-10-26, MacBook Air M4 16 GB under memory pressure (11 GB swap); Ollama `0.40.8-ailocal.18631.3`, `.4` for the MLX row; temperature 0] 80 held-out single-line infills from `src/` plus 10 executable FIM cases:
 
 | Model | Path | exact | similarity | executable | p50 | decode |
 |---|---|---|---|---|---|---|
-| `qwen2.5-coder:1.5b-base` | proxy path | 10/80 | 0.549 | 10/10 | 1.8 s | 68 tok/s |
-| `qwen2.5-coder:3b-base` | proxy path | 9/80 | 0.571 | 10/10 | 3.3 s | 32 tok/s |
-| `qwen2.5-coder:1.5b` (instruct) | proxy path | 0/80 | 0.096 | 0/10 | 2.0 s | 52 tok/s |
+| `qwen2.5-coder:1.5b-base` | proxy | 10/80 | 0.549 | 10/10 | 1.8 s | 68 tok/s |
+| `qwen2.5-coder:3b-base` | proxy | 9/80 | 0.571 | 10/10 | 3.3 s | 32 tok/s |
+| `qwen2.5-coder:1.5b` (instruct) | proxy | 0/80 | 0.096 | 0/10 | 2.0 s | 52 tok/s |
 | `qwen2.5-coder:1.5b-base` | native | 9/80 | 0.539 | 10/10 | 2.1 s | 74 tok/s |
 | `qwen2.5-coder:1.5b` (instruct) | native | 7/80 | 0.567 | 10/10 | 1.5 s | 77 tok/s |
 | `qwen2.5-coder:1.5b-base-q8_0` | native | 8/80 | 0.544 | 9/10 | 2.3 s | 52 tok/s |
 | `qwen2.5-coder:3b-base` | native | 9/80 | 0.571 | 10/10 | 3.2 s | 31 tok/s |
 | MLX mxfp8 import, 1.5B | native | 10/80 | 0.557 | 9/10 | 2.2 s | 36 tok/s |
 
-Fidelity differences between rows that work are within noise on 80 cases; base versus instruct and Q4_K_M versus Q8_0 change nothing measurable, and 3B gains about 0.02 similarity for half the speed. A Qwen repository-level header (`<|repo_name|>`, `<|file_sep|>` path) did not help either size (1.5B 7/80, 3B 10/80). A base model takes no instructions, so pre-prompting cannot raise fidelity; the levers are correct FIM formatting, more prefix and suffix inside the 3,968-token input, and stopping at the line or block the editor needs. Latency on this host is pessimistic: it was swapping, and the 64/128 GB rows were not measured on their target hardware.
-
-Per-request `max_tokens` still does not bind through the proxy, as recorded in `generation.py`; the role's `num_predict` of 512 is the ceiling. The llama.cpp hazards recorded in `registry.yaml` include silent front truncation past the slot and version-dependent parallel slot sizing. Ollama 0.40.13 gave this role two full 4,608-token slots on the 128 GB host; the older 0.32.14 halved them. LiteLLM's `max_input_tokens` of 3,968 rejects an oversized prompt before it reaches the runner. The 3B base is under the non-commercial Qwen Research License; the 1.5B is Apache-2.0.
-
-Historical 16/32 GB MLX geometry and client results do not transfer to the current GGUF/MTP selections. Current native GGUF loads and client trials are recorded in the model audit. Short probes on this 64 GB host do not validate full windows, physical 16/32 GB fit, or broad coding reliability.
+Differences between working rows are within noise; a repository-level header did not help; a base model takes no instructions. Per-request `max_tokens` does not bind through the proxy, so the role's `num_predict` of 512 is the ceiling, and LiteLLM's `max_input_tokens` of 3,968 rejects an oversized prompt. Ollama 0.40.13 gave the role two 4,608-token slots on 128 GB (0.32.14 halved them). The 3B base is under the non-commercial Qwen Research License; the 1.5B is Apache-2.0. 64/128 GB latency was not measured on target hardware.
 
 ## Patched Ollama
 
-Builds may reuse native files only from an intact ailocal-owned receipt whose source archive digest, base version and original vendor CLI hash match the selected source. Every recorded payload file is rehashed; symlinked, modified, foreign or incompatible trees are rejected, and copied native files must match the original native inventory. Without a matching cache, the builder takes the native files from the installed `ollama-binary` cask when its CLI hash equals `native_cli_sha256`: the cask installs the pinned release tarball unmodified. Otherwise it downloads that tarball (`ollama-darwin.tgz`), verifies its digest before extraction, rejects escaping paths and symlinks that leave the archive, and requires the approved CLI hash. Either way, every Mach-O file copied into the payload must pass `codesign --verify --strict` against Ollama's Developer ID team (`3MU9H2V9Y9`). Acquisition and compilation stay in temporary build space; receipts retain the native origin and original vendor CLI hash. The installed cask is never modified, and a Go server is never paired with another release's native libraries.
+`resources/deploy/ollama/patch.toml` (read only through `policy.py`) pins the exact 0.40.14 source and signed native tarball, the upstream Gemma SwitchGLU loader patch (#18631, unmerged), the mixed-precision router, MLX stop-string and Qwen history patches ([016](decisions.md#016-qwen-tool-loop-history-keeps-the-thinking-mode-signature)), and a `go.mod`/`go.sum` security patch. Builds:
 
-The optional `gemma4-switch-glu` backport fills unsupported native capabilities: loading pre-stacked Gemma MLX expert projections while upstream fix #18631 remains unmerged, preserving explicit 8-bit router settings in a globally 4-bit checkpoint, enforcing MLX request stop strings, and rendering Qwen thinking-mode tool loops without the empty think blocks that made Qwen3.5 answer inside its open block (#38, [ADR 016](adr/016-qwen-reasoning-history.md)). The authoritative declaration is `resources/deploy/ollama/patch.toml`, resolved only through `policy.py`. It pins the exact 0.40.14 source and signed native tarball, the upstream Go loader patch, separate mixed-precision router, stop and Qwen history patches, and a `go.mod`/`go.sum` security patch. Builds copy the approved native payload; they never modify the installed cask or global PATH. C/C++ payloads are unchanged. Builds require Go, git, Xcode compiler tools and codesign, have a 20-minute wall-clock limit, reject a mismatched acquired base, and require native SwitchGLU, mixed-precision, stop and Qwen history regressions to execute without skips before atomic promotion. Receipts record the actual compiler; pinned source/module inputs do not promise bit-identical output across compilers.
+- take native files from an intact owned receipt, else from the installed `ollama-binary` cask when its CLI hash equals `native_cli_sha256`, else from the downloaded tarball verified before extraction; every copied Mach-O must pass `codesign --verify --strict` for team `3MU9H2V9Y9`; the installed cask is never modified;
+- need Go, git, Xcode tools and codesign, run under a 20-minute limit, and require the SwitchGLU, mixed-precision, stop and Qwen history regressions to execute without skips before atomic promotion into `~/.local/share/ailocal/runtimes` (`AILOCAL_RUNTIMES`);
+- are selected by `AILOCAL_OLLAMA_PATCH` in `.env.local`, written only after activation succeeds; an unavailable or modified selection fails explicitly.
 
-The runtime prefix is install-owned `~/.local/share/ailocal/runtimes` (`AILOCAL_RUNTIMES`), separate from disposable generated state. Enabled roles declare `runtime_patch` alongside their exact backend and source; the installer selects the hardware tier first and resolves those requirements through `policy.py`, without model-name routing. The resulting `AILOCAL_OLLAMA_PATCH` choice lives in the existing operator-owned `.env.local`; the installer changes only that key and only after activation succeeds. Every ailocal CLI import/pull and the managed service resolve the same selected binary. An unavailable or modified selection fails explicitly. Teardown removes only complete, intact payloads carrying ailocal ownership receipts, preserving other files and the operator's selection for a later rebuild. Returning to stock uses `ailocal install --yes --ollama-patch none` after selecting a profile whose enabled models do not require the patch.
+Retire the backport when a signed upstream build supports the exact checkpoints and passes load, inference, client/tool transport, geometry and cache measurements; remove patch, adapter, option and tests together with a migration.
 
-Retire the backport after a signed upstream build supports the exact checkpoints and passes native load, inference, client/tool transport, geometry and cache measurements. Remove the patch, build adapter, option and associated tests together, with a migration to the supported runtime. A source build and passing tests do not establish model quality or a vulnerability-free native stack.
+## Releasing
 
-## Legacy app startup override
+Versioning follows Cadence's `versioning` reference (SemVer, Keep a Changelog, the 0.x rule). From v0.9.0 `main` is a public contract: the CLI commands and flags, configuration layout, install flow, generated client configuration and profile behaviour. A change to any of them carries its migration note and bump in the PR that makes it.
 
-Ollama runs only from the `ollama-binary` cask, under `com.ailocal.ollama`; install refuses while `/Applications/Ollama.app` exists (#74). Installs before #74 disabled the app's `com.ollama.ollama` login agent and kept a receipt, `~/Library/LaunchAgents/com.ailocal.ollama.restore.json`. Install and teardown now clear that override with `launchctl enable gui/$(id -u)/com.ollama.ollama` and delete the receipt; the cask has no such agent, so clearing is correct whatever the receipt recorded. A failed `enable` keeps the receipt for the next run. This shim is removed in the release after the one that ships it.
+- The version lives in `pyproject.toml` and `src/ailocal/__init__.py`; the gate fails unless they agree and `CHANGELOG.md` has a section for it.
+- There is one install path, `pipx install git+https://github.com/DevelopSolutionsLLC/ailocal.git@vX.Y.Z`; the README and release notes carry it for the release being cut, and the wheel is attached as the downloadable artifact, not a second path.
+- **The clean-install check is manual and the step most often skipped.** A human installs the built artifact on a Mac that has never run ailocal and confirms `ailocal check` passes; `tests/installed-runtime.py` is not a substitute. It was skipped for v0.9.1, v0.10.0 and v0.15.0; a skipped step is recorded in the release notes, never reported as passed. An automated clean-state gate (fresh `HOME`, `XDG_*` and config roots) is not built.
 
-## Promote and deliver
+```sh
+sed -i '' 's/ailocal.git@v[0-9.]*/ailocal.git@vX.Y.Z/' README.md
+python3 tests/gate.py --full
+python3 tests/installed-runtime.py
+ailocal check
+python3 -m pip wheel . --no-deps -w /tmp/ailocal-dist   # outside the checkout: the gate rejects untracked root entries
+git tag -a vX.Y.Z -m "ailocal vX.Y.Z"
+git push origin main --follow-tags
+gh release create vX.Y.Z /tmp/ailocal-dist/ailocal-X.Y.Z-py3-none-any.whl --notes-file <(sed -n '/## vX.Y.Z/,/^## /p' CHANGELOG.md)
+```
 
-Record candidate → evidence → accept/defer with a reason in the issue or PR. Update only the canonical pin/configuration and regenerate consumers. Reinstall before restarting when package resources change, then verify the running artifact matches the accepted declaration. Preserve the previous pin and any migration-specific recovery instructions.
+## Model audit
 
-Before pushing, review the staged diff and perform the credential sweep from Cadence's `security-review` skill when available. Push only within the user's authorization and report validation alongside the push. A blocked runtime gate stays blocked: a documentation-only change may be delivered with passing documentation checks and explicit runtime limitations, but it must not be represented as a validated dependency promotion or release. Never force-push to reconcile unrelated history.
+Labels: [REAL] observed through the actual runtime or client path; [APPROX] a reduced fixture, synthetic workload or estimate; [UNVERIFIED] not measured. Each row carries its measurement date and host; exact source pins live in the profiles, not here.
+
+Shipped selections (profiles `16gb`, `32gb`, `64gb`, `128gb`):
+
+| Tier | Primary | Fast | Cyber | Completion |
+|---|---|---|---|---|
+| 16 GB | `qwen3.5:4b-mtp` | resolves to primary | `qwen3.5:4b-unrestricted-mtp` | `qwen2.5-coder:1.5b-base` |
+| 32 GB | `qwen3.5:9b-calibrated-mtp` | resolves to primary | `qwen3.5:9b-unrestricted-mtp` | `qwen2.5-coder:1.5b-base` |
+| 64 GB | `gemma4:26b-qat-mtp` | `gemma4:26b-qat-mtp`, thinking off | `gemma4:26b-unrestricted-qat-mtp` | `qwen2.5-coder:3b-base` |
+| 128 GB | `gemma4:26b-qat-mtp` | `gemma4:26b-qat-mtp`, thinking off | `gemma4:26b-unrestricted-qat-mtp` | `qwen2.5-coder:3b-base` |
+
+### Common
+
+| Fact | Result |
+|---|---|
+| Runtime, 16/32 GB | Stock Ollama 0.40.14; no role declares the patched runtime ([REAL] 2026-11-05). |
+| Runtime, 64/128 GB earlier evidence | Gemma speed, coding and client rows below ran on managed `0.40.8-ailocal.18631.3` (2026-10-27); #68/#69 ran on Ollama 0.40.14 (2026-11-05). |
+| Sampling, 16/32 GB chat roles | Thinking off, greedy: temperature 0, top_p 1.0, top_k 20, min_p 0, no penalties; stops `<\|im_end\|>`/`<\|im_start\|>`. Greedy closed the 4B gap vs Nemotron ([REAL] 2026-11-05). |
+| Sampling, 64/128 GB chat roles | Google preset: temperature 1, top_p 0.95, top_k 64, repeat penalty 1; primary and cyber thinking on, fast thinking off. Matches Google's card (source review 2026-10-28). |
+| Sampling, completion | Temperature 0.1, top_p 0.9, top_k 20, native FIM formatting. |
+| Native context window | Every chat backend reports `context_length` 262144 via `/api/show` ([REAL] 2026-10-28; 4B library build re-read 2026-11-06). |
+| Geometry rule | Admission is bounded by memory up to the native window; cyber total equals primary total on every tier (regression-pinned 2026-10-28). |
+| MTP output identity | Two short greedy prompts per backend, MTP off vs selected depth: 8/8 identical ([REAL] 2026-10-27, the four 32/64 GB backends then selected; not distributional proof). |
+| Prompt cache reuse | Strict raw continuation: Qwen 3,821/3,829 tokens, Gemma 4,488/4,497 (~99.8%) ([REAL] 2026-10-27/28; synthetic, not client history). |
+| Image input | All six chat backends identified two color fixtures, 12/12, native API, 8192 context, thinking off ([REAL] 2026-10-28). |
+| Proxy/client projection | Every alias served and routed; FIM excluded from chat pickers; FIM completed: 16 GB 28/28, 32 GB 28/28, 64 GB 32/32 ([REAL] 2026-10-28, 64 GB host). |
+| Qwen thinking empty-turn defect | Cause: Ollama `Qwen35Renderer` writes an empty think block for un-replayed turns; renderer patch took four Qwen backends to 4/4 final replies vs 2-4/4 empty on stock ([REAL] 2026-10-29, #38). Shipped Qwen roles run thinking off. |
+| Delegation and client paths | 24 bounded coding workflows across 4B, 9B, 26B standard and unrestricted through hosted Claude, hosted Codex, `claude-local`, `codex-local` completed (not 24 first-attempt successes) ([REAL client paths; APPROX fixtures] 2026-10-29). |
+| Memory, all tiers | [APPROX] 2026-11-05 upper bounds: see per-model rows; `OLLAMA_MAX_LOADED_MODELS=4` holds on 64/128 GB; on 16/32 GB three loaded models and one parallel slot are recommended, not modelled per tier. `/api/ps` underreports GGUF residency and is not memory proof. |
+| Unverified, all tiers | Physical 16, 32 and 128 GB hardware; filled-window quality and latency; repository-scale accuracy; VS Code GUI chat or image turn; native parent-subagent guide inheritance. |
+
+### qwen3.5:4b-mtp (16 GB primary)
+
+Ollama library `qwen3.5:4b-mtp-q4_K_M` (weights, MTP draft and projector attached by the library build), imported natively under the structured name; draft depth 1.
+
+| Measured | Result |
+|---|---|
+| HumanEval+ 164, greedy, thinking off, 0.40.14, 128 GB M-series host, direct Ollama ([REAL] 2026-11-05) | 78.7%; 77/93 on the 93 problems Nemotron scored 81/93 |
+| Tool loop / recovery after injected failure (same run) | 10/10; 5/5 |
+| Decode (same run) | 98 tok/s |
+| Q8_0 comparison (same run, not selected: no room for 96K beside cyber on 16 GB) | 79.3%, 82/93, 113 tok/s |
+| Memory at 96K ([APPROX] 2026-11-05) | ~6.8 GB; ~8 GB with helpers |
+| Library pull, `/api/show` ([REAL] 2026-11-06, 128 GB host) | Three blobs as pinned; `qwen35.context_length` 262144 |
+| MTP on vs off, 0.40.11 stock, 16K, three seeds ([REAL runtime; APPROX fixtures] 2026-10-27, 64 GiB M3 Max) | 101.5 vs 84.1 tok/s median; coding 12/15 vs 9/15 (five functions x three seeds); three tool rounds |
+| Throughput at depth 1, managed runtime, 16K, 256 tokens ([APPROX] 2026-10-27) | 99.65 tok/s median (99.62–101.59) |
+| Proxy protocols: OpenAI Chat tool/result, Anthropic Messages, Responses, streaming ([REAL] 2026-10-27, `0.40.8-ailocal.18631.3`) | Passed; process args `--spec-type draft-mtp --spec-draft-n-max 1` |
+| Codex and Claude file-edit fixture ([REAL clients; APPROX fixture] 2026-10-27) | Passed both, three independent assertions |
+
+Unverified: physical 16 GB fit (memory figures are mapped-weight estimates from the 128 GB host); end-to-end re-run after the 2026-11-06 rename; full-window latency; repository-scale accuracy.
+
+### qwen3.5:4b-unrestricted-mtp (16 GB cyber)
+
+`hf.co/localslm/Qwen3.5-4B-MTP-Uncensored:model_q4_k_m.gguf`, publisher revision `36c997d2686cdbef4f8a70d505074eda536d1267`, built-in `qwen3.5` renderer/parser, embedded MTP head; draft depth 1; keep_alive 5m.
+
+| Measured | Result |
+|---|---|
+| MTP on vs off ([REAL runtime; APPROX fixtures] 2026-10-27, 64 GiB M3 Max) | 101.5 vs 79.9 tok/s median (+27%); 9/15 coding both; three tool rounds incl. error recovery; MTP execution confirmed in process flags and draft logs |
+| Throughput at depth 1 vs standard 4B, managed runtime ([APPROX] 2026-10-27) | 98.95 tok/s median (97.91–101.07), ~0.7% below standard |
+| Native renderer fix ([REAL] 2026-10-27) | Raw HF template failed Codex with `System message must be at the beginning`; native `/api/create` with `qwen3.5` renderer/parser passed a late-system-message request |
+| Proxy protocols and Codex/Claude edit fixture ([REAL] 2026-10-27) | Passed |
+| Publisher scalar sampling (no DRY) vs base-Qwen preset, five tasks x three seeds, 16K ([APPROX] 2026-10-28) | 9/15 in 34.29 s vs 9/15 in 41.64 s; preset kept |
+| Memory at 96K ([APPROX] 2026-11-05) | ~5.4 GB alone; Ollama unloads the primary to load it (~12 GB together exceeds the ~10.7 GB the primary leaves) |
+
+Unverified: re-measurement under greedy sampling (figures are 2026-10-27/28); projector not independently pinned by the recipe; comprehensive refusal behavior; physical 16 GB fit.
+
+### qwen3.5:9b-calibrated-mtp (32 GB primary)
+
+`hf.co/unsloth/Qwen3.5-9B-MTP-GGUF:Qwen3.5-9B-Q4_K_M.gguf`, revision `9716a636ee4bddc3fed678220b7a33dd2a4160ae`, 5,868,826,976 bytes; imatrix metadata `unsloth_calibration_Qwen3.5-9B.txt`, 248 entries, 77 chunks; embedded MTP head; draft depth 3.
+
+| Measured | Result |
+|---|---|
+| HumanEval+ 164, greedy, thinking off, 0.40.14, 128 GB host ([REAL] 2026-11-05) | 84.8% (published base 87.2%); 85/93 on Nemotron's 93 |
+| Tool loop / recovery (same run) | 10/10; 5/5 |
+| Decode (same run) | 51 tok/s |
+| Coding fixtures, ten tasks x three seeds, depth 2 then depth 3 ([APPROX] 2026-10-28, `0.40.8-ailocal.18631.3`, 64 GB M3 Max) | 22/30 and 3/3 tool rounds at both depths (previous official 9B: 21/30) |
+| Draft-depth sweep 0/1/2/3 ([APPROX] 2026-10-28) | 52.31 / 61.86 / 76.51 / 85.49 tok/s; depth 3 ~63% over MTP off |
+| Proxy protocols; Codex/Claude edit fixture ([REAL] 2026-10-28) | Passed; 35.0 s Codex, 44.5 s Claude |
+| Image probe, native `/api/chat` ([REAL] 2026-10-28) | Identified a solid-red image |
+| Cache probe at 139,264 window, depth 3 ([REAL] 2026-10-28) | 3,821/3,829 tokens reused; prefill 5.6 s to ~0.1 s |
+| Thinking-enabled client matrix after renderer fix, 32gb tier ([REAL] 2026-10-29, `0.40.8-ailocal.18631.4`) | `codex-local` 6/6; `claude-local` auto memory off 6/6 |
+| Memory at 163,840 ([APPROX] 2026-11-05) | ~9.4 GB; both 9B models resident ~20 GB with helpers; KV near 24 KB per token |
+
+Unverified: physical 32 GB fit; full-window latency and quality; repository-scale accuracy.
+
+### qwen3.5:9b-unrestricted-mtp (32 GB cyber)
+
+`hf.co/localslm/Qwen3.5-9B-MTP-Uncensored:model_q4_k_m.gguf`, revision `2d76f180895809e97ea55c524bca2236de7a0e26`, 5,885,604,000 bytes; imatrix metadata 77 chunks, 248 entries, one nextn layer; draft depth 3.
+
+| Measured | Result |
+|---|---|
+| MTP depth 2 vs off ([APPROX] 2026-10-27, `0.40.8-ailocal.18631.3`, 64 GB M3 Max) | 53.45 vs 37.13 tok/s |
+| Coding fixtures, ten tasks x three seeds, depth 1 ([APPROX] 2026-10-27) | 20/30 (one output-limit failure); three tool rounds |
+| Coding fixtures at depth 2 and depth 3 ([APPROX] 2026-10-28) | 22/30 and 3/3 tool rounds at both |
+| Draft-depth sweep 0/1/2/3 ([APPROX] 2026-10-28) | 51.97 / 62.96 / 75.49 / 85.85 tok/s |
+| Codex/Claude edit fixture ([REAL] 2026-10-28) | 53.4 s Codex; 41.4 s Claude (first Claude run hit the eight-turn limit on a harness permission denial; retry passed) |
+| Publisher scalar sampling (no DRY) vs base-Qwen preset ([APPROX] 2026-10-28) | 11/15 in 97.98 s vs 13/15 in 74.15 s; preset kept |
+| Memory at 163,840 ([APPROX] 2026-11-05) | ~9.4 GB; resident beside the primary on 32 GB |
+
+Unverified: re-measurement under greedy sampling (figures are 2026-10-27/28); universal non-refusal; physical 32 GB fit; repository-scale accuracy.
+
+### gemma4:26b-qat-mtp (64/128 GB primary and fast)
+
+Official `gemma4:26b-a4b-it-qat` QAT Q4_0 target plus the 251,937,728-byte HauhauCS MTP head (revision `f9093662a2e7ae0503f637088bc96f77a1a70c83`) via Ollama `DRAFT`/`draft_files`; `gemma4-large` renderer, `gemma4` parser; draft depth 2. A target-only HF pull does not attach the head.
+
+| Measured | Result |
+|---|---|
+| MTP depth 2 vs off, 16K, thinking off ([APPROX] 2026-10-27, `0.40.8-ailocal.18631.3`, 64 GB M3 Max) | 123.71 vs 81.69 tok/s; depth 2 beat 0/1/3 |
+| Coding fixtures at depth 3 ([APPROX] 2026-10-27) | 9/10 coding, 3/3 tool rounds (depth-2 quality not measured separately) |
+| Codex/Claude edit fixture ([REAL] 2026-10-27) | 29.35 s Codex; 34.35 s Claude |
+| Empty-message load at 262,144 ([REAL] 2026-10-27) | Worker RSS ~17.95 GiB (RSS is not full unified-memory accounting) |
+| Cache probe at 196,608 ([REAL] 2026-10-28) | 4,488/4,497 reused (99.8%); warm prefill ~56x faster |
+| Reasoning loops in tool turns, `codex-local` 0.166 ([REAL] 2026-11-05, #68) | 2/13 sessions looped on re-injected reasoning; `reasoning_loop_guard` (60,000-character threshold; normal max 41,466, loops >95,000) recovered 8/8 sessions |
+| Tool calls dropped by Ollama's `gemma4` parser, 0.40.14 ([REAL] 2026-11-05, #69) | 4/9 edit runs lost a call missing the opening `<\|"\|>`; guard re-send once: 8/8 edit-and-test sessions passed |
+| Memory with cyber ([APPROX] 2026-11-05) | 196K: ~20.0 GB (+22.2 cyber, ~44.5 GB with helpers under ~48 GB default GPU limit on 64 GB); 262K: ~21.3 GB (+23.5 cyber) |
+
+Unverified: thinking-enabled full-window task speed; filled-window quality; the 64 GB residency margin on a 64 GB Mac; 128 GB hardware (128 GB reuses 64 GB evidence); other Gemma 4 task shapes for #68/#69.
+
+### gemma4:26b-unrestricted-qat-mtp (64/128 GB cyber)
+
+HauhauCS QAT Q4_K_M target (`Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-MTP`, revision `f9093662a2e7ae0503f637088bc96f77a1a70c83`) plus the same MTP head; `gemma4-large`/`gemma4`; draft depth 3; keep_alive 20m.
+
+| Measured | Result |
+|---|---|
+| MTP depth 3 vs off ([APPROX] 2026-10-27, `0.40.8-ailocal.18631.3`, 64 GB M3 Max) | 111.19 vs 75.09 tok/s; ~10% slower than standard |
+| Coding fixtures at depth 3 ([APPROX] 2026-10-27) | 9/10 coding, 3/3 tool rounds |
+| Author sampling (0.6/0.9/64, min-p 0.05, repeat 1.1) ([APPROX] 2026-10-27) | 10/10 at depths 2 and 3, but 95.59/96.95 tok/s; Google preset kept |
+| Codex/Claude edit fixture ([REAL] 2026-10-27) | 32.54 s Codex; 38.57 s Claude |
+| Empty-message load at 262,144 ([REAL] 2026-10-27) | Worker RSS ~20.06 GiB |
+| 64 GB residency, five aliases sequential ([REAL] 2026-10-27) | Cyber evicted the idle fast worker; two backends ~33.51 GiB RSS, zero swap |
+| Memory ([APPROX] 2026-11-05) | ~22.2 GB at 196K; ~23.5 GB at 262K |
+
+Unverified: universal non-refusal; repository coding quality; full-window prefill; 128 GB hardware.
+
+### qwen2.5-coder:1.5b-base (16/32 GB completion) and qwen2.5-coder:3b-base (64/128 GB completion)
+
+Official Ollama base GGUF tags with native FIM tokens; the base template is required because LiteLLM drops `suffix` and sends the FIM prompt as a chat message.
+
+| Measured | Result |
+|---|---|
+| FIM arithmetic completion via completion API ([REAL] 2026-10-29) | Both backends returned the expected completion |
+| FIM request through installed proxy per tier ([REAL] 2026-10-28, 64 GB host) | Completed on 16, 32 and 64 GB activations |
+
+Unverified: latency on 64/128 GB target hardware (earlier FIM comparisons ran under memory pressure on an M4 16 GB host); any MTP enhancement; FIM quality beyond the arithmetic fixture.
+
+### Superseded and rejected
+
+- `nemotron-3.5-bolt:e4b` and `:e4b-unrestricted` (16/32 GB), 2026-11-05 to 2026-11-06: replaced once greedy sampling closed Qwen's gap (4B 77/93, 9B 85/93 vs Nemotron 81/93 on the same problems); its native window was 65,536 vs Qwen's 262,144.
+- `qwen3.5:4b-mtp-q4_K_M`, `qwen3.5:9b-calibrated-mtp-q4_K_M`, `qwen3.5:{4b,9b}-unrestricted-mtp-q4_K_M`, `gemma4:26b-unrestricted-qat-mtp-q4_K_M`, 2026-11-06: same weights, renamed to the structured names.
+- `qwen3.5:9b-mtp-q4_K_M` (official, 32 GB primary / 64 GB fast), 2026-10-28: replaced by calibrated Unsloth 9B (21/30 vs 22/30; 69.24 vs 77.92 tok/s).
+- Qwen 9B as 64/128 GB fast, superseded: fast is now the Gemma primary with thinking off.
+- `qwen3.5:4b-mtp-q4_K_M` Q8_0 variant, 2026-11-05: scored higher but leaves no room for the 96K window beside cyber on 16 GB.
+- Qwen3.8-distilled 9B GGUFs (Twobombs IQ3_M, mradermacher IQ3_M/Q4_K_M), 2026-10-28: 21/30 and 18/30 coding, no vision.
+- Nicolas Ramos Qwen3.8 9B oQ4e/MTP MLX, 2026-10-28: native load failed with an MLX concatenate panic.
+- `qwen3.5:9b-mtp-nvfp4` and calibrated MLX MTP (32 GB), 2026-10-27: no fidelity or speed win over GGUF (JSD 0.00516 vs 0.00340; 52.38 vs 52.82 tok/s).
+- `gemma4:26b-nvfp4` (calibrated MLX), 2026-10-27: 121.65 tok/s but no higher-precision fidelity comparison; unpromoted.
+- `gemma4:26b-mlx` and legacy MLX (64/128 GB), 2026-10-27: 74.91 tok/s vs 123.71 for QAT GGUF MTP.
+- Huihui Gemma QAT plus the same MTP head (64 GB cyber), 2026-10-27: 93.32 vs 111.19 tok/s for HauhauCS.
+- `huihui_ai/gemma-4-abliterated:26b-qat` and `ailocal-gemma4-26b-uncensored:mlx-46ab84d` (00cyre MLX), 2026-10-27: replaced by HauhauCS QAT MTP GGUF.
+- Huihui Opus-distilled abliterated 4B/9B (MLX and `huihui_ai/qwen3.5-abliterated:9b-Claude-4.6-Opus-q4_K`), andrevp 9B Heretic MLX (16/32 GB cyber), 2026-10-27: replaced by tested localslm unrestricted MTP GGUFs.
+- `qwen3.5:{4b,9b,2b}-mlx` official MLX (16/32 GB), 2026-10-24 to 2026-10-27: MLX-only selection superseded by the GGUF/MTP rule; native Codex edits failed at 90 s deadlines.
+- Inspected, never run (2026-10-27/28): bambocher Huihui 9B oQ4e/MTP, Foresee Qwen3.8 MTPLX (unverifiable lineage), TheCluster MXFP4 (no MTP tensors), underlotus/zecanard/yachen4ever (no MTP head), Blackwell/vLLM-only NVFP4 bundles.
