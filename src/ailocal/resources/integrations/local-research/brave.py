@@ -5,12 +5,14 @@ Each request is reserved before sending and settled from its outcome.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
 import sqlite3
 import time
+from typing import Any
 from urllib.parse import urlencode
 
 from transport import ResearchError, request
@@ -23,7 +25,7 @@ ESTABLISHING_SECONDS = 60
 SCOPE = 'Brave requests made through ailocal research on this machine'
 
 
-def _iso(value):
+def _iso(value: float | None) -> str | None:
     return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(value)) if value else None
 
 
@@ -60,11 +62,11 @@ class Grant:
 class Ledger:
     """SQLite with BEGIN IMMEDIATE serializes reservations across sessions."""
 
-    def __init__(self, path: Path, budget: int):
+    def __init__(self, path: Path, budget: int) -> None:
         self.path = path
         self.budget = budget
 
-    def _connect(self):
+    def _connect(self) -> sqlite3.Connection:
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600)
         os.close(fd)
@@ -77,14 +79,14 @@ class Ledger:
         return db
 
     @staticmethod
-    def _observation(db):
+    def _observation(db: sqlite3.Connection) -> dict[str, Any]:
         row = db.execute('SELECT observed_at, lim, remaining, reset_at, win, headers_missing_at, '
                          'quota_limited_until FROM observation WHERE k = 1').fetchone()
         keys = ('observed_at', 'limit', 'remaining', 'reset_at', 'window', 'headers_missing_at', 'quota_limited_until')
         return dict(zip(keys, row)) if row else {}
 
     @staticmethod
-    def _period(obs, now):
+    def _period(obs: Mapping[str, Any], now: float) -> tuple[float, float | None, bool]:
         """Return (start, end, known); unknown periods count conservatively."""
         if obs.get('reset_at') and obs['reset_at'] > now:
             return obs['reset_at'] - obs['window'], obs['reset_at'], True
@@ -93,7 +95,7 @@ class Ledger:
         return start, None, False
 
     @staticmethod
-    def _counted(db, since):
+    def _counted(db: sqlite3.Connection, since: float) -> int:
         return db.execute("SELECT COUNT(*) FROM requests WHERE at >= ? AND state IN ('reserved', 'billed', 'unknown')",
                           (since,)).fetchone()[0]
 
@@ -133,7 +135,7 @@ class Ledger:
         finally:
             db.close()
 
-    def _account_left(self, db, obs):
+    def _account_left(self, db: sqlite3.Connection, obs: Mapping[str, Any]) -> int:
         """Return the account-wide allowance left under a monthly cap."""
         used = obs['limit'] - obs['remaining']
         since = db.execute("SELECT COUNT(*) FROM requests WHERE at > ? AND state IN ('reserved', 'billed', 'unknown')",
@@ -233,7 +235,7 @@ def summary(report: dict, used: int, refusal: str | None) -> str:
 
 
 class Brave:
-    def __init__(self, key: str, ledger: Ledger, endpoint: str = ENDPOINT, session_cap: int = 30):
+    def __init__(self, key: str, ledger: Ledger, endpoint: str = ENDPOINT, session_cap: int = 30) -> None:
         self.key = key
         self.ledger = ledger
         self.endpoint = endpoint
@@ -241,7 +243,7 @@ class Brave:
         self.session_used = 0
 
     @property
-    def configured(self):
+    def configured(self) -> bool:
         return bool(self.key)
 
     async def search(self, query: str, result_filter: str = 'web') -> list[dict]:

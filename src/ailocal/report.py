@@ -11,12 +11,12 @@ def _c(text: object, colour: str) -> str:
     return f"{colour}{text}{RESET}"
 
 
-def step(m): print(f"\n▶ {m}")
-def ok(m):   print(f"  {_c('✓', GREEN)} {m}")
-def bad(m):  print(f"  {_c('✗', RED)} {m}")
-def warn(m): print(f"  {_c('⚠', YELLOW)} {m}")
-def dim(m):  print(f"  {_c('—', DIM)} {m}")
-def hdr(m):  print(f"\n{BOLD}{m}{RESET}")
+def step(m: object) -> None: print(f"\n▶ {m}")
+def ok(m: object) -> None:   print(f"  {_c('✓', GREEN)} {m}")
+def bad(m: object) -> None:  print(f"  {_c('✗', RED)} {m}")
+def warn(m: object) -> None: print(f"  {_c('⚠', YELLOW)} {m}")
+def dim(m: object) -> None:  print(f"  {_c('—', DIM)} {m}")
+def hdr(m: object) -> None:  print(f"\n{BOLD}{m}{RESET}")
 
 
 info = ok

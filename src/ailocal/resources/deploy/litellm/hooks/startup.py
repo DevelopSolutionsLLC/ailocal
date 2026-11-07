@@ -3,10 +3,13 @@
 Each reports one boot line via print() (the proxy filters third-party loggers)
 and never raises: a failure degrades one correction, never the container.
 """
+from __future__ import annotations
 
 import logging
 import os
 import sys
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any
 
 import litellm
 from litellm.integrations.custom_logger import CustomLogger
@@ -17,7 +20,7 @@ log = logging.getLogger("startup")
 CONFIG_PATH = os.environ.get("AILOCAL_CONFIG_PATH", "/app/generated/config.yaml")
 
 
-def _say(msg):
+def _say(msg: str) -> None:
     """Print one boot line, visible in `docker logs`."""
     print(msg, flush=True)
 
@@ -27,7 +30,7 @@ def _say(msg):
 # Register under the exact prefixed key. DELETE when all are "already mapped".
 
 
-def _load_model_list():
+def _load_model_list() -> list[dict[str, Any]]:
     """Return the generated model_list, or [] if unreadable."""
     try:
         import yaml
@@ -40,7 +43,7 @@ def _load_model_list():
         return []
 
 
-def _has_exact_key(model_key):
+def _has_exact_key(model_key: str) -> bool:
     """Return whether the exact key is in litellm.model_cost.
 
     Not get_model_info: it falls back to the stripped key the router cannot use.
@@ -48,7 +51,7 @@ def _has_exact_key(model_key):
     return model_key in litellm.model_cost
 
 
-def _router_can_resolve(model_key):
+def _router_can_resolve(model_key: str) -> bool:
     """Replicate the router's own lookup, for the self-check."""
     try:
         litellm.get_model_info(model=model_key)
@@ -57,7 +60,7 @@ def _router_can_resolve(model_key):
         return False
 
 
-def _cost_entry(model_key, model_info):
+def _cost_entry(model_key: str, model_info: Mapping[str, object]) -> dict[str, object]:
     """Build a cost-map entry from the deployment's own model_info block.
 
     litellm_provider (from the key prefix) survives _check_provider_match.
@@ -77,7 +80,7 @@ def _cost_entry(model_key, model_info):
     return entry
 
 
-def register_local_models():
+def register_local_models() -> tuple[list[str], list[str], list[str]]:
     """Inject every deployment LiteLLM cannot already map, then verify.
 
     Returns:
@@ -143,14 +146,14 @@ COMPAT_ROUTES = {
 }
 
 
-def _empty_ok():
+def _empty_ok() -> Any:
     """Return a fixed empty 200 with no side effects."""
     from fastapi import Response
 
     return Response(status_code=200)
 
 
-def _get_app():
+def _get_app() -> Any:
     """Return the running proxy's FastAPI app, or None.
 
     Imports the proxy only when standalone (the gate's importability check).
@@ -167,7 +170,7 @@ def _get_app():
     return getattr(mod, "app", None)
 
 
-def register_compat_routes():
+def register_compat_routes() -> list[str]:
     """Add the compatibility routes; return the paths added.
 
     Never raises; logs at ERROR so a no-op does not hide the remaining 404.
@@ -202,7 +205,7 @@ def register_compat_routes():
 PATCH_MARKER = "_ailocal_fake_stream_guard"
 
 
-def _fake_stream_types():
+def _fake_stream_types() -> tuple[type, ...]:
     """Return the fake-stream iterator classes success logging can receive.
 
     Both module paths are tried: 1.105.1 moved it while the bug persisted.
@@ -224,7 +227,7 @@ def _fake_stream_types():
     return tuple(found)
 
 
-def apply_stream_log_guard():
+def apply_stream_log_guard() -> str:
     """Install the guard idempotently; return a short status string."""
     try:
         from litellm.litellm_core_utils.litellm_logging import Logging as LiteLLMLogging
@@ -241,7 +244,7 @@ def apply_stream_log_guard():
     if not types:
         return "skipped: no fake-stream types to guard"
 
-    def patched(self, result, *args, **kwargs):
+    def patched(self: object, result: object, *args: object, **kwargs: object) -> object:
         # Before the original, so pydantic validation is never reached.
         if isinstance(result, types):
             return result
@@ -267,14 +270,14 @@ _IDENTITY_FIXTURE = [
 ]
 
 
-def _plain(value):
+def _plain(value: Any) -> dict[str, Any]:
     """Return a message or tool call as a dict, as the transform reads it."""
     if hasattr(value, "model_dump"):
         return value.model_dump(exclude_none=True)
     return value if isinstance(value, dict) else {}
 
 
-def add_tool_identity(messages, request):
+def add_tool_identity(messages: Sequence[object], request: object) -> None:
     """Set `tool_name` and tool-call `id` on a transformed request, in place.
 
     Any shape other than one message per input (and one call per function call)
@@ -307,7 +310,8 @@ def add_tool_identity(messages, request):
                 emitted["id"] = call["id"]
 
 
-def _upstream_forwards(target, config_cls):
+def _upstream_forwards(target: Callable[..., Any],
+                       config_cls: type) -> tuple[bool, bool] | None:
     """Return which of (tool_name, id) upstream already emits, or None."""
     try:
         out = target(config_cls(), "fixture", [dict(m) for m in _IDENTITY_FIXTURE], {}, {}, {})
@@ -318,7 +322,7 @@ def _upstream_forwards(target, config_cls):
         return None
 
 
-def apply_ollama_tool_identity():
+def apply_ollama_tool_identity() -> str:
     """Install the correction idempotently; return a short status string."""
     try:
         from litellm.llms.ollama.chat.transformation import OllamaChatConfig
@@ -336,7 +340,8 @@ def apply_ollama_tool_identity():
     if all(forwarded):
         return "not needed: upstream forwards tool_name and id"
 
-    def patched(self, model, messages, *args, **kwargs):
+    def patched(self: object, model: str, messages: Sequence[object],
+                *args: object, **kwargs: object) -> object:
         request = target(self, model, messages, *args, **kwargs)
         try:
             add_tool_identity(messages, request)

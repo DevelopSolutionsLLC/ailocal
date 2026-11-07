@@ -76,7 +76,7 @@ def render(model: str, guide: dict, brief: bool = False) -> str:
     ])
 
 
-def main(argv=None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="ailocal profile guide")
     parser.add_argument("model", nargs="?")
     parser.add_argument("--tier", choices=policy.TIERS)
@@ -142,7 +142,7 @@ def main(argv=None) -> int:
         return 2
 
 
-def hook_bytes(event: dict, tier=None) -> int | None:
+def hook_bytes(event: dict, tier: str | None = None) -> int | None:
     """Return bytes `--hook` prints for `event`, or None when it fails.
 
     Claude Code adds it to context beside CLAUDE.md, so the budget counts it
@@ -158,7 +158,7 @@ def hook_bytes(event: dict, tier=None) -> int | None:
     return len(out.getvalue().encode("utf-8")) if rc == 0 else None
 
 
-def launch_default_hook_bytes(tier=None) -> tuple[int | None, int | None]:
+def launch_default_hook_bytes(tier: str | None = None) -> tuple[int | None, int | None]:
     """Return guide-hook bytes: (launch default, model unspecified).
 
     Shared by the integration contract and `ailocal check` → same event.

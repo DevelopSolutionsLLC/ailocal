@@ -62,7 +62,7 @@ def fetch(source: dict, *, timeout: int = 900) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + timeout
 
-    def remaining():
+    def remaining() -> float:
         seconds = deadline - time.monotonic()
         if seconds <= 0:
             raise TimeoutError("model download budget exhausted")
@@ -205,7 +205,7 @@ def _native(model: str, source: dict) -> bool:
         return False
     base = policy.ollama_url().rstrip("/")
 
-    def call(path, body):
+    def call(path: str, body: dict) -> dict:
         _, raw = http_fetch(base + path, payload=body, timeout=180)
         return json.loads(raw)
 

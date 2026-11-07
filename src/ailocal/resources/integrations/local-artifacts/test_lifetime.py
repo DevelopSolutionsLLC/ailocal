@@ -4,6 +4,8 @@
 Clients kill the MCP process at session end, so the viewer must not live in
 it. Tests spawn and kill real processes: the contract is a process boundary.
 """
+from __future__ import annotations
+
 import json, os, shutil, subprocess, sys, tempfile, time, urllib.error, urllib.request
 from pathlib import Path
 
@@ -12,7 +14,7 @@ PORT = int(os.environ.get("LIFETIME_TEST_PORT", "7872"))
 PASS = FAIL = 0
 
 
-def check(name, cond, detail=""):
+def check(name: str, cond: object, detail: str = "") -> None:
     global PASS, FAIL
     if cond:
         PASS += 1; print(f"  PASS  {name}")
@@ -20,7 +22,7 @@ def check(name, cond, detail=""):
         FAIL += 1; print(f"  FAIL  {name}  {detail}")
 
 
-def get(path="/", timeout=3):
+def get(path: str = "/", timeout: float = 3) -> tuple[int | str, str]:
     req = urllib.request.Request(f"http://127.0.0.1:{PORT}{path}",
                                  headers={"Host": f"127.0.0.1:{PORT}"})
     try:
@@ -32,7 +34,7 @@ def get(path="/", timeout=3):
         return type(e).__name__, str(e)
 
 
-def listener_pids():
+def listener_pids() -> list[str]:
     r = subprocess.run(["lsof", "-nP", f"-iTCP:{PORT}", "-sTCP:LISTEN"],
                        capture_output=True, text=True)
     return sorted({l.split()[1] for l in r.stdout.splitlines()[1:]})
@@ -55,8 +57,8 @@ ENV = dict(os.environ, LOCAL_ARTIFACTS_PORT=str(PORT), LOCAL_ARTIFACTS_AUTO_OPEN
            LOCAL_ARTIFACTS_IDLE_EXIT="0")   # no reaper except where tested
 
 
-def publish(title, content, env=None):
-    """Publish from a short-lived process and return (returncode, stdout)."""
+def publish(title: str, content: str, env: dict[str, str] | None = None) -> tuple[int, str, str]:
+    """Publish in a short-lived process; return (returncode, stdout, stderr)."""
     r = subprocess.run([sys.executable, "-c", PUBLISHER, str(HERE / "server.py"),
                         title, content],
                        env=env or ENV, cwd=str(HERE), capture_output=True,
@@ -64,7 +66,7 @@ def publish(title, content, env=None):
     return r.returncode, r.stdout.strip(), r.stderr.strip()
 
 
-def cleanup():
+def cleanup() -> None:
     for pid in listener_pids():
         subprocess.run(["kill", pid], capture_output=True)
     shutil.rmtree(ROOT, ignore_errors=True)
@@ -225,7 +227,7 @@ try:
     real_await = m._await_ingest
     calls = {"n": 0}
 
-    def flaky(*a, **kw):
+    def flaky(*a: object, **kw: object) -> bool:
         calls["n"] += 1
         return False if calls["n"] == 1 else real_await(*a, **kw)
 

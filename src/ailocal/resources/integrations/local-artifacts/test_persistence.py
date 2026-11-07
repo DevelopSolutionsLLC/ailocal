@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
 """Project root resolution and automatic canonical-source persistence."""
+from __future__ import annotations
+
 import importlib.util, json, os, shutil, subprocess, sys, tempfile
 from pathlib import Path
+from types import ModuleType
 
 HERE = Path(__file__).resolve().parent
 # Each load() starts a real server: reap them; never touch live state.
 STATE = Path(tempfile.mkdtemp(prefix="tp-state-"))
 PORTS = []
 PASS = FAIL = 0
-def check(name, cond, detail=""):
+def check(name: str, cond: object, detail: object = "") -> None:
     global PASS, FAIL
     if cond: PASS += 1; print(f"  PASS  {name}")
     else: FAIL += 1; print(f"  FAIL  {name}  {detail}")
 
-def load(env, port):
+def load(env: dict[str, str], port: int) -> ModuleType:
     e = dict(os.environ)
     for k in ("LOCAL_ARTIFACTS_ROOT", "CLAUDE_PROJECT_DIR"):
         e.pop(k, None)

@@ -22,8 +22,13 @@ import os
 import re
 import sys
 import tomllib
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 SCHEMA_VERSION = 2   # 2: `modified` on advisories, `running` notes, `record`, `mode`
 
@@ -89,7 +94,7 @@ class Result:
 
 
 
-def http(url: str, body: dict | None = None, timeout: int = 20):
+def http(url: str, body: dict | None = None, timeout: int = 20) -> tuple[int, Any]:
     """Return (status, parsed JSON or None); 404/410 are answers, not raised.
 
     A GitHub token from the env is sent to api.github.com only.
@@ -187,7 +192,7 @@ def running() -> dict:
     return out
 
 
-def pins(probe=running) -> list[Pin]:
+def pins(probe: Callable[[], dict] = running) -> list[Pin]:
     from . import policy
     from .checks import services
     from .update import _split
@@ -257,7 +262,7 @@ def _add(r: Result, adv: dict) -> None:
     r.advisories.append(adv)
 
 
-def _osv(r: Result, ecosystem: str, name: str, version: str, fetch) -> None:
+def _osv(r: Result, ecosystem: str, name: str, version: str, fetch: Callable[..., tuple[int, Any]]) -> None:
     body = {"package": {"name": name, "ecosystem": ecosystem}, "version": version}
     token = None
     while True:
@@ -284,7 +289,7 @@ def _osv(r: Result, ecosystem: str, name: str, version: str, fetch) -> None:
     r.sources.append(f"osv.dev ({ecosystem})")
 
 
-def _github(r: Result, repo: str, version: str, fetch) -> None:
+def _github(r: Result, repo: str, version: str, fetch: Callable[..., tuple[int, Any]]) -> None:
     status, d = fetch(_GH_ADVISORIES.format(repo=repo))
     if status != 200 or not isinstance(d, list):
         raise Unavailable(f"GitHub advisories HTTP {status}")
@@ -307,7 +312,7 @@ def _github(r: Result, repo: str, version: str, fetch) -> None:
     r.sources.append(f"github.com/{repo} security advisories")
 
 
-def _registry(r: Result, url: str, label: str, fetch, deprecated_key: str = "") -> None:
+def _registry(r: Result, url: str, label: str, fetch: Callable[..., tuple[int, Any]], deprecated_key: str = "") -> None:
     status, d = fetch(url)
     if status in (404, 410):
         r.result = YANKED
@@ -324,7 +329,7 @@ def _registry(r: Result, url: str, label: str, fetch, deprecated_key: str = "") 
     r.sources.append(label)
 
 
-def check(p: Pin, fetch=None) -> Result:
+def check(p: Pin, fetch: Callable[..., tuple[int, Any]] | None = None) -> Result:
     fetch = fetch or http
     r = Result(p.name, p.kind, p.spec, p.version, p.declared_in, queried_at=_now(),
                notes=list(p.notes))
@@ -360,7 +365,7 @@ def check(p: Pin, fetch=None) -> Result:
     return r
 
 
-def report(fetch=None, pin_list: list[Pin] | None = None) -> dict:
+def report(fetch: Callable[..., tuple[int, Any]] | None = None, pin_list: list[Pin] | None = None) -> dict:
     results = [check(p, fetch) for p in (pins() if pin_list is None else pin_list)]
     worst = (YANKED if any(r.result == YANKED for r in results)
              else AFFECTED if any(r.result == AFFECTED for r in results)
@@ -372,12 +377,12 @@ def report(fetch=None, pin_list: list[Pin] | None = None) -> dict:
             "results": [asdict(r) for r in results]}
 
 
-def record_path():
+def record_path() -> Path:
     from . import policy
     return policy.state_root() / "audit" / "local.json"
 
 
-def write_record(doc: dict):
+def write_record(doc: dict) -> Path:
     """Overwrite the single latest-run record and return its path."""
     path = record_path()
     path.parent.mkdir(parents=True, exist_ok=True)

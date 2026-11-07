@@ -3,8 +3,11 @@
 
 Usage: check_diagram.py <html> [--expect-nodes a,b] [--expect-edges N]
 """
+from __future__ import annotations
+
 import re
 import sys
+from collections.abc import Iterable, Mapping
 
 TITLE_PX, TITLE_ADV = 13.0, 0.60
 SUB_PX, SUB_ADV = 10.5, 0.62
@@ -13,7 +16,7 @@ TYPE_PX, TYPE_ADV = 8.5, 0.66
 ELABEL_PX, ELABEL_ADV = 10.5, 0.62
 
 
-def _attrs(tag, svg):
+def _attrs(tag: str, svg: str) -> list[dict[str, str]]:
     out = []
     for m in re.finditer(r"<%s\b([^>]*)>" % tag, svg):
         a = dict(re.findall(r'([\w:-]+)="([^"]*)"', m.group(1)))
@@ -24,14 +27,15 @@ def _attrs(tag, svg):
     return out
 
 
-def _f(d, k, dflt=0.0):
+def _f(d: Mapping[str, str], k: str, dflt: float = 0.0) -> float:
     try:
         return float(d.get(k, dflt))
     except (TypeError, ValueError):
         return dflt
 
 
-def check(path, expect_nodes=None, expect_edges=None):
+def check(path: str, expect_nodes: Iterable[str] | None = None,
+          expect_edges: int | None = None) -> tuple[list[str], dict[str, object]]:
     doc = open(path, encoding="utf-8").read()
     if "<svg" not in doc:
         return ["no <svg> found in the artifact"], {}
@@ -45,7 +49,7 @@ def check(path, expect_nodes=None, expect_edges=None):
     texts = _attrs("text", svg)
     paths = _attrs("path", svg)
 
-    def box(r):
+    def box(r: Mapping[str, str]) -> tuple[float, float, float, float, str]:
         x, y = _f(r, "x"), _f(r, "y")
         return (x, y, x + _f(r, "width"), y + _f(r, "height"), r.get("class", ""))
 
@@ -53,7 +57,7 @@ def check(path, expect_nodes=None, expect_edges=None):
     groups = [box(r) for r in rects if "g-box" in r.get("class", "")]
     plates = [box(r) for r in rects if "e-label-bg" in r.get("class", "")]
 
-    def tbox(t):
+    def tbox(t: Mapping[str, str]) -> tuple[float, float, float, float, str, str]:
         cls = t.get("class", "")
         if "n-title" in cls:
             px, adv = TITLE_PX, TITLE_ADV
@@ -75,10 +79,10 @@ def check(path, expect_nodes=None, expect_edges=None):
 
     tb = [tbox(t) for t in texts]
 
-    def overlap(a, b):
+    def overlap(a: tuple[float, float, float, float, *tuple[str, ...]], b: tuple[float, float, float, float, *tuple[str, ...]]) -> bool:
         return not (a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1])
 
-    def inside(a, b):   # a inside b
+    def inside(a: tuple[float, float, float, float, *tuple[str, ...]], b: tuple[float, float, float, float, *tuple[str, ...]]) -> bool:   # a inside b
         return a[0] >= b[0] and a[1] >= b[1] and a[2] <= b[2] and a[3] <= b[3]
 
     fails = []

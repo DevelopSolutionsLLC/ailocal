@@ -4,6 +4,8 @@
 A control run w/o CSP must light them up, else silence proves nothing.
 `--host-resolver-rules` maps example.com onto a honeypot too.
 """
+from __future__ import annotations
+
 import http.server, importlib.util, os, socket, subprocess, tempfile, threading, time, sys, shutil
 from pathlib import Path
 
@@ -17,7 +19,7 @@ hits = {n: 0 for n in NAMES}
 lock = threading.Lock()
 stop = threading.Event()
 
-def honeypot(name, port):
+def honeypot(name: str, port: int) -> None:
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(("127.0.0.1", port)); s.listen(16); s.settimeout(0.3)
@@ -61,8 +63,8 @@ ok, msg = srv.publish(title="Boundary probe", content=ART); assert ok, msg
 
 # control server: identical bytes, no CSP
 class Ctrl(http.server.BaseHTTPRequestHandler):
-    def log_message(self, *a): pass
-    def do_GET(self):
+    def log_message(self, *a: object) -> None: pass
+    def do_GET(self) -> None:
         b = ART.encode()
         self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
@@ -70,7 +72,7 @@ threading.Thread(target=lambda: http.server.ThreadingHTTPServer(
     ("127.0.0.1", CTRL_PORT), Ctrl).serve_forever(), daemon=True).start()
 time.sleep(0.3)
 
-def load(url, seconds=7):
+def load(url: str, seconds: float = 7) -> None:
     prof = tempfile.mkdtemp(prefix="la-chrome-")
     rules = f"MAP example.com 127.0.0.1:{HONEY['internet']}"
     p = subprocess.Popen([CH, "--headless=new", "--disable-gpu", f"--user-data-dir={prof}",
@@ -83,7 +85,7 @@ def load(url, seconds=7):
     except Exception: p.kill()
     shutil.rmtree(prof, ignore_errors=True)
 
-def snapshot():
+def snapshot() -> dict[str, int]:
     with lock: return dict(hits)
 
 print("=== CONTROL: identical page, NO CSP header (test must detect escape) ===")
@@ -117,7 +119,7 @@ stop.set()
 shutil.rmtree(STATE, ignore_errors=True)
 
 PASS = FAIL = 0
-def check(name, cond, detail=""):
+def check(name: str, cond: object, detail: object = "") -> None:
     global PASS, FAIL
     if cond: PASS += 1; print(f"  PASS  {name}")
     else: FAIL += 1; print(f"  FAIL  {name}  {detail}")

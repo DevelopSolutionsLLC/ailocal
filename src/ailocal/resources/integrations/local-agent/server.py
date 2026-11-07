@@ -7,6 +7,8 @@ text, research, edit, full, capped by clients.toml `delegate_max_mode`. Argv
 and reported capabilities share one table per CLI. No recursion (one shared
 inference service); no credential or raw CLI diagnostic crosses the boundary.
 """
+from __future__ import annotations
+
 import contextlib
 import base64
 import fcntl
@@ -23,7 +25,9 @@ import sys
 import tempfile
 import time
 import uuid
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from pathlib import Path
+from types import FrameType
 from typing import Any
 
 log = logging.getLogger('local-agent')
@@ -64,7 +68,7 @@ class DelegateError(Exception):
 class CompletedWithoutReply(DelegateError):
     """Native completion permits an explicit resume, never a success claim."""
 
-    def __init__(self, agent: str, session_id: str):
+    def __init__(self, agent: str, session_id: str) -> None:
         if agent not in AGENTS or not isinstance(session_id, str) or not _UUID.fullmatch(session_id):
             raise DelegateError('DELEGATE_FAILED: invalid completed session')
         self.session_id = str(uuid.UUID(session_id))
@@ -199,7 +203,8 @@ def research_mcp_config() -> str:
     return json.dumps({'mcpServers': {'research': entry}})
 
 
-def _claude_argv(prompt, model, mode, resume, session, settings, cwd=None, images=False) -> list[str]:
+def _claude_argv(prompt: str, model: str, mode: str, resume: str | None, session: str,
+                 settings: dict, cwd: str | None = None, images: bool = False) -> list[str]:
     plan = CLAUDE_PLAN[mode]
     # No one answers prompts; w/o this a model retried one denied Read 228
     # times (#39). Needs Claude Code 2.1.259 (/en/headless).
@@ -265,7 +270,8 @@ def codex_permissions(mode: str) -> list[str]:
     return ['-c', f'default_permissions="{CODEX_PROFILE}"', '-c', f'permissions.{CODEX_PROFILE}={table}']
 
 
-def _codex_argv(prompt, model, mode, cwd, resume, out_file, images=()) -> list[str]:
+def _codex_argv(prompt: str, model: str, mode: str, cwd: str, resume: str | None, out_file: str,
+                images: Sequence[dict[str, Any]] = ()) -> list[str]:
     common = ['--model', model, '--json', '--skip-git-repo-check', '-o', out_file,
               '-c', 'mcp_servers.agent.disabled_tools=["delegate"]',
               # exec never prompts; stated so a profile cannot make a run wait.
@@ -413,7 +419,7 @@ def _group_alive(pgid: int) -> bool:
     return True
 
 
-def _shutdown(signum, frame) -> None:
+def _shutdown(signum: int, frame: FrameType | None) -> None:
     """Kill every live child group, then exit; children miss the host signal."""
     for pgid in list(_ACTIVE):
         _signal_group(pgid, signal.SIGTERM)
@@ -425,7 +431,7 @@ def _shutdown(signum, frame) -> None:
     os._exit(128 + signum)
 
 
-async def _reap(proc) -> None:
+async def _reap(proc: Any) -> None:
     """TERM then KILL the whole group, each wait bounded, on every exit."""
     import anyio
     _signal_group(proc.pid, signal.SIGTERM)
@@ -441,7 +447,9 @@ async def _reap(proc) -> None:
     _ACTIVE.discard(proc.pid)
 
 
-async def _run(argv, env, cwd, on_line=None, input_data=None) -> tuple[int, bytes]:
+async def _run(argv: list[str], env: dict[str, str], cwd: str | None,
+               on_line: Callable[[bytes | bytearray], None] | None = None,
+               input_data: bytes | None = None) -> tuple[int, bytes]:
     """Run one owned CLI in its own process group; return (exit code, stdout).
 
     Every exit runs the same shielded cleanup; the caller bounds wall time.
@@ -460,7 +468,7 @@ async def _run(argv, env, cwd, on_line=None, input_data=None) -> tuple[int, byte
     _ACTIVE.add(proc.pid)
     out, overflow, drained = bytearray(), False, anyio.Event()
 
-    async def feed():
+    async def feed() -> None:
         try:
             await proc.stdin.send(input_data)
         except (anyio.BrokenResourceError, anyio.ClosedResourceError):
@@ -468,7 +476,7 @@ async def _run(argv, env, cwd, on_line=None, input_data=None) -> tuple[int, byte
         finally:
             await proc.stdin.aclose()
 
-    async def pump():
+    async def pump() -> None:
         nonlocal overflow
         skipping = False
         try:
@@ -496,7 +504,7 @@ async def _run(argv, env, cwd, on_line=None, input_data=None) -> tuple[int, byte
         finally:
             drained.set()
 
-    async def discard():
+    async def discard() -> None:
         async for _ in proc.stderr:
             pass
 
@@ -582,7 +590,8 @@ def canonical_cwd(cwd: str | None) -> str | None:
         raise DelegateError('INVALID_CWD: cwd must be an existing absolute directory') from None
 
 
-def session_binding(session, agent, model, mode, scope, cwd, guides, guide) -> dict:
+def session_binding(session: str | None, agent: str, model: str, mode: str, scope: str | None,
+                    cwd: str, guides: dict, guide: dict) -> dict:
     identity = {k: guide.get(k) for k in ('model', 'source', 'context_input', 'max_output',
                                          'reasoning', 'sampling', 'input_modalities')}
     identity['tier'] = guides.get('tier')
@@ -640,7 +649,8 @@ def save_binding(binding: dict) -> None:
                 os.unlink(temporary)
 
 
-def bound_arguments(binding, agent, model, mode, tools, cwd):
+def bound_arguments(binding: dict, agent: str | None, model: str | None, mode: str | None,
+                    tools: bool | None, cwd: str | None) -> tuple[str, str, str, str | None]:
     """Return bound args: an ID-only resume inherits; changes keep scope."""
     effective = (binding['agent'] if agent is None else agent,
                  binding['model'] if model is None else model,
@@ -652,7 +662,7 @@ def bound_arguments(binding, agent, model, mode, tools, cwd):
 
 
 @contextlib.contextmanager
-def session_lock(session: str):
+def session_lock(session: str) -> Iterator[None]:
     """Lock a native session so concurrent resumes cannot interleave writes."""
     root = private_directory('sessions')
     fd = os.open(root / f'{session}.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
@@ -700,7 +710,8 @@ def image_bytes(path: str, scope: str) -> bytes:
 
 
 @contextlib.asynccontextmanager
-async def prepared_images(paths, scope, guide):
+async def prepared_images(paths: Sequence[str] | None, scope: str | None,
+                          guide: dict) -> AsyncIterator[list[dict[str, Any]]]:
     """Bound explicit attachments, without granting the model file tools."""
     if not paths:
         yield []
@@ -758,7 +769,8 @@ def _clip(text: str) -> tuple[str, bool]:
     return text[:MAX_OUTPUT_CHARS], True
 
 
-async def delegate_claude(prompt, model, mode, cwd, resume, guide, images=()) -> dict[str, Any]:
+async def delegate_claude(prompt: str, model: str, mode: str, cwd: str, resume: str | None,
+                          guide: dict, images: Sequence[dict[str, Any]] = ()) -> dict[str, Any]:
     session = resume or str(uuid.uuid4())
     argv = _claude_argv(prompt, model, mode, resume, session, claude_settings(mode, guide), cwd, bool(images))
     if images:
@@ -769,7 +781,7 @@ async def delegate_claude(prompt, model, mode, cwd, resume, guide, images=()) ->
                    'parent_tool_use_id': None, 'session_id': session}
         terminal = []
 
-        def on_event(line):
+        def on_event(line: bytes | bytearray) -> None:
             try:
                 event = json.loads(line)
                 if isinstance(event, dict) and event.get('type') == 'result':
@@ -807,7 +819,7 @@ async def delegate_claude(prompt, model, mode, cwd, resume, guide, images=()) ->
             'capabilities': {**capabilities('claude', mode), 'working_directory': cwd}}
 
 
-def _permission_denials(payload) -> list[dict[str, str]]:
+def _permission_denials(payload: dict) -> list[dict[str, str]]:
     """Return tool calls Claude Code refused, from its result message.
 
     Denied runs still exit 0 as success (anthropics/claude-code#76867), so the
@@ -824,11 +836,12 @@ def _permission_denials(payload) -> list[dict[str, str]]:
     return out
 
 
-async def delegate_codex(prompt, model, mode, cwd, resume, guide, images=()) -> dict[str, Any]:
+async def delegate_codex(prompt: str, model: str, mode: str, cwd: str, resume: str | None,
+                         guide: dict, images: Sequence[dict[str, Any]] = ()) -> dict[str, Any]:
     # Codex limits come from its catalog entry for `model`; guide is not needed.
     events = {'thread': None, 'completed': False, 'failed': False}
 
-    def on_event(line: bytes) -> None:
+    def on_event(line: bytes | bytearray) -> None:
         # learn.chatgpt.com/docs/non-interactive-mode
         try:
             event = json.loads(line)
@@ -896,7 +909,7 @@ DELEGATE_DESCRIPTION = (
     'Parent conversation images are not forwarded automatically; supply local file paths.')
 
 
-def build_mcp():
+def build_mcp() -> Any:
     from mcp.server.mcpserver import MCPServer
     from mcp.server.mcpserver.exceptions import ToolError
     from mcp.types import ToolAnnotations
@@ -1012,7 +1025,7 @@ def build_mcp():
     return app
 
 
-def main():
+def main() -> None:
     configure_logging(Path(os.environ.get('LOCAL_AGENT_STATE', '.')))
     log.info('local-agent starting (default model=%s)', DEFAULT_MODEL)
     for signum in (signal.SIGINT, signal.SIGTERM):

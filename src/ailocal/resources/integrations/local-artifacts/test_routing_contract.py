@@ -4,6 +4,8 @@
 Proves the description keeps the measured language, not that a model obeys
 it; tests/artifact-routing.sh measures the behavioural rate.
 """
+from __future__ import annotations
+
 import importlib.util, sys
 from pathlib import Path
 
@@ -13,7 +15,7 @@ spec = importlib.util.spec_from_file_location("srv", HERE / "server.py")
 srv = importlib.util.module_from_spec(spec); spec.loader.exec_module(srv)
 
 FAILS = 0
-def check(label, cond, detail=""):
+def check(label: str, cond: object, detail: str = "") -> None:
     global FAILS
     print(("  ok    " if cond else "  FAIL  ") + label + ("" if cond else f"  -- {detail}"))
     if not cond: FAILS += 1

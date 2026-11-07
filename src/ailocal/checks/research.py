@@ -1,4 +1,8 @@
 """Research integration diagnostics do not issue searches or inference."""
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from ailocal.primitives import sha256_file
 import json
 from ailocal import policy
@@ -6,8 +10,11 @@ from ailocal.mcp import launch_environment, registration
 from ailocal.checks import failed, passed, warning
 from ailocal.checks.services import http_json, Unreachable
 
+if TYPE_CHECKING:
+    from ailocal.checks import CheckResult
 
-def check_research():
+
+def check_research() -> CheckResult:
     home = policy.deployed_client_root() / 'claude'
     cj = home / '.claude.json'
     if not cj.is_file():

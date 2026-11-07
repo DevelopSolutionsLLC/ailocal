@@ -19,18 +19,20 @@ def _drop_stale_tree() -> None:
     shutil.rmtree(_BUILD_LIB, ignore_errors=True)
 
 
-def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
+def build_wheel(wheel_directory: str, config_settings: dict[str, str | list[str] | None] | None = None,
+                metadata_directory: str | None = None) -> str:
     _drop_stale_tree()
     return _setuptools.build_wheel(wheel_directory, config_settings,
                                    metadata_directory)
 
 
-def build_editable(wheel_directory, config_settings=None, metadata_directory=None):
+def build_editable(wheel_directory: str, config_settings: dict[str, str | list[str] | None] | None = None,
+                   metadata_directory: str | None = None) -> str:
     _drop_stale_tree()
     return _setuptools.build_editable(wheel_directory, config_settings,
                                       metadata_directory)
 
 
-def build_sdist(sdist_directory, config_settings=None):
+def build_sdist(sdist_directory: str, config_settings: dict[str, str | list[str] | None] | None = None) -> str:
     _drop_stale_tree()
     return _setuptools.build_sdist(sdist_directory, config_settings)

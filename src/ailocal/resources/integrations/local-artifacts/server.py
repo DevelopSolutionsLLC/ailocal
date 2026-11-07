@@ -11,6 +11,7 @@ listener in the MCP process dies at session end (docs/decisions.md, 013).
 `/` is the trusted viewer; model content is served at `/content`, framed with
 `sandbox="allow-scripts"` (opaque origin) under `connect-src 'none'`.
 """
+from __future__ import annotations
 
 import html
 import json
@@ -21,8 +22,10 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Mapping
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any, NoReturn
 
 import architecture
 import mermaid_validate
@@ -55,7 +58,7 @@ except OSError:
 
 # Approved file_path root: override, then CLAUDE_PROJECT_DIR (launch dir, not
 # git root; verified 2.1.231), then cwd. One session = one project.
-def _resolve_root():
+def _resolve_root() -> Path:
     for candidate in (os.environ.get("LOCAL_ARTIFACTS_ROOT"),
                       os.environ.get("CLAUDE_PROJECT_DIR")):
         if candidate:
@@ -86,7 +89,7 @@ MARKED_JS_PATH = VENDOR / "marked.min.js"
 MERMAID_JS_PATH = VENDOR / "mermaid.min.js"
 
 
-def _vendor(path):
+def _vendor(path: Path) -> str:
     """Read a bundled library for inlining; generated content never fetches."""
     try:
         return path.read_text(encoding="utf-8")
@@ -127,7 +130,7 @@ def _atomic_write(path: Path, text: str) -> None:
     os.replace(tmp, path)
 
 
-def _load_persisted_state():
+def _load_persisted_state() -> None:
     global _content_mtime
     try:
         if CONTENT_FILE.exists():
@@ -339,7 +342,7 @@ def _inline_markdown_mermaid(content: str) -> tuple[str, int]:
     """
     n = 0
 
-    def one(m):
+    def one(m: re.Match[str]) -> str:
         nonlocal n
         n += 1
         src, _ = strip_mermaid_presentation(m.group("body"))
@@ -480,7 +483,7 @@ _MERMAID_UNQUOTED_LABEL = re.compile(r'\[(?!")([^\[\]"\n]*[()][^\[\]"\n]*)\]')
 def normalise_mermaid_labels(source: str) -> tuple[str, int]:
     """Quote `[label]` text containing parentheses; return source and count."""
     n = 0
-    def q(m):
+    def q(m: re.Match[str]) -> str:
         nonlocal n
         n += 1
         return '["' + m.group(1).strip() + '"]'
@@ -508,13 +511,13 @@ def build_mermaid_content(source: str) -> str:
 
 
 #: Grammar gate on the normalised (served) source; UNAVAILABLE refuses too.
-def _mermaid_verdict(source: str):
+def _mermaid_verdict(source: str) -> mermaid_validate.Result:
     normalised, _ = strip_mermaid_presentation(source)
     normalised, _ = normalise_mermaid_labels(normalised)
     return mermaid_validate.parse(normalised)
 
 
-def _mermaid_refusal(result, where: str) -> str:
+def _mermaid_refusal(result: mermaid_validate.Result, where: str) -> str:
     if result.state == mermaid_validate.INVALID:
         return (f"Publish failed: {where} does not parse, so the artifact was "
                 "NOT published -- it would have rendered as \"Syntax error in "
@@ -555,7 +558,7 @@ def build_content_page(state: dict) -> str:
     return build_html_content(state.get("content", ""))
 
 
-def _notify_sse():
+def _notify_sse() -> None:
     ts = str(int(time.time()))
     with _sse_lock:
         clients = list(_sse_clients)
@@ -583,12 +586,12 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "local-artifacts"
     sys_version = ""
 
-    def log_message(self, fmt, *args):
+    def log_message(self, fmt: str, *args: object) -> None:
         pass  # MCP speaks stdio; stdout must stay clean
 
     # No do_POST: upstream's unauthenticated cross-origin publish is removed.
 
-    def do_GET(self):
+    def do_GET(self) -> None:
         global _last_activity
         _last_activity = time.time()
         if not _host_ok(self.headers.get("Host", "")):
@@ -638,7 +641,7 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._send(404, "text/plain; charset=utf-8", b"Not found")
 
-    def _sse(self):
+    def _sse(self) -> None:
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
@@ -665,7 +668,8 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError:
                     pass
 
-    def _send(self, code, ct, body, csp=None, extra=None):
+    def _send(self, code: int, ct: str, body: bytes, csp: str | None = None,
+              extra: Mapping[str, str] | None = None) -> None:
         self.send_response(code)
         self.send_header("Content-Type", ct)
         self.send_header("Content-Length", str(len(body)))
@@ -683,7 +687,8 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
 
-def _publish(title, emoji, content, fmt, published_at, artifact_id=""):
+def _publish(title: str, emoji: str, content: str, fmt: str, published_at: str,
+             artifact_id: str = "") -> None:
     now = published_at or time.strftime("%Y-%m-%d %H:%M:%S")
     with _state_lock:
         _state.update({"title": title, "emoji": emoji, "content": content,
@@ -699,7 +704,7 @@ def _publish(title, emoji, content, fmt, published_at, artifact_id=""):
     _notify_sse()
 
 
-def _run_http():
+def _run_http() -> None:
     global _http_error
     try:
         srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
@@ -714,7 +719,7 @@ def _run_http():
     srv.serve_forever()
 
 
-def _watch_state(interval=0.25):
+def _watch_state(interval: float = 0.25) -> NoReturn:
     """Ingest artifacts other processes publish via the 0600 state file.
 
     A file, not an HTTP endpoint, so there is no write surface (test_server E).
@@ -741,7 +746,7 @@ def _watch_state(interval=0.25):
             _notify_sse()
 
 
-def _idle_reaper():
+def _idle_reaper() -> None:
     """Exit once there are no requests and no SSE watchers."""
     if IDLE_EXIT <= 0:
         return
@@ -753,7 +758,7 @@ def _idle_reaper():
             os._exit(0)
 
 
-def _probe(timeout=0.6):
+def _probe(timeout: float = 0.6) -> bool:
     """Return whether OUR server answers on PORT: our JSON, not just a 200."""
     import urllib.request
     try:
@@ -768,7 +773,7 @@ def _probe(timeout=0.6):
         return False
 
 
-def _await_ingest(artifact_id, published_at, timeout=3.0):
+def _await_ingest(artifact_id: str, published_at: str, timeout: float = 3.0) -> bool:
     """Block until the shared server serves the artifact, before a tab opens."""
     import urllib.request
     deadline = time.time() + timeout
@@ -787,7 +792,7 @@ def _await_ingest(artifact_id, published_at, timeout=3.0):
     return False
 
 
-def ensure_preview_server(timeout=8.0):
+def ensure_preview_server(timeout: float = 8.0) -> bool:
     """Ensure a preview server owns PORT, in its own session, not this process.
 
     The MCP process dies at session end; bind-race losers exit and reuse the
@@ -826,7 +831,7 @@ def ensure_preview_server(timeout=8.0):
     return False
 
 
-def auto_open_enabled():
+def auto_open_enabled() -> tuple[bool, str]:
     """Return whether publish may open a window, and which switch decided.
 
     ailocal's variable, then CLAUDE_CODE_ARTIFACT_AUTO_OPEN, then enabled; any
@@ -842,7 +847,7 @@ def auto_open_enabled():
     return True, "default"
 
 
-def _watchers(timeout=0.6):
+def _watchers(timeout: float = 0.6) -> int | None:
     """Return the live viewer count from /status, or None if no answer."""
     import urllib.request
     try:
@@ -854,7 +859,7 @@ def _watchers(timeout=0.6):
         return None
 
 
-def _needs_presentation(grace=None):
+def _needs_presentation(grace: float | None = None) -> bool:
     """Return True if no tab watches now or reattaches within PRESENT_GRACE.
 
     Sampled over time: a healing tab reads zero watchers for VIEWER_RELOAD_MS,
@@ -870,7 +875,7 @@ def _needs_presentation(grace=None):
     return True
 
 
-def _open_browser(url):
+def _open_browser(url: str) -> str:
     """Hand `url` to the OS default browser, never the validation Chrome.
 
     Returns:
@@ -905,7 +910,7 @@ _SUBRESOURCE_PATTERNS = (
 )
 
 
-def external_subresources(content):
+def external_subresources(content: str | None) -> list[str]:
     """Return remote subresources the CSP blocks, so a blank page is refused."""
     found = []
     for pat in _SUBRESOURCE_PATTERNS:
@@ -916,7 +921,8 @@ def external_subresources(content):
     return found
 
 
-def resolve_input(content: str, file_path: str):
+def resolve_input(content: str, file_path: str
+                  ) -> tuple[None, str] | tuple[tuple[str, str | None], None]:
     """Return (content, format_hint).
 
     Raises:
@@ -965,7 +971,7 @@ def resolve_input(content: str, file_path: str):
     return (content, None), None
 
 
-def slugify(text, fallback="artifact"):
+def slugify(text: str | None, fallback: str = "artifact") -> str:
     """Return a non-empty capped [a-z0-9-] id; cannot escape or be a dotfile."""
     out = []
     for ch in (text or "").lower():
@@ -977,11 +983,11 @@ def slugify(text, fallback="artifact"):
     return slug or fallback
 
 
-def _source_path(artifact_id, fmt):
+def _source_path(artifact_id: str, fmt: str) -> Path:
     return ARTIFACT_DIR / (artifact_id + SOURCE_EXT.get(fmt, ".txt"))
 
 
-def persist_source(artifact_id, fmt, source):
+def persist_source(artifact_id: str, fmt: str, source: str) -> tuple[Path | None, str | None]:
     """Write the canonical source, not rendered output (that is cache).
 
     Never raises: an unwritable project still gets a preview, and says so.
@@ -998,7 +1004,7 @@ def persist_source(artifact_id, fmt, source):
         return None, f"could not write the source file ({e})"
 
 
-def resolve_artifact_id(title, artifact_id):
+def resolve_artifact_id(title: str, artifact_id: str | None) -> str:
     """Map one title to one artifact id deterministically, across sessions.
 
     Same-titled artifacts share a file; pass distinct `artifact_id`s to split.
@@ -1008,8 +1014,8 @@ def resolve_artifact_id(title, artifact_id):
     return slugify(title, fallback="artifact")
 
 
-def publish(title, content="", file_path="", fmt="html", emoji="\U0001F4C4",
-            artifact_id=""):
+def publish(title: str, content: str = "", file_path: str = "", fmt: str = "html",
+            emoji: str = "\U0001F4C4", artifact_id: str = "") -> tuple[bool, str]:
     """Publish an artifact; return (ok, message)."""
     if not isinstance(title, str) or not title.strip():
         return False, "Publish failed: 'title' is required and must be a string."
@@ -1148,7 +1154,7 @@ TOOL_DESCRIPTION = (
 )
 
 
-def build_mcp():
+def build_mcp() -> Any:
     """Build the MCP server; mcp 2.x derives the schema from annotations."""
     from mcp.server.mcpserver import MCPServer
     from pydantic import Field
@@ -1196,14 +1202,14 @@ def build_mcp():
     return server
 
 
-def start_http_thread():
+def start_http_thread() -> threading.Thread:
     """Start an in-process listener for tests; production uses `--serve`."""
     t = threading.Thread(target=_run_http, daemon=True)
     t.start()
     return t
 
 
-def serve_main():
+def serve_main() -> int:
     """Run the shared preview server until IDLE_EXIT after the last viewer."""
     try:
         srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
@@ -1218,7 +1224,7 @@ def serve_main():
     return 0
 
 
-def diagnose_main():
+def diagnose_main() -> int:
     """Print why presentation would or would not open a window right now.
 
     Reads publish()'s signals; prints no content or env values, only names.

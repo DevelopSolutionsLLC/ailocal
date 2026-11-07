@@ -17,6 +17,7 @@ import subprocess
 import sys
 import time
 import tomllib
+from collections.abc import Callable
 from pathlib import Path
 
 from . import policy
@@ -38,11 +39,11 @@ def recommended() -> list[tuple[tuple[str, ...], str, object, str]]:
 
 
 class _UnixHTTP(http.client.HTTPConnection):
-    def __init__(self, path: str, timeout: float):
+    def __init__(self, path: str, timeout: float) -> None:
         super().__init__("localhost", timeout=timeout)
         self._path = path
 
-    def connect(self):
+    def connect(self) -> None:
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.settimeout(self.timeout)
         self.sock.connect(self._path)
@@ -61,7 +62,7 @@ def effective(timeout: float = 5) -> dict | None:
         return None
 
 
-def _value(settings: dict, path: tuple[str, ...]):
+def _value(settings: dict, path: tuple[str, ...]) -> object:
     node = settings
     for key in path:
         node = node.get(key, {}) if isinstance(node, dict) else {}
@@ -132,7 +133,7 @@ def _save_receipt(originals: dict) -> None:
         json.dump({"owner": "ailocal", "schema": 1, "settings": originals}, stream)
 
 
-def apply(assume_yes: bool, ask) -> int:
+def apply(assume_yes: bool, ask: Callable[[str], str]) -> int:
     """Offer the recommended settings; 0 when they are in effect afterwards."""
     step("Docker Desktop settings")
     settings = effective()
@@ -213,7 +214,7 @@ def main(argv: list[str]) -> int:
             ok("recommended Docker Desktop settings in effect")
         return 1 if changes else 0
     if action == "apply":
-        def ask(prompt):
+        def ask(prompt: str) -> str:
             try:
                 return input(f"  {prompt}: ")
             except EOFError:

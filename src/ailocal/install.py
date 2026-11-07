@@ -16,7 +16,9 @@ import sys
 import time
 import tempfile
 import tomllib
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from . import policy, runtime
 from .report import bad, dim, ok, step, warn
@@ -59,12 +61,13 @@ def _ollama_env() -> dict[str, str]:
     return dict(OLLAMA_ENV, OLLAMA_NUM_PARALLEL=parallel)
 
 
-def _run(*args, check: bool = False, capture: bool = False, **kw):
+def _run(*args: str | Path, check: bool = False, capture: bool = False,
+         **kw: Any) -> subprocess.CompletedProcess[str]:
     return subprocess.run([str(a) for a in args], check=check, text=True,
                           capture_output=capture, **kw)
 
 
-def _out(*args) -> str:
+def _out(*args: str | Path) -> str:
     try:
         r = _run(*args, capture=True)
     except (OSError, subprocess.SubprocessError):
@@ -214,12 +217,12 @@ def upgrade_model_defaults(source: Path, config: Path) -> dict:
               "presence_penalty", "repeat_penalty", "enabled", "role", "purpose",
               "strengths", "weaknesses")
 
-    def literal(value):
+    def literal(value: object) -> str:
         if isinstance(value, dict):
             return "{" + ", ".join(json.dumps(k) + " = " + literal(v) for k, v in value.items()) + "}"
         return json.dumps(value, ensure_ascii=False)
 
-    def value_end(body, start):
+    def value_end(body: str, start: int) -> int:
         # A value ends at the first line completing it as TOML; trailing
         # comments and blanks stay with the next row.
         end = start
@@ -232,7 +235,7 @@ def upgrade_model_defaults(source: Path, config: Path) -> dict:
                 continue
         raise ValueError("model upgrade could not delimit an authored profile value")
 
-    def table(text, header, values):
+    def table(text: str, header: str | None, values: dict[str, object]) -> str:
         # header None is the top-level preamble before the first table.
         match = (re.match(r"", text) if header is None else
                  re.search(r"(?m)^" + re.escape(header) + r"[ \t]*(?:#[^\n]*)?$", text))
@@ -391,7 +394,7 @@ def migrate_profile_roles(source: Path, config: Path) -> dict:
             raise ValueError(f"{tier}.toml declares [fast] without a chat role to collapse into")
         primary = data[src]
 
-        def other(section):
+        def other(section: dict) -> dict:
             return {k: v for k, v in section.items() if k not in ROLE_SPLIT_FIELDS}
 
         expected = {k: copy.deepcopy(v) for k, v in data.items() if k not in retired}
@@ -558,7 +561,7 @@ def require_prerequisites() -> None:
     ok(f"{', '.join(label for _, label, _ in PREREQUISITES)} present, Docker running")
 
 
-def _wait(predicate, attempts: int, delay: float) -> bool:
+def _wait(predicate: Callable[[], bool], attempts: int, delay: float) -> bool:
     from .primitives import wait_until
     return wait_until(predicate, attempts, delay)
 
@@ -649,7 +652,7 @@ def _bootout(label: str) -> None:
     target = f"gui/{os.getuid()}/{label}"
     _run("launchctl", "bootout", target, capture=True, timeout=15)
 
-    def removed():
+    def removed() -> bool:
         status = _run("launchctl", "print", target, capture=True, timeout=5)
         if status.returncode == 0:
             return False
@@ -805,7 +808,7 @@ def _activate_ollama(binary: str) -> None:
         from .checks.services import http_json, Unreachable
         observed = "no response"
 
-        def ready():
+        def ready() -> bool:
             nonlocal observed
             try:
                 version = http_json(f"{policy.ollama_url()}/api/version", timeout=1).get("version")
@@ -927,7 +930,7 @@ def pull_models() -> int:
 
     from .model_sources import current
     have = _installed_models()
-    def size_of(tag):
+    def size_of(tag: str) -> tuple[float, bool]:
         for name, gb in have.items():
             # Only an omitted :latest matches; a shared prefix ≠ same quant.
             if name == tag or name == f"{tag}:latest" or f"{name}:latest" == tag:
@@ -1062,7 +1065,7 @@ VSCODE_KEY_STEPS = ("grep LITELLM_MASTER_KEY ~/.local/state/ailocal/env\n"
                     "'Manage Language Models' → ailocal → paste the key")
 
 
-def _vscode_provider_group():
+def _vscode_provider_group() -> dict | None:
     """Return ailocal's provider entry in chatLanguageModels.json, or None.
 
     Read-only: must never create the user directory it inspects.
@@ -1189,14 +1192,14 @@ def audit() -> list:
 
     results: list = []
 
-    def flag(klass, item, location, action):
+    def flag(klass: str, item: str, location: str | Path, action: str) -> None:
         results.append(CheckResult(klass.lower(), WARN, f"{klass} {item}",
                                    str(location), action))
 
-    def fine(summary):
+    def fine(summary: str) -> None:
         results.append(passed("install", summary))
 
-    def note(summary):
+    def note(summary: str) -> None:
         results.append(CheckResult("install", SKIP, summary))
 
     cfg = policy.deployed_client_root()
@@ -1281,7 +1284,7 @@ Idempotent.
 """
 
 
-def _opt(argv: list[str], name: str, default=None):
+def _opt(argv: list[str], name: str, default: str | None = None) -> str | None:
     return argv[argv.index(name) + 1] if name in argv else default
 
 

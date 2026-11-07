@@ -4,6 +4,8 @@
 FULL suite: a browser per fixture. Every accept is proved by the grammar, never
 by inspecting normaliser output.
 """
+from __future__ import annotations
+
 import importlib.util, os, sys, tempfile, time
 from pathlib import Path
 
@@ -18,7 +20,7 @@ srv = importlib.util.module_from_spec(spec); spec.loader.exec_module(srv)
 import mermaid_validate as V
 
 FAILS = 0
-def check(label, cond, detail=""):
+def check(label: str, cond: object, detail: object = "") -> None:
     global FAILS
     print(("  ok    " if cond else "  FAIL  ") + label + ("" if cond else f"  -- {detail}"))
     if not cond: FAILS += 1
@@ -28,7 +30,7 @@ if not V.available():
     print("      (publishing mermaid REFUSES on this machine -- it does not fail open)")
     sys.exit(0)
 
-def valid(src):
+def valid(src: str) -> bool:
     return V.parse(src).state == V.VALID
 
 # Recovered verbatim from a transcript: a member corrupted mid-token.
@@ -138,9 +140,9 @@ ok, msg = srv.publish(title="Grammar MD OK",
 check("markdown WITH a valid fence still publishes (bb15bec intact)", ok is True, msg)
 
 tmp = Path(tempfile.gettempdir())
-def profiles():
+def profiles() -> set[Path]:
     return {p for p in tmp.glob("mermaid-validate-profile-*")}
-def pages():
+def pages() -> set[Path]:
     return {p for p in tmp.glob("mermaid-validate-*") if "profile" not in p.name}
 
 before_p, before_g = profiles(), pages()

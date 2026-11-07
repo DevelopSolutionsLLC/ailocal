@@ -65,7 +65,8 @@ async def request(url: str, *, public: bool = False, sites: list[str] | None = N
         raise ResearchError('NETWORK_FAILED: check the configured backend or source availability') from None
 
 
-async def _request(url, public, sites, payload, headers):
+async def _request(url: str, public: bool, sites: list[str], payload: dict | None,
+                   headers: dict) -> tuple[int, dict, bytes]:
     for _ in range(4):
         parts = urlsplit(url)
         if (parts.scheme not in ('http', 'https') or not parts.hostname

@@ -5,7 +5,10 @@ The `runner` seam replaces Chrome; grammar lives in test_mermaid_grammar.py.
 Invariant: invalid or unchecked Mermaid never publishes. One bounded real
 parse keeps a green CORE from hiding a broken real path.
 """
+from __future__ import annotations
+
 import importlib.util, os, sys, tempfile, time
+from collections.abc import Callable
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -19,7 +22,7 @@ srv = importlib.util.module_from_spec(spec); spec.loader.exec_module(srv)
 import mermaid_validate as V
 
 FAILS = 0
-def check(label, cond, detail=""):
+def check(label: str, cond: object, detail: object = "") -> None:
     global FAILS
     print(("  ok    " if cond else "  FAIL  ") + label + ("" if cond else f"  -- {detail}"))
     if not cond: FAILS += 1
@@ -39,7 +42,7 @@ RECOVERED = """classDiagram
     StageError <|-- NoRenderNodesError
 """
 
-def dom(body):
+def dom(body: str) -> str:
     return f'<html><body><pre id="o">{body}</pre></body></html>'
 
 print("MERMAID VALIDATOR STATE MACHINE (no browser)")
@@ -74,11 +77,11 @@ check("UNAVAILABLE is NEVER reported as VALID",
 # bounded termination: the reader must not outlive the deadline
 class _Hang:
     """Fake a process that never emits and never exits."""
-    def __init__(self):
+    def __init__(self) -> None:
         import os
         self._r, self._w = os.pipe()
         self.stdout = open(self._r, "rb", buffering=0)
-    def poll(self): return None
+    def poll(self) -> None: return None
 t = time.time()
 buf = V._read_until_verdict(_Hang(), time.monotonic() + 1.0)
 el = time.time() - t
@@ -87,7 +90,7 @@ check("and yields no verdict (=> UNAVAILABLE)", buf == "")
 
 # the publish gate consumes all three states
 _real_parse = V.parse
-def fixed(state, detail=""):
+def fixed(state: str, detail: str = "") -> Callable[..., V.Result]:
     return lambda *a, **k: V.Result(state, detail)
 
 srv.mermaid_validate.parse = fixed(V.VALID)
@@ -121,7 +124,7 @@ check("prose markdown still publishes when validation is unavailable", ok is Tru
 
 # the validator must not run when there is nothing to validate
 calls = {"n": 0}
-def counting(*a, **k):
+def counting(*a: object, **k: object) -> V.Result:
     calls["n"] += 1
     return V.Result(V.VALID)
 srv.mermaid_validate.parse = counting
