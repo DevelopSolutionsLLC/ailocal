@@ -19,6 +19,7 @@ from harness import REPO, Suite, run  # noqa: E402
 from ailocal import environment  # noqa: E402
 from ailocal import policy as P  # noqa: E402
 from ailocal.checks import FAIL, PASS, WARN  # noqa: E402
+from ailocal.checks import host as H  # noqa: E402
 from ailocal.checks import services as S  # noqa: E402
 
 suite = Suite("CHECKS AND READ-ONLY COMMANDS")
@@ -84,8 +85,18 @@ def managed_ollama() -> None:
                 r = S.check_managed_ollama_runtime()
             got[label] = r.status if r.status is PASS or r.remediation == "ailocal install" else "no-remediation"
     want = {label: FAIL for label in cases} | {"selected binary on 11434": PASS}
-    check(got == want, "only the selected Ollama binary listening on 11434 passes; anything else "
-          "fails with `ailocal install`", repr(got))
+
+    # A client connected to :11434 lists before the daemon in plain lsof (#132).
+    def lsof_ps(*argv: str, timeout: float | None = None) -> str:
+        if argv[0] == "lsof":
+            return "222" if "-sTCP:LISTEN" in argv else "111\n222"
+        return {"111": "OLLAMA_MODELS=/client", "222": "OLLAMA_MODELS=/daemon"}.get(argv[-1], "")
+    with patch("ailocal.primitives.command_output", lsof_ps), \
+            patch.object(H, "command_output", lsof_ps):
+        got["models dir"] = H._models_dir()
+    want["models dir"] = "/daemon"
+    check(got == want, "only the selected Ollama binary listening on 11434 passes, anything else "
+          "fails with `ailocal install`, and the models dir is the listener's", repr(got))
 
 
 def commands() -> None:

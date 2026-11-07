@@ -12,7 +12,7 @@ import shutil
 from . import PASS, WARN, CheckResult
 from ailocal import policy as P
 from ailocal.primitives import command_output
-from .services import INSPECT_TIMEOUT, ollama_loaded
+from .services import INSPECT_TIMEOUT, ollama_listener_pid, ollama_loaded
 
 
 
@@ -49,8 +49,7 @@ def check_cli_tools() -> list[CheckResult]:
 
 def _models_dir() -> str:
     """Return the running daemon's OLLAMA_MODELS, else the launchctl value."""
-    pid = command_output("lsof", "-ti", ":11434",
-                         timeout=INSPECT_TIMEOUT).split("\n")[0]
+    pid = ollama_listener_pid()
     if pid:
         for tok in command_output("ps", "eww", "-p", pid, timeout=INSPECT_TIMEOUT).split():
             if tok.startswith("OLLAMA_MODELS="):
