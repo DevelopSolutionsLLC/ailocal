@@ -1,8 +1,6 @@
 """Host-machine checks that only doctor renders.
 
-The developer's machine rather than the repository or the running stack, always
-with remediation. Mostly WARN: a misplaced store or a cold model is expensive,
-not broken, and must not fail a runtime check.
+Mostly WARN: a misplaced store or a cold model is expensive, not broken.
 """
 
 from __future__ import annotations
@@ -27,12 +25,7 @@ def _run(cmd: list[str], timeout: int = INSPECT_TIMEOUT) -> str:
 
 
 def check_env_file() -> CheckResult:
-    """Both environment owners: the generated secrets and the user's file.
-
-    This checked one path because there used to be one file. Reporting only the
-    generated half would leave the user's provider keys unwatched — and they are
-    the half a human edits, so they are the half whose mode gets loosened.
-    """
+    """Check both env files; the hand-edited user file is the one loosened."""
     from .. import environment
     generated = environment.generated_file()
     if not generated.is_file():
@@ -50,12 +43,8 @@ def check_env_file() -> CheckResult:
 
 def check_cli_tools() -> list[CheckResult]:
     out = []
-    # Only tools ailocal cannot work without. jq is deliberately absent: every
-    # use of it is guarded and falls back, so warning about it trained people to
-    # install something nothing needs. ripgrep is needed: the generated
-    # instructions tell local models to search with `rg`, macOS ships none, and
-    # Claude Code's Bash `rg` falls back to the one on PATH when its own binary
-    # path is stale (measured 2026-11-04 after an upgrade mid-session, #64).
+    # Required tools only; jq use always falls back. rg: generated instructions
+    # use it, macOS ships none, Claude Code falls back to PATH's (#64).
     for tool, fix in (("docker", "brew install --cask docker-desktop"),
                       ("ollama", "brew install --cask ollama-binary"),
                       ("rg", "brew install ripgrep")):
@@ -67,11 +56,7 @@ def check_cli_tools() -> list[CheckResult]:
 
 
 def _models_dir() -> str:
-    """Where the running daemon actually stores models.
-
-    The managed agent bakes OLLAMA_MODELS into its own environment, and
-    com.ailocal.ollama-env publishes it with `launchctl setenv`. Asking the
-    running process is authoritative, with setenv as the no-daemon fallback."""
+    """Return the running daemon's OLLAMA_MODELS, else the launchctl value."""
     pid = _run(["lsof", "-ti", ":11434"]).split("\n")[0]
     if pid:
         for tok in _run(["ps", "eww", "-p", pid]).split():
@@ -81,9 +66,7 @@ def _models_dir() -> str:
 
 
 def check_model_store() -> list[CheckResult]:
-    """An unset OLLAMA_MODELS silently uses ~/.ollama, so a second account
-    re-downloads everything while the shared store still looks populated.
-    """
+    """Check the model store; unset OLLAMA_MODELS silently uses ~/.ollama."""
     out = []
     target = _models_dir()
     home_store = pathlib.Path.home() / ".ollama" / "models"
@@ -113,7 +96,7 @@ def check_model_store() -> list[CheckResult]:
 
 
 def check_residency(model: str) -> CheckResult:
-    """A cold model pays both a load and a cold prompt evaluation."""
+    """Check the model is loaded; a cold one pays a load and a cold eval."""
     loaded = {m.split(":", 1)[0] for m in ollama_loaded()}
     if model.split(":", 1)[0] in loaded:
         return CheckResult("residency", PASS, f"model loaded: {model}")
@@ -123,7 +106,7 @@ def check_residency(model: str) -> CheckResult:
 
 
 def check_parallelism(context: int) -> CheckResult:
-    """KV cache is allocated per parallel slot, so both numbers matter together."""
+    """Report parallelism with context; KV cache is allocated per slot."""
     npar = os.environ.get("OLLAMA_NUM_PARALLEL") or _run(
         ["launchctl", "getenv", "OLLAMA_NUM_PARALLEL"]) or "default"
     return CheckResult("parallelism", PASS,

@@ -1,12 +1,7 @@
-"""install.py — getting a machine into a state where the runtime can run.
+"""Install: prerequisites, policy, tier, env, models, login agents, audit.
 
-Prerequisite verification, asset provisioning, the active tier, .env, the Ollama model
-set, the login agents, and the read-only audit of an installation that
-`ailocal check` reports.
-
-Provenance rule: shipped assets are read in place from the package and are never
-copied anywhere; the config root holds user-editable policy and is replaced only
-where the file still matches the digest recorded when it was installed.
+Shipped assets are read in place, never copied; a config-root file is
+replaced only while it matches the digest recorded at install.
 """
 from __future__ import annotations
 
@@ -31,64 +26,32 @@ LOG_DIR = Path.home() / "Library" / "Logs" / "ailocal"
 MODEL_STORE = str(policy.ollama_model_store())
 #: The login agents a current install writes; teardown removes exactly these.
 AGENTS = ("com.ailocal.ollama", "com.ailocal.ollama-env", "com.ailocal.ollama-watch")
-#: Written by releases before 2026-11-03 (the login model preload, 65bccaa) and
-#: still booted out so an upgrade-then-teardown leaves nothing. Removal
-#: condition: 0.18, two minor releases after the retirement.
+#: Pre-2026-11-03 agents, still booted out on teardown. Remove in 0.18.
 RETIRED_AGENTS = ("com.ailocal.preload",)
 
-#: Ollama's runtime environment, in one place. KEEP_ALIVE is the GLOBAL DEFAULT
-#: and governs only direct callers that send no per-request keep_alive — in
-#: practice the embedder, which is infrastructure other tools depend on being
-#: resident. Generation models go through LiteLLM, which sends a per-role
-#: keep_alive that overrides this. MAX_LOADED caps COUNT, not size: Ollama
-#: refuses a model that will not fit, so it never OOMs the machine.
+#: Ollama's runtime env. MAX_LOADED caps count, not size (Ollama refuses a
+#: model that will not fit).
 OLLAMA_ENV = {
     "OLLAMA_HOST": "127.0.0.1:11434",
     "OLLAMA_MODELS": MODEL_STORE,
-    # 6h, not -1. This is the default for anything loaded WITHOUT an explicit
-    # keep_alive -- generation goes through LiteLLM, which sends a per-role value
-    # that overrides this, so the default governs a bare `ollama run` and
-    # models other tools load on this same daemon
-    # (nomic-embed-text is one). `-1` meant none of those ever released memory,
-    # which is not a default anyone chose; it is a default nobody noticed. A
-    # process that wants a model pinned can still ask for -1 explicitly.
+    # Default only for loads w/o keep_alive (LiteLLM sends per-role); -1 would
+    # pin e.g. nomic-embed-text forever. Callers may still ask for -1.
     "OLLAMA_KEEP_ALIVE": "6h",
-    # 4, not 5, and not 3. The tier needs THREE distinct models: primary (and
-    # fast, where declared, which is the same weights thinking off and shares
-    # its resident copy), cyber and the completion model. The fourth slot is nomic-embed-text, which is NOT in any
-    # profile -- it is served by this same Ollama for indexing outside ailocal,
-    # and it still occupies a slot.
-    #
-    # 3 would fit today only because `completion` is standby and never loads.
-    # The moment it does, Ollama must evict something to admit a 1.9 GB FIM
-    # model, and the eviction is not guaranteed to pick the cheap one: keep_alive
-    # -1 stops the TIMER, not a capacity eviction, so the 16 GiB gemma is a
-    # candidate. Paying a ~30 s reload of the large model to admit the small one
-    # is the thrash worth avoiding.
+    # primary (+ fast, same weights), cyber, completion, and external
+    # nomic-embed-text; 3 would evict a large model to load completion.
     "OLLAMA_MAX_LOADED_MODELS": "4",
-    # Conservative cross-tier default. [REAL] Ollama 0.32.14 split a 4,608-cell
-    # completion window between two slots, leaving 2,304 tokens in each. [REAL]
-    # Ollama 0.40.13 on this 128 GB Mac instead allocates two full 4,608-token
-    # slots for that model and two full 262,144-token slots for Gemma. Two-slot
-    # memory use on 16/32 GB tiers and the optional patched runtime remains
-    # unmeasured, so an operator can select 2 without changing those defaults.
+    # Conservative: 2-slot memory on 16/32 GB and the patched runtime is
+    # unmeasured (0.32.14 split one window across slots); operators may pick 2.
     "OLLAMA_NUM_PARALLEL": "1",
-    # These last two reach the llama_cpp runner ONLY, where they become
-    # `--flash-attn on --cache-type-k q8_0 --cache-type-v q8_0`. Every shipped
-    # chat role is a GGUF (QAT/MTP) on every tier since #93, so the q8_0 KV
-    # applies to all of them. The MLX runner accepts neither: it uses MLX's own
-    # fused attention and an unquantized KV cache, so an MLX selection pays full
-    # fp16 KV whatever is set here, and a KB/token figure cited for an MLX model
-    # is an unquantized one (measured 2026-08-21: gemma4:26b-mlx 46.2 KB/token
-    # at 64K depth).
-    # Keep them: they are correct and load-bearing for the llama_cpp roles.
+    # llama_cpp only (all shipped GGUF roles since #93); MLX ignores both and
+    # runs an unquantized fp16 KV cache.
     "OLLAMA_FLASH_ATTENTION": "1",
     "OLLAMA_KV_CACHE_TYPE": "q8_0",
 }
 
 
 def _ollama_env() -> dict[str, str]:
-    """Apply the operator's measured parallelism choice to both Ollama agents."""
+    """Apply the operator's measured parallelism to both Ollama agents."""
     from . import environment
     parallel = environment.value("AILOCAL_OLLAMA_NUM_PARALLEL") or "1"
     if parallel not in ("1", "2"):
@@ -124,7 +87,7 @@ def _yes(prompt: str) -> bool:
     return _ask(f"{prompt} [y/N]").lower().startswith("y")
 
 
-# ── provisioning ────────────────────────────────────────────────────────────
+# provisioning
 
 CONFIG_COMPONENTS = ("profiles",)
 MANIFEST_NAME = "install-manifest.json"
@@ -143,7 +106,7 @@ def _tree(root: Path, component: str) -> dict:
 
 
 def distribution_source() -> Path:
-    """The tree being installed FROM: the package's own resources."""
+    """Return the tree installed from: the package's own resources."""
     root = policy.data_root()
     if all((root / c).is_dir() for c in ("deploy", "clients")):
         return root
@@ -153,22 +116,11 @@ def distribution_source() -> Path:
 
 def provision(source: Path, config: Path, state: Path, *,
               reset: bool = False) -> dict:
-    """Install the user-editable policy defaults. Nothing else is copied.
+    """Install the user-editable policy defaults; nothing else is copied.
 
-    deploy/ and clients/ are read straight out of the package (policy.data_root),
-    so there is no shipped-asset tree to stage, swap or roll back, and no way for
-    a running container to be mounted on a directory this function is replacing.
-
-    A config file is replaced only where it still matches the digest recorded
-    when it was installed; anything else is the operator's and is preserved.
-
-    `reset=True` overrides that and takes the shipped default for every file,
-    edited or not -- but never destructively: each file it is about to replace is
-    copied into a timestamped directory beside the config root FIRST, and the
-    caller is told where. The preservation rule is the right default precisely
-    because it cannot know whether an edit was deliberate; --reset-config is how
-    an operator says it was not, after a release changes a default they never
-    chose to diverge from.
+    A file is replaced only while it matches its recorded install digest;
+    else it is the operator's. `reset=True` takes every shipped default but
+    first backs up each edited file to a timestamped dir beside the root.
     """
     for p in (config, state):
         p.mkdir(parents=True, exist_ok=True)
@@ -188,9 +140,7 @@ def provision(source: Path, config: Path, state: Path, *,
 
     backup = None
     if provenance and reset:
-        # Resolve what WOULD have been preserved, back exactly those up, then
-        # preserve nothing. Backing up the whole tree would copy files the
-        # installer was never going to touch.
+        # Back up only what would have been preserved, then preserve nothing.
         edited = [rel for rel, want in sorted(shipped.items())
                   if (config / rel).is_file() and digest(config / rel) != want]
         if edited:
@@ -205,14 +155,10 @@ def provision(source: Path, config: Path, state: Path, *,
         preserved = [rel for rel, want in sorted(shipped.items())
                      if (config / rel).is_file() and digest(config / rel) != want]
     elif reset:
-        # No provenance means no file can be proven untouched -- normally that
-        # makes everything preserved. Under reset the same absence means nothing
-        # can be proven EDITED either, so there is nothing to back up and the
-        # shipped tree simply lands.
+        # No provenance under reset: nothing provably edited → no backup.
         preserved = []
     else:
-        # Without provenance nothing can prove a file is untouched, so every
-        # existing config file is treated as edited. A fresh install has none.
+        # No provenance: every existing file counts as edited.
         preserved = sorted(str(p.relative_to(config))
                            for c in CONFIG_COMPONENTS
                            for p in (config / c).rglob("*") if p.is_file())
@@ -226,9 +172,7 @@ def provision(source: Path, config: Path, state: Path, *,
             if rel in preserved:
                 continue
             dest = config / rel
-            # Deleting a shipped default is a decision, not damage: once the
-            # manifest proves it was installed, an upgrade reports it rather
-            # than resurrecting it.
+            # A deleted shipped default is a decision: report, never resurrect.
             if not dest.exists() and rel in shipped and not reset:
                 absent.append(rel)
                 continue
@@ -236,12 +180,8 @@ def provision(source: Path, config: Path, state: Path, *,
             shutil.copyfile(src, dest)
             installed.append(rel)
 
-    # The manifest records what was SHIPPED, never what is on disk: adopting an
-    # edited file's own digest would make it look untouched, and the next
-    # upgrade would overwrite the edit it had just promised to keep.
-    # A policy file we shipped and no longer ship is removed, but only while it
-    # still matches the digest we recorded: an edited file is the operator's,
-    # whatever the distribution now contains.
+    # Record shipped digests, never on-disk ones (an edit would look pristine).
+    # A no-longer-shipped file is removed only while it matches its digest.
     retired = []
     for rel, want in sorted(shipped.items()):
         live = config / rel
@@ -265,10 +205,9 @@ def provision(source: Path, config: Path, state: Path, *,
 
 
 def upgrade_model_defaults(source: Path, config: Path) -> dict:
-    """Explicitly adopt model/sampling/features while retaining authored geometry.
+    """Adopt shipped model/sampling/features, keeping authored geometry.
 
-    Normal installation still preserves edits. Every candidate is parsed and
-    compared before any live file changes; complete originals are backed up.
+    Every candidate is parsed before any live file changes; originals backed up.
     """
     fields = ("active", "preferred", "source", "runtime_patch", "draft_num_predict",
               "stop", "reasoning", "temperature", "top_p", "top_k", "min_p",
@@ -281,8 +220,8 @@ def upgrade_model_defaults(source: Path, config: Path) -> dict:
         return json.dumps(value, ensure_ascii=False)
 
     def value_end(body, start):
-        # A value ends at the first line that completes it as TOML, so comments
-        # and blank lines after a multi-line array stay with the next row.
+        # A value ends at the first line completing it as TOML; trailing
+        # comments and blanks stay with the next row.
         end = start
         for line in body[start:].splitlines(keepends=True):
             end += len(line)
@@ -349,8 +288,8 @@ def upgrade_model_defaults(source: Path, config: Path) -> dict:
                 guide = copy.deepcopy(shipped["model_guidance"][model])
                 expected.setdefault("model_guidance", {})[model] = guide
                 text = table(text, "[model_guidance." + json.dumps(model) + "]", guide)
-            # Shared GGUF aliases use one runner window. Increase smaller input
-            # budgets to that authored maximum, retaining every output reserve.
+            # Shared GGUF aliases share one window: raise smaller input budgets
+            # to its authored maximum, keeping every output reserve.
             groups = {}
             for role in policy.ROLES:
                 cfg = expected.get(role, {})
@@ -393,21 +332,14 @@ def upgrade_model_defaults(source: Path, config: Path) -> dict:
     return {"updated": [path.stem for path in prepared], "backup": backup}
 
 
-#: Fields the 0.15 shipped roles differed in BY DESIGN (each role's label, prose
-#: and output reserve). A difference here between two retired sections is the old
-#: default, not an operator decision, so it never counts as a conflict.
+#: Fields 0.15 roles differed in by design; a difference is never a conflict.
 ROLE_SPLIT_FIELDS = ("role", "purpose", "strengths", "weaknesses", "context_input", "max_output")
 
-#: Where [primary] takes its values from, first match wins. Removal condition for
-#: the whole 0.15 role migration (this, RETIRED_ROLE_DEFAULTS_015,
-#: migrate_profile_roles and their tests): 0.17, with the deprecated aliases.
+#: [primary]'s sources, first match wins. Remove the 0.15 migration in 0.17.
 PRIMARY_SOURCES = ("primary", "architecture", "implementation", "review")
 
-#: Where a retired section differed from [architecture] in the 0.15.1 shipped profiles by
-#: default, not by an operator's hand: Qwen3.5's non-thinking sampling on 16gb and 32gb.
-#: The 0.16 primary there is Nemotron (#87), so these values match neither the migration
-#: source nor the shipped default and would otherwise read as an operator edit. On 64gb
-#: and 128gb the three roles were identical and [fast] stays.
+#: 0.15.1 shipped defaults that differ from [architecture] (16gb/32gb Qwen3.5
+#: sampling), so they do not read as operator edits (#87).
 RETIRED_ROLE_DEFAULTS_015 = {
     tier: {"implementation": {"temperature": 0.7, "top_p": 0.8, "presence_penalty": 1.5, "reasoning": False},
            "fast": {"temperature": 0.0, "top_p": 0.9, "presence_penalty": 1.5, "reasoning": False}}
@@ -415,8 +347,7 @@ RETIRED_ROLE_DEFAULTS_015 = {
 
 
 def _section_span(text: str, header: str) -> tuple[int, int] | None:
-    """(start, end) of `[header]` through the line before the next table, with the
-    comment and blank lines that introduce the next table left to it."""
+    """Return (start, end) of `[header]`, leaving the next table's preamble."""
     match = re.search(r"(?m)^\[" + re.escape(header) + r"\][ \t]*(?:#[^\n]*)?$\n?", text)
     if not match:
         return None
@@ -432,28 +363,12 @@ def _section_span(text: str, header: str) -> tuple[int, int] | None:
 
 
 def migrate_profile_roles(source: Path, config: Path) -> dict:
-    """Collapse 0.15's [architecture]/[implementation]/[review] into [primary] (#89).
+    """Collapse 0.15's architecture/implementation/review into [primary] (#89).
 
-    Runs on the operator's edited profiles, which provision() preserves; an
-    unedited one was already replaced by the shipped file and has nothing to
-    migrate. [primary] takes the first of PRIMARY_SOURCES present, verbatim, so
-    every value the operator set survives (`--upgrade-models` adopts the shipped
-    label and prose afterwards). Each other retired section is then compared with
-    it outside ROLE_SPLIT_FIELDS. A field that differs is a CONFLICT only when
-    the other section's value is neither the shipped default nor 0.15.1's own
-    default for that section (RETIRED_ROLE_DEFAULTS_015), because then both
-    sections carry an operator edit and there is no rule to choose between them;
-    it is reported, left for the operator, and nothing is written for any tier.
-    [fast] on a tier the shipped profile serves without one is dropped when,
-    outside those fields, it is the shipped default, equals the primary, or is
-    the primary with 0.15.1's fast overrides, and otherwise kept as the
-    operator's own fast role. On such a tier the primary also runs with
-    thinking off: ADR 018 serves 16gb and 32gb without thinking, and 0.15.1's
-    [architecture] thought there by shipped default, not by the operator's
-    choice (`--upgrade-models` is the path for every other shipped value).
-
-    Every candidate is parsed and compared before any live file changes;
-    complete originals are backed up.
+    [primary] copies the first PRIMARY_SOURCES section verbatim. Another
+    retired section differing outside ROLE_SPLIT_FIELDS from both shipped
+    defaults is a conflict: reported, nothing written. A default-equivalent
+    [fast] on a tier w/o one is dropped, and primary thinks off (ADR 018).
     """
     prepared, conflicts, dropped, kept_fast, thinking_off = {}, {}, {}, [], []
     for tier in policy.TIERS:
@@ -503,7 +418,7 @@ def migrate_profile_roles(source: Path, config: Path) -> dict:
             conflicts[tier] = found
             continue
         if src == "primary" and not remove:
-            continue  # a kept [fast] beside [primary] is already the operator's policy
+            continue  # a kept [fast] is the operator's policy
         if src != "primary":
             text = re.sub(r"(?m)^\[" + src + r"\]", "[primary]", text, count=1)
         if no_thinking:
@@ -544,19 +459,16 @@ def migrate_profile_roles(source: Path, config: Path) -> dict:
             "dropped": dropped, "kept_fast": kept_fast, "thinking_off": thinking_off}
 
 
-#: A trailing quantization token in a 0.15 selection name (`-q4_K_M`, `-q8_0`,
-#: `-f16`). The structured name carries none (#93); the source hash pins it.
+#: 0.15 trailing quant token (`-q4_K_M`); structured names carry none (#93).
 QUANT_SUFFIX = re.compile(r"-(?:i?q\d[\w]*|f16|bf16|fp16|f32)$", re.IGNORECASE)
 
 
 def migrate_selection_names(config: Path) -> dict:
-    """Rename a selection whose only fault is a trailing quantization token to
-    the structured name (#93), in `active`, `preferred` and the `model_guidance`
-    key, before anything loads the operator's profile. A 0.15.1 64gb/128gb
-    profile named cyber `gemma4:26b-unrestricted-qat-mtp-q4_K_M`; left as it
-    is, `load_profile` fails closed and the installer never reaches the
-    migration that would have fixed it. A name that is still invalid after the
-    rename is left for `load_profile` to report. Originals are backed up."""
+    """Strip a trailing quant token from selection names (#93) before loading.
+
+    Else `load_profile` fails closed before any migration runs. Covers
+    `active`, `preferred` and `model_guidance` keys; originals backed up.
+    """
     prepared, renamed = {}, {}
     for tier in policy.TIERS:
         path = policy.profile_path(tier, config)
@@ -603,7 +515,7 @@ def migrate_selection_names(config: Path) -> dict:
 
 
 def role_conflict_report(conflicts: dict) -> str:
-    """What the operator must decide before `ailocal install` can continue."""
+    """Return what the operator must decide before install can continue."""
     lines = ["Profile role migration stopped: retired role sections carry different values, and "
              "ailocal does not choose between them."]
     for tier, found in sorted(conflicts.items()):
@@ -615,32 +527,15 @@ def role_conflict_report(conflicts: dict) -> str:
     return "\n".join(lines)
 
 
-# ── host prerequisites ──────────────────────────────────────────────────────
+# host prerequisites
 
-#: command -> how to get it. ailocal does not install other people's software:
-#: a package manager it did not choose, running as root, is not a thing this
-#: project should own. It states exactly what is missing and stops.
-#:
-#: A prerequisite is something with NO working code path when it is absent.
-#: That is the whole bar, and jq did not clear it. Its only runtime use is
-#: scratchpad-hook.sh, where both call sites are `command -v jq`-guarded and
-#: fall back to plain stdout — which is a SUPPORTED form, not a degradation:
-#: code.claude.com/docs/en/hooks states that for SessionStart, stdout on exit 0
-#: "is added as context that Claude can see and act on". Measured on a PATH
-#: with no jq at all: exit 0, clean stderr, usable context, scratchpad still
-#: created and still isolated per session (keyed by timestamp+pid rather than
-#: the client's session_id).
-#:
-#: The guarded fallback is the whole reason, and it holds on every macOS this
-#: project runs on. Apple bundling jq at /usr/bin since Sequoia is a
-#: convenience, NOT the justification: ailocal states no minimum macOS beyond
-#: Apple Silicon, which reaches back to Big Sur — well before that bundling.
+#: command → how to get it; ailocal names what is missing, never installs it.
+#: Only tools w/o a fallback path qualify: jq does not (hook has a fallback).
 PREREQUISITES = (
     ("docker", "Docker Desktop", "brew install --cask docker-desktop"),
     ("ollama", "Ollama", "brew install --cask ollama-binary"),
 )
-#: The menu-bar app runs its own server and watchdog on :11434 and updates
-#: itself past the measured version, so install refuses while it exists (#74).
+#: The menu-bar app holds :11434 and self-updates past tested versions (#74).
 OLLAMA_APP = Path("/Applications/Ollama.app")
 
 
@@ -668,16 +563,12 @@ def _wait(predicate, attempts: int, delay: float) -> bool:
     return wait_until(predicate, attempts, delay)
 
 
-# ── Ollama environment and login agents ─────────────────────────────────────
+# Ollama environment and login agents
 
 def _write_ollama_setenv_agent() -> None:
-    """Login agent that publishes the effective Ollama env into the session.
+    """Write the login agent publishing the daemon's Ollama env to shells.
 
-    SECOND consumer of the same settings: `com.ailocal.ollama` bakes them into
-    the server's own environment, this one publishes them to user shells so a
-    bare `ollama` call sees what the daemon sees. It is rewritten wherever the
-    server agent is; rewritten separately, the two carried different values
-    and either one implied a runtime the server did not have.
+    Always rewritten with the server agent, else the two values diverge.
     """
     setenv = "; ".join(f"launchctl setenv {k} {v}" for k, v in _ollama_env().items())
     _write_agent("com.ailocal.ollama-env", ["/bin/sh", "-c", setenv])
@@ -720,12 +611,9 @@ def _write_agent(label: str, program: list[str], *, keep_alive: bool = False,
     return path
 
 
-#: Restarts com.ailocal.ollama after a cask upgrade (#76). launchd.plist(5)
-#: calls WatchPaths race-prone: an event can be missed or arrive while Homebrew
-#: is still writing. So the script waits until the new binary and its
-#: llama-server exist, restarts only when the daemon's executable differs from
-#: the symlink's target, and also runs every five minutes as a backstop.
-#: AILOCAL_LSOF and AILOCAL_LAUNCHCTL exist for the test suite; launchd sets neither.
+#: Restart com.ailocal.ollama after a cask upgrade (#76). WatchPaths races
+#: (launchd.plist(5)): wait for the binaries, restart only on a changed
+#: target, rerun every 5 min. AILOCAL_LSOF/AILOCAL_LAUNCHCTL: tests only.
 OLLAMA_WATCH = """\
 bin=$1 lsof=${AILOCAL_LSOF:-/usr/sbin/lsof} launchctl=${AILOCAL_LAUNCHCTL:-/bin/launchctl}
 for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
@@ -745,8 +633,7 @@ exec "$launchctl" kickstart -k "gui/$(id -u)/com.ailocal.ollama"
 
 
 def _write_ollama_watch_agent(binary: str) -> None:
-    """Watch the cask's Caskroom directory; any other binary has no upgrade
-    path that deletes files under the daemon, so its watcher is removed."""
+    """Watch the cask's Caskroom; other binaries need no watcher: remove it."""
     real = Path(os.path.realpath(binary))
     if len(real.parents) > 2 and real.parents[2].name == "Caskroom" and Path(binary).is_symlink():
         _write_agent("com.ailocal.ollama-watch", ["/bin/sh", "-c", OLLAMA_WATCH, "ollama-watch", binary],
@@ -770,18 +657,16 @@ def _bootout(label: str) -> None:
             return True
         raise OSError(f"Could not confirm that launch agent {label} stopped")
 
-    # bootout acknowledges the request before a running job has drained. A
-    # bootstrap in that interval fails with EIO and can leave no registered job.
+    # bootout returns before the job drains; bootstrap then may fail w/ EIO.
     if not _wait(removed, 120, 0.25):
         raise OSError(f"Could not confirm that launch agent {label} stopped")
 
 
 def _migrate_model_store() -> None:
-    """Move ~/.ollama/models into the shared store before repointing OLLAMA_MODELS.
+    """Move ~/.ollama/models into the shared store before repointing.
 
-    Repointing without migrating orphans what is already there: Ollama finds
-    nothing and silently re-downloads tens of gigabytes. Same volume, so each
-    move is a rename; one file at a time, so an interruption is resumable."""
+    Else Ollama re-downloads tens of GB. Per-file renames, so resumable.
+    """
     src, dst = Path.home() / ".ollama" / "models", Path(MODEL_STORE)
     if not src.is_dir() or not any(src.iterdir()) or src.resolve() == dst.resolve():
         return
@@ -790,7 +675,7 @@ def _migrate_model_store() -> None:
         return  # no migration work: do not kill a healthy managed daemon
     step("Migrating existing models to the shared store")
     if _out("pgrep", "-x", "ollama"):
-        # Stop the managed daemon by its label; an ad-hoc `ollama serve` is the operator's.
+        # Stop the managed daemon only; ad-hoc `ollama serve` is the operator's.
         _bootout("com.ailocal.ollama")
         if not _wait(lambda: not _out("pgrep", "-x", "ollama"), 12, 0.5):
             raise RuntimeError("an unmanaged ollama process is running; stop it, then re-run "
@@ -813,7 +698,7 @@ def _migrate_model_store() -> None:
 
 
 def _prepare_model_store() -> None:
-    """Group-writable and setgid so a second account can pull, not only read."""
+    """Make the store group-writable and setgid so other accounts can pull."""
     store = Path(MODEL_STORE)
     store.mkdir(parents=True, exist_ok=True)
     if os.access(store, os.W_OK):
@@ -823,11 +708,10 @@ def _prepare_model_store() -> None:
 
 
 def remove_login_agents() -> None:
-    """The uninstall half, reached from `ailocal teardown`: the agents, the
-    session environment they published, their log directory and every intact
-    owned runtime. Each is something install created; left behind, the GUI
-    session would keep OLLAMA_MODELS and OLLAMA_HOST until logout and the logs
-    would outlive the product that wrote them."""
+    """Remove the agents, their session env, logs and owned runtimes.
+
+    Reached from `ailocal teardown`; each is something install created.
+    """
     step("Removing ailocal startup LaunchAgents")
     for label in AGENTS + RETIRED_AGENTS:
         _bootout(label)
@@ -845,9 +729,7 @@ def remove_login_agents() -> None:
 
 
 def prune_owned_runtimes() -> list[str]:
-    """Remove every intact owned patched runtime; one line per path. Called when
-    nothing selects a patched runtime (install returning to stock, teardown):
-    a build nothing runs is 500 MB of state with no owner."""
+    """Remove every intact owned patched runtime; return one line per path."""
     from .ollama_patch import remove
     removed, preserved = remove()
     return ([f"✓ removed owned Ollama runtime {p}" for p in removed]
@@ -855,10 +737,10 @@ def prune_owned_runtimes() -> list[str]:
 
 
 def _clear_legacy_app_override() -> None:
-    """One-release shim (#74); remove with the next release. Earlier installs
-    disabled the app's com.ollama.ollama agent and kept a restore receipt. The
-    cask has no such agent, so clearing the override is correct whatever the
-    receipt recorded."""
+    """Clear the old com.ollama.ollama disable override (#74 shim).
+
+    Remove with the next release; the cask has no such agent.
+    """
     receipt = LA_DIR / "com.ailocal.ollama.restore.json"
     if not (receipt.exists() or receipt.is_symlink()):
         return
@@ -892,14 +774,13 @@ def _ollama_binary_version(binary: str) -> str:
 
 
 def _ollama_is_current(binary: str) -> bool:
-    """An intact, running service with the desired identity needs no restart."""
+    """Return whether the running service already has the desired identity."""
     from .checks.services import http_json, Unreachable
     path = LA_DIR / "com.ailocal.ollama.plist"
     try:
         with path.open("rb") as stream:
             actual = plistlib.load(stream)
-        # A matching version does not prove the daemon's file still exists: the
-        # app and the cask both shipped 0.40.14 when the app was removed (#74).
+        # Same version ≠ same file: app and cask both shipped 0.40.14 (#74).
         if (not Path(binary).is_file()
                 or actual.get("ProgramArguments") != [binary, "serve"]
                 or actual.get("EnvironmentVariables") != _ollama_env()
@@ -914,7 +795,7 @@ def _ollama_is_current(binary: str) -> bool:
 
 
 def _activate_ollama(binary: str) -> None:
-    """Activate one native binary, restoring the prior managed service on failure."""
+    """Activate one native binary; restore the prior service on failure."""
     expected = _ollama_binary_version(binary)
     path = LA_DIR / "com.ailocal.ollama.plist"
     previous = path.read_bytes() if path.is_file() else None
@@ -937,8 +818,7 @@ def _activate_ollama(binary: str) -> None:
         if not _wait(ready, 120, 0.5):
             job = _run("launchctl", "print", f"gui/{os.getuid()}/com.ailocal.ollama",
                        capture=True, timeout=5)
-            # Keep readiness failures actionable without dumping the service's
-            # environment or inference logs into installation output.
+            # Actionable failure w/o dumping the service env or logs.
             state = "; ".join(line.strip() for line in job.stdout.splitlines()
                               if re.match(r"\s*(state|runs|last exit code) =", line))[:300]
             state = state or ("not registered" if job.returncode else "unreported")
@@ -951,8 +831,7 @@ def _activate_ollama(binary: str) -> None:
 
 
 def _port_owner() -> tuple[str, str]:
-    """(pid listening on :11434, pid of com.ailocal.ollama); either may be empty,
-    and launchctl reports an unstarted job as "-"."""
+    """Return (pid on :11434, com.ailocal.ollama pid); either may be ""/"-"."""
     holder = next((line.split()[1] for line in
                    _out("lsof", "-nP", "-iTCP:11434", "-sTCP:LISTEN").splitlines()[1:]), "")
     agent = next((line.split()[0] for line in _out("launchctl", "list").splitlines()
@@ -983,8 +862,7 @@ def configure_ollama_services(*, binary: str | None = None) -> int:
         _activate_ollama(binary)
     ok(f"ollama serve managed by launchd (env baked in, logs in {LOG_DIR})")
 
-    # Same dict, second consumer, so the
-    # daemon's environment and the one published to user shells cannot disagree.
+    # Same dict, so the daemon and user shells cannot disagree.
     _write_ollama_setenv_agent()
     for k, v in _ollama_env().items():
         _run("launchctl", "setenv", k, v)
@@ -1011,7 +889,7 @@ def _retire_model_warmup() -> None:
         warn("preserved an unreadable legacy model-warmup script")
 
 
-# ── the model set ───────────────────────────────────────────────────────────
+# the model set
 
 SERVICES_GB, HEADROOM_GB = 3, 5
 
@@ -1030,10 +908,7 @@ def _installed_models() -> dict:
 
 
 def pull_models() -> int:
-    """Pull the model set for the active tier — a step of `ailocal install`.
-
-    Enabled capabilities only, deduplicated by tag, sized from what Ollama
-    reports and reduced by what is already on disk."""
+    """Pull the active tier's enabled models, deduped, minus what is on disk."""
     binary = policy.ollama_binary()
     if not _out(binary, "list"):
         raise SystemExit("  Ollama daemon is not responding.\n"
@@ -1054,8 +929,7 @@ def pull_models() -> int:
     have = _installed_models()
     def size_of(tag):
         for name, gb in have.items():
-            # Only an omitted :latest is equivalent. A shared model-name
-            # prefix does not establish the requested runner/quantization.
+            # Only an omitted :latest matches; a shared prefix ≠ same quant.
             if name == tag or name == f"{tag}:latest" or f"{name}:latest" == tag:
                 # An imported tag is present only as the pinned revision.
                 return gb, tag not in sources or current(tag, sources[tag])
@@ -1102,15 +976,14 @@ def pull_models() -> int:
     return int(failed)
 
 
-# ── tier and .env ───────────────────────────────────────────────────────────
+# tier and .env
 
 def _memory_gb() -> int:
     return int(_out("sysctl", "-n", "hw.memsize") or 0) // 1024 ** 3
 
 
 def tier_for_memory(gb: int) -> str | None:
-    """Never round up: a tier is chosen only when the machine has that memory,
-    or it is handed models sized for memory it does not have."""
+    """Return the largest tier the memory covers; never round up."""
     return next((t for t in ("128gb", "64gb", "32gb", "16gb")
                  if gb >= int(t[:-2])), None)
 
@@ -1167,14 +1040,7 @@ def _print_plan(tier: str, ram_note: str) -> None:
 
 
 def _write_env(assume_yes: bool) -> None:
-    """Establish both environment owners, migrating a legacy mixed file first.
-
-    There is no "re-generate .env? existing values are lost" prompt any more.
-    That prompt existed because one file held ailocal's generated secrets AND
-    the user's provider keys, so the only way to add a generated value was to
-    destroy the user's. With the two separated, an upgrade writes generated
-    state and never touches the user's file, so there is nothing to ask.
-    """
+    """Establish both env owners, migrating a legacy mixed file first."""
     from . import environment
     stale = policy.config_root() / ".env"
     if stale.is_file():
@@ -1186,26 +1052,20 @@ def _write_env(assume_yes: bool) -> None:
     ok(f"your keys and overrides in {environment.user_file()} (chmod 600)")
 
 
-# ── the audit / cleanup pair ────────────────────────────────────────────────
-# Two configs per client are CORRECT: the cloud root stays separate from the
-# local one, so findings are CLASSIFIED rather than listed — flagging that pair
-# would push someone into deleting a working setup.
-#
-# Out of scope by design: ~/.claude and ~/.codex, VS Code SecretStorage,
-# anything git tracks, and any container not named ailocal-*.
+# the audit / cleanup pair
+# Cloud and local roots coexist by design, so findings are classified.
+# Out of scope: ~/.claude, ~/.codex, SecretStorage, git, non-ailocal-* ctrs.
 
-#: The one instruction for the one thing ailocal cannot do for you. Kept next to
-#: the check that emits it so the wording cannot drift from the README.
+#: The one manual step; kept by its check so it cannot drift from README.
 VSCODE_KEY_STEPS = ("grep LITELLM_MASTER_KEY ~/.local/state/ailocal/env\n"
                     "then in VS Code: Copilot Chat → model picker → "
                     "'Manage Language Models' → ailocal → paste the key")
 
 
 def _vscode_provider_group():
-    """ailocal's native provider entry in chatLanguageModels.json, or None.
+    """Return ailocal's provider entry in chatLanguageModels.json, or None.
 
-    Read-only and side-effect free: it must never be the thing that creates the
-    user directory it is inspecting.
+    Read-only: must never create the user directory it inspects.
     """
     from . import clients
 
@@ -1223,20 +1083,11 @@ def _vscode_provider_group():
 
 
 def _vscode_findings() -> list:
-    """The VS Code side of "can a local model answer here?".
+    """Return VS Code findings; silent when VS Code is not installed.
 
-    Three things, and only three: the native provider projects the active
-    profile's aliases, limits and sampling, the API key reference survived (its VALUE
-    lives in SecretStorage and cannot be read from outside VS Code), and no
-    setting is present that routes Copilot's utility/`tools` calls onto the
-    selected local model. That last one is not cosmetic: it fires several
-    concurrent 50k-token requests at one model that serves them one at a time,
-    and the ones that queue die as "fetch failed" / rootCause ECONNRESET.
-
-    This inspects the USER's VS Code, which is host state, not managed
-    configuration — which is why it belongs to the audit and not to the
-    deterministic config layer. Silent when VS Code is not installed: not
-    using VS Code is not a broken installation.
+    Checks the provider matches the profile, the key reference exists, and
+    nothing routes Copilot utility calls to the local model (concurrent 50k
+    requests queue and die as ECONNRESET).
     """
     from . import clients
     from .checks import CheckResult, SKIP, WARN, passed
@@ -1269,10 +1120,7 @@ def _vscode_findings() -> list:
                    CheckResult("vscode-provider", WARN,
                                f"STALE native model configuration; proxy is {want}",
                                str(models_json), "run ailocal clients vscode"))
-        # The key VALUE lives in VS Code's SecretStorage, which no supported
-        # interface lets ailocal write — see the note on VSCODE_KEY_STEPS's use
-        # in client_audit. So this reports the state precisely and hands over
-        # the one manual step, rather than implying ailocal failed at something.
+        # SecretStorage is unwritable from outside: hand over the manual step.
         out.append(passed("vscode-key", "vscode   API key initialized")
                    if group.get("apiKey") else
                    CheckResult("vscode-key", WARN,
@@ -1283,32 +1131,21 @@ def _vscode_findings() -> list:
 
 
 def client_audit() -> list:
-    """The optional clients, one row each — its own `ailocal check` section.
+    """Return one row per optional client, its own `ailocal check` section.
 
-    Separate from audit() because it answers a different question. Everything
-    audit() reports is ailocal's own doing and a finding there is ailocal's
-    fault; a client is the USER's software, and the only useful thing to say
-    about an absent one is the command that installs it. Mixed into the
-    installation findings, "Codex CLI not installed" read like a defect.
+    Kept out of audit(): a missing client is the user's choice, not a defect.
     """
     from . import clients as _clients
     from .checks import CheckResult, SKIP, WARN, passed
 
     out: list = []
-    # deployed_client_root, NOT config_root: clients.py and generation.py both
-    # write here, and the two roots are the same directory only by default.
-    # Probing the policy root reported a healthy deployment as missing whenever
-    # AILOCAL_CONFIG was pointed elsewhere.
+    # deployed_client_root, not config_root: equal only by default.
     cfg = policy.deployed_client_root()
     probes = {"claude": cfg / "claude" / ".claude.json",
               "codex": cfg / "codex" / "config.toml",
               "vscode": None}  # VS Code's own state is read below instead
-    # One cause, one row. A VS Code that has never been opened has no settings
-    # folder, so the connector probe and every provider finding below would fire
-    # too — three warnings for one thing to do. It also has to be decided BEFORE
-    # the probe: `code --list-extensions` creates the user directory as a side
-    # effect, which would make a read-only audit change the machine and mask the
-    # very state it just reported.
+    # Never-opened VS Code: one row, decided before the probe, since
+    # `code --list-extensions` creates the user directory.
     unlaunched = (_clients.present("vscode")
                   and _clients._vscode_user_dir() is None)
 
@@ -1325,15 +1162,8 @@ def client_audit() -> list:
                                    "VS Code creates its settings folder on first launch",
                                    "open VS Code once, then: ailocal clients vscode"))
         elif name == "vscode" and not (_vscode_provider_group() or {}).get("apiKey"):
-            # NOT "configured": the provider can be perfectly written and the
-            # model picker still empty. VS Code keeps BYOK keys in SecretStorage,
-            # and neither the Custom Endpoint provider nor the `code` CLI (--add-mcp is the only
-            # non-interactive provisioning flag, and it is for MCP servers)
-            # exposes a supported way to seed it. The vendor's own alternative
-            # is a literal key in chatLanguageModels.json, which its docs warn
-            # against and which would trade Keychain for a 0644 file. So this
-            # step is a VS Code boundary, not ailocal configuration,
-            # and saying so is more useful than a green tick that lies.
+            # Not "configured": no supported way seeds SecretStorage, and a
+            # literal key in chatLanguageModels.json would be a 0644 secret.
             group = _vscode_provider_group()
             out.append(CheckResult(
                 "client", WARN,
@@ -1354,9 +1184,7 @@ def client_audit() -> list:
 
 
 def audit() -> list:
-    """Read-only. Returns CheckResults; never deletes, moves or rewrites
-    anything. A finding's `detail` is the path it is about, which is what
-    cleanup acts on."""
+    """Return read-only CheckResults; `detail` is the path cleanup acts on."""
     from .checks import CheckResult, SKIP, WARN, passed
 
     results: list = []
@@ -1405,16 +1233,8 @@ def audit() -> list:
     else:
         fine(f"port 11434 owned by the managed LaunchAgent (pid {holder})")
 
-    # The log destination is checked SEPARATELY from whether the agent runs,
-    # because the failure it catches is invisible to every other signal here.
-    # If the directory is removed while the agent is up, launchd does not
-    # recreate it and does not reopen the descriptors: the process keeps writing
-    # to an unlinked inode. `launchctl print` still reports running, the port is
-    # still held, `ailocal check` was still green -- and every diagnostic the
-    # runner emits (speculation stats, prompt truncation, load failures) is lost
-    # with no symptom at all. Only a restart reopens the path, so the fix is a
-    # mkdir AND a kickstart; either alone leaves the running process writing to
-    # nowhere.
+    # A removed log dir is invisible elsewhere: the agent writes to an unlinked
+    # inode until restarted, so the fix is mkdir and kickstart.
     if not LOG_DIR.is_dir():
         flag("MISSING", "log directory is gone; server output is unreadable",
              LOG_DIR, f"mkdir -p '{LOG_DIR}' && launchctl kickstart -k "
@@ -1430,7 +1250,7 @@ def audit() -> list:
     return results
 
 
-# ── install ─────────────────────────────────────────────────────────────────
+# install
 
 USAGE = """usage: ailocal install [--yes] [--profile <16gb|32gb|64gb|128gb>]
                        [--ollama-patch <gemma4-switch-glu|none>]
@@ -1534,17 +1354,14 @@ def cmd_install(argv: list[str]) -> int:
         if required_patch:
             requested_patch = required_patch
         elif policy.ollama_patch_selection():
-            # An earlier install selected the patch for a role that needed it.
-            # Nothing enabled needs it now, so without an explicit --ollama-patch
-            # the service returns to stock Ollama instead of rebuilding the patch.
+            # No enabled role needs the patch: w/o --ollama-patch, go stock.
             requested_patch = "none"
             ok("no enabled role needs the patched Ollama runtime; returning to stock Ollama")
 
     step("Configuring environment")
     _write_env(assume_yes)
 
-    # Build/test before changing either the authored selection or launch agent.
-    # A failed candidate never stops the currently running native runtime.
+    # Build/test first: a failed candidate never stops the running runtime.
     candidate_binary = None
     if requested_patch not in (None, "none"):
         step("Preparing the reviewed Ollama loader patch")
@@ -1552,8 +1369,7 @@ def cmd_install(argv: list[str]) -> int:
         try:
             candidate_binary = str(ollama_patch.prepare())
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-            # The last lines of a failed build step name the failing test or
-            # check; the exception class alone sends the operator to the logs.
+            # Show the step's last lines: they name the failing test or check.
             detail = " ".join(str(error).strip().splitlines()[-3:])[-400:]
             warn(f"Patched Ollama preparation failed ({type(error).__name__}): {detail}; "
                  "the current service and runtime selection were preserved")
@@ -1593,12 +1409,11 @@ def cmd_install(argv: list[str]) -> int:
                  "Repair configuration permissions and retry.")
             return 1
     if stock:
-        # Nothing selects a patched runtime now; a build left on disk has no owner.
+        # Nothing selects a patched runtime; a leftover build has no owner.
         for line in prune_owned_runtimes():
             print(f"  {line}")
 
-    # Generation must succeed before anything is pulled; the plan below renders
-    # from the generated artifact, so it cannot report stale numbers.
+    # Generate before pulling: the plan renders from the generated artifact.
     step("Generating configuration")
     from . import generation
     if generation.main([]):
@@ -1606,9 +1421,7 @@ def cmd_install(argv: list[str]) -> int:
     print()
     _print_plan(tier, f"physical memory:     {ram} GB")
 
-    # The ONLY image fetch in the product. Every tag is digest-pinned, so this
-    # is a first-fetch, not an upgrade; `ailocal start` deliberately runs
-    # offline against whatever is already on disk.
+    # The only image fetch; digest pins → first fetch only. `start` is offline.
     step("Pulling pinned Docker images")
     try:
         runtime.compose("pull")
@@ -1622,11 +1435,8 @@ def cmd_install(argv: list[str]) -> int:
         step("Model installation needs attention")
         return 1
 
-    # Deploying into a user's client roots is never implied by --yes: it edits
-    # ~/.zshrc and merges VS Code's settings.json, which is not something an
-    # unattended run should decide for someone. The claude-local/codex-local
-    # roots are ailocal's own, so --yes provisions those, including the agent
-    # MCP registered only there (see below).
+    # --yes never edits user roots (~/.zshrc, VS Code); it provisions only
+    # ailocal's own claude-local/codex-local roots and their agent MCP.
     from . import clients
     step("Client configs (optional)")
     detected = [n for n in clients.TARGETS if clients.present(n)]
@@ -1640,11 +1450,7 @@ def cmd_install(argv: list[str]) -> int:
     if not detected:
         ok("Nothing to configure. Install a client, then: ailocal clients")
     elif assume_yes:
-        # Documentation registration above creates the isolated roots, and
-        # `ailocal check` then requires their artifact and research runtimes.
-        # [REAL] 2026-10-25: a fresh `install --yes` failed its own check on
-        # both. Those roots and runtimes live under ailocal's own roots, so
-        # provisioning them decides nothing for the operator.
+        # `ailocal check` requires these runtimes in the roots created above.
         local = [n for n in detected if n in ("claude", "codex")]
         for name in local:
             clients._TARGETS[name]()
@@ -1674,7 +1480,7 @@ def cmd_install(argv: list[str]) -> int:
     step("Done")
     print(f"  LiteLLM proxy is ready at {runtime.proxy_url()}")
     print("  Verify a real request:  ailocal check")
-    # Offered, never applied: the change restarts Docker Desktop and is the operator's call.
+    # Offered, never applied: it restarts Docker Desktop.
     from . import docker_desktop
     current = docker_desktop.effective()
     if current is not None and docker_desktop.drift(current):

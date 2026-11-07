@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove the installed wheel needs no checkout: install from a copy, delete the copy, run.
+"""Prove the installed wheel needs no checkout: install a copy, delete it, run.
 
     python3 tests/installed-runtime.py            # path proof only, no Docker
 
@@ -54,7 +54,7 @@ def _prove(s: Suite, box: Path) -> int:
 
     env = {k: v for k, v in os.environ.items() if not k.startswith(ISOLATED)}
     env.update({name: str(path) for name, path in roots.items()})
-    # AILOCAL_DATA stays unset: the data root must be the installed package itself.
+    # AILOCAL_DATA unset: the data root must be the installed package itself.
     env.update(PATH=f"{venv / 'bin'}:{env.get('PATH', '')}", COMPOSE_PROJECT_NAME=PROJECT,
                AILOCAL_LITELLM_CONTAINER=f"{PROJECT}-litellm", AILOCAL_SEARXNG_CONTAINER=f"{PROJECT}-searxng",
                AILOCAL_LITELLM_PORT="4111", AILOCAL_SEARXNG_PORT="8111")
@@ -76,8 +76,7 @@ def _prove(s: Suite, box: Path) -> int:
     s.check(len(shipped) > 3 and not missing,
             "the wheel ships profiles, proxy hooks, the research MCP and the native runtime patches",
             ", ".join(missing))
-    # `install` would migrate and generate these; this suite never runs it. BRAVE_API is
-    # a placeholder: no search is issued, so no quota is spent.
+    # Never runs `install`; BRAVE_API is a placeholder and no search is sent.
     (state / "active-profile").write_text("64gb\n")
     for path, body in ((state / "env", "LITELLM_MASTER_KEY=sk-integration-test-only\nSEARXNG_SECRET=integration-test-only\n"),
                        (cfg / ".env.local", "BRAVE_API=integration-test-placeholder\n"

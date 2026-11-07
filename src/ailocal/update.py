@@ -1,25 +1,9 @@
-"""Update availability for the components ailocal declares.
+"""Report update availability for the components ailocal declares.
 
-THIS MODULE OWNS NO DISCOVERY LOGIC. Everything here is produced by
-checks/services.py, which already pins images by digest, detects declared-vs-
-running drift, resolves candidate digests through `docker buildx imagetools`,
-and reports provenance. A second implementation of any of that would be a second
-thing able to disagree about the same fact.
-
-TWO MODES, deliberately explicit rather than sniffed from the environment:
-
-    local     what this machine has, what the repo declares, what exists upstream
-    upstream  what the repo declares and what exists upstream -- nothing else
-
-The distinction is not cosmetic. A disposable CI runner has no Docker daemon,
-no Ollama and no models, and GitHub rebuilds its image weekly. Reporting those
-absences as ailocal's health would file a misleading report every week, so
-upstream mode never asks the machine anything.
-
-WHAT "VALIDATED" MEANS. The compose files declare `tag@digest`; the digest is
-authoritative and the tag is what a human reads. A newer upstream release is
-AVAILABLE -- a candidate nobody has run the gateway contract against -- and
-never SUPPORTED. Promotion is deliberate.
+Owns no discovery: checks/services.py does that, so nothing can disagree.
+Modes are explicit: `local` adds this machine; `upstream` never asks it, as a
+CI runner's absences are not ailocal's health. A newer release is AVAILABLE,
+never SUPPORTED: promotion is deliberate.
 """
 
 from __future__ import annotations
@@ -29,8 +13,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 
-SCHEMA_VERSION = 3   # 3: candidate is the version policy's (seven-day age, security sooner), not ≈N-2
-#                      2: position, candidate and hold on a component; the ollama component
+SCHEMA_VERSION = 3   # 3: candidate comes from version_policy
 
 _OLLAMA_RELEASES = "https://api.github.com/repos/ollama/ollama/releases?per_page=100"
 
@@ -46,8 +29,7 @@ DEGRADED = "degraded"
 @dataclass
 class Component:
     name: str
-    #: Local mode only; omitted upstream, where a runner's contents say nothing
-    #: about this project.
+    #: Local mode only.
     installed: str | None = None
     declared: str = ""
     available: str = ""
@@ -55,25 +37,20 @@ class Component:
     update_method: str = ""
     requires_local_validation: bool = True
     requires_restart: bool = False
-    #: How many newer stable upstream releases exist (0 = newest). None when
-    #: upstream was not asked or the declared version is not in its list.
+    #: Newer stable upstream releases (0 = newest); None if unknown.
     position: int | None = None
-    #: The release the version policy adopts today (version_policy.candidate).
     candidate: str = ""
-    #: The recorded reason this component is held older than its candidate,
-    #: from its declaration file. Empty means no hold is recorded.
+    #: Recorded reason for holding below the candidate; "" if none.
     hold: str = ""
     notes: list[str] = field(default_factory=list)
 
 
 def position(declared: str, releases: list[str]) -> int | None:
-    """How many stable releases are newer than `declared` (0 = newest). Context
-    only: the candidate is chosen by version_policy, never by this count.
+    """Return how many stable releases are newer than `declared` (0 = newest).
 
-    `releases` are tags as upstream lists them; pre-releases and anything not
-    purely numeric are dropped, so `v0.40.9-rc1` never counts as a release.
-    A declared version absent from the list has no position: that is reported,
-    not guessed."""
+    Context only; version_policy picks the candidate. Pre-releases never count,
+    and a declared version absent from `releases` returns None.
+    """
     from . import version_policy as vp
     found = sorted({vp.stable(v) for v in releases if vp.stable(v)}, key=vp.key, reverse=True)
     declared = declared.lstrip("v")
@@ -81,9 +58,10 @@ def position(declared: str, releases: list[str]) -> int | None:
 
 
 def advisory_fixes(pin) -> tuple[list[str], str]:
-    """(fix versions of advisories affecting `pin`, a note when they could not be read).
+    """Return (advisory fix versions for `pin`, a note if unreadable).
 
-    These are what admit a release younger than seven days."""
+    These admit a release younger than seven days.
+    """
     from . import audit
     try:
         r = audit.check(pin)
@@ -95,7 +73,7 @@ def advisory_fixes(pin) -> tuple[list[str], str]:
 
 
 def position_notes(c: Component, why: str = "") -> list[str]:
-    """What the version policy says about the declared version. Never an action."""
+    """Describe the policy's view of the declared version; never an action."""
     from . import version_policy as vp
     if c.position is None:
         return []
@@ -113,12 +91,10 @@ def position_notes(c: Component, why: str = "") -> list[str]:
 
 
 def _split(ref: str) -> tuple[str, str, str]:
-    """`repo:tag@sha256:...` -> (repo, tag, digest). Tag may be empty."""
+    """Split `repo:tag@sha256:...` into (repo, tag, digest); tag may be ""."""
     head, _, digest = ref.partition("@")
     repo, sep, tag = head.rpartition(":")
-    # A tag can never contain "/", so a colon followed by a path segment is a
-    # registry port (localhost:5000/img), not a tag. Without this the repo is
-    # truncated to the hostname and every downstream comparison silently misses.
+    # A colon before a "/" is a registry port (localhost:5000/img), not a tag.
     if not sep or "/" in tag:
         repo, tag = head, ""
     return repo, tag, digest
@@ -134,9 +110,7 @@ def _images(mode: str) -> list[Component]:
         return [Component(name="images", state=DEGRADED, update_method="compose",
                           notes=["could not read the compose declarations"])]
 
-    # One upstream query for every image, through the existing primitive.
-    # Upstream candidate resolution is identical in both modes: it asks the
-    # registry, not the machine.
+    # Candidate resolution asks the registry, identically in both modes.
     try:
         results = sv.check_updates(declared)
     except Exception:
@@ -178,12 +152,11 @@ def _images(mode: str) -> list[Component]:
 
 
 def _ollama(mode: str) -> Component:
-    """The patched Ollama base: declared in patch.toml, running at /api/version.
+    """Report the patched Ollama base (patch.toml vs /api/version).
 
-    Upstream is the GitHub release list, so the position counts releases, not
-    tags. The hold is read from the same manifest that pins the base, because
-    the reason the base is held is a fact about the patches, and it must move
-    with them."""
+    The hold is read from the manifest pinning the base, so it moves with the
+    patches.
+    """
     from . import policy
     from .checks import services
     try:
@@ -238,11 +211,9 @@ def _ollama(mode: str) -> Component:
 
 
 def _vendored(mode: str) -> list[Component]:
-    """Vendored browser libraries. Discovery only -- these bytes ship in the wheel.
+    """Report vendored browser libraries; discovery only, never replaced.
 
-    Replacing them is not a package install: the artifact renderer depends on the
-    exact files, so promotion runs the artifact and headless-browser suites. That
-    lifecycle is deliberately not automated here.
+    Promotion runs the artifact and headless-browser suites, by hand.
     """
     from . import policy
     versions = (policy.data_root() / "integrations" / "local-artifacts"
@@ -254,10 +225,7 @@ def _vendored(mode: str) -> list[Component]:
         name, _, ver = line.strip().partition(" ")
         if not name or not ver:
             continue
-        # DEGRADED, not CURRENT. There is no upstream discovery for these yet,
-        # and "we never looked" is not "up to date" -- the same reason a failed
-        # network lookup is never reported as current. The declared version is
-        # what ships; whether anything newer exists is simply unknown here.
+        # DEGRADED, not CURRENT: "never looked" is not "up to date".
         c = Component(name=name, declared=ver, update_method="vendored",
                       state=DEGRADED, requires_local_validation=True,
                       notes=["no upstream discovery implemented; the declared "
@@ -269,19 +237,14 @@ def _vendored(mode: str) -> list[Component]:
 
 
 def _self(mode: str) -> Component:
-    """ailocal's own package.
+    """Report ailocal's own package; never self-updated in process.
 
-    Never mutated here. Replacing the executing pipx installation swaps the
-    directory the running LiteLLM container bind-mounts, which the container then
-    reads as EMPTY rather than missing. `ailocal start` already detects that by
-    inode fingerprint and force-recreates; the safe sequence is package
-    replacement followed by `ailocal start`, not an in-process self-update.
+    Replacing it swaps a bind-mounted dir; `ailocal start` then recreates.
     """
     c = Component(name="ailocal", update_method="self", requires_restart=True,
                   requires_local_validation=True,
                   notes=["self-update is external: replace the package, then run "
                          "`ailocal start` so the changed bind mount is re-resolved"])
-    # Same rule: nothing was queried, so nothing is known.
     c.state = DEGRADED
     c.notes.append("no authoritative release source declared; not queried")
     return c

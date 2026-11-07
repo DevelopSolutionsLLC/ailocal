@@ -56,7 +56,7 @@ def blocked(name: str, summary: str, detail: str | None = None) -> CheckResult:
 
 def verdict(name: str, ok: bool, good: str, bad: str,
             remediation: str | None = None, detail: str | None = None) -> CheckResult:
-    """A check whose two outcomes differ only in wording."""
+    """Build a check whose two outcomes differ only in wording."""
     return (CheckResult(name, PASS, good) if ok
             else CheckResult(name, FAIL, bad, detail, remediation))
 
@@ -67,8 +67,10 @@ _MARK = {PASS: ("\033[32m✓\033[0m", 1), FAIL: ("\033[31m✗\033[0m", 2),
 
 
 def render(results) -> None:
-    """Print results. Anything that is not a pass carries its fix and goes to
-    stderr, so a caller redirecting stdout still sees what is wrong."""
+    """Print results; non-passes go to stderr with their fix.
+
+    stderr so a caller redirecting stdout still sees what is wrong.
+    """
     for r in results:
         mark, stream = _MARK[r.status]
         out = sys.stdout if stream == 1 else sys.stderr
@@ -82,5 +84,5 @@ def render(results) -> None:
 
 
 def exit_code(results) -> int:
-    """0 clean, 1 if anything failed. WARN and BLOCKED do not fail a command."""
+    """Return 1 if anything failed, else 0; WARN and BLOCKED never fail."""
     return 1 if any(r.status is FAIL for r in results) else 0

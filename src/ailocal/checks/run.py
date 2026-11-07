@@ -1,31 +1,12 @@
 #!/usr/bin/env python3
-"""Entry point behind `ailocal check` — the one answer to "is ailocal
-configured and working?".
+"""Run `ailocal check`: is ailocal configured and working.
 
-One engine: collect CheckResults from every layer, render them through the one
-renderer, exit on the one rule. There are no modes. Every finding carries its
-fix.
+Layers: configuration (files only, works w/ stack stopped), runtime, supply
+chain, installation, host. Every finding carries its fix.
 
-  configuration  Deterministic consistency read from files on disk. Opens no
-                 socket, so it reports the same thing with the stack stopped.
-  runtime        Containers, proxy health, served aliases, advertised
-                 geometry, Ollama inventory, one bounded model response,
-                 search. Every call carries a timeout.
-  supply chain   Every declared image pinned by digest, the running image
-                 identical to the declared one, services on loopback only,
-                 provenance where a publisher signs.
-  installation   Client configs, login services and the port they claim.
-  host           Machine-level guidance: .env permissions, tooling, the model
-                 store, residency and parallelism.
-
-Exit 0 when nothing failed, 1 otherwise. A warning is advisory and does not
-fail the run; an unresolvable active tier does, because diagnosing against an
-assumed tier reports on a configuration the machine is not running.
-
-Two flags, both opt-in because both reach the network beyond the local stack:
-`--updates` asks upstream what image versions exist (it never pulls and never
-rewrites a pin), and `--external-search` issues one federated query to the
-keyless general-web engines. It never spends Brave allowance; never loop it.
+Exit 1 if anything failed; warnings are advisory. An unresolvable tier fails:
+diagnosing an assumed tier reports on a cfg the machine is not running.
+`--updates` and `--external-search` are opt-in: both reach the network.
 """
 
 from __future__ import annotations
@@ -42,7 +23,7 @@ BOLD, RESET = "\033[1;36m", "\033[0m"
 
 
 def _expected() -> tuple[list[str], dict[str, int], list[str]]:
-    """Aliases, advertised geometry and required backends for the active tier."""
+    """Return aliases, advertised geometry and required backends of the tier."""
     from ailocal import policy as P
 
     tier = P.resolve_active_tier()
@@ -62,7 +43,7 @@ def _expected() -> tuple[list[str], dict[str, int], list[str]]:
 
 
 def _check(argv: list[str]) -> int:
-    """0 when nothing failed, 1 otherwise."""
+    """Run every layer; return 0 when nothing failed, 1 otherwise."""
     from ailocal import policy as P
     from ailocal import install
 

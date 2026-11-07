@@ -1,8 +1,6 @@
-"""cli.py — the single public command surface.
+"""The single public command surface.
 
-Dispatch is a TABLE, not a chain of branches: every command differs only by
-target and fixed arguments, so the differences are data. Help is rendered from
-that same table, which is the only way the two cannot drift.
+Dispatch and help render from one table, so the two cannot drift.
 """
 from __future__ import annotations
 
@@ -18,7 +16,7 @@ from . import __version__
 
 @contextlib.contextmanager
 def _lifecycle_lock():
-    """Two independent install/start/stop commands must not race over services."""
+    """Hold the lock so two lifecycle commands cannot race over services."""
     from . import policy
     root = policy.state_root()
     root.mkdir(parents=True, exist_ok=True)
@@ -51,10 +49,8 @@ COMMANDS: dict[str, tuple[str, tuple]] = {
     "mcp":            ("ailocal.mcp", ()),
 }
 
-#: `ailocal <command> --help`, answered here so no command can mistake the flag
-#: for a request: `clients --help` used to configure every client and
-#: `start --help` to start the stack. `install` owns a longer usage, and `check`
-#: owns its own because only checks/run.py may name the metered search flag.
+#: Answered here so no command mistakes --help for a request; `install` and
+#: `check` own theirs (only checks/run.py may name the metered search flag).
 USAGE: dict[str, str] = {
     "status":   "usage: ailocal status [--dashboard|--table|--models]",
     "update":   "usage: ailocal update [--upstream-only] [--json]",
@@ -68,9 +64,7 @@ USAGE: dict[str, str] = {
     "mcp":      "usage: ailocal mcp research [--enable-answer]",
 }
 
-#: Help layout: (heading, [command...]). Every dispatchable command appears
-#: exactly once; the gate asserts it. There is no hidden command: a surface
-#: that dispatches what it does not advertise is a surface nobody can trust.
+#: Help layout: every dispatchable command appears exactly once (gate-asserted).
 GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("bootstrap the stack",        ("install",)),
     ("inspect",                    ("status", "check", "update", "audit")),
@@ -93,9 +87,8 @@ def _usage() -> str:
                      + ["", "  --version".ljust(width + 2) + "the installed version"])
 
 
-#: `ailocal profile <query>`. Scalars print bare so `$(...)` captures them
-#: cleanly; every failure prints the error CODE to stderr and exits non-zero.
-#: `role --field` remains a stable query interface for client tooling.
+#: Scalars print bare for `$(...)`; failures print the CODE to stderr, exit ≠ 0.
+#: `role --field` is a stable query interface for client tooling.
 def _profile(argv: list[str]) -> int:
     from . import policy as P
     query = argv[0] if argv else ""
@@ -136,8 +129,7 @@ def _profile(argv: list[str]) -> int:
                 print(f"{P.ROLE_CONFIG_INVALID}: no field {field!r}", file=sys.stderr)
                 return 2
             else:
-                # An absent optional field is not an error, but it must not
-                # print as the string "None" into a shell variable.
+                # Never print "None" into a shell variable.
                 print("" if cfg[field] is None else cfg[field])
         elif query == "profile-summary":
             tier = opt("--tier")
@@ -161,9 +153,7 @@ def _profile(argv: list[str]) -> int:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     cmd = argv.pop(0) if argv else "help"
-    # Redirected stdout is block-buffered, while the docker, brew and code
-    # children it runs write straight to the descriptor: a saved install log
-    # printed their output before the step that started them.
+    # Children write straight to the fd; line-buffer so a saved log keeps order.
     if isinstance(sys.stdout, io.TextIOWrapper):
         sys.stdout.reconfigure(line_buffering=True)
 
@@ -171,16 +161,11 @@ def main(argv: list[str] | None = None) -> int:
         print(_usage())
         return 0
 
-    # Answered here, beside help, rather than added to COMMANDS: both are
-    # questions about the CLI itself, not a module to dispatch to. Bare, so
-    # `$(ailocal --version)` is the version and nothing else — the first thing
-    # anyone asks for in a bug report.
+    # Bare, so `$(ailocal --version)` is the version and nothing else.
     if cmd in ("--version", "-V", "version"):
         print(__version__)
         return 0
 
-    # `profile` is a few lines over policy, answered here rather than given a
-    # module of its own.
     if cmd == "profile":
         return _profile(argv)
 
@@ -193,8 +178,7 @@ def main(argv: list[str] | None = None) -> int:
         print(USAGE[cmd])
         return 0
 
-    # A package command runs in THIS process: it is a function, not a program,
-    # so there is one dispatch mechanism and no second interpreter to choose.
+    # In-process: one dispatch mechanism, no second interpreter to choose.
     import importlib
     module, fixed = COMMANDS[cmd]
     with (_lifecycle_lock() if cmd in ("install", "start", "stop", "teardown")
@@ -203,8 +187,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             return importlib.import_module(module).main([str(a) for a in [*fixed, *argv]])
         except P.ProfileError as e:
-            # A profile that fails closed is reported with its code and the
-            # fix it names, never as a traceback (#101).
+            # Fail-closed profile → code and fix, never a traceback (#101).
             print(f"  ✗ {e.code}: {e.detail}", file=sys.stderr)
             return 2
 

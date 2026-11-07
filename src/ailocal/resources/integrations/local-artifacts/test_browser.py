@@ -1,13 +1,8 @@
 #!/usr/bin/env python3
-"""Behavioural proof of the rendering boundary.
+"""Prove the rendering boundary with honeypots counting real TCP connections.
 
-Each probe target is a honeypot socket that counts real TCP connections, so the
-verdict is "did a packet leave", not "what did the exception say". A control run
-serves the identical page WITHOUT the CSP header: if the honeypots do not light
-up there, the test cannot detect an escape and its silence means nothing.
-
-`--host-resolver-rules` maps example.com onto a honeypot, so the internet case
-is measured the same way as the loopback ones.
+A control run w/o CSP must light them up, else silence proves nothing.
+`--host-resolver-rules` maps example.com onto a honeypot too.
 """
 import http.server, importlib.util, os, socket, subprocess, tempfile, threading, time, sys, shutil
 from pathlib import Path
@@ -64,7 +59,7 @@ srv = importlib.util.module_from_spec(spec); spec.loader.exec_module(srv)
 srv.start_http_thread(); srv._http_ready.wait(5)
 ok, msg = srv.publish(title="Boundary probe", content=ART); assert ok, msg
 
-# ── control server: identical bytes, no CSP ────────────────────────────────
+# control server: identical bytes, no CSP
 class Ctrl(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def do_GET(self):

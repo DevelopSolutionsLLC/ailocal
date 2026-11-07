@@ -1,13 +1,6 @@
-# ailocal finalize.zsh — sourced at the BOTTOM of ~/.zshrc. Managed file —
-# installed by `ailocal clients`, always overwritten. Must produce
-# ZERO stdout/stderr.
-#
-# Only acts inside a VS Code terminal (_AILOCAL_VSCODE set by configure.zsh,
-# sourced at the top of .zshrc). Tears down the p10k prompt that instant-prompt
-# still loaded, replaces it with a plain fast prompt, and explicitly sources
-# VS Code's shell-integration script so OSC 633 command-completion markers are
-# reliable — without this, agent terminal commands finish but the client's
-# spinner never stops.
+# Swap p10k for a plain prompt in VS Code terminals; sourced last in ~/.zshrc.
+# Managed by `ailocal clients`, overwritten; must print nothing at all.
+# Shell integration keeps OSC 633 markers, or agent spinners never stop.
 if [[ -n "$_AILOCAL_VSCODE" ]]; then
   (( $+functions[prompt_powerlevel9k_teardown] )) && prompt_powerlevel9k_teardown
   PROMPT='%~ %# '

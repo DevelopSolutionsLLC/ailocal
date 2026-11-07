@@ -41,8 +41,7 @@ def public_address(value: str) -> bool:
             address = address.ipv4_mapped
         elif (address.sixtofour or address.teredo
               or address in ipaddress.IPv6Network('64:ff9b::/96')):
-            # Transition mechanisms can route apparently global IPv6 to an
-            # embedded private IPv4 destination. Public pages need none of them.
+            # Transition IPv6 can embed a private IPv4; public pages need none.
             return False
     return address.is_global and not address.is_multicast
 
@@ -50,10 +49,10 @@ def public_address(value: str) -> bool:
 async def request(url: str, *, public: bool = False, sites: list[str] | None = None,
                   payload: dict | None = None, headers: dict | None = None,
                   timeout: float = 15) -> tuple[int, dict, bytes]:
-    """One bounded request; redirects are checked and pinned on every hop.
+    """Make one bounded request; every redirect hop is checked and pinned.
 
-    Backend endpoints are trusted operator config. Public page URLs never get
-    credential headers, ambient proxies, or a second DNS lookup at connect time.
+    Public pages never get credential headers, ambient proxies, or a second
+    DNS lookup at connect; backend endpoints are trusted operator cfg.
     """
     try:
         async with asyncio.timeout(timeout):

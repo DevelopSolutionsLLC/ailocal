@@ -1,40 +1,19 @@
-"""audit.py — every artifact ailocal pins, against live advisory sources.
+"""Audit every artifact ailocal pins against live advisory sources.
 
-THE GAP THIS CLOSES. `ailocal check` proves the running image is the declared
-digest. It cannot prove the declared digest is still SAFE: a pin that was clean
-when validated can later be named in an advisory, yanked, or unpublished as
-malware. [REAL] 2026-10-22: LiteLLM v1.107.0 shipped a credential stealer to
-PyPI and the floating Docker tags (BerriAI/litellm#47826); had it been the
-validated pin, nothing offline would have said so. This is an online question,
-so it lives here and never in the regression gate.
+`ailocal check` proves the running digest is the declared one, not that the
+declared one is still safe; that is an online question, kept out of the gate.
 
-ONE RESULT PER PIN, FOUR OUTCOMES:
+One result per pin:
 
     clean       every applicable source answered and named nothing -- today
     affected    inside an advisory's range; IDs and fixed versions listed
     yanked      unpublished, yanked or deprecated by its registry
     unverified  a lookup failed or nothing covers the pin -- NEVER read as clean
 
-A registry 404 is an ANSWER (that is how a registry withdraws malware), not a
-failed lookup. Container images have no OSV ecosystem, so each image is mapped
-EXPLICITLY to its publisher's GitHub repository; an unmapped image is
-unverified rather than guessed.
-
-Pins are read from their source-of-truth files and nowhere else: compose
-`image:` lines (through checks/services.py), the reviewed Ollama patch manifest,
-and the vendored browser libraries' VERSIONS.txt.
-
-WHAT IS RUNNING IS AUDITED TOO. A declaration says what should serve; the
-daemon's `/api/version` and each container's repo digest say what does. The
-running Ollama base is audited beside the declared one when they differ, and a
-service whose running digest is not the declared one says so here as well as
-in `ailocal check` -- a declaration patched after a compromise protects nothing
-while the old image keeps serving.
-
-EVERY RUN IS RECORDED at `state_root()/audit/local.json`. The record is what
-the integration contract publishes to Cadence (`audit.record`), which merges
-these findings into the machine-wide weekly audit; a record older than a week
-is unverified there, never current.
+A registry 404 is an answer (how malware is withdrawn), not a failed lookup.
+Images map explicitly to a GitHub repository; unmapped ones are unverified.
+Running versions and digests are audited beside declared ones. Each run writes
+`state_root()/audit/local.json` for Cadence; a week-old record is unverified.
 """
 from __future__ import annotations
 
@@ -60,9 +39,8 @@ _GO_INFO = "https://proxy.golang.org/{mod}/@v/v{version}.info"
 _GH_ADVISORIES = ("https://api.github.com/repos/{repo}/security-advisories"
                   "?per_page=100&state=published")
 
-#: image repository -> (publisher's GitHub repository, PyPI distribution or
-#: None). Declared, not derived: an image name is not a repository name in
-#: general, and a wrong guess would report a clean audit of the wrong project.
+#: image → (GitHub repo, PyPI dist or None). Declared: a guess could audit the
+#: wrong project clean.
 IMAGE_SOURCES = {
     "ghcr.io/berriai/litellm": ("BerriAI/litellm", "litellm"),
     "searxng/searxng": ("searxng/searxng", None),
@@ -110,13 +88,14 @@ class Result:
     notes: list[str] = field(default_factory=list)
 
 
-# --- transport ---------------------------------------------------------------
 
 def http(url: str, body: dict | None = None, timeout: int = 20):
-    """(status, parsed JSON or None). Raises Unavailable when nothing answered.
+    """Return (status, parsed JSON or None); 404/410 are answers, not raised.
 
-    A 404 or 410 is returned, not raised: it is the registry's answer. A GitHub
-    token from the environment goes to api.github.com only.
+    A GitHub token from the env is sent to api.github.com only.
+
+    Raises:
+        Unavailable: Nothing answered.
     """
     from .primitives import Unreachable, fetch
     headers = {"Accept": "application/json", "User-Agent": "ailocal-audit"}
@@ -137,18 +116,15 @@ def http(url: str, body: dict | None = None, timeout: int = 20):
         raise Unavailable(type(e).__name__) from e
 
 
-# --- versions ----------------------------------------------------------------
 
 _PRE = {"a": -3, "alpha": -3, "b": -2, "beta": -2, "rc": -1}
 
 
 def _key(v: str) -> tuple | None:
-    """(release tuple, pre-release rank), or None when unorderable.
+    """Return (release tuple, pre-release rank), or None when unorderable.
 
-    PEP 440 pre-releases order before their release (`1.104.0rc1` < `1.104.0`);
-    LiteLLM's advisories use them. `-stable` is LiteLLM's channel suffix on the
-    release itself (`1.83.10-stable`), so it orders as the bare version. Any
-    other suffix is unorderable and the range becomes UNVERIFIED, not guessed.
+    PEP 440 pre-releases sort before release; LiteLLM's `-stable` sorts as the
+    bare version. Any other suffix is unorderable → UNVERIFIED, not guessed.
     """
     m = re.fullmatch(r"v?([0-9]+(?:\.[0-9]+)*)(?:-stable|-?(a|alpha|b|beta|rc)\.?([0-9]*))?",
                      v.strip())
@@ -167,8 +143,7 @@ _OPS = {"<": lambda a, b: a < b, "<=": lambda a, b: a <= b,
 
 
 def in_range(version: str, rng: str) -> bool | None:
-    """A GitHub advisory's `vulnerable_version_range`: comma-joined AND
-    clauses such as `>= 1.91.0, < 1.100.4`. None when any part is unparseable."""
+    """Match a GitHub `vulnerable_version_range`; None if unparseable."""
     v = _key(version)
     if v is None:
         return None
@@ -188,18 +163,14 @@ def in_range(version: str, rng: str) -> bool | None:
 
 
 def _tag_version(tag: str) -> str:
-    """The release a tag names: `v1.106.2` -> `1.106.2`, SearXNG's
-    `2026.10.17-1c10abe2d` -> `2026.10.17`. "" when the tag names none."""
+    """Return a tag's release (`v1.2` → `1.2`, dated tags → date) or ""."""
     m = re.match(r"v?([0-9]+(?:\.[0-9]+)+)", tag)
     return m.group(1) if m else ""
 
 
-# --- pin discovery -----------------------------------------------------------
 
 def running() -> dict:
-    """What serves right now: the daemon's version string (None when it does
-    not answer) and, per declared image repository, the container name and
-    repo digest actually running ("" when none is)."""
+    """Return daemon version (or None) and running name, digest per image."""
     from .checks import services
     from .update import _split
     out: dict = {"ollama": None, "images": {}}
@@ -271,14 +242,13 @@ def pins(probe=running) -> list[Pin]:
     return out
 
 
-# --- sources -----------------------------------------------------------------
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _add(r: Result, adv: dict) -> None:
-    """One issue is often filed in several databases; merge on any shared ID."""
+    """Add an advisory, merging on any shared ID across databases."""
     ids = {adv["id"], *adv.get("aliases", [])}
     for have in r.advisories:
         if ids & {have["id"], *have.get("aliases", [])}:
@@ -306,7 +276,7 @@ def _osv(r: Result, ecosystem: str, name: str, version: str, fetch) -> None:
                      "severity": str((v.get("database_specific") or {})
                                      .get("severity", "")).lower(),
                      "modified": v.get("modified", ""),
-                     # OSV files malicious packages under MAL- (the OpenSSF feed).
+                     # OSV files malicious packages under MAL- (OpenSSF feed).
                      "malicious": v["id"].startswith("MAL-")})
         token = d.get("next_page_token")
         if not token:
@@ -368,8 +338,7 @@ def check(p: Pin, fetch=None) -> Result:
         return r
     try:
         if p.kind == "image" and p.pypi:
-            # The image ships this distribution at the tag's version: the
-            # LiteLLM compromise was filed against PyPI first.
+            # Image ships this dist at the tag's version; PyPI files first.
             _registry(r, _PYPI.format(name=p.pypi, version=p.version), "PyPI", fetch)
             _osv(r, "PyPI", p.pypi, p.version, fetch)
         elif p.kind == "go":
@@ -382,8 +351,7 @@ def check(p: Pin, fetch=None) -> Result:
         if p.github:
             _github(r, p.github, p.version, fetch)
     except Unavailable as e:
-        # A finding already made stands: a later source failing does not make
-        # a named advisory or a yank less true. Only absence becomes UNVERIFIED.
+        # A later failure keeps earlier findings; only absence → UNVERIFIED.
         r.notes.append(f"lookup failed: {e}")
         if r.result != YANKED:
             r.result = UNVERIFIED
@@ -410,8 +378,7 @@ def record_path():
 
 
 def write_record(doc: dict):
-    """One record, overwritten on every run: the consumer wants the latest
-    answer and its time, not a history. Returns the path written."""
+    """Overwrite the single latest-run record and return its path."""
     path = record_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(doc, indent=2) + "\n")
@@ -423,7 +390,6 @@ def exit_code(doc: dict) -> int:
     return {YANKED: 1, AFFECTED: 1, UNVERIFIED: 2}.get(doc["status"], 0)
 
 
-# --- presentation ------------------------------------------------------------
 
 def _print(doc: dict) -> None:
     malicious = [(r["name"], a["id"]) for r in doc["results"] for a in r["advisories"]

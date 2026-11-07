@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Run a test implementation inside the running LiteLLM container, beside harness.py.
-# The suite reads the image's own /app paths. Usage: in-container.sh <impl.py> [NAME=VALUE ...]
+# Run a test implementation inside the LiteLLM container, beside harness.py.
+# Usage: in-container.sh <impl.py> [NAME=VALUE ...]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -12,8 +12,7 @@ shift
 docker ps --format '{{.Names}}' | grep -qx "$CONTAINER" || {
   echo "$CONTAINER is not running; start the stack first." >&2; exit 1; }
 
-# A per-run directory keeps concurrent suites apart; streaming (not docker cp)
-# leaves the files owned and readable by the image's user.
+# Per-run dir keeps suites apart; streaming (not docker cp) keeps ownership.
 STAGE="/tmp/ailocal-test-$$-$(basename "$IMPL" .py)"
 trap 'docker exec "$CONTAINER" rm -rf "$STAGE" >/dev/null 2>&1 || true' EXIT
 docker exec "$CONTAINER" mkdir -p "$STAGE"

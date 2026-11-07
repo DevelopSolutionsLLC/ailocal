@@ -11,28 +11,16 @@ from pathlib import Path
 
 from . import policy
 
-#: Model ids Claude Code sends for a model it did not resolve to a Claude
-#: family. [REAL] 2026-10-26, Claude Code 2.1.310 behind the local gateway:
-#: selecting `ailocal-cyber` from the /model picker's gateway-discovered rows
-#: ran PostModelSwitch with the hook name `claude-router-61696c6f63616c2d6379626572`,
-#: persisted that same id as the saved `model`, and reported
-#: `[claude-code:unrecognized_model] {"model":"claude-router-6169…"}` on the
-#: next launch; the hex decodes to `ailocal-cyber`. The encoding is not in
-#: the hooks or model-config documentation, so it is a fallback after the
-#: documented fields, never the first lookup.
+#: Claude Code's id for an unresolved gateway model: claude-router-<hex name>
+#: (seen 2.1.310, 2026-10-26). Undocumented → fallback, never first lookup.
 _ROUTER_ID = re.compile(r"^claude-router-([0-9a-f]+)$")
 
 
 def hook_model_candidates(event: dict) -> list[str]:
-    """Model ids a PostModelSwitch/SessionStart event may name, documented first.
+    """Return model ids a PostModelSwitch/SessionStart event names, docs first.
 
-    `to_model` is the id the session switched to and `requested_model` the
-    alias or id the request named (code.claude.com/docs/en/hooks, PreModelSwitch
-    input, shared by PostModelSwitch). A gateway id Claude Code does not
-    recognise reaches `to_model` as the undocumented router encoding above, so
-    each candidate that matches it also contributes its decoded id, after the
-    verbatim value. Order is preserved and duplicates dropped; the caller takes
-    the first candidate the profile knows.
+    `to_model`, then `requested_model` (code.claude.com/docs/en/hooks); a
+    router-encoded id is followed by its decoded id. Order kept, dupes dropped.
     """
     seen, out = set(), []
     for key in ("to_model", "requested_model", "model"):
@@ -61,9 +49,11 @@ REFERENCE_POINTER = ("Quantization, inference preset, MTP draft depth and evalua
 
 
 def render(model: str, guide: dict, brief: bool = False) -> str:
-    """The guide for one model. `brief` is the always-on hook form (#60): limits,
-    prompting advice and limitations only. The rest is reference data a task
-    rarely needs, and it cost more than half of the local root's instruction budget."""
+    """Return the guide for one model.
+
+    `brief` is the always-on hook form (#60): limits, prompting advice and
+    limitations only; the rest cost over half the instruction budget.
+    """
     return "\n".join([
         f"Local model guide: {model} ({guide.get('model', model)})",
         *([] if brief else [guide["summary"]]),
@@ -112,8 +102,7 @@ def main(argv=None) -> int:
         result = policy.model_guides(args.tier)
         if candidates:
             models = result["models"]
-            # Native Claude slots are resolved through the same authored policy,
-            # and through its one rule for a slot naming a role this tier omits.
+            # Native slots resolve via the same policy and omitted-role rule.
             slots = policy.load_client_policy().get("claude", {}).get("slots", {})
             roles = [name.removeprefix("ailocal-") for name in models]
             matches = {}
@@ -129,18 +118,15 @@ def main(argv=None) -> int:
                 return 2
             result["models"] = matches
         if hook_cwd and not args.json:
-            # Native hook input supplies the current directory on resume too;
-            # a launch-time appended system prompt can retain an older one.
+            # Hook input has the current dir on resume; a launch prompt may not.
             print('Task working directory: ' + json.dumps(hook_cwd) + '. '
                   'Resolve relative task files here unless the task chooses another directory. '
                   'The client already loaded its instruction files; its configuration directory '
                   'is not the task directory.')
         if unspecified:
-            # Each alias's limits, one line apiece, and never a guessed default after
-            # resume. Not each alias's full guide (#60: ~7 KB of always-on context), and
-            # not a bare lookup instruction: [REAL] Claude 2.1.308 given only that left
-            # the chosen guide out of the request. PostModelSwitch adds the full brief
-            # guide once a model is named.
+            # One limits line per alias, not full guides (#60: ~7 KB) nor a bare
+            # lookup instruction (Claude 2.1.308 then omitted the guide).
+            # PostModelSwitch adds the brief guide once a model is named.
             print("Active model was not supplied by the client; apply only the line matching the "
                   "selected alias. Its prompting advice and limitations: the agent MCP's model_guide "
                   "tool, or `ailocal profile guide <alias>`.")
@@ -157,10 +143,10 @@ def main(argv=None) -> int:
 
 
 def hook_bytes(event: dict, tier=None) -> int | None:
-    """Bytes the `--hook` command prints for `event`, or None when it fails.
+    """Return bytes `--hook` prints for `event`, or None when it fails.
 
-    Claude Code adds that output to the session's context beside the root's
-    CLAUDE.md, so the instruction budget check counts it (#39, ADR 017).
+    Claude Code adds it to context beside CLAUDE.md, so the budget counts it
+    (#39, ADR 017).
     """
     stdin, sys.stdin = sys.stdin, io.StringIO(json.dumps(event))
     try:
@@ -173,10 +159,9 @@ def hook_bytes(event: dict, tier=None) -> int | None:
 
 
 def launch_default_hook_bytes(tier=None) -> tuple[int | None, int | None]:
-    """(launch-default payload, model-unspecified payload) of Claude's guide hook.
+    """Return guide-hook bytes: (launch default, model unspecified).
 
-    The integration contract subtracts the first from the instruction budget, and
-    `ailocal check` counts it beside CLAUDE.md, so both measure the same event.
+    Shared by the integration contract and `ailocal check` → same event.
     """
     default = (policy.load_client_policy().get("claude") or {}).get("launch_default")
     if default:

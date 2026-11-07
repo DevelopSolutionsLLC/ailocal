@@ -1,19 +1,13 @@
 #!/usr/bin/env bash
-# Does a real local model CALL the artifact tool? Out of the gate: needs the stack
-# and minutes of inference. Run when the tool description, alwaysLoad/searchHint or
-# server.py routing contract changes; test_routing_contract.py gates the wording.
-# Every positive phrase was a [REAL] miss before the description named its verb.
-# Per-phrase majority-of-3 was itself flaky, so this asserts the aggregate rate,
-# no phrase at 0/N, and every negative clean (publishing everything is not a fix).
-#
+# Measure whether a real local model calls the artifact tool (needs the stack).
+# Asserts aggregate rate, no phrase at 0/N, every negative clean.
 # Usage: ./tests/artifact-routing.sh [runs-per-positive]   (default 3)
 set -uo pipefail
 RUNS="${1:-3}"
 FAILS=0 POS_HITS=0 POS_RUNS=0
 CLIENTS="$(PYTHONPATH="$(cd "$(dirname "$0")/.." && pwd)/src" python3 -c 'from ailocal import policy; print(policy.deployed_client_root())')"
 
-# One fresh claude-local session per turn list (later turns --continue). Prints 1 if
-# an artifact reached disk, else 0.
+# Print 1 if one fresh session over the turns wrote an artifact, else 0.
 attempt() {
   local d flag="" n=0 turn tools=mcp__artifact__publish,Read
   [ $# -gt 1 ] && tools="$tools,Bash"
@@ -68,7 +62,7 @@ positive "sketch the class relationships"       "sketch the class relationships"
 positive "make me a code architecture diagram"  "make me a code architecture diagram"
 positive "publish a flowchart"                  "Publish a flowchart showing A -> B -> C."
 positive "visualize the process"                "Visualize the process where A leads to B leads to C."
-# [REAL] the live miss was a later turn after a prose exploration, not a cold prompt.
+# The live miss was a later turn after prose exploration, not a cold prompt.
 positive "explore-then-draw, the real failing shape" \
   "explore this repo and explain the code hierarchy to me" \
   "can you draw me a code architecture diagram of the classes and objects in this pipeline"

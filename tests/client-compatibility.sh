@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
-# The gateway is transparent to each client dialect in every AILOCAL_TOOL_GATEWAY mode
-# (off/report/filter): each request still succeeds with a usable response. Run by
-# `gate.py --full`; recreates the LiteLLM container named by AILOCAL_LITELLM_CONTAINER.
-# Claude Code and Codex payloads are real captured shapes; the VS Code payload is
-# SYNTHESISED, so it proves the route and headers, not the VS Code client profile.
+# Prove each client dialect succeeds through every AILOCAL_TOOL_GATEWAY mode.
+# VS Code payload is synthesised: proves route and headers, not its profile.
 set -uo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/harness.sh"
 cd "$ROOT_DIR" || exit 1
@@ -69,7 +66,7 @@ vscode() {  # /v1/chat/completions, OpenAI nested-function envelope
            {"type":"function","function":{"name":"Workflow","description":"Orchestrate","parameters":{"type":"object"}}}]}'
 }
 
-# A file, not `python3 <<PY`: a heredoc becomes stdin and the checker read nothing.
+# A file, not a heredoc: a heredoc becomes stdin and the checker reads nothing.
 cat > "$TMP/has_content.py" <<'PY'
 import json, sys
 raw = sys.stdin.read()

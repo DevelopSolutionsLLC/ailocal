@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""`ailocal check` and the read-only commands.
+"""Test `ailocal check` and the read-only commands.
 
-The live section runs `ailocal check` against this installation; everything else is in-process.
+Only the live section runs against this installation; the rest is in-process.
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ check = suite.check
 
 def services() -> None:
     suite.section("service probes")
-    # A reinstall leaves the container serving an empty bind mount while healthy; repair is `ailocal start`.
+    # A reinstall leaves a healthy container on an empty mount; fix: start.
     verdicts = []
     for out in (SimpleNamespace(returncode=0, stdout="", stderr=""),
                 SimpleNamespace(returncode=1, stdout="", stderr="ls: No such file or directory")):
@@ -38,7 +38,7 @@ def services() -> None:
     check(verdicts == [(FAIL, "ailocal start")] * 2,
           "a detached config mount fails and points at `ailocal start`", repr(verdicts))
 
-    # #103: the proxy may leave loopback only when `ailocal bind` says so, and then as a warning.
+    # #103: proxy leaves loopback only via `ailocal bind`, and then warns.
     def ports(mapping):
         return lambda argv, **_kw: SimpleNamespace(returncode=0, stdout=(
             mapping if argv[1] == "port" else "/" + S.CONTAINER if argv[-1] == "{{.Name}}" else "x"))
@@ -90,7 +90,7 @@ def managed_ollama() -> None:
 
 def commands() -> None:
     suite.section("read-only commands")
-    # `ailocal trace` and `status` once raised NameError on a deleted helper while every import check passed.
+    # `trace`/`status` raised NameError on a deleted helper past import checks.
     broken = {}
     for cmd in ("help", "--version", "status", "trace", "profile active-tier"):
         r = run([sys.executable, "-m", "ailocal.cli", *cmd.split()], timeout=120, cwd=REPO)

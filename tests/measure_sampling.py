@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """A/B one model's sampling on executed, assertion-scored code. Out of the gate.
 
-    python3 tests/measure_sampling.py                          # candidate sampling, one rep
-    python3 tests/measure_sampling.py --settings all --reps 3  # historical Gemma A/B
-    python3 tests/measure_sampling.py --model gemma4:26b-mlx [--json OUT] [--prompt-file P]
+    python3 tests/measure_sampling.py  # candidate sampling, one rep
+    python3 tests/measure_sampling.py --settings all --reps 3  # Gemma A/B
+    python3 tests/measure_sampling.py --model gemma4:26b-mlx [--json OUT]
+    python3 tests/measure_sampling.py --prompt-file P
 
-Throughput does not show quality, so each task's code runs in a timed subprocess
-against hidden edge-case assertions; no judge model. Two perfect scores mean the
-tasks are too easy, not that the settings are equal. Runs generated code: run alone.
+Code runs in a timed subprocess against hidden edge-case assertions; no
+judge model. Two perfect scores mean the tasks are too easy. Runs generated
+code: run alone.
 """
 from __future__ import annotations
 
@@ -29,15 +30,15 @@ from measure_geometry import (  # noqa: E402
 )
 
 NUM_CTX = 32768
-# At 1200, thinking consumed the whole budget and empty answers scored as wrong code.
+# At 1200, thinking consumed the budget and empty answers scored as wrong.
 NUM_PREDICT = 8192
-#: profile_old shipped before 2026-08-21; vendor is Google's Gemma 4 setting, shipped now.
+#: profile_old: before 2026-08-21; vendor: Google's Gemma 4 setting (shipped).
 SETTINGS = {
     "profile_old (t0.1/k20/p0.9)": {"temperature": 0.1, "top_k": 20, "top_p": 0.9, "repeat_penalty": 1.0},
     "vendor      (t1.0/k64/p0.95)": {"temperature": 1.0, "top_k": 64, "top_p": 0.95, "repeat_penalty": 1.0},
 }
 
-#: (name, prompt naming an exact signature, hidden assertions on edge cases models miss)
+#: (name, prompt w/ exact signature, hidden assertions on edge cases)
 TASKS = [
     ('run_length_encode',
      "Write a Python function `run_length_encode(s: str) -> str` that compresses a string to counts, e.g. "
@@ -121,13 +122,13 @@ FENCE = re.compile(r"```(?:python|py)?\s*\n(.*?)```", re.S)
 
 
 def extract(text):
-    """The longest fenced block, else the whole reply: formatting is not scored."""
+    """Return the longest fenced block, else the reply; format is not scored."""
     blocks = FENCE.findall(text or "")
     return max(blocks, key=len) if blocks else (text or "")
 
 
 def score(code, checks):
-    """(passed, reason) from running code plus assertions in a subprocess; a timeout fails."""
+    """Return (passed, reason) running code + assertions; a timeout fails."""
     with tempfile.TemporaryDirectory() as d:
         f = pathlib.Path(d) / "candidate.py"
         f.write_text(code + "\n" + checks)
@@ -150,7 +151,7 @@ def generate(model, prompt, opts, think=True, context=NUM_CTX, max_output=NUM_PR
                           "keep_alive": "300s"}, timeout=timeout)
     message = r.get("message", {})
     n, secs = r.get("eval_count", 0), r.get("eval_duration", 0) / 1e9
-    # Thinking is returned so an empty answer reads as an exhausted budget, not wrong code.
+    # Thinking returned: an empty answer is an exhausted budget, not bad code.
     return (message.get("content", ""), (n / secs if n and secs else None), speculation_since(off),
             message.get("thinking", "") or "", r.get("done_reason"), r.get("prompt_eval_count"), n)
 

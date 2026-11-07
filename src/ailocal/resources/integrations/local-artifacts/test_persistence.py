@@ -4,8 +4,7 @@ import importlib.util, json, os, shutil, subprocess, sys, tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-# Each load() starts a real preview server on its own port. They must not
-# outlive the test, and must never touch the operator's live artifact state.
+# Each load() starts a real server: reap them; never touch live state.
 STATE = Path(tempfile.mkdtemp(prefix="tp-state-"))
 PORTS = []
 PASS = FAIL = 0
@@ -87,9 +86,7 @@ check("content actually changed", len(json.loads(src.read_text())["nodes"]) == 3
 check("no duplicate file created",
       not (proj / ".artifacts" / "ailocal-architecture-2.architecture.json").exists())
 
-# Deterministic identity: the same title resolves to the same file in a FRESH
-# process too, so regenerating a diagram next session updates it rather than
-# leaving ailocal-architecture-2, -3, -4 behind.
+# Same title → same file in a fresh process, so regeneration updates in place.
 srv2 = load({"CLAUDE_PROJECT_DIR": str(proj)}, 7866)
 ok, msg = srv2.publish(title="ailocal architecture", content=json.dumps(arch),
                        fmt="architecture")

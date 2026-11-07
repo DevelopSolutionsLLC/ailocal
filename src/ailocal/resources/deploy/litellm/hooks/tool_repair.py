@@ -1,42 +1,10 @@
-"""
-tool_repair.py — generic recovery of malformed tool calls from local models.
+"""Recover malformed tool calls from local models, by format, never by name.
 
-When a model omits the opening <tool_call> tag, Ollama's parser hands the whole
-call back as plain assistant text; the client waits for a tool_call that never
-arrives and the loop stalls. UNFIXED upstream: ollama/ollama#16686, with #16693
-open and stale and #16732 closed unmerged. block/goose#6883 is the same bug in
-another framework, fixed the same client-side way.
-
-Model-agnostic by construction: it recognises FORMATS, never model names. Keep
-it even if #16686 lands — it costs ~0.1-0.2 ms and never fires when native tool
-calls work. [REAL] affected models go from mostly-failing to 8/8 tool calls.
-
-SAFETY MODEL
-------------
-Fabricating a call the model never made is the dangerous failure, so every rule
-biases toward doing nothing:
-  - only runs when the response carries NO native tool_calls
-  - fenced/inline code is stripped first, so documentation examples that merely
-    *show* tool syntax can never become executable calls
-  - incomplete calls are rejected (a closing boundary is required) so a
-    truncated command is never executed
-  - the tool name must appear in the tools the caller actually declared
-  - arguments are validated against the declared JSON schema; unknown keys are
-    dropped and missing REQUIRED keys cause the call to be rejected outright
-  - arguments are never invented or defaulted
-
-SECOND DEFECT: a NATIVE call missing one UI-metadata argument
--------------------------------------------------------------
-Everything above concerns a call the runtime failed to parse at all. There is a
-second, disjoint defect: the runtime parses the call perfectly and the MODEL
-omits a required argument. See complete_ui_metadata() for the measurement, the
-rule, and why exactly one (tool, argument) pair is eligible.
-
-The "arguments are never invented" rule above still holds for recover(): that
-path may not fabricate, because there the whole call is in doubt. This one is
-narrower in every dimension — the call is native and already trusted, the tool
-is named explicitly, and the fabricated value is derived from an argument the
-model DID supply — so it is a schema-compatibility normalisation, not inference.
+Ollama returns a call missing its <tool_call> tag as plain text, stalling the
+loop (ollama/ollama#16686, unfixed). Fabricating a call is the dangerous
+failure, so: native calls win, code fences are stripped, closing boundaries
+are required, tools must be declared, and arguments are schema-checked and
+never invented. complete_ui_metadata() is a separate, narrower native repair.
 """
 
 import collections
@@ -51,14 +19,12 @@ from litellm.integrations.custom_logger import CustomLogger
 
 log = logging.getLogger("tool_repair")
 
-# print(), not log.info(): LiteLLM filters third-party loggers, so log.info() is
-# invisible in `docker logs`. AILOCAL_TOOL_REPAIR_DEBUG=1 enables it.
+# print(), not log.info(): LiteLLM filters third-party loggers.
 AILOCAL_DEBUG = os.environ.get("AILOCAL_TOOL_REPAIR_DEBUG") == "1"
 
 
 def attribute(**fields):
-    """One machine-parseable line per tool-bearing response: native tool call,
-    or rescued here? Silent unless AILOCAL_TOOL_REPAIR_DEBUG=1."""
+    """Print one parseable native-or-rescued line; only if debug is on."""
     if not AILOCAL_DEBUG:
         return
     try:
@@ -67,25 +33,14 @@ def attribute(**fields):
         pass
 
 
-# ── Counters ────────────────────────────────────────────────────────────────
-# Deliberately NOT gated behind AILOCAL_TOOL_REPAIR_DEBUG. Gating the only signal
-# behind a flag that production does not set meant "repair never fired" and "repair
-# fired and the client ignored it" looked identical in the logs — a real incident
-# that cost two container swaps to disambiguate. Counters are cheap; emit always.
-#
-# `reason` is the diagnostic that was missing entirely: a rejected candidate used to
-# vanish silently, so a false negative was invisible.
+# Never debug-gated: else "never fired" and "fired, ignored" look identical.
 _COUNTS = collections.Counter()
 
 
 def record(outcome, reason=None, tool=None, route=None, model=None, turn=None):
-    """Count one repair decision. outcome: attempted|repaired|rejected|native."""
+    """Count one repair decision: attempted|repaired|rejected|native."""
     try:
         _COUNTS[(outcome, reason or "-", tool or "-")] += 1
-        # print(), NOT log.info() — LiteLLM filters third-party loggers, so log.info is
-        # invisible in `docker logs`. The module docstring already records this; routing
-        # the new counters through log.info reproduced the exact blindness they exist to
-        # remove, and the first smoke run surfaced zero metrics because of it.
         print("tool_repair_metric " + json.dumps({
             "outcome": outcome, "reason": reason or "-", "tool": tool or "-",
             "route": route or "-", "model": model or "-", "turn": turn,
@@ -96,12 +51,7 @@ def record(outcome, reason=None, tool=None, route=None, model=None, turn=None):
 
 
 def _turn_of(request_data):
-    """Best-available turn index: how many assistant replies are already in play.
-
-    LiteLLM does not hand the hook a turn counter, but every agent round-trip appends
-    to the conversation, so the assistant-message count IS the turn number. Works for
-    all three routes because each carries its history under a known key.
-    """
+    """Return the turn index: assistant messages in the history, plus one."""
     try:
         d = request_data or {}
         msgs = d.get("messages") or d.get("input") or []
@@ -115,7 +65,7 @@ def _turn_of(request_data):
 
 
 def _route_of(request_data, hint=None):
-    """Which API dialect this request arrived on. `hint` wins when the caller knows."""
+    """Return the API route of the request; `hint` wins when given."""
     if hint:
         return hint
     d = request_data or {}
@@ -125,32 +75,25 @@ def _route_of(request_data, hint=None):
 
 
 def _ctx(request_data, route=None):
-    """Dimensions attached to every metric: route, model, turn."""
+    """Return the metric dimensions: route, model, turn."""
     d = request_data or {}
     return {"route": _route_of(d, route), "model": d.get("model"),
             "turn": _turn_of(d)}
 
 
 def _reject(reason, tool=None, ctx=None):
-    """Record a rejected repair candidate and return None (the caller's sentinel)."""
+    """Record a rejected repair candidate and return None."""
     record("rejected", reason=reason, tool=tool, **(ctx or {}))
     return None
 
 
 def counters():
-    """Snapshot for tests/introspection: {(outcome, reason, tool): n}."""
+    """Return a snapshot {(outcome, reason, tool): n}."""
     return dict(_COUNTS)
 
-# ── Format recognisers ──────────────────────────────────────────────────────
 FENCE_RE = re.compile(r"```.*?```", re.S)
 INLINE_RE = re.compile(r"`[^`\n]*`")
-# Closing tags are REQUIRED — this is what rejects truncated calls.
-# The closing tag is an ALTERNATION because models mix the two dialects: observed
-# output opened `<function=exec_command>` and closed `</tool_call>`. The old
-# pattern required `</function>`, matched nothing, and the call was printed to the
-# user as literal text instead of being repaired or rejected. `$` terminates a
-# truncated emission so a cut-off call is still recoverable rather than silently
-# dropped.
+# Closer alternation: models mix dialects (`<function=…>` … `</tool_call>`).
 QWEN_FUNC_RE = re.compile(
     r"<function=([A-Za-z0-9_\-]+)\s*>(.*?)(?:</function>|</tool_call>|$)", re.S)
 QWEN_PARAM_RE = re.compile(r"<parameter=([A-Za-z0-9_\-]+)\s*>(.*?)</parameter>", re.S)
@@ -162,22 +105,17 @@ HINTS = ("<function=", '"name"')
 
 
 def _maybe_marker(text):
-    """Streaming guard: could `text` still be growing into a tool marker?
+    """Return whether `text` contains or may still grow into a tool marker.
 
-    Markers arrive token-by-token ("<function", "=B", "ash", ">"), so a plain
-    `"<function=" in text` test is too late — the first chunk is emitted as
-    visible text before the "=" ever arrives, leaking a fragment to the user.
-    Return True while the accumulated text either contains a marker OR is still
-    a viable prefix of one, so the chunk is held back rather than shown.
+    Markers stream token by token; holding viable prefixes stops a fragment
+    leaking to the user.
     """
     t = text.lstrip()
     if not t:
         return False
     if any(h in t for h in HINTS):
         return True
-    # A marker may begin mid-string (e.g. '{"na' growing into '{"name"'), so test
-    # whether any TAIL of the text is still a viable prefix of a marker. Only the
-    # last len(longest marker) characters can matter, so this stays O(1).
+    # Any tail may be a marker prefix; only the last len(longest) chars matter.
     window = max(len(h) for h in HINTS)
     tail = t[-window:]
     for i in range(len(tail)):
@@ -194,15 +132,10 @@ def _strip_code(text):
 def _coerce(value, spec):
     """Coerce to the schema's declared type; never fail a call over coercion.
 
-    Accepts ALREADY-TYPED values, not just strings. The Responses branch used to
-    stringify every argument before validation, which corrupted arrays/bools/ints
-    into their repr; it now passes raw JSON values through, so a bool arrives as a
-    bool. A value that already matches its declared type is returned untouched.
+    Already-typed values pass through untouched.
     """
     t = (spec or {}).get("type")
     if not isinstance(value, str):
-        # Already structured (from parsed JSON). Trust it if the type lines up,
-        # and never call string methods on it.
         py = {"integer": int, "number": (int, float), "boolean": bool,
               "object": dict, "array": list, "string": str}.get(t)
         if py is None or isinstance(value, py):
@@ -224,7 +157,7 @@ def _coerce(value, spec):
 
 
 def _index_tools(declared):
-    """name -> function schema, from the tools the caller actually sent."""
+    """Map name -> function schema for the tools the caller declared."""
     index = {}
     for t in declared or []:
         fn = t.get("function") if isinstance(t, dict) and "function" in t else t
@@ -234,13 +167,11 @@ def _index_tools(declared):
 
 
 def _validate(name, args, tool_index):
-    """Return an OpenAI tool_call dict, or None if the candidate must be rejected."""
+    """Return an OpenAI tool_call dict, or None to reject the candidate."""
     if name not in tool_index:
         return None  # hallucinated / unknown tool
     spec = tool_index[name]
-    # OpenAI tools carry the schema under "parameters"; Anthropic /v1/messages
-    # tools carry the SAME schema under "input_schema". Claude Code uses the
-    # latter, so missing this key silently rejected every call on that route.
+    # OpenAI: "parameters"; Anthropic /v1/messages: "input_schema".
     params = spec.get("parameters") or spec.get("input_schema") or {}
     props = params.get("properties") or {}
     required = set(params.get("required") or [])
@@ -254,11 +185,7 @@ def _validate(name, args, tool_index):
     }
 
 
-# ── Missing UI-metadata argument on a NATIVE tool call ──────────────────────
-# Eligible (tool, argument) pairs. Deliberately a hardcoded allowlist and not a
-# heuristic over the schema: "which required arguments are safe to fabricate" is
-# not answerable from a JSON schema, so it is answered here, per tool, by a human
-# who checked what the argument does.
+# Human-vetted allowlist: safety to fabricate is not derivable from a schema.
 FABRICABLE = {("Agent", "description")}
 
 _WS_RE = re.compile(r"\s+")
@@ -267,15 +194,10 @@ LABEL_CHARS = 60
 
 
 def _short_label(prompt):
-    """First few words of the prompt, as a bounded, deterministic task label.
+    """Return the prompt's first words as a bounded, deterministic label.
 
-    Chosen over a fixed per-subagent string ("Explore repository") because
-    subagent types are user-defined and open-ended, so any fixed mapping is
-    wrong for the types it has never heard of. Chosen over the whole prompt
-    because the schema asks for 3-5 words.
-
-    Discloses nothing new: the prompt is already rendered in the client's UI
-    next to this label, so no content moves anywhere it was not already going.
+    Subagent types are open-ended, so no fixed label fits; the prompt is
+    already shown beside it, so nothing new is disclosed.
     """
     words = _WS_RE.sub(" ", prompt).strip().split(" ")
     label = " ".join(words[:LABEL_WORDS])[:LABEL_CHARS].strip()
@@ -285,64 +207,20 @@ def _short_label(prompt):
 def complete_ui_metadata(name, args_text, declared_tools, ctx=None):
     """Add ONE missing UI-metadata argument to a native tool call's arguments.
 
-    Returns the patched arguments as a JSON string, or None to leave the call
-    exactly as the model emitted it. `args_text` is the raw JSON the runtime
-    parsed out of the model's call.
+    Returns:
+        The patched arguments as JSON, or None to leave the call as emitted.
 
-    THE DEFECT. gemma4 receives Claude Code's `Agent` schema, can recite that
-    `description` is required, and omits it anyway. Measured against Ollama
-    0.32.13 (latest stable) with the production sampling parameters and the
-    real captured schema: 10/10 calls omitted it on gemma4:26b-mlx AND 10/10 on
-    non-MLX gemma4:26b, while a control tool with two required string arguments
-    omitted 0/10. In real claude-local sessions: 8 of 17 Agent calls omitted it,
-    and those 8 are 8 of the 9 DISTINCT sessions that delegated at all — the
-    remaining 9 calls are one session that got it right and then repeated its
-    own correct example. So it is close to once per fresh delegation.
-    Independently reproduced off Ollama entirely, on vLLM: vllm-project/vllm
-    #39072 (open, gemma4 omits a required `path`). So the defect is the model,
-    not the runtime — confirmed by asking gemma4 to recite the schema it was
-    given, which it does correctly, `description` and all.
-
-    WHY REPAIR RATHER THAN LET THE CLIENT RETRY. Claude Code does recover: it
-    returns an InputValidationError and the model retries correctly. Measured
-    cost of one such recovery: 18.0 s wall, a discarded 14,474-token prefill,
-    252 discarded output tokens, and a user-visible "Invalid tool parameters"
-    line — on every fresh delegation, deterministically at temperature 0.1.
-
-    WHY `description` IS FABRICABLE. It is UI metadata: "A short (3-5 word)
-    description of the task". `subagent_type` selects the agent and `prompt`
-    is the work; `description` steers nothing. Fabricating it cannot change
-    what the agent does. No other argument of any other tool has been shown to
-    have that property, so no other argument is eligible.
-
-    WHY IT CANNOT DRIFT. The missing-required set must be EXACTLY the one
-    eligible name. If Claude Code adds a required `Agent` field tomorrow and
-    gemma4 omits that too, the missing set becomes two names, no rule matches,
-    and the call goes to the client unrepaired — a visible error, which is the
-    correct outcome for a field nobody has vetted.
-
-    RETIREMENT. Deliberately not tied to a version number — measure, do not
-    assume a release fixed it. Delete this function, its call sites and the
-    `native-args` suite when this returns `description` on every attempt:
-
-        POST http://127.0.0.1:11434/api/chat
-        {"model": <the configured model>, "stream": false,
-         "options": {"temperature": 0.1, "top_p": 0.9, "top_k": 20},
-         "tools": [<Claude Code's Agent tool, verbatim>],
-         "messages": [{"role": "user", "content":
-             "Use the Explore subagent to find where retry logic lives in this
-              repository. Delegate it, do not search yourself."}]}
-
-    Baseline for comparison: 0/10 attempts included `description` on both
-    gemma4:26b-mlx and gemma4:26b under ollama 0.32.13. The same result also
-    follows if the runtime gains schema-constrained tool arguments, since the
-    omission then becomes impossible to emit.
+    gemma4 omits Claude Code's required `Agent.description` on most fresh
+    delegations (also vllm-project/vllm#39072); the client retry costs ~18 s.
+    `description` is UI metadata that steers nothing, so it alone is eligible,
+    and only when it is EXACTLY the missing set. Retire when a direct Ollama
+    /api/chat with the Agent tool returns `description` on every attempt.
     """
     if not args_text or not declared_tools or not isinstance(name, str):
         return None
     eligible = {arg for tool, arg in FABRICABLE if tool == name}
     if not eligible:
-        return None                       # not a tool we will ever complete
+        return None
     try:
         args = json.loads(args_text)
     except Exception:                     # noqa: BLE001 - malformed JSON is not ours
@@ -357,15 +235,14 @@ def complete_ui_metadata(name, args_text, declared_tools, ctx=None):
     params = spec.get("parameters") or spec.get("input_schema") or {}
     props = params.get("properties") or {}
     missing = set(params.get("required") or []) - set(args)
-    # EXACTLY the eligible argument — never a superset, never a different one.
+    # Exactly the eligible argument; an unvetted extra → visible client error.
     if missing != eligible:
         return None
     field = next(iter(missing))
     if (props.get(field) or {}).get("type") != "string":
         return _reject("field_not_a_string", tool=name, ctx=ctx)
 
-    # Every OTHER argument the model did supply must itself be well-formed.
-    # A call that is broken in some second way is not a call we complete.
+    # A call broken in a second way is not completed.
     prompt = args.get("prompt")
     if not isinstance(prompt, str) or not prompt.strip():
         return _reject("no_usable_prompt", tool=name, ctx=ctx)
@@ -381,17 +258,14 @@ def complete_ui_metadata(name, args_text, declared_tools, ctx=None):
 
 
 def recover(content, declared_tools, ctx=None):
-    """(tool_calls | None, leftover_text). Pure function — unit-testable.
+    """Return (tool_calls | None, leftover_text); pure.
 
-    `ctx` is metrics-only (route/model/turn) and never affects the decision.
-    Without it the Anthropic and chat routes report nothing, making a rejection
-    on those routes invisible.
+    `ctx` is metrics-only and never affects the decision.
     """
     if not content or not declared_tools:
         return None, content
     if not any(h in content for h in HINTS):
-        # No tool syntax at all -> the model never attempted a call. Distinct from a
-        # rejected attempt, and the two were previously indistinguishable.
+        # No tool syntax: no attempt, distinct from a rejected one.
         record("no_attempt", **(ctx or {}))
         return None, content
     tool_index = _index_tools(declared_tools)
@@ -414,36 +288,15 @@ def recover(content, declared_tools, ctx=None):
                 raw = json.loads(m.group(2))
             except Exception:  # noqa: BLE001
                 continue
-            # Raw values, not str() — same corruption bug fixed in the Responses
-            # branch: stringifying here turned arrays/bools/ints into their repr.
+            # Raw values: str() would turn arrays/bools/ints into their repr.
             call = _validate(m.group(1), raw, tool_index)
             if call:
                 calls.append(call)
                 spans.append(m.group(0))
 
     if not calls:
-        # THIRD format: the whole reply is ONE fenced JSON tool call.
-        #
-        # _strip_code() deletes fenced blocks before scanning, deliberately —
-        # fences usually hold tutorial examples, and executing those would run
-        # commands the model never intended. That is still right.
-        #
-        # But it also deleted the case observed in a real Claude Code session,
-        # where qwen3-coder's ENTIRE response was:
-        #     ```json
-        #     {"name": "Read", "arguments": {"file_path": "..."}}
-        #     ```
-        # A genuine call, dropped because of where it sat. The session stalled:
-        # the model described a tool call and the client never executed one.
-        #
-        # The distinction that makes this safe is CONTEXT, not content: a
-        # tutorial fence is surrounded by prose, whereas a real call IS the whole
-        # reply. So this accepts a fenced call only when
-        #   - there is exactly ONE fenced block, and
-        #   - removing it leaves nothing but whitespace, and
-        #   - the blob validates against a DECLARED tool.
-        # An explanation with an example fence fails the second test and is left
-        # alone, which is the behaviour the multi-fence support was rejected for.
+        # Third format: the WHOLE reply is one fenced JSON call. Safe by
+        # context: a tutorial fence has prose around it; a call is the reply.
         fences = FENCE_RE.findall(content)
         if len(fences) == 1 and not _strip_code(content).strip():
             body = fences[0].strip("`")
@@ -463,7 +316,6 @@ def recover(content, declared_tools, ctx=None):
                 return calls, None
 
     if not calls:
-        # Tool syntax was present but nothing survived validation.
         _reject("no_valid_call_in_text", ctx=ctx)
         return None, content
 
@@ -475,21 +327,10 @@ def recover(content, declared_tools, ctx=None):
     return calls, (leftover or None)
 
 
+# /v1/responses: the hook sees typed LiteLLM events (SSE serialises after), so
+# this branch builds LiteLLM's own event classes, never `data:` lines.
 
-# ── /v1/responses (Codex) ───────────────────────────────────────────────────
-# This route is NOT byte-oriented. Measured: the streaming iterator hook receives
-# LiteLLM Pydantic events (OutputTextDeltaEvent, OutputItemDoneEvent, ...) and the
-# SSE serializer runs AFTER the hook. So this branch mutates typed objects and
-# constructs LiteLLM's own event classes — never hand-built dicts, never
-# reconstructed `data:` lines. Porting the Anthropic byte approach here would have
-# parsed nothing.
-#
-# The observed failure: Codex asks for a tool, the local model answers with a
-# fenced JSON blob inside output_text, and zero function_call events are emitted,
-# so the call never executes.
-
-# The fence must be TERMINAL — nothing but whitespace may follow it. Leading prose
-# is permitted and deliberately NOT inspected (see responses_fence_candidate).
+# The fence must be terminal; leading prose is allowed and not inspected.
 TERMINAL_FENCE_RE = re.compile(
     r'```(?:json)?[ \t]*\n((?:(?!```).)*?)\n?[ \t]*```[ \t\r\n]*\Z', re.S)
 
@@ -497,25 +338,10 @@ TERMINAL_FENCE_RE = re.compile(
 def responses_fence_candidate(text, declared_tools, ctx=None):
     """Recover a tool call from output_text — Responses route only.
 
-    Deliberately NOT `recover()`: that strips fenced blocks as a safety measure,
-    which would delete the very content we need here. This is the narrow inverse,
-    and it stays narrow on purpose — the whole output must be one fence and
-    nothing else.
-
-    ALLOW   leading prose followed by a terminal fence holding one complete,
-            declared, schema-valid tool invocation
-    REJECT  trailing content after the fence, multiple fences, multiple objects,
-            malformed JSON, undeclared tools, invalid or missing required args
-
-    Prose is NOT inspected. "I will execute a command" and "here is what this
-    would look like" are structurally identical, so separating them means
-    classifying intent from natural language — this is a capability adapter, not
-    an intent classifier. vLLM's Llama parser does the same and is looser still
-    (it needs neither a fence nor a single object).
-
-    ACCEPTED TRADEOFF: a model that ILLUSTRATES a declared tool with valid
-    arguments in a terminal fence will have it executed. Bounded by _validate():
-    declared tools only, schema-checked, never an invented argument.
+    Not `recover()`, which strips fences. Accepts only one terminal fence with
+    one declared, schema-valid call. Prose is not inspected (no intent
+    classifying), so an illustrated valid call executes: accepted, bounded by
+    _validate().
     """
     if not text or not declared_tools:
         return _reject("no_text_or_tools", ctx=ctx)
@@ -523,12 +349,12 @@ def responses_fence_candidate(text, declared_tools, ctx=None):
         return _reject("multiple_fences", ctx=ctx)
     m = TERMINAL_FENCE_RE.search(text)
     if not m:
-        return _reject("no_terminal_fence", ctx=ctx)  # no fence, or text follows
+        return _reject("no_terminal_fence", ctx=ctx)
     inner = m.group(1).strip()
     if not inner.startswith("{") or not inner.endswith("}"):
         return _reject("fence_not_json_object", ctx=ctx)
     try:
-        obj = json.loads(inner)          # must be exactly one JSON object
+        obj = json.loads(inner)
     except Exception:                    # noqa: BLE001
         return _reject("malformed_json", ctx=ctx)
     if not isinstance(obj, dict):
@@ -537,15 +363,10 @@ def responses_fence_candidate(text, declared_tools, ctx=None):
     args = obj.get("arguments")
     if not isinstance(name, str) or not isinstance(args, dict):
         return _reject("missing_name_or_arguments", ctx=ctx)
-    # Pass values RAW. _validate() -> _coerce() knows each argument's declared type;
-    # stringifying here first turned arrays/bools/ints into their repr (prefix_rule
-    # ["rg","grep"] became the string "['rg', 'grep']"), which the schema then had to
-    # un-corrupt and could not. Measured on a real Codex exec_command payload.
+    # Raw values: _coerce() knows each type; str() would corrupt arrays.
     index = _index_tools(declared_tools)
     if name not in index:
-        # Distinguished from a schema failure on purpose: an undeclared name means
-        # the model invented a tool, a schema failure means it called a real one
-        # wrongly. They need different responses.
+        # Invented tool, distinct from a real tool called wrongly.
         return _reject("undeclared_tool", tool=name, ctx=ctx)
     call = _validate(name, args, index)
     if not call:
@@ -557,8 +378,7 @@ def responses_fence_candidate(text, declared_tools, ctx=None):
 def _responses_function_call_events(call, output_index):
     """Build the event sequence LiteLLM emits for a genuine function call.
 
-    Mirrors responses/streaming_iterator.py's function_call branch so Codex
-    receives the same object stream it would have gotten natively.
+    Mirrors responses/streaming_iterator.py's function_call branch.
     """
     from litellm.types.llms.openai import (
         FunctionCallArgumentsDeltaEvent,
@@ -602,43 +422,27 @@ def _responses_function_call_events(call, output_index):
 
 
 def _responses_event_name(chunk):
-    """Event discriminator, tolerant of enum-or-str typing."""
+    """Return the event type, tolerant of enum-or-str typing."""
     t = getattr(chunk, "type", None)
     return getattr(t, "value", t) if t is not None else None
 
 
 def _responses_stream_from_complete(response, request_data=None):
-    """Yield a valid /v1/responses event stream for an already-completed response.
+    """Yield a valid /v1/responses event stream for a completed response.
 
-    The event sequence is BUILT BY LITELLM, not by us. build_synthetic_response_events
-    (private `_build_synthetic_response_events` up to 1.98; public, same keyword
-    signature, by 1.102.4) is the same function behind MockResponsesAPIStreamingIterator (o1-pro and other
-    non-streaming models) and CachedResponsesAPIStreamingIterator (cache hits), so
-    de-streamed responses leave here in exactly the shape every other de-streamed
-    LiteLLM path already produces -- including the content_part, output_text.delta,
-    function_call_arguments.delta/done and reasoning_summary events that a
-    hand-rolled created/completed pair silently drops. Hand-rolling this was the
-    first attempt and it broke tool calls.
-
-    Its absence is handled rather than assumed: the fallback emits the minimal
-    created/item/completed sequence, which is degraded (no deltas, no tool-call
-    arguments). [REAL] on 1.102.4 with only the private name tried, that fallback
-    reached the client as an EMPTY stream -- so a missing builder is a broken
-    Codex web search, not a degraded one. Re-run the w7 probe after any upgrade.
-
-    The iterator classes wrapping it are deliberately NOT reused. Both label the
-    call with custom_llm_provider="cached_response" and set
-    _completed_response_cache_hit, which would report a real, freshly executed
-    web-search turn as a cache hit and corrupt spend tracking.
+    LiteLLM's own (_)build_synthetic_response_events builds the sequence; a
+    hand-rolled one drops deltas and broke tool calls. Without the builder the
+    minimal fallback breaks Codex web search: re-run the w7 probe on upgrade.
+    The wrapping iterators are not reused: they would log a cache hit.
     """
     logging_obj = (request_data or {}).get("litellm_logging_obj")
     status = getattr(response, "status", None)
 
     def _terminal_override():
-        """LiteLLM always terminates with response.completed, even for a failed
-        response. Announcing a failure as a completion is wrong in a way a client
-        cannot detect, so the terminal event is corrected here. This is the only
-        deliberate divergence from the vendor sequence."""
+        """Return a failed/incomplete terminal event in place of `completed`.
+
+        LiteLLM always ends with response.completed; the only divergence.
+        """
         if status not in ("failed", "incomplete"):
             return None
         from litellm.types.llms.openai import (
@@ -691,16 +495,10 @@ _REASONING_TEXT_PARTS = ("output_text", "text", "reasoning_text")
 
 
 def _summarised_reasoning(item):
-    """One de-streamed reasoning item in the shape LiteLLM's own streaming path emits.
+    """Reshape a de-streamed reasoning item as LiteLLM's streaming path does.
 
-    LiteLLM's non-streaming Responses bridge (`_extract_reasoning_output_items`)
-    writes reasoning as `content: [output_text]` with no `summary`; its streaming
-    path writes `summary: [summary_text]`. Codex 0.165 requires `summary` and
-    accepts only `reasoning_text`/`text` content, so it drops the whole item and
-    never replays reasoning. Qwen3.5 then sees every prior tool-loop turn as an
-    empty think block and answers inside its open one (#38). The text stays
-    reasoning: it moves to `summary`, never to visible content, and LiteLLM's
-    input side already reads replayed reasoning from either field.
+    Codex drops reasoning without `summary`, so Qwen3.5 answers inside an open
+    think block (#38). The text moves to `summary`, never to visible content.
     """
     payload = item.model_dump() if hasattr(item, "model_dump") else item
     if not isinstance(payload, dict) or payload.get("type") != "reasoning" or payload.get("summary"):
@@ -712,20 +510,17 @@ def _summarised_reasoning(item):
         return item
     update = {"summary": [{"type": "summary_text", "text": "\n".join(texts)}], "content": []}
     if hasattr(item, "model_copy"):
-        # model_copy does not validate nested values. Keep SDK field types so
-        # serialization cannot warn with the reasoning text in its diagnostic.
+        # Validate nested types, else a serializer warning leaks the reasoning.
         validated = type(item).model_validate({**payload, **update})
         return item.model_copy(update={key: getattr(validated, key) for key in update})
     return {**item, **update}
 
 
 def _with_reasoning_summaries(response):
-    """The response with every reasoning item summarised, or the same object if none changed.
+    """Return the response with reasoning items summarised, or it unchanged.
 
-    UPSTREAM  LiteLLM 1.106.2 `_extract_reasoning_output_items`; BerriAI/litellm#41262, #45552.
-    REPRO     a de-streamed /v1/responses turn from a thinking model must emit
-      `response.output_item.done` whose reasoning item carries `summary`.
-    RETIRE    when LiteLLM's non-streaming bridge emits `summary` itself.
+    Upstream: BerriAI/litellm#41262, #45552. Retire when the non-streaming
+    bridge emits `summary` itself.
     """
     output = list(getattr(response, "output", None) or ())
     summarised = [_summarised_reasoning(item) for item in output]
@@ -737,14 +532,10 @@ def _with_reasoning_summaries(response):
 
 
 class _CompletedResponseStream:
-    """An already-completed Responses result, served as the stream the client asked for.
+    """Serve a completed Responses result as the stream the client asked for.
 
-    The proxy streams any AsyncIterator, so this needs no LiteLLM base class.
-    `_hidden_params` is carried because the proxy reads response headers
-    (model id, api base) from it. `completed_response` is where the proxy's
-    /v1/responses container-ownership pass looks for the finished response;
-    without it, every de-streamed web search logged "Container ownership
-    recording skipped".
+    `_hidden_params` feeds response headers; `completed_response` feeds the
+    proxy's container-ownership pass.
     """
 
     def __init__(self, response, request_data):
@@ -763,31 +554,27 @@ class _CompletedResponseStream:
 
 
 def _destreamed_responses_result(request_data, response):
-    """Did websearch_interception turn a streamed /v1/responses call into this?"""
+    """Return whether websearch_interception de-streamed this response."""
     return (bool((request_data or {}).get("_websearch_interception_converted_stream"))
             and type(response).__name__ == "ResponsesAPIResponse")
 
 
 class ToolRepair(CustomLogger):
-    """Registered via litellm_settings.callbacks: tool_repair.proxy_handler_instance"""
+    """Registered via litellm_settings.callbacks."""
 
     @staticmethod
     def _repair_anthropic(data, response):
         """Repair the Anthropic /v1/messages shape.
 
-        This is the route Claude Code actually uses. Its response has top-level
-        `content` blocks and `stop_reason` — no `.choices` — so the OpenAI branch
-        below never sees it. Missing this was why raw XML still reached the user
-        in a real claude-local run even though /v1/chat/completions was clean.
+        Claude Code's route: top-level `content`, no `.choices`, so the OpenAI
+        branch never sees it.
         """
         blocks = getattr(response, "content", None)
         if blocks is None and isinstance(response, dict):
             blocks = response.get("content")
         if not isinstance(blocks, list):
             return False
-        # Native tool_use already present -> the runtime parsed the call, so the
-        # text-recovery path below has nothing to do. The arguments may still be
-        # missing a UI-metadata field; that is the only thing touched here.
+        # Native tool_use → no text recovery; only UI metadata may be completed.
         native = False
         for b in blocks:
             is_dict = isinstance(b, dict)
@@ -851,26 +638,12 @@ class ToolRepair(CustomLogger):
         return True
 
     async def async_post_call_success_deployment_hook(self, request_data, response, call_type):
-        """Re-stream a /v1/responses web search that websearch_interception de-streamed.
+        """Re-stream a /v1/responses web search that was de-streamed.
 
-        websearch_interception (LiteLLM's own callback, enabled in our config)
-        sets stream=False to run its search loop and hands back a finished
-        ResponsesAPIResponse for a request the client asked to stream. On
-        /v1/messages LiteLLM re-wraps that in a FakeAnthropicMessagesStreamIterator;
-        on /v1/responses the re-wrap is MISSING. Unwrapped, no client ever sees
-        response.completed, so agentic clients retry forever (measured:
-        codex-local, 10/10 reconnects). Up to 1.102 the bare object reached the
-        streaming-iterator hook; from 1.103 the proxy calls `__aiter__()` on it
-        first (`_UpstreamStreamBoundary`) and the request fails with 500. This
-        hook runs on the deployment's result, before either, on both lines --
-        [REAL] w7 completes on 1.102.4 and 1.106.0 with no other handler.
-
-        UPSTREAM  BerriAI/litellm#42770 (open); fix proposed in #42821, which
-          wraps the same flag in the Responses bridge.
-        REPRO     POST /v1/responses stream=true with
-          tools=[{"type":"web_search"}] must end in response.completed; the
-          built-in tool type is the whole trigger.
-        RETIRE    when that request completes with this hook removed.
+        LiteLLM re-wraps it on /v1/messages but not /v1/responses, so clients
+        never see response.completed and retry forever (BerriAI/litellm#42770).
+        Retire when a streamed /v1/responses with tools=[{"type":"web_search"}]
+        completes without this hook.
         """
         if not _destreamed_responses_result(request_data, response):
             return None
@@ -891,7 +664,7 @@ class ToolRepair(CustomLogger):
             for choice in choices:
                 msg = getattr(choice, "message", None)
                 if msg is None or getattr(msg, "tool_calls", None):
-                    continue  # native tool calls present -> never touch
+                    continue  # native tool calls: never touch
                 calls, leftover = recover(getattr(msg, "content", None), data.get("tools"),
                                       _ctx(data, "/v1/chat/completions"))
                 if not calls:
@@ -910,7 +683,7 @@ class ToolRepair(CustomLogger):
 
     @classmethod
     def _native_tool_use_events(cls, ts, args_text):
-        """Re-emit one buffered tool_use block, with `args_text` as its input."""
+        """Re-emit one buffered tool_use block with `args_text` as input."""
         idx = ts.get("index", 0)
         return [
             cls._sse("content_block_start", {
@@ -925,15 +698,12 @@ class ToolRepair(CustomLogger):
 
     @classmethod
     def _anthropic_native_arg_repair(cls, text, state, tools):
-        """Complete a missing UI-metadata argument on a NATIVE streamed tool_use.
+        """Complete a missing UI-metadata arg on a native streamed tool_use.
 
-        Returns the byte chunks to emit, or None for "not my event" so the
-        caller's own handling runs unchanged.
+        Buffers the block start→stop: the decision needs the whole arguments.
 
-        Buffers one tool_use block start->stop because the arguments arrive as
-        input_json_delta fragments and the decision needs the whole object. That
-        costs nothing a user can perceive: a tool call is executed, not read —
-        the same reasoning the streaming hook already documents for text.
+        Returns:
+            Byte chunks to emit, or None for an event this does not own.
         """
         try:
             payload = json.loads(text.split("data:", 1)[1].strip())
@@ -947,15 +717,14 @@ class ToolRepair(CustomLogger):
         if etype == "content_block_start":
             block = payload.get("content_block") or {}
             if block.get("type") != "tool_use":
-                return None               # text block: caller's buffering owns it
+                return None               # text block: caller owns it
             ts.clear()
             ts.update(active=True, index=payload.get("index", 0), id=block.get("id"),
                       name=block.get("name"), args="")
-            # The runtime parsed a call: the text-recovery path must stand down,
-            # exactly as it would have on seeing this event itself.
+            # The runtime parsed a call: text recovery stands down.
             state["native"] = True
             state["saw_tool_use"] = True
-            return []                     # hold until the arguments are known
+            return []
 
         if not ts.get("active"):
             return None
@@ -984,37 +753,24 @@ class ToolRepair(CustomLogger):
     def _anthropic_sse_repair(cls, raw, state, tools):
         """Recover malformed tool calls on the Anthropic SSE byte stream.
 
-        WHY BYTES: there is no structured callback seam before SSE serialization.
-        adapters/handler.py:600 goes straight from litellm.acompletion() into
-        ANTHROPIC_ADAPTER.translate_completion_output_params_streaming(), which
-        returns async_anthropic_sse_wrapper() — already encoded. The proxy's
-        async_post_call_streaming_iterator_hook then receives bytes. Repairing
-        here is therefore the only option that does not fork LiteLLM internals.
-        (Upstream fix: add a normalization seam on `completion_stream` BEFORE the
-        adapter, so callbacks can operate on ModelResponseStream chunks.)
+        Bytes, because the adapter encodes SSE before any callback seam. Buffers
+        a text block start→stop, then emits tool_use events or flushes verbatim.
+        Each chunk is one complete SSE event.
 
-        STRATEGY: buffer a text content block start->stop, then decide. If the
-        accumulated text recovers into tool calls, emit synthetic tool_use events
-        in its place; otherwise flush the buffered events verbatim so ordinary
-        prose streams untouched. Each yielded chunk is exactly one complete SSE
-        event (streaming_iterator.py:793), so no partial-event handling is needed.
-
-        Returns a list of byte chunks to emit (possibly empty while buffering).
+        Returns:
+            Byte chunks to emit (empty while buffering).
         """
         try:
             text = raw.decode("utf-8", "ignore")
         except Exception:  # noqa: BLE001
             return [raw]
 
-        # A native tool_use block may still be missing a required argument. That
-        # is a different defect from everything below, so it is decided first;
-        # the helper returns None for every event it does not own.
+        # Native missing-argument repair first; None for events it does not own.
         completed = cls._anthropic_native_arg_repair(text, state, tools)
         if completed is not None:
             return completed
 
-        # A real tool_use block means the runtime parsed it correctly -> stand down
-        # for the rest of the stream.
+        # Native tool_use → stand down for the rest of the stream.
         if '"type": "tool_use"' in text or '"type":"tool_use"' in text:
             if not state.get("native"):
                 attribute(route="/v1/messages", stream=True, native=True, repaired=False,
@@ -1053,10 +809,10 @@ class ToolRepair(CustomLogger):
             buf = state["buf"] + [raw]
             calls, leftover = recover(state.get("accum") or "", tools, state.get("ctx"))
             if not calls:
-                return buf  # ordinary text — emit exactly as received
+                return buf  # ordinary text, verbatim
             idx = state.get("index", 0)
             out = []
-            if leftover:  # preserve any genuine prose alongside the call
+            if leftover:
                 out.append(cls._sse("content_block_start", {
                     "type": "content_block_start", "index": idx,
                     "content_block": {"type": "text", "text": ""}}))
@@ -1093,23 +849,13 @@ class ToolRepair(CustomLogger):
 
     @staticmethod
     def _fix_anthropic_sse_stop_reason(raw, state):
-        """Repair stop_reason after _anthropic_sse_repair injected a tool_use block.
+        """Repair stop_reason after a tool_use block was injected.
 
-        The model finished on prose, so upstream's message_delta says end_turn;
-        the injected tool_use block makes that a contradiction, and Claude Code
-        does not execute a tool in a turn that claims to be finished.
+        Claude Code will not run a tool in an end_turn turn. Injected streams
+        only; native ones were fixed upstream in 1.101.0 (#39010).
 
-        Only INJECTED streams are touched. A native tool_use stream used to need
-        this too: Ollama emits tool_calls and done=true in separate chunks, and
-        LiteLLM left finish_reason "stop". [REAL] Fixed upstream in 1.101.0
-        (#39010): with this hook removed, 1.98.0 returned end_turn 5/5 and
-        1.102.4 returned tool_use 5/5. A native stream now passes through as
-        LiteLLM emitted it.
-
-        Rewrites exactly one field on exactly one event. Each yielded chunk is one
-        complete SSE event, so no cross-chunk buffering is needed.
-
-        Returns replacement bytes, or None to pass the chunk through untouched.
+        Returns:
+            Replacement bytes, or None to pass the chunk through untouched.
         """
         if not state.get("injected"):
             return None
@@ -1119,7 +865,6 @@ class ToolRepair(CustomLogger):
             return None
         if "message_delta" not in text:
             return None
-        # Only rewrite a terminal stop_reason that contradicts the tool_use block.
         for wrong in ('"stop_reason": "end_turn"', '"stop_reason":"end_turn"'):
             if wrong in text:
                 fixed = text.replace(wrong, wrong.replace("end_turn", "tool_use"))
@@ -1132,20 +877,13 @@ class ToolRepair(CustomLogger):
     async def async_post_call_streaming_iterator_hook(
         self, user_api_key_dict, response, request_data
     ):
-        """Buffer suspected tool syntax rather than streaming it as visible text.
+        """Buffer suspected tool syntax instead of streaming it as text.
 
-        Buffering is correct, not a compromise: a tool call is EXECUTED, not read,
-        so emitting it token-by-token has no user value and leaking half a call as
-        assistant text is exactly the bug we are fixing.
-
-        Also repairs stop_reason on the Anthropic SSE byte path when a tool call
-        was injected — see _fix_anthropic_sse_stop_reason. That path delivers
-        pre-serialized bytes, so structured repair is impossible here, but a
-        targeted field rewrite is both possible and safe.
+        A tool call is executed, not read, so buffering costs the user nothing.
+        Also fixes stop_reason after an injected call on the SSE byte path.
         """
         tools = (request_data or {}).get("tools")
-        # Responses-route state. Kept separate from the byte-oriented sse_state so
-        # the two branches cannot interfere.
+        # Separate from sse_state so the two branches cannot interfere.
         rs = {"buf": [], "text": "", "native": False, "index": 0, "done": False}
         sse_state = {"saw_tool_use": False,
                      "ctx": _ctx(request_data, "/v1/messages"),
@@ -1154,21 +892,18 @@ class ToolRepair(CustomLogger):
         if AILOCAL_DEBUG:
             print(f"tool_repair: STREAM hook entered tools={len(tools or [])}", flush=True)
         _dbg_shapes = set()
-        buffered = []          # chunks held back while a call may be forming
-        text = ""              # accumulated visible text
+        buffered = []
+        text = ""
         suspect = False
         native_seen = False
-        # A de-streamed /v1/responses web search never reaches this hook as a
-        # bare object: async_post_call_success_deployment_hook re-streams it first.
         try:
             async for chunk in response:
-                # ── /v1/responses: typed events, handled before anything else ──
+                # /v1/responses: typed events, handled first.
                 ev = _responses_event_name(chunk)
                 if isinstance(ev, str) and ev.startswith("response."):
                     if rs["done"]:
                         yield chunk
                         continue
-                    # A genuine function call means the runtime got it right.
                     item = getattr(chunk, "item", None)
                     if getattr(item, "type", None) == "function_call" or "function_call" in ev:
                         rs["native"] = True
@@ -1205,12 +940,11 @@ class ToolRepair(CustomLogger):
                             for out in _responses_function_call_events(calls[0], rs["index"]):
                                 yield out
                         else:
-                            for c in rs["buf"]:      # ordinary text — release verbatim
+                            for c in rs["buf"]:
                                 yield c
                         rs["buf"] = []
                         continue
-                    # anything else (in_progress, completed, ...) passes through,
-                    # after flushing whatever text was buffered.
+                    # Anything else passes through after flushing the buffer.
                     for c in rs["buf"]:
                         yield c
                     rs["buf"] = []
@@ -1221,9 +955,7 @@ class ToolRepair(CustomLogger):
                 try:
                     delta = chunk.choices[0].delta
                 except Exception:  # noqa: BLE001
-                    # Anthropic SSE route delivers pre-serialized bytes. Structured
-                    # repair is impossible here, but after an injected call the
-                    # stop_reason field must be corrected or the loop stalls.
+                    # Anthropic SSE bytes: fix stop_reason or the loop stalls.
                     if isinstance(chunk, (bytes, bytearray)):
                         for out in self._anthropic_sse_repair(bytes(chunk), sse_state, tools):
                             fixed = self._fix_anthropic_sse_stop_reason(out, sse_state)
@@ -1243,13 +975,10 @@ class ToolRepair(CustomLogger):
                         attribute(route="/v1/chat/completions", stream=True, native=True,
                                   repaired=False, model=sse_state.get("model"),
                                   tools=sse_state.get("ntools"))
-                    native_seen = True  # runtime parsed it correctly; stay out of the way
+                    native_seen = True
                     sse_state["saw_tool_use"] = True
 
-                # Same finish_reason bug on the OpenAI streaming shape: Ollama emits
-                # tool_calls in an earlier chunk than done=True, so the transformation's
-                # same-chunk override never fires and the terminal chunk says "stop".
-                # Measured directly: a streamed Bash call arrived with finish_reason=stop.
+                # Ollama sends tool_calls before done=True; end says "stop".
                 try:
                     ch0 = chunk.choices[0]
                     if (
@@ -1270,19 +999,15 @@ class ToolRepair(CustomLogger):
                 text += piece
                 buffered.append(chunk)
                 if _maybe_marker(text):
-                    suspect = True           # hold back — may be (part of) a tool call
+                    suspect = True
                 else:
-                    # Provably not a tool marker: release everything held so far
-                    # and resume normal pass-through streaming.
+                    # Provably no marker: release what was held.
                     suspect = False
                     for c in buffered:
                         yield c
                     buffered = []
 
-            # A stream that ended mid tool_use block leaves the completion
-            # buffer holding events nobody will ever close. Emit them as
-            # received: a truncated call the client rejects is a visible
-            # failure, and swallowing it silently would be a worse one.
+            # Ended mid tool_use: flush unrepaired; a visible failure.
             ts = sse_state.get("native_tool") or {}
             if ts.get("active"):
                 ts["active"] = False
@@ -1306,7 +1031,7 @@ class ToolRepair(CustomLogger):
                     log.info("tool_repair: recovered %d tool call(s) from stream", len(calls))
                     yield last
                 else:
-                    for c in buffered:       # not a tool call after all — release verbatim
+                    for c in buffered:
                         yield c
         except Exception as exc:  # noqa: BLE001
             log.error("tool_repair: streaming repair failed: %s", exc)

@@ -1,25 +1,17 @@
 #!/usr/bin/env python3
-"""The validator STATE MACHINE and the publish gate that consumes it.
+"""Test the validator state machine and the publish gate that consumes it.
 
-Deterministic and fast: the browser is replaced through the `runner` seam, so
-this asserts control flow -- what happens for VALID / INVALID / UNAVAILABLE /
-TIMEOUT -- without launching Chrome. The GRAMMAR itself is authoritative only in
-test_mermaid_grammar.py (FULL), which runs real Mermaid.
-
-Split that way on purpose. The invariant CI must never lose is "invalid or
-unchecked Mermaid does not publish successfully", and that is control flow. One
-bounded REAL parse runs here too, so a green CORE cannot mean the authoritative
-path is broken.
+The `runner` seam replaces Chrome; grammar lives in test_mermaid_grammar.py.
+Invariant: invalid or unchecked Mermaid never publishes. One bounded real
+parse keeps a green CORE from hiding a broken real path.
 """
 import importlib.util, os, sys, tempfile, time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-# Publishing writes .artifacts/ under the approved root, which defaults to cwd.
-# Point it at a throwaway dir BEFORE server.py is imported (it resolves the root
-# at import time), or the suite litters the checkout it is testing -- which the
-# install-parity and root-cleanliness gates then correctly reject.
+# Set the approved root before importing server.py, else .artifacts/ lands
+# in the checkout.
 _ARTIFACT_ROOT = tempfile.mkdtemp(prefix="la-testroot-")
 os.environ["LOCAL_ARTIFACTS_ROOT"] = _ARTIFACT_ROOT
 spec = importlib.util.spec_from_file_location("srv", HERE / "server.py")
@@ -52,7 +44,7 @@ def dom(body):
 
 print("MERMAID VALIDATOR STATE MACHINE (no browser)")
 
-# ── the four states ───────────────────────────────────────────────────────────
+# the four states
 r = V.parse("classDiagram\n class A\n", runner=lambda u: (dom(V._OK), None))
 check("VALID when the grammar accepts", r.state == V.VALID, r)
 
@@ -79,9 +71,9 @@ V.find_chrome = _real_find
 check("UNAVAILABLE is NEVER reported as VALID",
       V.UNAVAILABLE != V.VALID and V.parse("x", runner=lambda u: ("", None)).state != V.VALID)
 
-# ── bounded termination: the reader must not outlive the deadline ─────────────
+# bounded termination: the reader must not outlive the deadline
 class _Hang:
-    """A process that never emits and never exits."""
+    """Fake a process that never emits and never exits."""
     def __init__(self):
         import os
         self._r, self._w = os.pipe()
@@ -93,7 +85,7 @@ el = time.time() - t
 check("a hung browser is bounded by the deadline", 0.9 < el < 3.0, f"{el:.2f}s")
 check("and yields no verdict (=> UNAVAILABLE)", buf == "")
 
-# ── the publish gate consumes all three states ────────────────────────────────
+# the publish gate consumes all three states
 _real_parse = V.parse
 def fixed(state, detail=""):
     return lambda *a, **k: V.Result(state, detail)
@@ -127,7 +119,7 @@ check("html still publishes when validation is unavailable", ok is True, msg)
 ok, msg = srv.publish(title="Gate Prose", content="# Title\n\nProse only.\n", fmt="markdown")
 check("prose markdown still publishes when validation is unavailable", ok is True, msg)
 
-# ── the validator must not run when there is nothing to validate ──────────────
+# the validator must not run when there is nothing to validate
 calls = {"n": 0}
 def counting(*a, **k):
     calls["n"] += 1
@@ -144,7 +136,7 @@ srv.check_mermaid("<!doctype html>", "html")
 check("html starts NO validation", calls["n"] == 0, calls)
 srv.mermaid_validate.parse = _real_parse
 
-# ── one bounded REAL parse, so green CORE cannot hide a broken real path ──────
+# one bounded REAL parse, so green CORE cannot hide a broken real path
 if V.available():
     t = time.time()
     real = V.parse(RECOVERED % CORRUPT_LINE)

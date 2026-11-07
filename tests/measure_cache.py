@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Show whether the KV prefix cache is reused across turns. Out of the gate.
 
-    python3 tests/measure_cache.py [--quick] [--tier 64gb] [--log PATH]  # active: cold, then warm turn
-    python3 tests/measure_cache.py --tail 20                             # passive: last N logged requests
+    # active: cold, then warm turn
+    python3 tests/measure_cache.py [--quick] [--tier 64gb] [--log PATH]
+    # passive: last N logged requests
+    python3 tests/measure_cache.py --tail 20
 
-Ollama's prompt_eval_count includes cached tokens ([REAL] 11115 reported, 1030
-evaluated), so reuse comes from prompt_eval_cached_count (Ollama >= 0.33.3), else
-the server log, else the prefill-time collapse alone. The active probe stops and
-reloads the model: run alone. Reads the live launch agent's log read-only.
+prompt_eval_count includes cached tokens, so reuse comes from
+prompt_eval_cached_count (Ollama ≥ 0.33.3), else the server log, else the
+prefill-time collapse. The active probe reloads the model: run alone.
 """
 from __future__ import annotations
 
@@ -27,7 +28,7 @@ EVAL_LINE = re.compile(r"prompt eval time =\s*[\d.]+ ms /\s*(\d+) tokens")
 
 
 def resolve_log(explicit):
-    """--log, else the launch agent's StandardErrorPath, else the default."""
+    """Return --log, else the launch agent's StandardErrorPath, else default."""
     if explicit:
         return pathlib.Path(explicit)
     try:
@@ -40,7 +41,7 @@ def resolve_log(explicit):
 
 
 def generate(model, prompt, num_ctx, num_predict=8, options=None):
-    """Raw, non-thinking: the warm continuation is neither re-templated nor hidden as thinking."""
+    """Generate raw, non-thinking, so the warm turn is not re-templated."""
     return api("/api/generate", {
         "model": model, "prompt": prompt, "stream": False, "raw": True, "think": False,
         "options": {**(options or {}), "num_ctx": num_ctx, "num_predict": num_predict},
@@ -48,7 +49,7 @@ def generate(model, prompt, num_ctx, num_predict=8, options=None):
 
 
 def evaluated_from_log(log, start_offset):
-    """Uncached prompt tokens of the newest request logged after start_offset, or None."""
+    """Return uncached prompt tokens of the newest request after offset."""
     if not log or not log.is_file():
         return None
     try:
@@ -61,8 +62,10 @@ def evaluated_from_log(log, start_offset):
 
 
 def probe(model, num_ctx, depth, log=None, options=None):
-    """Cold turn, then a warm turn that EXTENDS it with the model's own reply: a hybrid
-    recurrent model reuses state only along an extension, so a diverging marker reads 0%."""
+    """Run a cold turn, then a warm turn extending it with the model's reply.
+
+    A hybrid recurrent model reuses state only along an extension.
+    """
     prompt = f"# cache probe {time.time_ns()}\n" + CHUNK * max(1, depth // 18)  # salt once
     subprocess.run(["ollama", "stop", model], capture_output=True)
     time.sleep(4)
@@ -101,8 +104,10 @@ def probe(model, num_ctx, depth, log=None, options=None):
 
 
 def tail(log, n):
-    """Passive: per-request reuse from the log. Only the FIRST `cached n_tokens` after a
-    request is inherited prefix; later ones are a recurrent model's own snapshots."""
+    """Report per-request reuse from the log.
+
+    Only the first `cached n_tokens` after a request is inherited prefix.
+    """
     if not log.is_file():
         print(f"no Ollama log at {log} -- pass --log PATH; the active probe needs no log")
         return

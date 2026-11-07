@@ -1,17 +1,8 @@
 """PEP 517 backend shim: never package a stale build tree.
 
-setuptools' build_py COPIES src/ into build/lib and never removes a file that
-has since been deleted from source, so the next wheel keeps shipping it. That is
-not theoretical: it was reproduced in the sibling Cadence checkout, where a
-deleted hook still arrived in site-packages through `pipx install --force .`
-because the wheel was built from a build/lib that still held it. ailocal builds
-the same way, so it carries the same hazard. A stale build tree silently
-un-deletes files, and the installed package stops matching the checkout.
-
-Clearing build/lib before each build makes the wheel a function of the source
-tree alone. It costs one directory copy per build and removes a whole class of
-release-correctness bug, which is a trade worth making. This is a lifecycle fix,
-not a documented cleanup ritual: nobody has to remember it.
+setuptools copies src/ into build/lib and never prunes deleted files, so a
+stale tree un-deletes them in the wheel; clearing it makes the wheel a function
+of the source tree alone.
 """
 from __future__ import annotations
 

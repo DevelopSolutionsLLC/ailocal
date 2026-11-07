@@ -1,11 +1,7 @@
 #!/usr/bin/env python3
-"""check_diagram.py — objective geometry gate for architecture artifacts.
+"""Gate architecture artifacts on geometry: measure SVG overlaps, not pixels.
 
-Adapted from the checker written for the hosted-Claude diagram benchmark. It
-answers the question a screenshot cannot: are any two things on top of each
-other. Parses the generated SVG and measures, rather than trusting the renderer.
-
-    python3 check_diagram.py <artifact.html> [--expect-nodes a,b] [--expect-edges 4]
+Usage: check_diagram.py <html> [--expect-nodes a,b] [--expect-edges N]
 """
 import re
 import sys

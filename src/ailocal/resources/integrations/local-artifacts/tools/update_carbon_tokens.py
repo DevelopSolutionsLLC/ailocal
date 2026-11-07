@@ -1,21 +1,12 @@
 #!/usr/bin/env python3
 """Regenerate themes/carbon.tokens.json from a PINNED @carbon/themes release.
 
-This is a DEVELOPER command. Nothing in the artifact runtime calls it, and
-rendering never touches the network -- the generated file is committed.
-
-    python3 tools/update_carbon_tokens.py            # regenerate at the pin
-    python3 tools/update_carbon_tokens.py --check     # fail if the tree is stale
+    python3 tools/update_carbon_tokens.py          # regenerate at the pin
+    python3 tools/update_carbon_tokens.py --check  # fail if the tree is stale
     python3 tools/update_carbon_tokens.py --pin 11.81.0
 
-Why a generator and not a hand-copied palette: @carbon/themes ships its tokens
-as DTCG JSON (src/dtcg/), so the values arrive from IBM's source of truth
-instead of someone's eyedropper. We resolve ONLY the tokens the authored file
-actually aliases, which keeps a 255 KB upstream down to the subset we use.
-
-Determinism: output carries the version and the npm integrity hash but NO
-timestamp, so regenerating at the same pin is byte-identical and provenance is
-reproducible.
+Developer command; rendering never touches the network. Resolves only the
+aliased tokens; no timestamp, so the same pin regenerates byte-identically.
 """
 import argparse
 import base64
@@ -34,9 +25,7 @@ GENERATED = HERE / "themes/carbon.tokens.json"
 
 PIN = "11.80.0"
 PKG = "@carbon/themes"
-# Which upstream theme backs each of our two modes. g10 pairs a gray.10 ground
-# with white layers; g100 is its dark counterpart (gray.100 ground, gray.90
-# layers). That inversion is what keeps the two modes structurally identical.
+# g10/g100 are inverses, which keeps the two modes structurally identical.
 THEME_FILES = {"light": "g10.json", "dark": "g100.json"}
 PALETTE_FILE = "color-palette.json"
 
@@ -44,7 +33,7 @@ REF = re.compile(r"^\{([^}]+)\}$")
 
 
 def fetch(pin):
-    """Return (palette, {mode: theme}, integrity) from the pinned npm tarball."""
+    """Return (palette, {mode: theme}, integrity) from the pinned tarball."""
     meta_url = f"https://registry.npmjs.org/{PKG.replace('/', '%2f')}/{pin}"
     with urllib.request.urlopen(meta_url, timeout=60) as r:
         meta = json.load(r)
@@ -53,7 +42,6 @@ def fetch(pin):
     with urllib.request.urlopen(dist["tarball"], timeout=120) as r:
         blob = r.read()
 
-    # Verify before trusting a single byte of it.
     algo, _, b64 = integrity.partition("-")
     if algo.startswith("sha"):
         digest = hashlib.new(algo, blob).digest()
@@ -98,7 +86,7 @@ def resolve(value, palette, depth=0):
 
 
 def wanted(node, out=None):
-    """Every {carbon....} alias the authored file actually uses."""
+    """Return every {carbon....} alias the authored file uses."""
     out = set() if out is None else out
     if isinstance(node, dict):
         for k, v in node.items():
@@ -149,7 +137,6 @@ def build(pin):
             "$extensions": {"com.developsolutions.ailocal": {"upstream": origin}},
         })
 
-    # Drop the null descriptions rather than emit them.
     def prune(n):
         if isinstance(n, dict):
             return {k: prune(v) for k, v in n.items() if v is not None}

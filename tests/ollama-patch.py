@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Patched Ollama: the pinned build refuses what it cannot verify.
 
-Fixtures only: build steps, downloads and signature checks are mocked; nothing compiles or infers.
+Fixtures only: build, downloads and signature checks are mocked.
 """
 import shutil, tempfile, unittest  # noqa: E401
 from pathlib import Path
@@ -80,7 +80,7 @@ class PatchInstall(unittest.TestCase):
             return candidate.prepare()
 
     def test_an_unsupported_go_toolchain_is_refused(self):
-        """An outdated point release links its standard-library advisories into the daemon (#106)."""
+        """Outdated point release links its stdlib advisories in (#106)."""
         with self.assertRaisesRegex(RuntimeError, "not a current supported release"):
             self.build(go_listing=[{"version": "go1.27.4", "stable": True}, {"version": "go1.26.11", "stable": True}])
 

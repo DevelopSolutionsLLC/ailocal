@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Compare candidate models for the agentic default. Out of the gate; asserts nothing.
+"""Compare candidate models for the agentic default; out of gate, no asserts.
 
     python3 tests/measure_agentic.py --quick    # decode-only plumbing smoke
-    python3 tests/measure_agentic.py            # active model, 32K decode/tools pilot
-    python3 tests/measure_agentic.py --prefill  # opt into expensive prefill probes
+    python3 tests/measure_agentic.py            # active model, 32K pilot
+    python3 tests/measure_agentic.py --prefill  # expensive prefill probes
     python3 tests/measure_agentic.py --models gemma4:26b-mlx
 
-Measures decode tok/s with MTP acceptance, cold/warm prefill, resident memory and a
-tool loop, each candidate at its vendor sampling. The tool loop is [APPROX]: direct
-/api/chat, because the gateway routes only the incumbent. Stops and reloads models: run alone.
+Decode tok/s with MTP acceptance, cold/warm prefill, resident memory and a
+tool loop ([APPROX]: direct /api/chat) at vendor sampling. Reloads models:
+run alone.
 """
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ CANDIDATES = {
         "label": "challenger — qwen3_5 arch, 27.8B, adds vision", "think": "medium",
         "options": {"temperature": 1.0, "top_k": 20, "top_p": 0.95, **_NEUTRAL}},
 }
-# Small-tier Cyber candidates take the shipped profile's sampling; host-measured only.
+# Small-tier Cyber candidates use the shipped profile's sampling.
 for _tier in ("16gb", "32gb"):
     _cfg = P.resolve_role(_tier, "cyber", P.data_root())
     CANDIDATES[_cfg["model"]] = {
@@ -81,8 +81,10 @@ _STATS = re.compile(r"acceptance=(?P<acc>[\d.]+).*?avg_draft=(?P<draft>[\d.]+).*
 
 
 def server_log():
-    """The running server's stderr log, from lsof: the launch agent redirects it to
-    ~/Library/Logs/ailocal, so ~/.ollama/logs goes stale. None if deleted or absent."""
+    """Return the running server's stderr log via lsof, or None.
+
+    The launch agent redirects it, so ~/.ollama/logs goes stale.
+    """
     pid = subprocess.run(["pgrep", "-f", "ollama serve"], capture_output=True, text=True).stdout.split()
     if not pid:
         return None
@@ -94,7 +96,7 @@ def server_log():
 
 
 def log_offset():
-    """(log, size) taken before a request so its stats are not scraped from history."""
+    """Return (log, size) before a request, so old stats are not scraped."""
     log = server_log()
     try:
         return (log, log.stat().st_size) if log else None
@@ -103,8 +105,10 @@ def log_offset():
 
 
 def speculation_since(offset):
-    """speculate_stats written after offset; None for no stats AND for no log (the
-    caller tells them apart by the offset it passed)."""
+    """Return speculate_stats written after offset, or None.
+
+    None means no stats or no log; the caller's offset tells them apart.
+    """
     if offset is None:
         return None
     log, start = offset
@@ -122,8 +126,10 @@ def speculation_since(offset):
 
 
 def decode(model, opts, think, ctx, want=128, repeats=5):
-    """Median decode rate over repeats (single runs spread 68.7-100.8 tok/s with a 2.9
-    outlier), with speculation aggregated: the runner does not log every request."""
+    """Return the median decode rate over repeats, speculation aggregated.
+
+    Single runs are noisy, and the runner does not log every request.
+    """
     rates, accs, reason, log_ok = [], [], "?", False
     for _ in range(repeats):
         off = log_offset()
@@ -149,7 +155,7 @@ def decode(model, opts, think, ctx, want=128, repeats=5):
 
 
 def prefill_pair(model, depth, opts, ctx):
-    """Cold prefill, then the identical prompt again while the prefix trie is warm."""
+    """Measure cold prefill, then the same prompt with the prefix trie warm."""
     prompt = f"# prefill probe {depth} {time.time_ns()}\n" + CHUNK * max(1, depth // 18)
     cold = generate_cold(model, prompt, ctx, 8, opts)
     n, res = cold.get("prompt_eval_count", 0), resident(model)
@@ -161,8 +167,10 @@ def prefill_pair(model, depth, opts, ctx):
 
 
 def tool_loop(model, opts, think, ctx, rounds):
-    """[APPROX] A round completes only if read_file ran and the file's value was reported.
-    Odd rounds inject one transient read failure the model must retry through."""
+    """Run the tool loop [APPROX]; a round needs read_file and the value.
+
+    Odd rounds inject one transient read failure the model must retry.
+    """
     fx = pathlib.Path(FIXTURE_PATH)
     fx.parent.mkdir(parents=True, exist_ok=True)
     fx.write_text(FIXTURE_BODY)

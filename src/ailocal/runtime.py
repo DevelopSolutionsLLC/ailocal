@@ -1,8 +1,7 @@
-"""runtime.py — the running stack: how it is composed, driven and inspected.
+"""Compose, drive and inspect the running stack.
 
-One owner for the Compose invocation, the lifecycle (start, stop, update,
-teardown) and the status/metric renderings, because they need the same
-roots, the same rendered SearXNG settings and the same readiness signal.
+One owner for Compose, lifecycle and status: they share roots, the rendered
+SearXNG settings and the readiness signal.
 """
 from __future__ import annotations
 
@@ -29,31 +28,21 @@ def _fail(message: str) -> "SystemExit":
 
 
 def _confirm(prompt: str) -> bool:
-    """Destructive operations ask, in one place, and default to no."""
+    """Ask before a destructive operation; default to no."""
     try:
         return input(f"  {prompt} [y/N]: ").strip().lower().startswith("y")
     except EOFError:
         return False
 
 
-# ── composition ─────────────────────────────────────────────────────────────
-#
-# The stack is split across two files under deploy/ so LiteLLM and SearXNG are
-# configured in their own locations, but they must come up as ONE Compose
-# project sharing ONE network, so LiteLLM can reach SearXNG at
-# http://searxng:8080.
-#
-# --project-directory pins relative-path resolution inside both compose files;
-# --env-file names the environment explicitly, because Compose would otherwise
-# auto-discover .env from the project directory and couple the secrets file to
-# wherever the compose assets live. Do not drop either flag.
+# Two compose files, ONE project and network (LiteLLM → http://searxng:8080).
+# Keep --project-directory and --env-file: else Compose auto-discovers .env.
 
 GITHUB_SEARCH_PLACEHOLDER = "__GITHUB_SEARCH_TOKEN__"
 
 
 def env_file() -> Path:
-    """The GENERATED environment. Kept as a name because callers ask "where do
-    the secrets live"; ownership and precedence belong to `environment`."""
+    """Return the generated env file; precedence belongs to `environment`."""
     from . import environment
     return environment.generated_file()
 
@@ -68,18 +57,14 @@ def proxy_url() -> str:
 
 
 def env_value(name: str) -> str:
-    """The EFFECTIVE value: user override first, then generated state.
-
-    This used to read one file and stop, which is why a user override could not
-    exist: there was only ever one file to override.
-    """
+    """Return the effective value: user override first, then generated state."""
     from . import environment
     return environment.value(name)
 
 
 def _render_search_secret(text: str, src: Path, placeholder: str,
                           variable: str, engine: str, prefix: str) -> str:
-    """Inject an optional engine credential without exposing it in diagnostics."""
+    """Inject an optional engine credential, never exposing it in output."""
     key = env_value(variable)
     if key and key in text:
         raise _fail(f"{prefix}_SETTINGS_SECRET_LEAK: key present in TRACKED {src}")
@@ -102,9 +87,8 @@ def _render_search_secret(text: str, src: Path, placeholder: str,
 def render_searxng_settings() -> None:
     """Render deploy/searxng/settings.yml with its optional token, atomically.
 
-    SearXNG has no environment interpolation for an engine's api_key, so the
-    tracked settings.yml must stay secret-free and the rendered copy lives under
-    the state root, OUTSIDE the checkout. Fails closed; never prints the key.
+    SearXNG cannot interpolate api_key, so the rendered copy lives in the
+    state root. Fails closed; never prints the key.
     """
     src = policy.data_root() / "deploy" / "searxng" / "settings.yml"
     out = searxng_settings()
@@ -114,8 +98,7 @@ def render_searxng_settings() -> None:
     out.parent.chmod(0o700)
     text = src.read_text(encoding="utf-8")
 
-    # BRAVE_API is never rendered: Brave is spent only through the research
-    # ledger. The tracked template must still never contain the key.
+    # BRAVE_API is never rendered: Brave is spent only via the research ledger.
     brave = env_value("BRAVE_API")
     if brave and brave in text:
         raise _fail(f"BRAVE_SETTINGS_SECRET_LEAK: key present in TRACKED {src}")
@@ -139,10 +122,7 @@ def render_searxng_settings() -> None:
 def compose_argv(args) -> list[str]:
     data = policy.data_root()
     argv = ["docker", "compose", "--project-directory", str(data)]
-    # Generated state first, user overrides second: Compose applies repeated
-    # --env-file in order and the last definition of a name wins. That ordering
-    # IS the ownership model — it is the only reason a user file can override
-    # anything ailocal generated.
+    # Order is the ownership model: the last --env-file wins, so user overrides.
     from . import environment
     for f in environment.env_files():
         argv += ["--env-file", str(f)]
@@ -176,9 +156,7 @@ def compose(*args, check: bool = True, capture: bool = False):
 def wait_ready(max_attempts: int = 30, progress: bool = False) -> bool:
     """Wait until the proxy accepts requests.
 
-    /health/liveliness returns 200 as soon as LiteLLM is listening; the full
-    /health endpoint blocks on every model and fails when Ollama is down, so it
-    is the wrong signal here.
+    /health/liveliness, not /health: the latter blocks on every model.
     """
     url = f"{proxy_url()}/health/liveliness"
     from .primitives import wait_until
@@ -193,7 +171,7 @@ def wait_ready(max_attempts: int = 30, progress: bool = False) -> bool:
 
 
 def _get(url: str, timeout: int = 3) -> str | None:
-    """The body of a 2xx answer, else None: a liveness probe, not a client."""
+    """Return the body of a 2xx answer, else None; a probe, not a client."""
     from .primitives import Unreachable, fetch
     try:
         status, body = fetch(url, timeout=timeout)
@@ -215,7 +193,6 @@ def _container(name_env: str, default: str) -> str:
     return os.environ.get(name_env, default)
 
 
-# ── model residency ─────────────────────────────────────────────────────────
 
 def _loaded() -> dict:
     body = _get(f"{OLLAMA}/api/ps")
@@ -226,7 +203,7 @@ def _loaded() -> dict:
 
 
 def _find(loaded: dict, backend: str) -> dict | None:
-    """A backend may be recorded with or without an explicit :latest tag."""
+    """Match a backend recorded with or without an explicit :latest tag."""
     if backend in loaded:
         return loaded[backend]
     if f"{backend}:latest" in loaded:
@@ -253,7 +230,7 @@ def _remaining(delta) -> str:
 
 
 def _state(cap: dict, loaded: dict, now: datetime) -> tuple[str, str]:
-    """persistent | loaded | idle. A far-future expiry IS a pinned model."""
+    """Return persistent | loaded | idle; a far-future expiry is pinned."""
     m = _find(loaded, cap["backend"])
     if not m:
         return "idle", YELLOW
@@ -264,7 +241,7 @@ def _state(cap: dict, loaded: dict, now: datetime) -> tuple[str, str]:
 
 
 def _vscode_provider() -> bool:
-    """ailocal's native Custom Endpoint group is configured in VS Code."""
+    """Return whether ailocal's Custom Endpoint group is in VS Code."""
     from .install import _vscode_provider_group  # install imports runtime
     return _vscode_provider_group() is not None
 
@@ -276,18 +253,15 @@ def _capabilities() -> list:
     return json.loads(path.read_text())["capabilities"]
 
 
-# ── gateway ─────────────────────────────────────────────────────────────────
 
 METRIC_PREFIX = "tool_gateway_metric "
 
 
 def metric_records(container: str, since: str | None = "2h",
                    path: Path | None = None) -> tuple[list, list, int]:
-    """(request measurements, operational events, malformed count).
+    """Return (request measurements, operational events, malformed count).
 
-    Event records (gateway_init, bad_mode, …) are separated because averaging an
-    operational signal into a request statistic corrupts every figure derived
-    from it.
+    Events are kept apart so they never skew request statistics.
     """
     if path:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -309,7 +283,7 @@ def metric_records(container: str, since: str | None = "2h",
 
 
 def _gateway_summary(container: str) -> None:
-    """The most recent request, for the dashboard."""
+    """Return the most recent request, for the dashboard."""
     rows, _, _ = metric_records(container)
     if not rows:
         dim("no gateway activity in this window (not evidence of a problem)")
@@ -328,22 +302,12 @@ def _gateway_summary(container: str) -> None:
     print(f"  {len(rows)} request(s) seen")
 
 
-# ── lifecycle ───────────────────────────────────────────────────────────────
-
-#: Files LiteLLM reads ONCE at boot and that are bind-mounted, so editing them
-#: changes no Compose spec and `up -d` restarts nothing — the proxy keeps
-#: serving the old routing and tool policy with nothing in the logs to say so.
-#: Fingerprinting them makes the restart deliberate rather than remembered.
+#: LiteLLM reads bind-mounted config once at boot and `up -d` will not restart
+#: for an edit; the fingerprint makes the restart deliberate.
 def _config_fingerprint() -> str:
     data, state = policy.data_root(), policy.state_root()
-    # EVERY bind-mounted directory's IDENTITY, not just its contents. A mount
-    # follows the inode: replace the directory and the container keeps reading
-    # the unlinked old one, which appears EMPTY rather than missing, so the
-    # proxy serves on with nothing in its log to say so. `pipx upgrade` does
-    # this to the shipped assets; removing the state root does it to the
-    # generated config. Both are byte-identical afterwards, so contents alone
-    # can never see it. Both mounts are covered, because covering only the one
-    # that bit most recently is how the other one bites next.
+    # Each mount's inode too: a replaced dir leaves the container reading the
+    # unlinked (empty) old one, with byte-identical contents (pipx upgrade).
     parts = []
     for mount in ((data / "deploy"), (state / "litellm")):
         try:
@@ -388,7 +352,6 @@ def _preflight() -> None:
         return
     ok("Ollama daemon responding")
 
-    # The model set comes from the GENERATED artifact, never the profile.
     present = {m.get("name", "") for m in json.loads(tags).get("models", [])}
     required = {r["model"] for r in policy.effective_summary()["roles"].values()}
     missing = sorted(m for m in required
@@ -404,16 +367,13 @@ def cmd_start(argv: list[str]) -> int:
     no_wait = "--no-wait" in argv
     _preflight()
 
-    # Configuration is DERIVED, never a state the user has to remember to
-    # refresh: editing a profile and starting is the whole loop.
+    # Derived config: editing a profile and starting is the whole loop.
     step("Generating configuration from the active profile")
     from . import generation
     if generation.main([]):
         raise _fail("generation failed — nothing was started")
 
-    # No `docker compose pull` here by design: start (including the boot
-    # LaunchAgent) must be reproducible and offline-safe, so it runs whatever
-    # image is on disk. Images are refreshed deliberately, by update.
+    # No pull: start must be offline-safe; images refresh only via update.
     step("Starting ailocal services")
     was_running = "ailocal-litellm" in _running()
     compose("up", "-d", "--remove-orphans")
@@ -422,10 +382,7 @@ def cmd_start(argv: list[str]) -> int:
     current = _config_fingerprint()
     previous = stamp.read_text() if stamp.is_file() else ""
     if was_running and previous and previous != current:
-        # RECREATE, not restart. A restart re-uses the container's existing
-        # mounts, which is useless when what changed is the directory those
-        # mounts point at. Recreating re-resolves every bind mount, and covers
-        # a plain hook edit just as well.
+        # Recreate, not restart: only recreation re-resolves bind mounts.
         step("Mounted LiteLLM config changed since last start — recreating")
         compose("up", "-d", "--force-recreate", "litellm", "searxng")
         ok("containers recreated (routing/persona/hook changes are now live)")
@@ -453,7 +410,7 @@ def cmd_stop(argv: list[str]) -> int:
         warn("--volumes flag set: all Docker volumes will be removed.")
         if not _confirm("This destroys all database and cache data. Are you sure?"):
             print("Aborted.")
-            return 1  # declined is not done: a script must not read it as success
+            return 1  # declined is not success
     step("Stopping ailocal services")
     if remove_volumes:
         compose("down", "--volumes", "--remove-orphans")
@@ -466,11 +423,10 @@ def cmd_stop(argv: list[str]) -> int:
 
 
 def cmd_bind(argv: list[str]) -> int:
-    """`ailocal bind lan|local|<ipv4>|status`: where the proxy listens.
+    """Set or show where the proxy listens: lan|local|<ipv4>|status.
 
-    Only the proxy follows the switch, because only the proxy authenticates
-    (the master key); Ollama and SearXNG stay on loopback whatever it says. The
-    change is written to .env.local and applied by the next `ailocal start`.
+    Only the proxy authenticates, so only it moves; Ollama and SearXNG stay on
+    loopback. Written to .env.local; applied by the next `ailocal start`.
     """
     from . import environment
     want = argv[0] if argv else "status"
@@ -504,8 +460,7 @@ def cmd_bind(argv: list[str]) -> int:
 
 
 def _bind_matches(configured: str, mapping: str) -> bool:
-    """Does one `docker port` line (`0.0.0.0:4000`, `[::]:4000`, `127.0.0.1:4000`)
-    realise the configured host address?"""
+    """Return whether a `docker port` line realises the configured address."""
     host = mapping.rsplit(":", 1)[0]
     if configured == "0.0.0.0":
         return host in ("0.0.0.0", "[::]")
@@ -569,7 +524,6 @@ def cmd_teardown(argv: list[str]) -> int:
     return 0
 
 
-# ── renderings ──────────────────────────────────────────────────────────────
 
 def _dashboard() -> None:
     state = policy.state_root()
@@ -631,10 +585,9 @@ def _dashboard() -> None:
 
 
 def codex_status(config: Path) -> str:
-    """The Codex dashboard line, from what `config` registers; "" when absent.
+    """Return the Codex dashboard line from `config`; "" when absent.
 
-    Registration is read, not probed: a server that is listed may still fail
-    to start, so the line says so instead of claiming either outcome (#43).
+    Registration is read, not probed, and the line says so (#43).
     """
     if not config.is_file():
         return ""

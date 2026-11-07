@@ -1,55 +1,16 @@
-"""mermaid_validate.py — authoritative syntax gate for Mermaid artifacts.
+"""Gate Mermaid artifacts on the real Mermaid grammar before publish.
 
-    Mermaid source  ->  real Mermaid grammar  ->  publish, or a parser error
-
-[REAL] the failure this exists for. A local model published a classDiagram whose
-line 37 read `+render_nodes(ctx: Episode%} -> list[dict]` -- token-level
-corruption, not a style slip. `strip_mermaid_presentation` and
-`normalise_mermaid_labels` both returned ZERO changes: they are normalisers, and
-a normaliser has no opinion about grammar. The broken source was written to
-.artifacts/ and served, and the first thing that noticed was a human looking at
-a bomb icon. The model had to be TOLD by the user that its own output did not
-parse.
-
-THREE STATES, NOT TWO. This sits on a correctness boundary, so "I could not
-tell" must never be reported as "valid":
+Normalisers have no opinion on grammar; a corrupted diagram once shipped. Three
+states, since "could not tell" must never read as valid:
 
     VALID        the grammar accepted it            -> publish
     INVALID      the grammar rejected it            -> refuse, quote the parser
     UNAVAILABLE  no verdict was obtained at all     -> refuse, say why
 
-UNAVAILABLE covers a missing browser, a launch failure, a timeout and a run that
-produced no verdict. Treating it as VALID is exactly the original defect --
-an unvalidated diagram reported as a successful publish -- so it is refused
-instead. Only the Mermaid path is affected: html, markdown-without-diagrams and
-architecture artifacts never reach this module.
-
-Why a browser and not Node. The verdict has to come from the SAME grammar the
-viewer runs, or it is a second opinion pretending to be the first. Two cheaper
-routes were measured and rejected:
-
-  * a regex/bracket-counting pre-check -- that is a second, weaker Mermaid
-    grammar, and it would produce exactly the false confidence this module
-    exists to remove;
-  * `vendor/mermaid.min.js` under Node. It LOADS (via vm.runInThisContext -- the
-    bundle is a classic script, so a CJS import leaves its top-level `var` off
-    globalThis) and `mermaid.parse` is reachable, but it dies in
-    `sanitizeText -> DOMPurify.addHook`: DOMPurify drops addHook when there is
-    no DOM. A real verdict needs a real DOM, and jsdom is a large new dependency
-    for a guard. Stubbing sanitisation would validate with a mermaid that is not
-    the mermaid that renders.
-
-So: headless Chrome over vendor/mermaid.min.js, which is REFERENCED by <script
-src> rather than copied -- the validator cannot drift to a different Mermaid
-than the page.
-
-PROCESS LIFETIME. Chrome runs in a throwaway --user-data-dir and is killed by
-us, never left to exit on its own. [REAL] with a profile, `--dump-dom` prints
-the finished DOM at ~2.0s and then never exits; without one it exits cleanly but
-runs against the user's real profile. Neither is acceptable on its own, so this
-reads stdout until the verdict marker appears, then terminates Chrome and
-removes the profile. A validator must not depend on, mutate or lock the state of
-the browser a person is using.
+Headless Chrome loads vendor/mermaid.min.js by <script src>, so the verdict is
+the viewer's grammar; under Node DOMPurify lacks a DOM, and a regex pre-check
+is a weaker second grammar. Chrome uses a throwaway profile and is killed once
+the verdict marker prints: with a profile `--dump-dom` never exits.
 """
 import html
 import json
@@ -64,7 +25,7 @@ from pathlib import Path
 VENDOR = Path(__file__).resolve().parent / "vendor"
 MERMAID_JS = VENDOR / "mermaid.min.js"
 
-#: Wall-clock ceiling for one verdict. [REAL] a real verdict lands at ~1.8s.
+#: Wall-clock ceiling for one verdict; a real one lands at ~1.8s.
 TIMEOUT = 30
 
 VALID = "valid"
@@ -99,7 +60,7 @@ try {{
 
 
 class Result:
-    """A verdict. `state` is VALID / INVALID / UNAVAILABLE; `detail` explains."""
+    """Hold a verdict: `state` VALID / INVALID / UNAVAILABLE, with `detail`."""
 
     __slots__ = ("state", "detail")
 
@@ -111,7 +72,7 @@ class Result:
 
 
 def find_chrome():
-    """Absolute path to a Chrome/Chromium binary, or None."""
+    """Return the absolute path of a Chrome/Chromium binary, or None."""
     for c in _CHROME_CANDIDATES:
         if os.path.isabs(c):
             if os.path.exists(c):
@@ -124,16 +85,12 @@ def find_chrome():
 
 
 def available():
-    """True when a real verdict is obtainable on this machine."""
+    """Return whether a real verdict is obtainable on this machine."""
     return bool(find_chrome()) and MERMAID_JS.is_file()
 
 
 def _read_until_verdict(proc, deadline_at):
-    """Stream stdout until a marker appears or time runs out. Returns the buffer.
-
-    Chrome is not expected to exit -- see the module docstring -- so waiting on
-    it would always hit the timeout. The marker IS the completion signal.
-    """
+    """Return stdout read until a marker or timeout; Chrome never exits."""
     import time
     buf = ""
     while time.monotonic() < deadline_at:
@@ -195,14 +152,12 @@ def _run_chrome(chrome, page_uri, timeout):
 
 
 def parse(source, runner=None, timeout=TIMEOUT):
-    """Return a Result for `source`.
+    """Return a Result for `source`, the post-normalisation rendered text.
 
-    `source` must be the text that will actually be rendered -- i.e. AFTER
-    normalisation -- so the verdict describes the page the user will see.
-
-    `runner` exists so the state machine can be tested without a browser. It is
-    called as runner(page_uri) and returns (dom_text_or_None, error_or_None);
-    the real one is _run_chrome. Nothing in production passes it.
+    Args:
+        source: Text as it will render, i.e. after normalisation.
+        runner: Test seam, runner(page_uri) -> (dom or None, error or None).
+        timeout: Wall-clock ceiling in seconds.
     """
     if not MERMAID_JS.is_file():
         return Result(UNAVAILABLE,

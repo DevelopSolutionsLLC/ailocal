@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
-"""policy.py — the ONE policy reader and resolver.
+"""Read and resolve policy: the one reader, failing closed.
 
-profiles/<tier>.toml is authoritative deployment configuration; the
-active-profile marker in $AILOCAL_STATE selects a tier and HAS NO IMPLICIT
-DEFAULT. Policy is TOML because tomllib is in the standard library and rejects
-duplicate keys and duplicate tables outright (ADR 010).
-
-ONE READER, NO FALLBACK: this module fails closed, because a tier guessed on a
-32 GB machine pulls models that do not fit.
+profiles/<tier>.toml is authoritative; the active-profile marker selects a tier
+with no implicit default, since a guessed tier pulls models that do not fit.
+TOML because tomllib rejects duplicate keys and tables (ADR 010).
 """
 from __future__ import annotations
 
@@ -21,18 +17,18 @@ TIERS = ("16gb", "32gb", "64gb", "128gb")
 
 
 def ollama_model_store() -> Path:
-    """The daemon and native Safetensors importer must use the same store."""
+    """Return the model store; daemon and importer must share it."""
     return Path(os.environ.get("OLLAMA_MODELS", "/Users/Shared/ollama/models"))
 
 
 def ollama_runtime_root() -> Path:
-    """Provisioned binaries survive deletion of disposable generated state."""
+    """Return the binary root; it survives deletion of generated state."""
     return (Path(os.environ["AILOCAL_RUNTIMES"]) if os.environ.get("AILOCAL_RUNTIMES")
             else _xdg("XDG_DATA_HOME", ".local", "share") / "ailocal" / "runtimes")
 
 
 def ollama_patch_spec() -> dict:
-    """The reviewed, immutable source and patch declaration shipped with ailocal."""
+    """Return the reviewed source and patch declaration shipped with ailocal."""
     root = data_root() / "deploy" / "ollama"
     with (root / "patch.toml").open("rb") as stream:
         spec = tomllib.load(stream)
@@ -50,9 +46,7 @@ def ollama_patch_selection() -> str:
 
 
 def stock_ollama_binary() -> str:
-    """The `ollama` on PATH, unresolved. The `ollama-binary` cask links
-    /opt/homebrew/bin/ollama into a versioned Caskroom directory that an upgrade
-    replaces; launchd given the realpath would keep a deleted executable."""
+    """Return `ollama` on PATH unresolved; the cask realpath dies on upgrade."""
     binary = shutil.which("ollama")
     if not binary:
         raise SystemExit("Ollama CLI not found on PATH; brew install --cask ollama-binary")
@@ -60,7 +54,7 @@ def stock_ollama_binary() -> str:
 
 
 def ollama_binary() -> str:
-    """One selected binary for the native CLI and its managed service."""
+    """Return the one binary for the native CLI and its managed service."""
     selected = ollama_patch_selection()
     if not selected:
         return stock_ollama_binary()
@@ -76,7 +70,7 @@ def ollama_binary() -> str:
 
 
 def client_mcp_path(client: str, *, local: bool) -> Path:
-    """Native user-scope MCP locations, respecting hosted client overrides."""
+    """Return native user-scope MCP paths, honouring hosted client overrides."""
     if client == "copilot" and not local:
         return Path(os.environ.get("COPILOT_HOME") or Path.home() / ".copilot") / "mcp-config.json"
     if client not in ("claude", "codex"):
@@ -91,90 +85,38 @@ def client_mcp_path(client: str, *, local: bool) -> Path:
         return Path.home() / ".claude.json"
     return root / ("config.toml" if client == "codex" else ".claude.json")
 
-#: Capability roles, in the one order every client surface lists them.
-#:
-#: `embeddings` was one of these and is not any more. ailocal provisioned
-#: nomic-embed-text, published an `ailocal-embeddings` alias and warmed the
-#: model — and nothing ever called it. The only embedding consumer on the
-#: machine talks to Ollama directly (grepai's embedder is configured
-#: `provider: ollama, endpoint: http://localhost:11434`), so the alias was a
-#: capability ailocal advertised, provisioned and kept resident for no reader.
-#: Embedding ownership belongs to whoever indexes; Ollama is the shared
-#: prerequisite underneath both.
-#:
-#: `architecture`, `implementation` and `review` collapsed into `primary` in
-#: 0.16 (#89, ADR 018): on every shipped tier they were one backend with one
-#: thinking mode, differing only in output reserve and prose. `fast` is the
-#: primary with thinking off, so only a tier whose primary thinks declares it.
+#: Capability roles in client-surface order. Embeddings belong to the indexer.
+#: `fast` = primary w/o thinking, declared only where primary thinks (ADR 018).
 ROLES = ("primary", "fast", "cyber", "completion")
 
-#: Roles a tier may omit, each with the role that stands in for it. A client
-#: slot, compat id or default that names an absent optional role resolves to
-#: its stand-in through resolve_capability(), and nowhere else: a per-tier
-#: special case in a consumer would be a second rule that could disagree.
+#: Omittable roles → stand-in; resolved only by resolve_capability().
 OPTIONAL_ROLES = {"fast": "primary"}
 
-#: Role names 0.16 retired, and the role each now means. Served as LiteLLM
-#: aliases for one release so a client configured against 0.15 keeps routing;
-#: never a configured role, never a client target. Removed in 0.17.
+#: Roles retired in 0.16 → successor; LiteLLM aliases only, removed in 0.17.
 RETIRED_ROLES = {"architecture": "primary", "implementation": "primary", "review": "primary"}
 
-#: Profile sections 0.16 retired. Unlike `embeddings`, a leftover one is not
-#: inert: it carries routing policy the operator edited, and silently reading
-#: `[primary]` beside it would run shipped defaults in place of those edits. So
-#: it fails closed, and `ailocal install` migrates the file (#89).
+#: Fail closed: a leftover holds operator edits `[primary]` would ignore (#89).
 RETIRED_ROLE_SECTIONS = tuple(RETIRED_ROLES)
-#: Sections that may appear in a profile and are NOT capabilities.
-#:
-#: `embeddings` is here because it USED to be one. Profiles live in the
-#: user-owned config root, where ailocal replaces a shipped default only while
-#: it still matches the digest recorded at install — so removing the section
-#: from the shipped profiles does NOT remove it from a machine that already
-#: installed them. Without this entry, generation on every existing install
-#: fails closed with "embeddings declares no max_output", because the section is
-#: present and no longer has a schema. Recognising it here keeps those profiles
-#: valid, publishes no alias for it, and leaves the user's file untouched: their
-#: config is theirs to edit, and a retired section is inert, not invalid.
-#:
-#: `compaction` is retired the same way: each client compacts against the
-#: window ailocal declares to it, so a profile-owned trigger is no longer read.
+#: Non-capability sections. Retired ones stay valid: installed user profiles
+#: keep them and are never rewritten, so inert must not mean invalid.
 NON_ROLE_SECTIONS = ("compaction", "embeddings", "model_guidance")
 
-#: Fields a profile may still declare that no longer mean anything.
-#:
-#: Same reason as the retired sections above: profiles live in the user's config
-#: root and are not rewritten, so a field removed from the shipped profiles
-#: stays on every installed machine. Unknown fields are a hard error by design
-#: — `temprature = 0.1` must not read as set — so a retired field has to be
-#: recognised explicitly or it takes the whole profile down. Accepted and
-#: ignored; the user's file is theirs to tidy.
-#:
-#: `persona` selected a per-capability system prompt. The prompt content was
-#: measured to make a toolless model hallucinate tool calls, and its minimal
-#: replacement produced no measurable difference through a real client, so the
-#: injector and its instruction files were removed and the flag now decides
-#: nothing.
+#: Retired fields, accepted and ignored: unknown fields are errors, and
+#: installed user profiles still carry these.
 RETIRED_ROLE_FIELDS = ("persona",)
 
-#: Required on EVERY role, because every consumer reads them. Everything else is
-#: optional and returns None when absent -- no defaults are injected here, since
-#: a value this module invents would not be one any generated config ever had.
+#: Required on every role; all else is None when absent, never defaulted.
 REQUIRED_ROLE_FIELDS = ("role", "active", "context_input")
 
-#: The one structure every model selection follows, `<family>:<size>[-<variant>…]`:
-#: a lowercase family (never a repository URL), a size (`4b`, `1.5b`, `270m`,
-#: `e4b`) and variant tokens from SELECTION_VARIANTS in that order, each at most
-#: once. A quantization token never appears: the quantization is what the
-#: source hash pins, so a library tag whose own name carries one is imported
-#: natively under the structured name. `ollama list` then shows one name per
-#: selection on every tier, and a guide keyed by name follows the model.
+#: Selection names: `<family>:<size>[-<variant>…]`, variants in this order,
+#: each once. No quantization token: the source hash pins it.
 SELECTION_VARIANTS = ("unrestricted", "calibrated", "it", "base", "qat", "mtp")
 SELECTION_NAME = re.compile(r"^(?P<family>[a-z0-9][a-z0-9.-]*):(?P<size>\d+(?:\.\d+)?[bm]|e\d+b)"
                             r"(?P<variants>(?:-[a-z0-9_]+)*)$")
 
 
 def selection_name_error(name) -> str | None:
-    """Why `name` is not a structured selection name, or None when it is."""
+    """Return why `name` is not a structured selection name, or None."""
     m = SELECTION_NAME.fullmatch(str(name)) if isinstance(name, str) else None
     if m is None:
         return (f"{name!r} is not <family>:<size>[-variant…] (lowercase family, size such as "
@@ -190,14 +132,12 @@ def selection_name_error(name) -> str | None:
     return None
 
 
-#: `context` was ambiguous — TOTAL window in one reader, INPUT budget in
-#: another. It is an error, not a fallback: guessing which was meant is how both
-#: interpretations survived side by side.
+#: Ambiguous (total vs input) → an error, never guessed.
 LEGACY_CONTEXT_FIELD = "context"
 
 #: Optional, with their current behaviour when absent:
 #:   reasoning      -> None; generation treats absent as non-thinking
-#:   temperature/top_p/top_k/repeat_penalty -> None; omitted from generated params
+#:   temperature/top_p/top_k/repeat_penalty -> None; omitted from params
 #:   num_predict    -> DERIVED from max_output by geometry(); never configured
 #:   keep_alive     -> None; omitted, Ollama default applies
 #:   preferred/purpose/strengths/weaknesses -> [] (documentation only)
@@ -220,8 +160,7 @@ ROLE_CONFIG_INVALID = "ROLE_CONFIG_INVALID"
 
 
 class ProfileError(Exception):
-    """Carries a CODE and the offending key, never file contents: an error
-    string is the easiest place for configuration to leak into a pasted log."""
+    """Policy error carrying a code and key, never file contents (log leaks)."""
 
     def __init__(self, code: str, detail: str = ""):
         self.code = code
@@ -229,15 +168,10 @@ class ProfileError(Exception):
         super().__init__(f"{code}: {detail}" if detail else code)
 
 
-# ── public interface ────────────────────────────────────────────────────────
 CLIENTS = ("claude", "codex", "compat")
 
 
-# ── the three roots ─────────────────────────────────────────────────────────
-# User-editable configuration, installed data assets and generated state have
-# separate homes, XDG throughout with an AILOCAL_* override per root. These
-# functions are the ONLY implementations of that resolution; nothing else may
-# compute a root.
+# Config, data and state roots: XDG + AILOCAL_* overrides; resolved only here.
 
 def _xdg(var: str, *fallback: str) -> Path:
     return Path(os.environ.get(var) or os.path.join(
@@ -245,19 +179,10 @@ def _xdg(var: str, *fallback: str) -> Path:
 
 
 def ollama_url() -> str:
-    """The Ollama base URL, from OLLAMA_HOST, always with a scheme.
+    """Return the Ollama base URL from OLLAMA_HOST, always with a scheme.
 
-    OLLAMA_HOST is Ollama's OWN variable and its documented form is a bare
-    `host:port` — which is exactly what `ailocal install` writes into the
-    LaunchAgent and into `launchctl setenv`. Read as a URL it is unusable:
-    urllib parses `127.0.0.1:11434` as scheme `127.0.0.1`, every request raises,
-    and a caller that maps "raised" onto "unreachable" reports Ollama as DOWN
-    while it is serving perfectly. `ailocal check` did exactly that, and only in
-    shells that had inherited the variable ailocal itself sets — so it looked
-    intermittent rather than wrong.
-
-    Normalising here rather than at each call site keeps ONE reading of the
-    variable, in the module both consumers already import.
+    OLLAMA_HOST's documented form is bare `host:port`, which urllib misparses
+    as a scheme; normalised here so there is one reading.
     """
     raw = (os.environ.get("OLLAMA_HOST") or "").strip()
     if not raw:
@@ -266,11 +191,10 @@ def ollama_url() -> str:
 
 
 def state_root(override_path=None) -> Path:
-    """Generated and machine-selected state, OUTSIDE the checkout.
+    """Return the generated-state root, outside the checkout.
 
-    One artifact -- the rendered SearXNG settings -- can carry a search token,
-    and living outside Git's tree makes committing it impossible rather than
-    merely discouraged.
+    Rendered SearXNG settings can hold a token; outside Git it cannot be
+    committed.
     """
     if override_path is not None:
         return Path(override_path)
@@ -280,11 +204,7 @@ def state_root(override_path=None) -> Path:
 
 
 def config_root(repo_root=None) -> Path:
-    """User-editable policy: profiles/, clients.toml, .env.
-
-    ailocal never overwrites anything under this root without an explicit
-    manifest-digest match proving the file is still exactly what was shipped.
-    """
+    """Return the user policy root; overwritten only on shipped-digest match."""
     if repo_root is not None:
         return Path(repo_root)
     override = os.environ.get("AILOCAL_CONFIG")
@@ -292,14 +212,9 @@ def config_root(repo_root=None) -> Path:
 
 
 def data_root(repo_root=None) -> Path:
-    """Shipped assets: deploy/, clients/. THE PACKAGE'S OWN RESOURCES.
+    """Return the package's own resources (deploy/, clients/), never a copy.
 
-    Not a copy under ~/.local/share. Compose bind-mounts deploy/ and LiteLLM
-    reads its hooks from it, so a copy meant a live container could be mounted
-    on a directory ailocal itself was replacing — the copy was the only reason
-    that race existed. Reading straight from the wheel makes the shipped tree
-    immutable to ailocal: it changes when pip/pipx changes it, and never while
-    the stack is being provisioned.
+    Compose bind-mounts deploy/; a copy could change under a live container.
     """
     if repo_root is not None:
         return Path(repo_root)
@@ -311,19 +226,10 @@ def data_root(repo_root=None) -> Path:
 
 
 def deployed_client_root() -> Path:
-    """Where GENERATED client configuration is written for its client to read.
+    """Return where generated client config is written.
 
-    Deliberately NOT config_root(), even though both land in ~/.config/ailocal
-    by default. They hold different things with different owners and different
-    lifecycles: authored policy is the operator's and survives upgrades under a
-    digest promise, generated client config is disposable and rewritten on every
-    start.
-
-    Resolving both through one function collapsed that boundary, and the
-    collapse was not theoretical: the test harness points AILOCAL_CONFIG at the
-    checkout to read the shipped profiles, so generated client config was
-    written into the repository and committed. An override of the POLICY root
-    must not relocate GENERATED output.
+    Not config_root(): authored policy and disposable output differ in owner and
+    lifecycle, and overriding the policy root must not relocate output.
     """
     override = os.environ.get("AILOCAL_CLIENTS")
     return Path(override) if override else _xdg(
@@ -339,7 +245,7 @@ def profile_path(tier: str, repo_root=None) -> Path:
 
 
 def active_profile_path(state=None) -> Path:
-    """Where the selected tier is recorded. The only place this is spelled."""
+    """Return the path recording the selected tier; spelled only here."""
     return state_root(state) / "active-profile"
 
 
@@ -348,8 +254,7 @@ def client_policy_path(repo_root=None) -> Path:
 
 
 def _read_toml(path: Path, missing: str, invalid: str) -> dict:
-    """Parse a policy file. tomllib rejects duplicate keys and duplicate tables,
-    so a merge artefact cannot silently change the deployed model."""
+    """Parse a policy file; duplicate keys or tables fail, never merge."""
     if not path.exists():
         raise ProfileError(missing, str(path))
     try:
@@ -360,7 +265,7 @@ def _read_toml(path: Path, missing: str, invalid: str) -> dict:
 
 
 def load_profile_file(path: Path) -> dict:
-    """A profile document, unvalidated. load_profile() adds the schema checks."""
+    """Load a profile unvalidated; load_profile() adds schema checks."""
     data = _read_toml(Path(path), PROFILE_FILE_MISSING, PROFILE_INVALID)
     _reject_retired_sections(data)
     _validate_guidance(data)
@@ -377,7 +282,7 @@ def _reject_retired_sections(data: dict) -> None:
 
 
 def load_client_policy(repo_root=None) -> dict:
-    """Which capability each client surface uses. Fails closed like profiles."""
+    """Load per-client capability policy; fails closed like profiles."""
     data = _read_toml(client_policy_path(repo_root),
                       CLIENT_POLICY_MISSING, CLIENT_POLICY_INVALID)
     for section, mapping in data.items():
@@ -388,9 +293,8 @@ def load_client_policy(repo_root=None) -> dict:
         if not isinstance(mapping, dict):
             raise ProfileError(CLIENT_POLICY_INVALID,
                                f"{section!r} must be a table")
-    # An UNQUOTED key containing a dot is a dotted key in TOML: `gpt-5.5 = "x"`
-    # nests silently into {"gpt-5": {"5": "x"}} instead of naming the model.
-    # Every compat entry maps one client-sent model ID to one capability.
+    # Unquoted `gpt-5.5 = "x"` is a dotted key and nests; each entry must map
+    # one model ID to one capability.
     for name, target in (data.get("compat") or {}).items():
         if not isinstance(target, str):
             raise ProfileError(CLIENT_POLICY_INVALID,
@@ -399,17 +303,15 @@ def load_client_policy(repo_root=None) -> dict:
     return data
 
 
-#: What a delegated worker may be granted, weakest first. `full` lifts the
-#: worker CLI's own sandbox and permission prompts.
+#: Delegate modes, weakest first; `full` lifts the worker's sandbox and prompts.
 DELEGATE_MODES = ("text", "research", "edit", "full")
 DELEGATE_DEFAULT_CEILING = "edit"
 
 
 def delegate_ceilings(repo_root=None) -> dict:
-    """The strongest mode `delegate` may grant each worker CLI.
+    """Return the strongest mode `delegate` may grant each worker CLI.
 
-    Operator policy, read from `[claude]`/`[codex] delegate_max_mode`; an absent
-    key keeps the sandboxed default, and an invalid one fails closed.
+    Absent `delegate_max_mode` keeps the sandboxed default; invalid fails.
     """
     data = load_client_policy(repo_root)
     out = {}
@@ -423,22 +325,15 @@ def delegate_ceilings(repo_root=None) -> dict:
     return out
 
 
-#: Largest instruction file (CLAUDE.md / AGENTS.md) a local client root should
-#: carry. [REAL] 2026-10-29, Qwen3.5 9B via claude-local: with the 17 KB composed
-#: policy loaded, 2/6 fixture runs re-read that file or took its directory for the
-#: working directory; with it excluded, every run edited the task file. #39, ADR 017.
+#: Max local instruction file; 17 KB derailed a 9B model in 2/6 runs (#39).
 INSTRUCTION_DEFAULT_MAX_BYTES = 4096
 
 
 def instruction_budgets(repo_root=None, tier=None) -> dict:
-    """Per-client instruction-file budget, from `[claude]`/`[codex] instruction_max_bytes`.
+    """Return per-client instruction-file budgets (`instruction_max_bytes`).
 
-    Published in the integration contract so a co-installed instruction composer
-    can fit it, and checked by `ailocal check` whoever wrote the file. An absent
-    key keeps the measured default; a non-positive or non-integer one fails closed.
-    `instruction_max_bytes_by_tier` replaces the value for the named tier, because
-    the budget is a property of the tier's model (#47); it applies only when the
-    caller names the tier, so a reader without one gets the tier-independent value.
+    Published for co-installed composers. Absent → measured default; invalid
+    fails closed. `_by_tier` overrides apply only when `tier` is given (#47).
     """
     data = load_client_policy(repo_root)
     out = {}
@@ -459,7 +354,7 @@ def instruction_budgets(repo_root=None, tier=None) -> dict:
 
 
 def client_capability_targets(repo_root=None) -> dict:
-    """Only model-routing fields target capabilities; worker modes do not."""
+    """Return model-routing targets per client; worker modes are excluded."""
     data = load_client_policy(repo_root)
     delegate_ceilings(repo_root)
     instruction_budgets(repo_root)
@@ -484,12 +379,10 @@ def client_capability_targets(repo_root=None) -> dict:
 
 
 def resolve_capability(target: str, roles) -> str:
-    """The enabled role a client target names, given the tier's enabled roles.
+    """Return the enabled role a client target names.
 
-    THE one rule for an absent optional role: `fast` on a tier that does not
-    declare it resolves to `primary`. Any other target is returned as given,
-    so a consumer's own validation rejects an unknown one instead of this
-    function guessing a role for it.
+    The one rule for absent optional roles; other targets pass through unchanged
+    so the consumer rejects unknown ones rather than this guessing.
     """
     if target in roles:
         return target
@@ -498,12 +391,7 @@ def resolve_capability(target: str, roles) -> str:
 
 
 def deprecated_aliases(roles) -> dict:
-    """Retired capability names still served, each with the role it routes to.
-
-    The retired 0.15 roles, plus every optional role the tier omits. Generation
-    emits these as LiteLLM `model_group_alias` entries so `ailocal-architecture`
-    and, on 16/32 GB, `ailocal-fast` keep answering for one release.
-    """
+    """Return retired or omitted role names still served → their target role."""
     out = {old: new for old, new in RETIRED_ROLES.items() if new in roles}
     out.update({opt: stand for opt, stand in OPTIONAL_ROLES.items()
                 if opt not in roles and stand in roles})
@@ -511,29 +399,23 @@ def deprecated_aliases(roles) -> dict:
 
 
 def enabled_roles(tier: str, repo_root=None, _data=None) -> tuple:
-    """The roles a tier serves, in ROLES order. The set every client target
-    resolves against."""
+    """Return the roles a tier serves, in ROLES order."""
     data = load_profile(tier, repo_root) if _data is None else _data
     return tuple(r for r in ROLES if r in data
                  and resolve_role(tier, r, repo_root, _data=data)["enabled"])
 
 
 def effective_capability(target: str, repo_root=None) -> str:
-    """resolve_capability() against the active tier."""
+    """Resolve a capability against the active tier."""
     return resolve_capability(target, enabled_roles(resolve_active_tier(repo_root), repo_root))
 
 
 def slot_problems(tier=None, repo_root=None) -> list:
-    """Client slot assignments that violate profile geometry.
+    """Return client slot assignments that violate profile geometry.
 
-    Returns (severity, message) pairs; "error" must fail generation, "warning"
-    is a papercut. The rule lives here because it compares client policy against
-    profile geometry, and policy owns both.
-
-    Several slots on one capability is not a problem: Claude Code's /model is
-    the generated `modelPicker` with `replaceBuiltInOptions`, one row per
-    capability whatever the slots say, and the shipped policy points opus,
-    sonnet and fable at `primary` by design.
+    Returns:
+        (severity, message) pairs; "error" must fail generation. Several slots
+        on one capability is by design, not a problem.
     """
     tier = tier or resolve_active_tier(repo_root)
     profile = load_profile(tier, repo_root)
@@ -541,8 +423,7 @@ def slot_problems(tier=None, repo_root=None) -> list:
     slots = (load_client_policy(repo_root).get("claude") or {}).get("slots", {})
     out = []
 
-    # `completion` is FIM-only at a small window; a real agent turn routed there
-    # hard-400s. Every built-in Claude slot carries full conversation context.
+    # `completion` is FIM-only, small window: an agent turn there hard-400s.
     bad = sorted(s for s, cap in slots.items() if resolve_capability(cap, roles) == "completion")
     if bad:
         ctx = resolve_role(tier, "completion", repo_root)["total_context"] \
@@ -554,10 +435,7 @@ def slot_problems(tier=None, repo_root=None) -> list:
 
 
 def resolve_active_tier(repo_root=None, state=None) -> str:
-    """The active tier. NEVER defaults -- a missing marker is an error.
-
-    An installation that silently picks a tier is an installation that can pull
-    models the machine cannot hold."""
+    """Return the active tier; never defaults, a missing marker is an error."""
     marker = active_profile_path(state)
     if not marker.exists():
         raise ProfileError(ACTIVE_PROFILE_MISSING, str(marker))
@@ -571,7 +449,7 @@ def resolve_active_tier(repo_root=None, state=None) -> str:
 
 
 def load_profile(tier: str, repo_root=None) -> dict:
-    """Whole profile, validated. Read once; callers should not re-read."""
+    """Load and validate the whole profile; callers should not re-read."""
     if tier not in TIERS:
         raise ProfileError(ACTIVE_PROFILE_INVALID, f"{tier!r}")
     path = profile_path(tier, repo_root)
@@ -615,19 +493,14 @@ def _validate_guidance(data: dict) -> None:
 
 
 def capability_description(section: dict, guide: dict) -> str:
-    """The one description every client surface shows for a capability.
-
-    `<role> — <model name>, <N>K ctx`: the profile's role text, the guide's
-    readable model name (the backend tag only when a profile predates `name`),
-    and the derived total window. Codex's catalog, Claude Code's picker and the
-    LiteLLM config all call this, so the surfaces cannot drift apart again."""
+    """Return `<role> — <model name>, <N>K ctx` for every client surface."""
     model = guide.get("name") or str(section.get("active", ""))
     total = geometry(section.get("context_input"), section.get("max_output"))["total_context"]
     return f"{section.get('role')} — {model}, {total // 1024}K ctx"
 
 
 def guidance_for(data: dict, role: str) -> dict:
-    """Exact backend match; changing a model never inherits another's advice."""
+    """Return guidance for an exact backend match; never another model's."""
     return data.get("model_guidance", {}).get(data[role]["active"], {
         "summary": "No model-specific guidance recorded for this backend.",
         "prompting": [], "limitations": [], "sources": [],
@@ -636,9 +509,9 @@ def guidance_for(data: dict, role: str) -> dict:
 
 
 def _known_role_fields() -> frozenset:
-    """Every field a role may declare. Anything else is a typo or a stale key."""
+    """Return every field a role may declare; others are typos or stale."""
     return frozenset(REQUIRED_ROLE_FIELDS) | frozenset(OPTIONAL_ROLE_FIELDS) | {
-        # Structural, not tuning: consumed by generation rather than by geometry.
+        # Structural, consumed by generation rather than geometry.
         "enabled", "role", "active",
     }
 
@@ -650,9 +523,7 @@ def _validate_role(role: str, cfg) -> None:
         raise ProfileError(PROFILE_SCHEMA_INVALID,
                            f"{role} still uses legacy `context`; migrate to "
                            "context_input + max_output")
-    # UNKNOWN FIELDS ARE ERRORS, NOT NOISE: only recognised keys are copied
-    # out, so `temprature = 0.1` would otherwise read as set in review while the
-    # role ran at the default.
+    # Unknown fields are errors: a dropped typo would read as set in review.
     unknown = sorted(set(cfg) - _known_role_fields() - set(RETIRED_ROLE_FIELDS))
     if unknown:
         raise ProfileError(PROFILE_SCHEMA_INVALID,
@@ -687,8 +558,7 @@ def _validate_role(role: str, cfg) -> None:
         draft_keys = {"draft_model", "draft_sha256"}
         projector_keys = {"projector_model", "projector_sha256"}
         native_ref = r"(?:hf\.co/[\w.-]+/[\w.-]+|(?:[\w-]+/)?[\w.-]+):[\w.-]+"
-        # A draft head and a vision projector are each a pulled tag plus the
-        # SHA-256 of its weight blob: both keys or neither.
+        # Draft head / projector: pulled tag + weight SHA-256, both or neither.
         native = (isinstance(source, dict)
                   and set(source) in (native_keys, native_keys | draft_keys,
                                       native_keys | projector_keys,
@@ -712,25 +582,21 @@ def _validate_role(role: str, cfg) -> None:
     if mo is None:
         return                      # embedding route: no generation, no reserve
     if not isinstance(mo, int) or mo <= 0:
-        # -1/-2 (Ollama infinite/fill) are rejected: an unbounded reserve makes
-        # admission uncomputable.
+        # -1/-2 (Ollama unbounded) would make admission uncomputable.
         raise ProfileError(ROLE_CONFIG_INVALID,
                            f"{role}.max_output must be a positive integer")
 
 
 
 def geometry(context_input, max_output):
-    """THE derivation. Every consumer calls this; none recomputes it.
+    """Derive context geometry; every consumer calls this, none recomputes it.
 
         total_context     = context_input + max_output   -> Ollama num_ctx
         num_predict       = max_output                   -> backend ceiling
         max_input_tokens  = context_input                -> admission
 
-    Admission equals context_input BY CONSTRUCTION, so there is no second place
-    to get over-admission wrong. max_output is the only ceiling that binds:
-    [REAL] a per-request max_tokens of 512 against an alias declaring
-    num_predict 32768 returned 4,199 tokens (LiteLLM 1.93.0, ollama_chat);
-    re-verified on 1.98.0, where the same 512 returned 2,510 tokens.
+    max_output is the only ceiling that binds; LiteLLM ignores a smaller
+    per-request max_tokens (measured on 1.93.0 and 1.98.0).
     """
     if not isinstance(context_input, int) or context_input <= 0:
         raise ProfileError(ROLE_CONFIG_INVALID, f"context_input={context_input!r}")
@@ -747,13 +613,11 @@ def geometry(context_input, max_output):
 
 
 def resolve_role(tier: str, role: str, repo_root=None, _data=None) -> dict:
-    """One role's effective configuration.
+    """Return one role's effective configuration.
 
-    `enabled` is false when there is no backend or an explicit disable: the
-    capability does not ship and must not be treated as though it did.
-
-    `_data` lets a caller that has already parsed the profile pass it in, so
-    profile_summary() parses the file once rather than once per role."""
+    `enabled` is false w/o a backend or on explicit disable. `_data` passes an
+    already-parsed profile so a summary parses once.
+    """
     if role in NON_ROLE_SECTIONS:
         raise ProfileError(ROLE_MISSING, f"{role} is not a capability role")
     data = load_profile(tier, repo_root) if _data is None else _data
@@ -766,8 +630,7 @@ def resolve_role(tier: str, role: str, repo_root=None, _data=None) -> dict:
            "enabled": bool(active) and bool(cfg.get("enabled", True))
                       and active.lower() not in ("none", "false", "disabled"),
            **geometry(cfg.get("context_input"), cfg.get("max_output"))}
-    # `context` is an alias for total_context, read by cross-tier
-    # planning and status. Derived, never configured.
+    # Derived alias for total_context, read by planning and status.
     out["context"] = out["total_context"]
     for f in OPTIONAL_ROLE_FIELDS:
         out[f] = cfg.get(f)
@@ -776,7 +639,7 @@ def resolve_role(tier: str, role: str, repo_root=None, _data=None) -> dict:
 
 
 def profile_summary(tier: str, repo_root=None) -> dict:
-    """Serializable view for shells, doctor and status."""
+    """Return a serializable view for shells, doctor and status."""
     data = load_profile(tier, repo_root)
     return {
         "tier": tier,
@@ -788,7 +651,7 @@ def profile_summary(tier: str, repo_root=None) -> dict:
 
 
 def required_runtime_patch(tier: str, repo_root=None) -> str | None:
-    """Enabled model requirements drive installation, without model-name routing."""
+    """Return the runtime patch enabled models declare they require."""
     required = {cfg["runtime_patch"] for cfg in profile_summary(tier, repo_root)["roles"].values()
                 if cfg["enabled"] and cfg.get("runtime_patch")}
     if len(required) > 1:
@@ -796,12 +659,7 @@ def required_runtime_patch(tier: str, repo_root=None) -> str | None:
     return next(iter(required), None)
 
 
-# ── runtime views ───────────────────────────────────────────────────────────
-# Derived in memory from profiles/<tier>.toml on every call. There is no
-# generated "effective profile" artifact: a file that only ailocal reads, whose
-# content is a pure function of the profile beside it, can only ever go stale —
-# and every mechanism that used to detect that staleness (schema version,
-# input hashes, a drift check) existed solely because the file existed.
+# Runtime views derive from the profile per call; a cached file could go stale.
 
 def active_tier(repo_root=None) -> str:
     return resolve_active_tier(repo_root)
@@ -816,7 +674,7 @@ def effective_summary(repo_root=None) -> dict:
 
 
 def model_guides(tier=None, repo_root=None) -> dict:
-    """One public knowledge view for direct clients and delegating MCP callers."""
+    """Return the public model guide for direct clients and MCP callers."""
     summary = profile_summary(tier or active_tier(repo_root), repo_root)
     return {"tier": summary["tier"], "models": {
         "ailocal-" + role: {

@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
-"""Co-owned Claude settings and the local-agent delegation boundary: the child's environment, real-CLI reach
-per mode against scripted endpoints (no inference) and the stdio server end to end. Temp roots only;
-re-executes under the local-agent venv."""
+"""Test co-owned Claude settings and the local-agent delegation boundary.
+
+Covers the child env, real-CLI reach per mode against scripted endpoints (no
+inference) and the stdio server end to end. Temp roots only; re-executes under
+the local-agent venv.
+"""
 import contextlib, http.server, importlib.util, json, os, shlex, shutil
 import subprocess, sys, tempfile, threading, unittest, uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -29,7 +32,7 @@ from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
 class ScriptedModel:
-    """A streaming Messages endpoint that plays fixed tool calls and records each request; no inference."""
+    """Serve scripted streaming tool calls and record each request."""
     def __init__(self, calls):
         self.calls, self.results, self.offered = calls, [], []
         owner = self
@@ -73,7 +76,7 @@ class ScriptedModel:
 
 class Guidance(unittest.TestCase):
     def test_claude_settings_keep_foreign_hooks_and_operator_values(self):
-        """settings.json is co-owned: regeneration keeps a foreign hook and an operator's explicit value."""
+        """Keep a foreign hook and explicit operator values on regeneration."""
         models = generation.load_models_yaml(RES / 'profiles/16gb.toml')
         tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
         target, external = tmp / 'settings.json', {'hooks': [{'type': 'command', 'command': 'external-hook'}]}
@@ -88,10 +91,10 @@ class Guidance(unittest.TestCase):
 
 
 class Contract(unittest.TestCase):
-    """What the local-agent boundary hands a delegated CLI; no inference."""
+    """Test what the local-agent boundary hands a delegated CLI."""
 
     def test_child_env_carries_no_hosted_credential_and_denies_the_key_files(self):
-        # Includes what a hosted Claude Code session exports to its MCP servers.
+        # Includes what a hosted Claude Code session exports to MCP servers.
         leaked = {'ANTHROPIC_AUTH_TOKEN': 'h', 'CLAUDE_CODE_USE_BEDROCK': '1', 'CLAUDE_CODE_OAUTH_TOKEN': 'x', 'ANTHROPIC_MODEL': 'opus',
                   'OPENAI_ORG_ID': 'org', 'CODEX_API_KEY': 'k', 'CLAUDECODE': '1', 'CLAUDE_CODE_SESSION_ID': 'h',
                   'CLAUDE_PROJECT_DIR': '/hosted/repo', 'SSH_AUTH_SOCK': '/agent'}
@@ -105,13 +108,13 @@ class Contract(unittest.TestCase):
         self.assertEqual((claude['CLAUDE_CONFIG_DIR'], claude['ANTHROPIC_BASE_URL'], claude['ANTHROPIC_API_KEY']),
                          ('/local/claude', 'http://127.0.0.1:4000', 'local'))
         self.assertEqual((codex['OPENAI_BASE_URL'], codex['OPENAI_API_KEY']), ('http://127.0.0.1:4000/v1', 'local'))
-        # The launcher names ailocal's own key files so every restricted mode denies them.
+        # The launcher names ailocal's key files so restricted modes deny them.
         with patch.object(launcher.runtime, 'env_value', return_value='k'):
             denied = set(json.loads(launcher.agent_environment()['LOCAL_AGENT_DENY_READ']))
         self.assertLessEqual({str(environment.user_file()), str(environment.generated_file())}, denied)
 
     def test_codex_worker_cannot_read_a_denied_file(self):
-        """[REAL] 2026-10-28, Codex 0.165.0: `--sandbox read-only` let a delegated shell read the key file."""
+        """Codex `--sandbox read-only` let a shell read the key."""
         root = policy.deployed_client_root() / 'codex'
         if not shutil.which('codex') or not (root / 'config.toml').is_file() or sys.platform != 'darwin':
             self.skipTest('codex, its worker root or macOS Seatbelt unavailable')
@@ -128,7 +131,7 @@ class Contract(unittest.TestCase):
             got = {}
             for mode in ('text', 'edit'):
                 argv = S._codex_argv('p', 'm', mode, str(work), None, '/o')
-                # --sandbox or sandbox_mode selects the older settings and drops the profile's deny entries.
+                # --sandbox/sandbox_mode drop the profile's deny entries.
                 self.assertFalse('--sandbox' in argv or [a for a in argv if a.startswith('sandbox_mode')], mode)
                 got[mode] = probe([x for i, a in enumerate(argv) if a == '-c' and 'permissions' in argv[i + 1]
                                    for x in ('-c', argv[i + 1])])
@@ -138,10 +141,11 @@ class Contract(unittest.TestCase):
 
 
 class RealClaudeReach(unittest.TestCase):
-    """The installed claude CLI's permission engine against a hostile project and eight scripted tool calls."""
+    """Test the installed claude CLI's permissions against a hostile project."""
     LOADS = {'text': {'user-hook'}, 'research': {'user-hook', 'research-mcp'}, 'edit': {'user-hook'},
              'full': {'user-hook', 'project-hook', 'project-mcp'}}
-    #: in-cwd read, symlink out, outside read, denied key, read calc.py, edit it, Write and Bash redirect outside.
+    #: in-cwd read, symlink out, outside read, denied key, read calc.py, edit
+    #: it, Write and Bash redirect outside.
     REACH = {'research': [True, False, False, False, True, False, False, False],
              'edit': [True, False, False, False, True, True, False, False], 'full': [True] * 8}
 
@@ -187,7 +191,7 @@ class RealClaudeReach(unittest.TestCase):
         for mode, (r, model, work, outside, marks) in runs.items():
             with self.subTest(mode=mode):
                 self.assertEqual((r.returncode, marks), (0, self.LOADS[mode]), r.stdout[-300:])
-                # Claude forces a scrubbed acceptEdits run back to default unless tools are declared.
+                # acceptEdits reverts to default unless tools are declared.
                 self.assertNotIn('forced to default', r.stderr)
                 builtin = {n for names in model.offered for n in names
                            if not n.startswith('mcp__') and n not in ('DeferredToolPlaceholder', 'ToolSearch')}
@@ -210,7 +214,7 @@ async def agent_session(env):
 
 
 class StdioServer(unittest.IsolatedAsyncioTestCase):
-    """The stdio server under a real MCP client and a fake claude; no inference."""
+    """Test the stdio server under a real MCP client and a fake claude."""
 
     async def asyncSetUp(self):
         self.tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
@@ -219,7 +223,7 @@ class StdioServer(unittest.IsolatedAsyncioTestCase):
         self.env = dict(os.environ, AILOCAL_CONFIG=str(RES), AILOCAL_STATE=str(self.tmp), LOCAL_AGENT_STATE=str(self.tmp),
                         LOCAL_AGENT_BASE_URL='http://127.0.0.1:9', LOCAL_AGENT_KEY='not-a-key',
                         PATH=f'{self.tmp / "bin"}{os.pathsep}{os.environ["PATH"]}')
-        # A run that "succeeds" with a refused Write, or that the CLI itself marks failed.
+        # A run that "succeeds" with a refused Write, or the CLI marks failed.
         (self.tmp / 'bin/claude').write_text(f'''#!{sys.executable}
 import json, sys
 argv = sys.argv
@@ -232,7 +236,7 @@ print(json.dumps({{'type': 'result', 'subtype': 'success', 'is_error': argv[2] =
     async def test_refused_and_failed_delegations_are_never_reported_as_success(self):
         error = lambda result, code: self.assertTrue(result.is_error and code in result.content[0].text, (code, result))
         async with agent_session(self.env) as (session, _):
-            # The shipped policy stops at edit; full is refused before any CLI starts.
+            # Policy stops at edit; full is refused before a CLI starts.
             for agent in S.AGENTS:
                 error(await session.call_tool('delegate', {'prompt': 'x', 'agent': agent, 'mode': 'full', 'cwd': str(self.tmp)}),
                       'MODE_NOT_PERMITTED')

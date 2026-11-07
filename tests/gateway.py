@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Gateway request handling on the host: tool-call repair on text and on the Anthropic SSE
-byte path, and the running proxy's authentication. Only the auth check leaves the process:
-it calls the proxy at AILOCAL_PROXY.
+"""Test gateway tool-call repair (text, SSE bytes) and proxy auth on the host.
+
+Only the auth check leaves the process: it calls the proxy at AILOCAL_PROXY.
 """
 from __future__ import annotations
 
@@ -41,7 +41,6 @@ TOOLS = [_tool("Read", {"file_path": "string"}, ["file_path"]),
 AGENT_TOOLS = TOOLS + [_tool("Agent", {"description": "string", "prompt": "string",
                                        "subagent_type": "string"}, ["description", "prompt"])]
 
-# ── text repair ─────────────────────────────────────────────────────────
 suite.section("REPAIR: a reply that is only a call becomes the call")
 repaired = {}
 for label, text in (("json fence", '```json\n{"name": "Read", "arguments": {"file_path": "/tmp/a"}}\n```'),
@@ -62,7 +61,6 @@ accepted = [label for text, label in (
     if tr.recover(text, TOOLS) != (None, text)]
 check(not accepted, "an example or invalid call in text is never executed", str(accepted))
 
-# ── SSE byte path ───────────────────────────────────────────────────────
 suite.section("SSE: native tool calls on the Anthropic byte stream")
 
 
@@ -107,7 +105,6 @@ async def truncated():
 body = asyncio.run(truncated())
 check("Find the ret" in body and "tool_use" in body, "a stream cut mid-call is flushed, not swallowed")
 
-# ── proxy auth ──────────────────────────────────────────────────────────
 suite.section("AUTH (running proxy)")
 from ailocal.checks import services as S  # noqa: E402
 

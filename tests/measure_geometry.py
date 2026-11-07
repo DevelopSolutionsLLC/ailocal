@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Re-measure the context/output geometry the active profile cites. Out of the gate.
+"""Re-measure the context/output geometry the active profile cites.
 
     python3 tests/measure_geometry.py [--tier 32gb] [--quick] [--time-budget S]
 
-Prints measurements and asserts nothing; exit status says only whether it ran.
-Stops and reloads models: run alone. Also the shared helpers for tests/measure_*.py.
+Out of the gate; asserts nothing; exit status says only whether it ran.
+Stops and reloads models: run alone. Shared helpers for tests/measure_*.py.
 """
 from __future__ import annotations
 
@@ -27,12 +27,12 @@ from ailocal import policy as P  # noqa: E402
 
 HOST = "http://127.0.0.1:11434"
 GIB = 2 ** 30
-# ~18 tokens per repetition; callers salt once per probe so probes share no prefix.
+# ~18 tokens per repetition; salt once per probe so probes share no prefix.
 CHUNK = "def process_record(record, index):\n    value = record.get('value')\n"
 
 
 class BudgetExpired(RuntimeError):
-    """The whole-run deadline, distinct from an individual socket timeout."""
+    """Signal the whole-run deadline, distinct from a socket timeout."""
 
 
 @contextmanager
@@ -66,7 +66,7 @@ def positive(text):
 
 
 def parser(doc, budget=900):
-    """The common CLI: the docstring's first line and a whole-run --time-budget."""
+    """Return the common CLI: docstring's first line and --time-budget."""
     ap = argparse.ArgumentParser(description=(doc or "").split("\n")[0])
     ap.add_argument("--time-budget", type=positive, default=budget,
                     help=f"whole-run wall-clock budget in seconds (default {budget})")
@@ -74,7 +74,7 @@ def parser(doc, budget=900):
 
 
 def cli(main, errors=(urllib.error.URLError, OSError, ValueError, RuntimeError)):
-    """Entry point: line-buffered (a silent probe looks hung), clean failure exits."""
+    """Run `main` line-buffered (silent probes look hung), exiting cleanly."""
     sys.stdout.reconfigure(line_buffering=True)
     try:
         sys.exit(main())
@@ -103,12 +103,12 @@ def release_model(model):
 
 
 def installed():
-    """Exact installed tags to digests; measurements refuse anything else."""
+    """Return exact installed tags → digests; measurements refuse others."""
     return {m["name"]: m["digest"] for m in api("/api/tags", timeout=10).get("models", [])}
 
 
 def loaded_model(model):
-    """The /api/ps entry for one exact tag; variants of a family are distinct."""
+    """Return the /api/ps entry for one exact tag; variants are distinct."""
     def canonical(name):
         return name if ":" in name.rsplit("/", 1)[-1] else name + ":latest"
     return next((m for m in api("/api/ps").get("models", [])
@@ -121,7 +121,7 @@ def resident(model):
 
 
 def engine_of(model):
-    """The runner Ollama reports after loading; tag names and formats do not decide."""
+    """Return the runner Ollama reports after load; tag names do not decide."""
     runner = (loaded_model(model) or {}).get("runner")
     if runner in ("mlx", "llamacpp"):
         return "llama_cpp" if runner == "llamacpp" else runner
@@ -138,21 +138,21 @@ def generate_cold(model, prompt, num_ctx, num_predict, options):
 
 
 def load_cold(model, num_ctx, options=None):
-    """Resident bytes after a cold load: all of eager llama_cpp KV, only MLX weights."""
+    """Return resident bytes after a cold load (llama_cpp KV, MLX weights)."""
     generate_cold(model, "hi", num_ctx, 1, options)
     time.sleep(2)
     return resident(model)
 
 
 def fill(model, target_tokens, num_ctx, options=None):
-    """One cold, uncached prefill: (prompt tokens, seconds, resident bytes)."""
+    """Run one cold prefill; return (prompt tokens, seconds, resident bytes)."""
     prompt = f"# geometry probe {target_tokens} {time.time_ns()}\n" + CHUNK * max(1, target_tokens // 18)
     r = generate_cold(model, prompt, num_ctx, 8, options)
     return r.get("prompt_eval_count", 0), r.get("prompt_eval_duration", 0) / 1e9, resident(model)
 
 
 def ceiling(model, num_ctx, want, options=None):
-    """done_reason 'length' at the requested count demonstrates the output budget."""
+    """Probe the output budget: done_reason 'length' at the requested count."""
     r = api("/api/generate", {
         "model": model, "stream": False, "keep_alive": "60s",
         "prompt": "List 400 distinct short code-review rules, numbered, one per line. Do not stop early.",
@@ -168,7 +168,7 @@ def versions():
     except Exception:
         ollama = "unreachable"
     mlx = "unavailable"
-    # The ollama-binary cask keeps its runtime beside the file its PATH symlink names.
+    # The cask keeps its runtime beside its PATH symlink's target.
     found_cli = shutil.which("ollama")
     roots = [pathlib.Path(found_cli).resolve().parent] if found_cli else []
     for v, root in ((v, r) for v in ("mlx_metal_v4", "mlx_metal_v3") for r in roots):
@@ -219,7 +219,7 @@ def measure(args, models):
             print(f"  kv           (same backend and window as {seen[model, num_ctx]})")
         else:
             seen[model, num_ctx] = role
-            # A small load identifies the runner; Ollama may pick MLX for any tag.
+            # A small load identifies the runner; Ollama may pick MLX for a tag.
             load_cold(model, min(num_ctx, 8192), options)
             eng = engine_of(model)
             print(f"  runner       {eng} (reported by Ollama)")
@@ -245,13 +245,13 @@ def measure(args, models):
         if args.quick:
             print("  output       not measured in quick mode")
             continue
-        # The deepest admitted prompt: the worst cold resume before client compaction.
+        # Deepest admitted prompt: worst cold resume before client compaction.
         n, secs, after = fill(model, cfg["context_input"], num_ctx, options)
         if n and secs:
             print(f"  cold prefill {n} tokens in {secs:.1f}s ({n/secs:.0f} tok/s) at full admission")
         if after:
             print(f"  resident     {after/GIB:.2f} GiB with {n} tokens in the window")
-        # Generating max_output costs minutes; a shared (model, ceiling) is probed once.
+        # max_output takes minutes: probe a shared (model, ceiling) once.
         if (model, cfg["max_output"]) in ceilings:
             print(f"  output       (same ceiling on the same backend as {ceilings[model, cfg['max_output']]})")
         else:

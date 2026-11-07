@@ -1,23 +1,11 @@
 #!/usr/bin/env python3
-"""Design-system invariants: contrast, colour-independence, presentation boundary.
+"""Test design invariants: contrast, colour-independence, presentation.
 
-These are gates, not opinions. Every number is computed from the canonical token
-file, so a future palette edit that regresses legibility fails here rather than
-in someone's browser.
-
-WCAG 2.2 thresholds applied:
+Computed from the canonical tokens (pinned @carbon/themes). WCAG 2.2:
   normal text                                    >= 4.5:1
   large text                                     >= 3.0:1
   graphical objects NEEDED to understand content >= 3.0:1
-
-Decorative styling is deliberately NOT held to 3:1. A card border that merely
-reinforces a boundary already carried by fill, accent rail and text is not a
-graphical object required for understanding, and demanding 3:1 of it would push
-the palette somewhere worse for no accessibility gain. It must still be VISIBLE
-against what it sits on, which is a separate and weaker claim -- gated below.
-
-Colour values are generated from a pinned @carbon/themes release, so these gates
-are also what stops an upstream bump from silently regressing legibility.
+Decorative borders need only be visible, not 3:1.
 """
 import importlib.util
 import json
@@ -72,7 +60,7 @@ for mode in ("light", "dark"):
 print("\nGRAPHICAL OBJECTS REQUIRED FOR UNDERSTANDING (>= 3.0:1)")
 for mode in ("light", "dark"):
     m = THEME[mode]
-    # Connectors carry the relationships; without them the diagram means nothing.
+    # Connectors carry the relationships, so they are load-bearing.
     worst, which = min((contrast(v, m["canvas"]), k) for k, v in m["accent"].items())
     check(f"{mode}/weakest connector vs canvas >= 3.0:1", worst >= 3.0,
           f"{which} {worst:.2f}:1")
@@ -89,8 +77,7 @@ check("every accent kind has a printed text label", not missing, str(missing))
 edges = THEME["edge_kinds"]
 check("every edge kind carries a text label",
       all("label" in v for v in edges.values()))
-# The greyscale case is what makes the text carrier load-bearing: several accents
-# are deliberately close in luminance, so identification cannot rely on hue.
+# Accents are close in luminance, so identification cannot rely on hue.
 gs = []
 ks = [k for k in accents if k != "default"]
 for i, a in enumerate(ks):
@@ -107,7 +94,7 @@ spec = importlib.util.spec_from_file_location("srv", str(HERE / "server.py"))
 srv = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(srv)
 
-# Real captured model output. These exact fills reached a user's screen.
+# Real captured model output.
 CAPTURED = """graph TD
     Start([Developer Submits PR]) --> CI[Run Tests]
     CI --> Review[Reviewer(s) Assigned]
@@ -124,11 +111,8 @@ for hexval in ("#f9f", "#0f0", "#e1f5fe", "#fff9c4"):
 check("semantic structure survives",
       "Start([Developer Submits PR])" in out and "-->" in out and "Reviewer(s)" in out)
 
-# A classDiagram declares its classes with `class Foo {`. Stripping that as if
-# it were a flowchart's `class node styleName` deleted the declaration and left
-# the closing brace, so [REAL] a ten-class diagram with members rendered as
-# "Syntax error in text" -- the colour rule reintroducing the exact failure the
-# quoting rule below exists to prevent.
+# `class Foo {` declares a class here; stripping it like flowchart styling
+# leaves an orphan brace and a syntax error.
 CLASS_DIAGRAM = """classDiagram
     class Router {
         -routes: dict
@@ -151,7 +135,7 @@ check("the relationship survives", "Handler <|-- Router" in cd_out)
 check("classDef colour is still stripped there",
       cd_dropped == 1 and "#f9f" not in cd_out, f"dropped {cd_dropped}")
 
-# The flowchart dialect must NOT lose the rule: there `class` IS presentation.
+# In flowcharts `class` is presentation and must still be stripped.
 FLOWCHART = """flowchart TD
     A[a] --> B[b]
     class A hot
@@ -179,9 +163,7 @@ check("LOCAL_ARTIFACTS_AUTO_OPEN=0 suppresses the browser",
       'LOCAL_ARTIFACTS_AUTO_OPEN' in (HERE / "server.py").read_text())
 
 print("\nA BORDER MUST AT LEAST BE VISIBLE ON WHAT IT SITS ON")
-# Not a 3:1 claim -- just that it is not the same colour as its own fill. The
-# first Carbon mapping tried border.subtle.01, which resolves to the same
-# gray.20 as layer.accent.01: a group outline that could not be seen at all.
+# Not 3:1, only distinct from its fill (border.subtle.01 matched it once).
 for mode in ("light", "dark"):
     m = THEME[mode]
     for ground in ("surface", "group_surface", "canvas"):
@@ -189,8 +171,7 @@ for mode in ("light", "dark"):
               f'both {m["border"]}')
 
 print("\nACCENTS STAY LEGIBLE ON EVERY GROUND THEY ARE DRAWN ON")
-# A connector crosses the canvas, a type rail sits on a node, and both appear
-# inside group fills. All three are load-bearing, so all three are gated.
+# Connectors and rails also sit inside group fills; gate all three.
 for mode in ("light", "dark"):
     m = THEME[mode]
     for ground in ("canvas", "surface", "group_surface"):
@@ -238,8 +219,7 @@ check("hex fallback agrees with the components it falls back for",
           "#%02x%02x%02x" % tuple(round(n * 255) for n in c["components"])
           for c in vals if "hex" in c))
 
-# The authored file is the mapping; it must not carry its own literal colours,
-# or a value could drift away from the generated palette unnoticed.
+# No literal colours in the mapping, or values drift from the palette.
 literal = re.findall(r'"#[0-9a-fA-F]{3,8}"', (HERE / "themes/artifact.tokens.json").read_text())
 check("the authored mapping hard-codes no colour of its own", not literal, str(literal))
 # Same claim for the renderer.

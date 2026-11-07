@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Policy files fail closed, generation stays out of hosted roots, and the environment files' ownership.
+"""Test policy fail-closed, generation outside hosted roots, env file ownership.
 
 Writes only temp roots. Generation keeps the real HOME; every hosted client root
-is pointed at a temp dir that must stay empty."""
+is pointed at a temp dir that must stay empty.
+"""
 from __future__ import annotations
 
 import contextlib
@@ -28,8 +29,7 @@ GOOD = '[primary]\nrole = "Lead"\nactive = "m:1b"\ncontext_input = 100\nmax_outp
 
 @contextlib.contextmanager
 def env_set(**values):
-    """Set env vars and restore the prior values, never drop them: the gate
-    wrapper declares the isolated roots and a pop would repoint later checks."""
+    """Set env vars, then restore prior values; a pop repoints later checks."""
     def apply(pairs):
         for k, v in pairs.items():
             os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, str(v))
@@ -75,7 +75,7 @@ def fails_closed() -> None:
         ("non-integer context_input", head + 'context_input = "x"\n', P.ROLE_CONFIG_INVALID),
         ("missing required field", '[primary]\nrole = "L"\ncontext_input = 10\n', P.PROFILE_SCHEMA_INVALID),
         ("duplicate key", GOOD + "context_input = 999\n", P.PROFILE_INVALID),
-        # Unknown keys were silently dropped before 2026-08-04, so a typo read as set and was not.
+        # Unknown keys must fail: a dropped typo reads as set but is not.
         ("mistyped key", GOOD + "temprature = 0.1\n", P.PROFILE_SCHEMA_INVALID),
     ]
     for label, text, code in profiles:
@@ -95,7 +95,7 @@ def fails_closed() -> None:
 
 
 def _generate(tier: str) -> dict:
-    """Run the generator for one tier into temp roots, every hosted root pointed at an empty dir."""
+    """Run the generator for one tier, every hosted root at a temp dir."""
     b = Path(tempfile.mkdtemp(dir=TMP))
     shutil.copytree(RESOURCES / "profiles", b / "cfg/profiles")
     P.active_profile_path(b / "state").parent.mkdir(parents=True, exist_ok=True)
@@ -120,7 +120,7 @@ def generated() -> None:
     if bad:
         return
     launch = P.load_client_policy(RESOURCES).get("claude", {}).get("launch_default", "primary")
-    # Claude Code defaults to 32000 output tokens; a mismatch looped on max_tokens for ~27 min.
+    # Claude Code defaults to 32000 output tokens; a mismatch loops.
     got, want = {}, {}
     for tier, g in runs.items():
         cenv = json.loads((g["root"] / "clients/claude/settings.json").read_text()).get("env", {})

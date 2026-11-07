@@ -1,43 +1,14 @@
-"""
-capability_registry.py — loads registry.yaml and answers capability questions.
+"""Load registry.yaml and answer capability questions; owns its shape.
 
-The only module that knows the registry's shape. Everything downstream asks it
-questions ("can this model use tools?", "does this route drop namespace tools?",
-"is this client known?") rather than testing model or tool names itself. That is
-the whole point: the negotiator must contain no conditional about any specific
-model, client, or tool, so that swapping any of them is a config edit.
+The negotiator holds no conditional on a model, client or tool name, so swapping
+one is a config edit. Commitments:
 
-DESIGN COMMITMENTS
-------------------
-1. **Fail open, and say why.** Every lookup has a defined answer when the
-   registry is absent, unparseable, or silent about the subject — and that answer
-   is always "change nothing". A capability layer that fails closed turns a
-   config typo into a client that has lost its tools.
-2. **States are distinguished.** `absent` / `unavailable` (no PyYAML) / `error`
-   (malformed) are separate, because a corrupt registry demands a different
-   response from a deliberately missing one.
-3. **max_context is not restated.** It is read from
-   config/capabilities.generated.json, which generation.py derives from the
-   active profile. Duplicating it here would create two sources that drift apart
-   after a profile change. The registry's own max_context is a fallback for
-   classes with no generated entry (cloud models).
-4. **Classification follows the BACKING MODEL, then the slot.** A capability
-   (primary, fast, cyber) is a ROLE, not a model. Roles share weights: `fast`
-   is the primary with thinking off, and before 0.16 the three roles that
-   collapsed into `primary` were one backend too. Matching the role first
-   therefore handed one model two or three contradictory capability
-   declarations depending only on which alias the request arrived under. So
-   the order is:
-
-     1. the resolved BACKEND model (from the generated model_list) by pattern
-     2. the capability/role, as a policy fallback for a backend we do not name
-     3. the raw requested name by pattern
-     4. `unknown` (fails open)
-
-   Step 1 still protects the compat aliases that motivated the original
-   capability-first rule: `claude-sonnet-4-6` resolves to a backend of
-   `gemma4:26b-mlx`, which cannot match `claude-*`. Step 3 is reached only by a
-   model with no ailocal backend at all — a genuine frontier passthrough.
+1. Fail open: absent, unparseable or silent registry → change nothing.
+2. `absent` / `unavailable` (no PyYAML) / `error` (malformed) stay distinct.
+3. max_context comes from capabilities.generated.json; the registry's is only a
+   fallback for classes w/o a generated entry (cloud models).
+4. Classify by backend model, then capability, then raw name, then `unknown`:
+   roles share weights, so role-first gave one model conflicting classes.
 """
 
 import fnmatch
@@ -52,14 +23,12 @@ CONFIG_PATH = os.environ.get("AILOCAL_CONFIG_PATH", "/app/generated/config.yaml"
 
 
 def truthy_flag(v):
-    """YAML `true`/`yes`/`1` -> True. Anything absent or unrecognised is False,
-    so a typo in the registry fails CLOSED (keeps tools) rather than silently
-    stripping a task's toolset."""
+    """Return True for YAML `true`/`yes`/`1`; a typo is False, keeping tools."""
     return str(v).strip().lower() in ("1", "true", "yes", "on")
 
 
 class Registry:
-    """Loaded capability registry. Construct once; it is read-only afterwards."""
+    """Loaded capability registry; read-only after construction."""
 
     def __init__(self, path=None, caps_json=None, config_path=None):
         self.path = path or REGISTRY_PATH
@@ -71,7 +40,6 @@ class Registry:
         self.backends = {}      # capability -> backing model (generated)
         self._load(caps_json or CAPS_JSON, config_path or CONFIG_PATH)
 
-    # ── loading ─────────────────────────────────────────────────────────────
     def _load(self, caps_json, config_path):
         try:
             import yaml
@@ -105,9 +73,8 @@ class Registry:
                 cfg = yaml.safe_load(f) or {}
             self.alias = dict((cfg.get("router_settings") or {}).get(
                 "model_group_alias") or {})
-            # capability -> backing model, so classification can describe the
-            # weights rather than the role (commitment 4). The provider prefix
-            # is stripped: registry patterns name models, not deployments.
+            # capability → backing model (commitment 4); patterns name models,
+            # so the provider prefix is stripped.
             for entry in (cfg.get("model_list") or []):
                 name = entry.get("model_name") or ""
                 backend = ((entry.get("litellm_params") or {}).get("model")
@@ -124,26 +91,19 @@ class Registry:
     def loaded(self):
         return self.state == "loaded"
 
-    # ── model resolution ────────────────────────────────────────────────────
     def capability_of(self, model):
-        """Requested model name -> ailocal capability key, via model_group_alias."""
+        """Map a requested model name to its capability (model_group_alias)."""
         name = self.alias.get(model, model) or ""
         return name[len("ailocal-"):] if name.startswith("ailocal-") else name
 
     def backend_of(self, model):
-        """Requested model name -> the model actually serving it, or None.
-
-        None means this deployment has no backend for it, which is itself the
-        signal that the name belongs to something we do not host.
-        """
+        """Return the model serving a requested name; None means not hosted."""
         return self.backends.get(self.capability_of(model))
 
     def model_class(self, model):
-        """(class_name, class_dict) for a requested model name.
+        """Return (class_name, class_dict) in commitment-4 order.
 
-        Backend model first, then the capability/role, then the raw name — see
-        commitment 4 for why that order and not the reverse. Returns (None, {})
-        when nothing matches, which every caller must treat as 'no opinion'.
+        (None, {}) means no opinion.
         """
         classes = (self.doc.get("model_classes") or {})
         capability = self.capability_of(model)
@@ -152,11 +112,8 @@ class Registry:
         def by_name(candidate, allow_universal):
             for name, spec in classes.items():
                 for pattern in spec.get("match_models") or []:
-                    # The `*` catch-all is a LAST-resort class, so it must not
-                    # win at the backend stage — every backend matches it, and
-                    # that would starve the capability stage below of any
-                    # class it could ever answer (local_completion is
-                    # capability-only and would become unreachable).
+                    # `*` is last resort: winning here would starve the
+                    # capability stage (local_completion would be unreachable).
                     if pattern == "*" and not allow_universal:
                         continue
                     if candidate and fnmatch.fnmatch(candidate, pattern):
@@ -175,28 +132,19 @@ class Registry:
         return None, {}
 
     def supports(self, model, feature):
-        """Capability flag lookup, e.g. supports(m, "tools") -> bool|None.
-
-        None means the registry does not say. Callers must not coerce that to
-        False: 'unknown' and 'unsupported' license different behaviour.
-        """
+        """Look up a capability flag; None (unknown) must not read as False."""
         _, spec = self.model_class(model)
         return spec.get("supports_" + feature)
 
     def is_passthrough(self, model):
-        """True when this model must be forwarded unmodified regardless of flags.
-
-        Unknown models are passthrough too — an unmatched class has no
-        `passthrough` key, so the absence of a class is itself a passthrough
-        signal via the `unknown` catch-all.
-        """
+        """Return whether the model is forwarded as-is; unknown ones are."""
         name, spec = self.model_class(model)
         if name is None:
             return True
         return bool(spec.get("passthrough"))
 
     def max_context(self, model):
-        """Generated context window, falling back to the class's declared one."""
+        """Return the generated context window, else the class's own."""
         capability = self.capability_of(model)
         if capability in self.contexts:
             return self.contexts[capability]
@@ -207,17 +155,15 @@ class Registry:
         _, spec = self.model_class(model)
         return dict(spec.get("routing_hints") or {})
 
-    # ── groups and tool names ───────────────────────────────────────────────
     def group_members(self, group):
         return list((self.doc.get("groups") or {}).get(group) or [])
 
     def all_groups(self):
-        """Every declared group name. Exposed so callers never have to reach
-        into `self.doc` — the registry's shape stays this module's business."""
+        """Return every declared group name; callers never read `self.doc`."""
         return set(self.doc.get("groups") or {})
 
     def expand(self, groups):
-        """Group names -> the set of tool names/patterns they contain."""
+        """Expand group names to the tool names/patterns they contain."""
         out = set()
         for g in groups or []:
             out.update(self.group_members(g))
@@ -225,7 +171,7 @@ class Registry:
 
     @staticmethod
     def matches(name, patterns):
-        """Whether a tool name is covered by a name/prefix pattern set."""
+        """Return whether a name/prefix pattern set covers a tool name."""
         if not name:
             return False
         if name in patterns:
@@ -234,29 +180,23 @@ class Registry:
                    for p in patterns)
 
     def group_of(self, name):
-        """Which group a tool belongs to, or None. Used for reporting, so a
-        human reading a drop list sees categories rather than 20 bare names."""
+        """Return a tool's group (for reports), or None."""
         for group in (self.doc.get("groups") or {}):
             if self.matches(name, set(self.group_members(group))):
                 return group
         return None
 
     def is_protected(self, name):
-        """Protected tools survive every rule. Unnamed entries — normalised to
-        `<web_search>`, `<namespace>` — are protected implicitly: a registry is
-        written in names and cannot have formed an intent about an entry without
-        one."""
+        """Return whether a tool survives every rule; unnamed entries do."""
         if name and name.startswith("<") and name.endswith(">"):
             return True
         return self.matches(name, set(self.doc.get("protected") or []))
 
-    # ── routes ──────────────────────────────────────────────────────────────
     def route_for_call_type(self, call_type, has_input_key=False):
-        """Resolve the API dialect from the call_type the proxy reports.
+        """Resolve the API dialect from the proxy's call_type.
 
-        `has_input_key` disambiguates the OpenAI family: /v1/responses payloads
-        carry a top-level `input`. Passed in rather than inspected here so this
-        stays a pure lookup.
+        `has_input_key` marks /v1/responses (top-level `input`); passed in to
+        keep this a pure lookup.
         """
         routes = self.doc.get("routes") or {}
         for route, spec in routes.items():
@@ -265,8 +205,7 @@ class Registry:
         return "/v1/responses" if has_input_key else "/v1/chat/completions"
 
     def route_drops_type(self, route, tool_type):
-        """Whether LiteLLM discards this tool type on this route before the
-        backend. Bytes it drops are not the gateway's to claim as a saving."""
+        """Return whether LiteLLM drops this tool type on the route itself."""
         spec = (self.doc.get("routes") or {}).get(route) or {}
         return tool_type in (spec.get("drops_tool_types") or [])
 
@@ -274,11 +213,8 @@ class Registry:
         spec = (self.doc.get("routes") or {}).get(route) or {}
         return spec.get("result_status", "unknown")
 
-    # ── clients ─────────────────────────────────────────────────────────────
     def detect_client(self, headers):
-        """Identify the client from request headers. Returns a name from the
-        registry, or "unknown" — never a guess derived from the model name,
-        which is an alias any client may request."""
+        """Identify the client from headers, or "unknown"; never by model."""
         lowered = {str(k).lower(): str(v or "")
                    for k, v in (headers or {}).items()}
         ua = lowered.get("user-agent", "").lower()
@@ -299,16 +235,11 @@ class Registry:
     def client_profile(self, client):
         return dict((self.doc.get("clients") or {}).get(client) or {})
 
-    # ── the negotiation rule ────────────────────────────────────────────────
     def removable_groups(self, client, model):
-        """Groups removable for this (client, model) pair.
+        """Return groups both client and model class agree to drop.
 
-        The INTERSECTION of what the client profile is willing to drop and what
-        the model class does not want. Requiring both sides to agree means
-        neither can unilaterally strip a tool the other depends on, and a client
-        or model the registry does not describe contributes an empty set — so an
-        unknown participant results in no filtering rather than maximal
-        filtering.
+        Intersection, so neither side strips what the other needs; an unknown
+        participant contributes nothing and nothing is filtered.
         """
         profile = self.client_profile(client)
         _, spec = self.model_class(model)
@@ -316,11 +247,8 @@ class Registry:
         model_denies = set(spec.get("denied_groups") or [])
         return client_drops & model_denies
 
-    # ── namespace expansion ─────────────────────────────────────────────────
     def namespace_expansion(self):
-        """Config for flattening namespace bundles into function tools.
-        `enabled` defaults False: flattening changes the name the model emits and
-        the client must be able to route it."""
+        """Return namespace-flattening config; off by default (renames)."""
         cfg = dict(self.doc.get("namespace_expansion") or {})
         cfg.setdefault("enabled", False)
         cfg.setdefault("source_type", "namespace")
@@ -329,16 +257,11 @@ class Registry:
         cfg.setdefault("max_tools_per_namespace", 40)
         return cfg
 
-    # ── task classification (Phase D) ───────────────────────────────────────
     def classify_task(self, text):
-        """(class_name, groups, hits) for a request, or (None, None, 0).
+        """Return (class_name, groups, hits), or (None, None, 0).
 
-        Substring matching, case-insensitive, first class with enough hits wins.
-        Returns groups=None when unclassified, which the caller MUST treat as
-        "no opinion" and leave the Phase B allowlist alone. Returning an empty
-        set instead would mean "this task needs nothing", which is the dangerous
-        misreading — a misclassified task that loses its tools produces a stuck
-        agent, while an unnecessary tool only costs tokens.
+        First class with enough case-insensitive substring hits wins. None
+        groups means no opinion, never "needs nothing": lost tools stall.
         """
         spec = self.doc.get("task_classes") or {}
         always = set(spec.get("always") or [])
@@ -349,14 +272,8 @@ class Registry:
             hits = sum(1 for pat in cls.get("patterns") or []
                        if str(pat).lower() in lowered)
             if hits >= int(cls.get("min_confidence_hits", 1) or 1):
-                # `override_always` lets a class drop BELOW the always-floor.
-                # Only the conversational class uses it, and it exists because
-                # the floor (edit_and_run) is what made a general question like
-                # "show me hello world in C++" behave like an engineering task:
-                # the model still held Read/Glob/Grep/Bash, and the coding
-                # persona duly went looking through the repository first.
-                # Everything else keeps the floor — losing tools mid-task is the
-                # dangerous direction, so this stays opt-in per class.
+                # `override_always` drops below the floor, opt-in per class:
+                # conversational asks otherwise searched the repository first.
                 groups = set(cls.get("groups") or [])
                 if not truthy_flag(cls.get("override_always")):
                     groups = always | groups
@@ -365,13 +282,7 @@ class Registry:
 
     @staticmethod
     def _mentioned(spec, lowered):
-        """Groups the request explicitly asked for by name (task_classes.mention_overrides).
-
-        Classification matches on TOPIC and is blind to an instruction about how
-        to work, so "delegate this to the reviewer subagent" matched the `review`
-        class and lost the Task tool it was asking for. An explicit instruction
-        outranks an inferred class — a user who names the mechanism gets it.
-        """
+        """Return groups the request names (mention_overrides); beat topic."""
         out = set()
         for group, pats in (spec.get("mention_overrides") or {}).items():
             if any(str(p).lower() in lowered for p in pats or []):
@@ -381,15 +292,11 @@ class Registry:
     def task_always_groups(self):
         return set((self.doc.get("task_classes") or {}).get("always") or [])
 
-    # ── schema rewrites (Phase C) ───────────────────────────────────────────
     def rewrite_rules(self, client):
-        """Effective rewrite rules for a client: defaults overlaid by the
-        client's own `schema_rewrites` block, if any.
+        """Return defaults overlaid by the client's `schema_rewrites`.
 
-        Returns a dict with enabled/strip_keys/max_description_chars/
-        max_param_description_chars/truncation_marker. When the registry says
-        nothing, `enabled` is False — a rewrite the operator never configured
-        must not happen."""
+        `enabled` is False unless configured.
+        """
         block = self.doc.get("schema_rewrites") or {}
         rules = dict(block.get("defaults") or {})
         rules.update(dict(self.client_profile(client).get("schema_rewrites") or {}))
@@ -401,18 +308,15 @@ class Registry:
         return rules
 
     def mutating_tools(self):
-        """(definite, ambiguous) name sets for the verification pipeline."""
+        """Return (definite, ambiguous) mutating-tool name sets."""
         spec = self.doc.get("mutating_tools") or {}
         return (set(spec.get("definite") or []),
                 set(spec.get("ambiguous") or []))
 
     def loop_guard_limit(self, model):
-        """Reasoning characters after which a looping /v1/responses turn is retried
-        without replayed reasoning, or None when the guard does not cover the model.
+        """Return the reasoning-char limit for a looping turn, or None.
 
-        Keyed on the BACKEND (commitment 4): Gemma and Qwen share a model class,
-        and only Gemma was measured looping. Absent, malformed or unmatched -> None,
-        which changes nothing.
+        Keyed on backend (commitment 4): only Gemma was measured looping.
         """
         spec = self.doc.get("reasoning_loop_guard") or {}
         limit = spec.get("reasoning_chars")
@@ -422,7 +326,7 @@ class Registry:
         return limit if self.matches(backend, spec.get("backends") or []) else None
 
     def describe(self):
-        """Compact state summary for metrics and doctor output."""
+        """Return a compact state summary for metrics and doctor."""
         return {
             "state": self.state,
             "error": self.error,

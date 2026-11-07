@@ -1,30 +1,11 @@
 #!/usr/bin/env python3
 """Stdio MCP boundary that delegates a task to a local ailocal agent.
 
-A hosted Claude or Codex session calls `delegate` to hand a prompt to
-claude-local or codex-local running on a local model (ailocal-cyber by default),
-the way it would spawn a subagent. The local CLIs are driven headless; the
-loopback proxy base URL, key and the isolated config root are injected by the
-`ailocal mcp agent` launcher, so a hosted config is never read or written here.
-
-Four modes, chosen per call, weakest first. The default, text, cannot edit
-files: it runs in an ailocal-owned empty directory, local Claude with no tools
-and no MCP servers, local Codex in its read-only sandbox (it may read files and
-run commands, and loads its root's MCP servers, because Codex has no tool-free
-mode). Research (Claude only) reads inside its working directory and searches
-the web through ailocal's research server, and nothing else. Edit is confined
-to an existing working directory: Claude by an edit rule for cwd plus its OS
-Bash sandbox, Codex by its workspace permission profile. Full lifts each CLI's own
-sandbox and permission checks. Everything above text is bounded by the
-operator's per-worker `delegate_max_mode` in clients.toml, read on every call.
-Below full, a project's own Claude settings, hooks and .mcp.json are not
-loaded; ailocal's worker-root hooks run in every mode. The argv, settings and
-the `capabilities` block every result reports are built from one table per
-CLI, so the report cannot drift from what ran. A delegated agent cannot
-delegate again: both share one local inference service, so recursion only
-queues work behind itself. No credential or raw CLI diagnostic crosses the MCP
-boundary -- a failure returns a constant, named error and any captured text is
-scoped to the delegated run.
+Drives claude-local/codex-local headless; the launcher injects proxy URL, key
+and the isolated root, so no hosted cfg is touched. Modes, weakest first:
+text, research, edit, full, capped by clients.toml `delegate_max_mode`. Argv
+and reported capabilities share one table per CLI. No recursion (one shared
+inference service); no credential or raw CLI diagnostic crosses the boundary.
 """
 import contextlib
 import base64
@@ -52,16 +33,13 @@ DEFAULT_MODEL = os.environ.get('LOCAL_AGENT_DEFAULT_MODEL', 'ailocal-cyber')
 #: Enabled in the policy view but not an agent: fill-in-the-middle completion.
 NOT_DELEGABLE = ('ailocal-completion',)
 MAX_OUTPUT_CHARS = 60000
-#: stdout held while a child runs. Claude's single JSON result is read whole;
-#: Codex's event stream is consumed a line at a time and never accumulated.
+#: stdout held per child; Codex events are read per line, never accumulated.
 STDOUT_LIMIT = 8 * 1024 * 1024
-#: After the CLI exits, how long a descendant may hold its stdout open before
-#: the group is killed and the reply read as it stands.
+#: Grace for descendants holding stdout after the CLI exits, then kill.
 DRAIN_GRACE = 2
 #: TERM, then KILL, each bounded, so cleanup cannot outlive the call by more.
 KILL_GRACE = 5
-#: After a normal exit the leader is already gone, so waiting on it gives the
-#: rest of the group no time at all; this is how long they get after TERM.
+#: Group grace after TERM once the leader has already exited.
 GROUP_GRACE = 1
 GUIDE_TIMEOUT = 10
 IMAGE_LIMIT = 5 * 1024 * 1024
@@ -69,13 +47,9 @@ IMAGE_COUNT = 4
 IMAGE_PIXELS = 16_000_000
 IMAGE_SIDE = 8192
 BINDING_VERSION = 1
-#: Inherited variables that would reroute or re-authenticate a child away from
-#: the loopback proxy. Claude Code ranks cloud-provider selection and
-#: ANTHROPIC_AUTH_TOKEN above ANTHROPIC_API_KEY (code.claude.com/docs/en/authentication).
-#: Every CLAUDE_* name, because a hosted session also exports its own messaging
-#: token and socket, session id, entrypoint and project dir; the child's own
-#: CLAUDE_* values are applied after this filter. SSH_AUTH_SOCK would hand the
-#: child the parent's SSH agent.
+#: Inherited vars that reroute or re-auth a child off the proxy (provider and
+#: AUTH_TOKEN outrank API_KEY, code.claude.com/docs/en/authentication), the
+#: parent's CLAUDE_* session state, and its SSH agent.
 _HOSTED_PREFIXES = ('ANTHROPIC_', 'CLAUDE_', 'OPENAI_', 'CODEX_')
 _HOSTED_NAMES = ('AWS_BEARER_TOKEN_BEDROCK', 'CLAUDECODE', 'SSH_AUTH_SOCK')
 DEPTH_VAR = 'LOCAL_AGENT_DEPTH'
@@ -98,12 +72,7 @@ class CompletedWithoutReply(DelegateError):
 
 
 def configure_logging(state: Path) -> None:
-    """Record lifecycle and fatal exits off the stdout protocol channel.
-
-    stdout carries the MCP stream and must stay byte-clean, so records go to a
-    file under the state directory and to stderr -- the same discipline the
-    local-research server uses, so a silent death leaves a diagnostic behind.
-    """
+    """Log lifecycle and fatal exits to a state file and stderr, not stdout."""
     handlers: list[logging.Handler] = [logging.StreamHandler(sys.stderr)]
     try:
         state.mkdir(parents=True, exist_ok=True)
@@ -115,18 +84,11 @@ def configure_logging(state: Path) -> None:
 
 
 def _child_env(agent: str, mode: str = 'text') -> dict[str, str]:
-    """Point the local CLI at the loopback proxy and its isolated config root.
+    """Return a child env aimed at the loopback proxy and its isolated root.
 
-    The launcher injects LOCAL_AGENT_* so this boundary never reads a hosted
-    config. For Claude the base URL and key are the gateway contract; for Codex
-    the same reach the CLI through its own env and the isolated CODEX_HOME.
-    Routing and session names are dropped in every mode -- they would point the
-    child at the hosted provider or the parent's session. Full mode keeps the
-    parent's SSH agent, which the restricted modes withhold.
+    Hosted routing and session vars are dropped; only full keeps SSH_AUTH_SOCK.
     """
-    # LOCAL_AGENT_* is this boundary's own launch contract, and LOCAL_AGENT_KEY
-    # is the proxy key under a name no CLI scrubs; the child gets only the
-    # credential its CLI authenticates with, below.
+    # LOCAL_AGENT_KEY: a name no CLI scrubs; the child gets only its own cred.
     withheld = _HOSTED_NAMES if mode != 'full' else tuple(n for n in _HOSTED_NAMES if n != 'SSH_AUTH_SOCK')
     env = {k: v for k, v in os.environ.items()
            if not k.startswith(_HOSTED_PREFIXES + ('LOCAL_AGENT_',)) and k not in withheld}
@@ -138,8 +100,7 @@ def _child_env(agent: str, mode: str = 'text') -> dict[str, str]:
         home = os.environ.get('LOCAL_AGENT_CLAUDE_HOME')
         if home:
             env['CLAUDE_CONFIG_DIR'] = home
-        # The same slots, timeout and context switches claude-local applies,
-        # projected by the launcher from client policy.
+        # claude-local's slots, timeout and context switches, from the launcher.
         try:
             launch = json.loads(os.environ.get('LOCAL_AGENT_CLAUDE_ENV') or '{}')
         except ValueError:
@@ -147,8 +108,7 @@ def _child_env(agent: str, mode: str = 'text') -> dict[str, str]:
         env.update({k: str(v) for k, v in launch.items() if isinstance(k, str)})
         env['ANTHROPIC_BASE_URL'] = base
         env['ANTHROPIC_API_KEY'] = key
-        # No gateway discovery: it only fills the /model picker. Behind a custom
-        # ANTHROPIC_BASE_URL, --model passes any non-empty ID through unchanged.
+        # No gateway discovery: --model passes any id through a custom base URL.
     else:
         home = os.environ.get('LOCAL_AGENT_CODEX_HOME')
         if home:
@@ -161,29 +121,11 @@ def _child_env(agent: str, mode: str = 'text') -> dict[str, str]:
 #: Weakest first; a call may not exceed the operator's ceiling for its agent.
 MODES = ('text', 'research', 'edit', 'full')
 
-#: One row per mode: everything argv, settings and the reported capabilities
-#: are built from. `tools` is the built-in tool list (None: the CLI default);
-#: `mcp` is "none", "research" (only ailocal's research server, its search
-#: tool) or "worker" (the worker root's user-scope servers); `sources` is the
-#: settings files Claude reads (None: all, including the project's).
-#:
-#: Edit confinement: --dangerously-skip-permissions lifts the working directory
-#: boundary entirely, and --add-dir only widens it: a delegated model that
-#: misread its working directory once searched $HOME and rewrote an unrelated
-#: file. An allow rule approves file edits only under cwd and a headless run
-#: denies every other prompt; the sandbox confines Bash writes to cwd and
-#: $TMPDIR and refuses to start rather than run unsandboxed. [REAL] Claude Code
-#: 2.1.308 forces the permission mode to default whenever the credential scrub
-#: is on, ignoring --permission-mode acceptEdits (and warning "Permission mode
-#: forced to default"), so the edit grant is the rule, not the mode.
-#: Project settings: a headless run loads a repository's .mcp.json servers
-#: without asking, and its settings can add hooks or widen the sandbox, all of
-#: which run outside the confinement above; `--setting-sources user` reads
-#: neither (code.claude.com/docs/en/mcp, /en/permissions). It also skips the
-#: project's CLAUDE.md, so the caller puts what the task needs in the prompt.
-#: Auto memory is off in every mode because its storage path in the system
-#: prompt is what one model mistook for its working directory.
-#: https://code.claude.com/docs/en/permission-modes, /en/sandboxing
+#: Per-mode rows that build argv, settings and reported capabilities.
+#: Edit: a cwd allow rule + Bash sandbox (2.1.308 forces default permission
+#: mode under the scrub); `--setting-sources user` skips project .mcp.json and
+#: hooks; auto memory off (its path was mistaken for cwd). See
+#: code.claude.com/docs/en/permission-modes, /en/sandboxing.
 CLAUDE_PLAN = {
     'text': {'tools': '', 'mcp': 'none', 'sources': 'user', 'permission_mode': None,
              'sandbox': None, 'reads': 'none', 'writes': 'none', 'workdir': 'empty'},
@@ -200,21 +142,16 @@ CLAUDE_PLAN = {
 }
 #: Research may call only this tool; a headless run would deny it otherwise.
 RESEARCH_TOOL = 'mcp__research__search'
-#: Edit and full keep the worker root's MCP servers; the delegate tool among
-#: them is removed so a child cannot delegate again. Research loads no agent
-#: server, and neither it nor text has the Agent tool.
+#: Edit/full keep worker MCP servers minus delegate, so no re-delegation.
 CLAUDE_DENIED_TOOLS = {'research': ['Agent', 'mcp__agent__delegate'],
                        'edit': ['mcp__agent__delegate'], 'full': ['mcp__agent__delegate']}
 
 
 def claude_settings(mode: str, guide: dict) -> dict:
-    """The one --settings object for a Claude child, for the SELECTED alias.
+    """Return the --settings object for a Claude child's selected alias.
 
-    The worker root's settings.json carries the launch-default role's limits in
-    its `env` block, and a settings `env` value replaces the inherited process
-    value, so exporting the selected alias's limits does nothing. Command-line
-    settings outrank user settings (code.claude.com/docs/en/env-vars#precedence,
-    /en/settings#settings-precedence).
+    Settings `env` beats the process env, so limits go here: CLI settings
+    outrank user settings (code.claude.com/docs/en/env-vars#precedence).
     """
     plan = CLAUDE_PLAN[mode]
     settings: dict[str, Any] = {'autoMemoryEnabled': False}
@@ -226,24 +163,16 @@ def claude_settings(mode: str, guide: dict) -> dict:
     settings['env'] = {'CLAUDE_CODE_MAX_OUTPUT_TOKENS': str(guide['max_output']),
                        'CLAUDE_CODE_MAX_CONTEXT_TOKENS': str(guide['context_input'])}
     if mode == 'full':
-        # An unsandboxed child can read any file it likes, so a read rule here
-        # would only look like protection; scrubbing would break the tokens a
-        # full-mode task is granted to use.
+        # Unsandboxed: a read rule is theatre and a scrub breaks granted tokens.
         return settings
-    # The scrub keeps the proxy key out of Bash, hooks and stdio MCP servers;
-    # Claude keeps it for its own requests (/en/env-vars).
+    # Scrub hides the proxy key from Bash, hooks and MCP; Claude keeps it.
     settings['env']['CLAUDE_CODE_SUBPROCESS_ENV_SCRUB'] = '1'
-    # [REAL] 2026-10-28: a tools=true child's Bash read the key file, because the
-    # sandbox allows reads of most of the machine. credentials.files denies the
-    # path to sandboxed commands; Read runs outside the sandbox and needs its own
-    # rule, where `//` anchors an absolute path. Deny entries only narrow, from
-    # any scope. code.claude.com/docs/en/sandboxing#protect-credentials,
-    # /en/permissions
+    # Sandboxed Bash could read the key file: credentials.files denies it, and
+    # Read (outside the sandbox) needs a `//` rule (/en/sandboxing).
     denied = _denied_paths()
     settings['permissions'] = {'deny': [f'Read(/{p})' for p in denied]}
     if plan['reads'] == 'working directory':
-        # Read, Grep and Glob refuse paths outside the working directories,
-        # following symlinks (/en/settings-reference#permissions-blockreadsoutsideworkingdirectories).
+        # Read/Grep/Glob refuse paths outside cwd, symlinks followed.
         settings['permissions']['blockReadsOutsideWorkingDirectories'] = True
     if plan['sandbox'] == 'confined':
         settings['sandbox']['credentials'] = {'files': [{'path': p, 'mode': 'deny'} for p in denied]}
@@ -251,7 +180,7 @@ def claude_settings(mode: str, guide: dict) -> dict:
 
 
 def _denied_paths() -> list[str]:
-    """Key-bearing files the launcher names; never restated here."""
+    """Return the key-bearing files the launcher names; never restated here."""
     try:
         paths = json.loads(os.environ.get('LOCAL_AGENT_DENY_READ') or '[]')
     except ValueError:
@@ -260,9 +189,7 @@ def _denied_paths() -> list[str]:
 
 
 def research_mcp_config() -> str:
-    """ailocal's own research registration, projected by the launcher from
-    mcp.registration(), so research mode starts the same server claude-local
-    does -- search only, its local synthesis tool left disabled."""
+    """Return the launcher's research registration: search, no synthesis."""
     try:
         entry = json.loads(os.environ.get('LOCAL_AGENT_RESEARCH_MCP') or 'null')
     except ValueError:
@@ -274,24 +201,20 @@ def research_mcp_config() -> str:
 
 def _claude_argv(prompt, model, mode, resume, session, settings, cwd=None, images=False) -> list[str]:
     plan = CLAUDE_PLAN[mode]
-    # Nobody can answer a prompt in a delegated run. `--permission-prompts none`
-    # also tells the model so and not to retry the denied call; without it a
-    # local model re-issued one denied Read 228 times until the timeout [REAL, #39].
-    # Requires Claude Code 2.1.259 (/en/headless#turn-off-permission-prompts-in-unattended-runs).
+    # No one answers prompts; w/o this a model retried one denied Read 228
+    # times (#39). Needs Claude Code 2.1.259 (/en/headless).
     argv = ['claude', '-p', prompt, '--model', model, '--output-format', 'json',
             '--settings', json.dumps(settings), '--permission-prompts', 'none']
     if images:
         del argv[2]
         argv[argv.index('--output-format') + 1] = 'stream-json'
         argv += ['--input-format', 'stream-json', '--verbose']
-    # A fresh run is given its identity rather than having it parsed back out;
-    # a resumed run keeps the id it was resumed by.
+    # Assign a fresh run's id; a resumed run keeps its own.
     argv += ['--resume', resume] if resume else ['--session-id', session]
     if plan['sources']:
         argv += ['--setting-sources', plan['sources']]
     if plan['tools'] is not None:
-        # Headless Claude would still run read-only tools such as Read without
-        # a prompt; `--tools` names the whole built-in set ("" for none).
+        # Headless runs read-only tools unprompted; `--tools ""` disables all.
         argv += ['--tools', plan['tools']]
     if plan['mcp'] == 'none':
         # --strict-mcp-config with no --mcp-config loads no MCP server.
@@ -302,10 +225,8 @@ def _claude_argv(prompt, model, mode, resume, session, settings, cwd=None, image
     if plan['permission_mode']:
         argv += ['--permission-mode', plan['permission_mode']]
     if plan.get('allow_edits') and cwd:
-        # Edit rules cover every file-editing tool; `//` anchors an absolute
-        # path. An allow rule must match both the requested path and the file
-        # it resolves to, so a symlinked cwd (/tmp on macOS) is named both ways
-        # (/en/permissions#symlinks).
+        # Allow rules must match path and target, so name a symlinked cwd both
+        # ways (/en/permissions#symlinks); `//` anchors an absolute path.
         roots = dict.fromkeys((os.path.abspath(cwd), os.path.realpath(cwd)))
         argv += ['--allowedTools', *(f'Edit(/{root}/**)' for root in roots)]
     if mode in CLAUDE_DENIED_TOOLS:
@@ -313,9 +234,8 @@ def _claude_argv(prompt, model, mode, resume, session, settings, cwd=None, image
     return argv
 
 
-#: Codex: research is not offered -- its read-only sandbox still executes
-#: whatever code the model writes, so it cannot honour a read-only research
-#: contract. Every other mode is a permission profile, not `sandbox_mode`.
+#: Codex has no research mode (read-only sandbox still runs model code).
+#: Other modes are permission profiles, not `sandbox_mode`.
 CODEX_PLAN = {
     'text': {'profile': ':read-only', 'reads': 'most of the machine', 'writes': 'none',
              'workdir': 'empty'},
@@ -324,19 +244,15 @@ CODEX_PLAN = {
     'full': {'profile': ':danger-full-access', 'reads': 'unrestricted', 'writes': 'unrestricted',
              'workdir': 'cwd'},
 }
-#: The per-run profile name; defined on the command line, never in a config file.
+#: The per-run profile name; defined on the command line, never in a file.
 CODEX_PROFILE = 'ailocal-delegate'
 
 
 def codex_permissions(mode: str) -> list[str]:
-    """-c overrides selecting this mode's permission profile.
+    """Return -c overrides selecting this mode's permission profile.
 
-    [REAL] 2026-10-28, Codex 0.165.0: `--sandbox read-only` let a delegated
-    shell read the key file; a profile extending :read-only with a `deny`
-    entry blocked it, both under the worker config (which sets sandbox_mode for
-    interactive codex-local) and without it. --sandbox or a sandbox_mode
-    override would select the older settings and drop the profile, so neither
-    is passed. learn.chatgpt.com/docs/permissions
+    Codex 0.165.0 `--sandbox read-only` let a shell read the key file; a deny
+    profile blocks it, and --sandbox would drop the profile, so never pass it.
     """
     base = CODEX_PLAN[mode]['profile']
     if base == ':danger-full-access':
@@ -357,22 +273,16 @@ def _codex_argv(prompt, model, mode, cwd, resume, out_file, images=()) -> list[s
     for image in images:
         common += ['--image', image['path']]
     if mode != 'full':
-        # Codex passes *KEY*/*SECRET*/*TOKEN* variables to the commands it
-        # spawns unless default excludes are applied, and the child inherits
-        # the hosted parent's environment. [REAL] 2026-10-28, 0.165.0: the
-        # provider key was absent from the shell with or without this. Full
-        # mode keeps them: a granted task may need its tokens.
-        # learn.chatgpt.com/docs/config-file/config-advanced#shell-environment-policy
+        # Exclude *KEY*/*SECRET*/*TOKEN* from spawned shells; full keeps them.
         common += ['-c', 'shell_environment_policy.ignore_default_excludes=false']
     if resume:
-        # [REAL] Codex 0.165.0: `exec resume` has no -C; cwd is the process cwd,
-        # which is the same directory the session started in.
+        # `exec resume` has no -C (0.165.0); the process cwd is the start dir.
         return ['codex', 'exec', 'resume', *common, '--', resume, prompt]
     return ['codex', 'exec', *common, '-C', cwd, '--', prompt]
 
 
 def capabilities(agent: str, mode: str) -> dict[str, Any]:
-    """What the child was given, read from the same rows that built its argv."""
+    """Return what the child was given, from the rows that built its argv."""
     full = mode == 'full'
     env = ('parent environment minus hosted routing and session variables' if full else
            'hosted routing, session variables and SSH agent removed; '
@@ -407,9 +317,10 @@ def capabilities(agent: str, mode: str) -> dict[str, Any]:
 
 
 def scoped_prompt(prompt: str, cwd: str, mode: str = 'edit') -> str:
-    """[REAL] 2026-10-28: a 9B child resolved files against its config root or
-    memory path instead of the process cwd (0/3 edits); naming it gave 3/3.
-    Edit and research are confined, so they say so."""
+    """Prefix the prompt w/ its cwd and confinement.
+
+    A 9B child otherwise resolved files against its config root (0/3 vs 3/3).
+    """
     bound = {'edit': '; you cannot write outside it', 'research': '; you can read only inside it'}.get(mode, '')
     context = ('\nThe client already loaded its instruction files. Use the supplied instructions '
                'and task context; do not reread the client configuration directory to discover '
@@ -430,13 +341,10 @@ def research_prompt(prompt: str, cwd: str | None) -> str:
 
 
 def empty_workdir() -> str:
-    """The ailocal-owned directory text runs (and research runs without a cwd)
-    start in, so a hosted session's repository is neither the child's project
-    nor its default read target. One fixed path, under this server's state
-    root: a resumed session starts in the directory it began in (Codex filters
-    resume by cwd, Claude stores sessions per directory), and the worker root
-    gains one project entry rather than one per run. No mode that runs there
-    can write, so anything found in it is cleared."""
+    """Return the fixed, cleared dir where text (and cwd-less research) runs.
+
+    Fixed so resume finds its sessions (both CLIs key them by cwd).
+    """
     state = os.environ.get('LOCAL_AGENT_STATE')
     root = Path(state) / 'empty' if state else Path(tempfile.gettempdir()) / 'local-agent-empty'
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -454,13 +362,10 @@ AGENT_MODES = {'claude': tuple(CLAUDE_PLAN), 'codex': tuple(CODEX_PLAN)}
 
 
 def resolve_mode(mode: str | None, tools: bool | None) -> str:
-    """The legacy `tools` flag and the explicit `mode`, reconciled before launch.
+    """Reconcile the legacy `tools` flag with `mode`; refuse a contradiction.
 
-    Omitted both, or tools=false alone: text (Codex: its read-only sandbox).
-    tools=true alone: edit. An explicit mode wins when tools agrees or is
-    omitted; tools=false agrees only with text and tools=true with edit or
-    full, so research takes no tools flag. A contradiction is refused rather
-    than resolved either way.
+    Neither or tools=false → text; tools=true → edit. tools=false agrees only
+    with text, tools=true with edit or full.
     """
     if mode is None:
         return 'edit' if tools else 'text'
@@ -509,9 +414,7 @@ def _group_alive(pgid: int) -> bool:
 
 
 def _shutdown(signum, frame) -> None:
-    """The host is stopping this server. Each child runs in its own session, so
-    the host's signal never reaches it: kill every live group, then exit. A
-    SIGKILLed server cannot run this, and its children are not claimed."""
+    """Kill every live child group, then exit; children miss the host signal."""
     for pgid in list(_ACTIVE):
         _signal_group(pgid, signal.SIGTERM)
     deadline = time.monotonic() + SHUTDOWN_GRACE
@@ -523,14 +426,12 @@ def _shutdown(signum, frame) -> None:
 
 
 async def _reap(proc) -> None:
-    """TERM then KILL the whole group, each wait bounded. Runs on every exit, so
-    a tool subprocess the CLI left behind does not outlive the call either."""
+    """TERM then KILL the whole group, each wait bounded, on every exit."""
     import anyio
     _signal_group(proc.pid, signal.SIGTERM)
     with anyio.move_on_after(KILL_GRACE):
         await proc.wait()
-    # A normal exit reaches here with the leader already gone, so the wait above
-    # returned at once; descendants still in the group get their own short grace.
+    # Leader already gone on a normal exit: give descendants their own grace.
     with anyio.move_on_after(GROUP_GRACE):
         while _group_alive(proc.pid):
             await anyio.sleep(0.05)
@@ -543,21 +444,13 @@ async def _reap(proc) -> None:
 async def _run(argv, env, cwd, on_line=None, input_data=None) -> tuple[int, bytes]:
     """Run one owned CLI in its own process group; return (exit code, stdout).
 
-    The caller bounds the wall clock with anyio.fail_after. Timeout, MCP
-    cancellation and normal exit all leave through the same shielded cleanup.
-    A descendant that starts its own session escapes the group and is not
-    claimed here. stdout is bounded while it is read: with on_line each
-    complete line is handed over and dropped, and a single line longer than
-    STDOUT_LIMIT is skipped -- the events read from it are small, and an item
-    that large is a tool's output, not an answer. Without on_line at most
-    STDOUT_LIMIT bytes are held, and more fails the run. stderr is drained and
-    discarded -- it can quote the child's environment.
+    Every exit runs the same shielded cleanup; the caller bounds wall time.
+    With on_line, lines go out one by one (over STDOUT_LIMIT skipped); else
+    over STDOUT_LIMIT fails. stderr is discarded: it can quote the env.
     """
     import anyio
     try:
-        # stdin is this server's JSON-RPC pipe. `codex exec` and `claude -p`
-        # both read a non-TTY stdin as extra prompt input, so inheriting it
-        # would consume protocol messages and block until the host closes it.
+        # stdin is our JSON-RPC pipe; both CLIs would read it as prompt input.
         proc = await anyio.open_process(argv, stdin=subprocess.PIPE if input_data is not None else subprocess.DEVNULL,
                                         stdout=subprocess.PIPE,
                                         stderr=subprocess.PIPE, cwd=cwd, env=env,
@@ -571,7 +464,7 @@ async def _run(argv, env, cwd, on_line=None, input_data=None) -> tuple[int, byte
         try:
             await proc.stdin.send(input_data)
         except (anyio.BrokenResourceError, anyio.ClosedResourceError):
-            pass  # The child's exit/result decides failure, not a raw pipe diagnostic.
+            pass  # Exit/result decides failure, not a pipe diagnostic.
         finally:
             await proc.stdin.aclose()
 
@@ -628,8 +521,7 @@ async def _run(argv, env, cwd, on_line=None, input_data=None) -> tuple[int, byte
 
 
 async def model_guides() -> dict:
-    """The public policy view, read on every call: a long-lived MCP must not
-    retain the previous hardware profile or operator's old advice."""
+    """Return the public policy view, re-read per call so it is never stale."""
     import anyio
     try:
         with anyio.fail_after(GUIDE_TIMEOUT):
@@ -643,8 +535,7 @@ async def model_guides() -> dict:
 
 
 async def mode_ceilings() -> dict:
-    """The operator's per-worker ceilings, read through policy on every call so
-    lowering one takes effect without restarting this server. Fails closed."""
+    """Return per-worker mode ceilings, re-read per call; fails closed."""
     import anyio
     try:
         with anyio.fail_after(GUIDE_TIMEOUT):
@@ -658,7 +549,7 @@ async def mode_ceilings() -> dict:
 
 
 def selected_guide(guides: dict, model: str) -> dict:
-    """Refuse before launch what the active policy does not serve as an agent."""
+    """Refuse before launch what the active policy serves not as an agent."""
     if model in NOT_DELEGABLE:
         raise DelegateError(f'MODEL_NOT_DELEGABLE: {model} serves code completion, not agents')
     guide = guides['models'].get(model)
@@ -750,7 +641,7 @@ def save_binding(binding: dict) -> None:
 
 
 def bound_arguments(binding, agent, model, mode, tools, cwd):
-    """An ID-only resume inherits; an explicit change never changes its scope."""
+    """Return bound args: an ID-only resume inherits; changes keep scope."""
     effective = (binding['agent'] if agent is None else agent,
                  binding['model'] if model is None else model,
                  binding['mode'] if mode is None and tools is None else resolve_mode(mode, tools),
@@ -762,8 +653,7 @@ def bound_arguments(binding, agent, model, mode, tools, cwd):
 
 @contextlib.contextmanager
 def session_lock(session: str):
-    """One run per native session at a time: two resumes of one transcript
-    would interleave its writes. The file exists only to be locked."""
+    """Lock a native session so concurrent resumes cannot interleave writes."""
     root = private_directory('sessions')
     fd = os.open(root / f'{session}.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, 'a') as handle:
@@ -848,9 +738,8 @@ async def prepared_images(paths, scope, guide):
                 raise DelegateError('IMAGE_INVALID: native image validation failed') from None
             if max(width, height) > IMAGE_SIDE or width * height > IMAGE_PIXELS:
                 raise DelegateError('IMAGE_LIMIT: images must fit 8192 pixels per side and 16 million pixels total')
-            # Metadata can survive a corrupt pixel stream. Force a native decode
-            # only after dimensions are bounded; discard its output and deliver
-            # the original validated bytes without conversion to the worker.
+            # Metadata can survive corrupt pixels: decode once dimensions are
+            # bounded, then deliver the original bytes unconverted.
             try:
                 with anyio.fail_after(10):
                     code, _ = await _run(['/usr/bin/sips', '-s', 'format', 'png', str(target),
@@ -901,10 +790,8 @@ async def delegate_claude(prompt, model, mode, cwd, resume, guide, images=()) ->
     except (ValueError, AttributeError):
         text, failed, subtype = '', True, ''
     if failed or code != 0:
-        # The subtype is a fixed CLI vocabulary (e.g. error_max_turns); the
-        # result text may quote the child's environment, so it stays here.
-        # [REAL] Claude Code 2.1.308 reports an API error as is_error with
-        # subtype "success", which names nothing.
+        # Report the fixed-vocabulary subtype, never the text (may quote env).
+        # 2.1.308 reports an API error as is_error w/ subtype "success".
         reason = (subtype if subtype != 'success' and re.fullmatch(r'[a-z_]{1,40}', subtype)
                   else 'did not complete')
         raise DelegateError(f'DELEGATE_FAILED: local Claude run {reason}')
@@ -921,14 +808,10 @@ async def delegate_claude(prompt, model, mode, cwd, resume, guide, images=()) ->
 
 
 def _permission_denials(payload) -> list[dict[str, str]]:
-    """The tool calls Claude Code refused during the run, from its result message.
+    """Return tool calls Claude Code refused, from its result message.
 
-    A headless run whose calls were denied still ends `subtype: success` with
-    exit 0 (anthropics/claude-code#76867, #90578), and a local model can then
-    reply that the task is done [REAL, #39]. `permission_denials` is the CLI's
-    authoritative record (/en/agent-sdk/typescript#sdkpermissiondeniedmessage);
-    reporting it lets the caller see a claim of success beside the refusals.
-    It is not a verdict on the task. Targets are clipped, never interpreted.
+    Denied runs still exit 0 as success (anthropics/claude-code#76867), so the
+    caller sees refusals beside any claim of success. Targets clipped only.
     """
     out = []
     for entry in payload.get('permission_denials') or ():
@@ -946,7 +829,7 @@ async def delegate_codex(prompt, model, mode, cwd, resume, guide, images=()) -> 
     events = {'thread': None, 'completed': False, 'failed': False}
 
     def on_event(line: bytes) -> None:
-        # learn.chatgpt.com/docs/non-interactive-mode#make-output-machine-readable
+        # learn.chatgpt.com/docs/non-interactive-mode
         try:
             event = json.loads(line)
         except ValueError:
@@ -1050,7 +933,7 @@ def build_mcp():
             guides['models'] = {model: guides['models'][model]}
         return guides
 
-    # No destructive hint: annotations are per tool, and edit/full modes edit files.
+    # No destructive hint: per-tool annotation, and edit/full modes edit files.
     @app.tool(name='delegate', description=DELEGATE_DESCRIPTION,
               annotations=ToolAnnotations(open_world_hint=True))
     async def delegate(prompt: str, agent: str | None = None, model: str | None = None,
@@ -1065,7 +948,7 @@ def build_mcp():
                 raise DelegateError('RECURSIVE_DELEGATION: already running as a local delegate')
             if os.environ.get('LOCAL_AGENT_CALLER') == 'local':
                 raise DelegateError('LOCAL_DELEGATION_DISABLED: use this local session directly; model_guide remains available')
-            # Codex would also resolve a thread NAME; only ids this tool returned.
+            # Codex also resolves a thread NAME; accept only ids we returned.
             if resume is not None and not _UUID.fullmatch(resume):
                 raise DelegateError('INVALID_SESSION: resume takes a session_id returned by delegate')
             resume = str(uuid.UUID(resume)) if resume else None
@@ -1089,8 +972,7 @@ def build_mcp():
                 elif mode == 'research':
                     prompt = research_prompt(prompt, scope)
                 runner = delegate_claude if agent == 'claude' else delegate_codex
-                # The published deadline covers policy lookup, startup and the run;
-                # group cleanup after it is bounded separately (KILL_GRACE).
+                # Deadline covers lookup, startup, run; cleanup has KILL_GRACE.
                 with anyio.fail_after(timeout):
                     # Text is always permitted; anything stronger is checked
                     # against the operator's current ceiling for this agent.
@@ -1107,8 +989,7 @@ def build_mcp():
                         async with prepared_images(image_paths, scope, guide) as images:
                             result = await runner(prompt, model, mode, cwd, resume, guide, images)
                     except CompletedWithoutReply as error:
-                        # The runner verified native completion and identity. Bind
-                        # only that authority; no reply or transcript is stored.
+                        # Bind only verified completion/identity; no reply.
                         save_binding(session_binding(error.session_id, agent, model, mode,
                                                      scope, cwd, guides, guide))
                         raise DelegateError(str(error) + '; resume=' + error.session_id

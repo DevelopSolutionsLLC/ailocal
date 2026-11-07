@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
-"""generation.py — the ONE generator, and the only public entry point for it.
+"""Generate every derived artifact from the profiles; the one generator.
 
-Reads profiles/<tier>.toml (what each capability is) and profiles/clients.toml
-(which capability each client surface uses) through policy, and writes every
-derived artifact DIRECTLY INTO THE HOME ITS CONSUMER READS — the two LiteLLM
-bind-mounts under $AILOCAL_STATE, everything else under the config root. There
-is no staging tree and no deployment copy. Outputs are staged in memory and
-swapped atomically, so the tree is never part old and part new.
-
-Never hand-edit a generated file: edit the profile; `ailocal start` regenerates.
+Reads profiles/<tier>.toml and clients.toml via policy and writes each output
+straight into the home its consumer reads, swapped atomically in memory.
+Never hand-edit an output: edit the profile; `ailocal start` regenerates.
 """
 
 import json
@@ -24,16 +19,7 @@ from ailocal import policy as _pc
 from ailocal.guidance import render as render_guidance
 from ailocal.report import ok, step, warn  # noqa: F401
 
-# Every path comes from policy. Four roots, each with ONE owner:
-#   config root   authored policy (profiles/, .env) — the operator's
-#   data root     shipped templates and assets, read in place from the package
-#   client root   generated client config, in the home each client reads
-#   state root    the two artefacts LiteLLM bind-mounts, plus the tier marker
-#
-# Client config is generated STRAIGHT INTO the home the client reads. There is
-# no staging copy under the state root: an intermediate generated file is a
-# second thing that can be stale, and the copy step that fed it was the only
-# reason a client could be running last week's routing.
+# Paths come from policy. No staging copy: a second generated file can be stale.
 PROFILES_DIR   = _pc.profiles_dir()
 ACTIVE_PROFILE = _pc.active_profile_path()       # machine-selected tier
 CLIENTS_YAML   = _pc.client_policy_path()
@@ -46,11 +32,8 @@ CAPS_JSON      = _LITELLM_OUT / "capabilities.json"
 CLAUDE_SETTINGS_TPL = _DATA / "clients/claude/settings.template.json"
 CLAUDE_SETTINGS = _CLIENTS / "claude/settings.json"
 
-#: settings.json `env` keys ailocal once wrote and now removes on regeneration.
-#: [REAL] ENABLE_LSP_TOOL was the pre-2.0.74 gate for the LSP tool, which is
-#: built in as of Claude Code 2.1.224: hosted ~/.claude/settings.json sets it
-#: nowhere and a documentSymbol request there returns real pyright output. A
-#: dead flag left in generated config reads like a live requirement.
+#: settings.json `env` keys ailocal once wrote; removed so dead flags don't
+#: read as live (ENABLE_LSP_TOOL: LSP is built in since Claude Code 2.1.224).
 RETIRED_CLAUDE_ENV = {
     "ENABLE_LSP_TOOL": "the LSP tool is built into Claude Code since 2.0.74",
     "CLAUDE_CODE_AUTO_COMPACT_WINDOW":
@@ -65,9 +48,7 @@ CODEX_CONFIG   = CODEX_HOME / "config.toml"
 CONFIGURE_ZSH_TPL = _DATA / "clients/configure.template.zsh"
 CONFIGURE_ZSH  = _CLIENTS / "configure.zsh"
 
-# The machine-readable seam with Cadence. Cadence reads THIS and nothing else to
-# learn about the local runtime — see write_integration_contract(). ailocal does
-# NOT own client instruction policy; an external consumer composes it from this contract.
+# Cadence's only view of this runtime; see write_integration_contract().
 CONTRACT_JSON  = _CLIENTS / "integration-contract.json"
 BASE_URL       = "http://localhost:4000"
 
@@ -79,11 +60,10 @@ AL_END   = "  # >>> END GENERATED model_group_alias <<<"
 CS_BEGIN = "  # >>> BEGIN GENERATED claude slots — do not edit <<<"
 CS_END   = "  # >>> END GENERATED claude slots <<<"
 
-# One model_list entry per capability, named `ailocal-<cap>`. The prefix is
-# applied only at emit time; the source spells the bare capability key.
+# One model_list entry per capability; `ailocal-` prefix applied at emit only.
 MODEL_PREFIX = "ailocal-"
 def mn(cap):
-    """Client-facing model id for a capability (the ailocal- prefixed name LiteLLM serves)."""
+    """Return the client-facing `ailocal-` model id LiteLLM serves for `cap`."""
     return f"{MODEL_PREFIX}{cap}"
 
 
@@ -92,7 +72,7 @@ def mn(cap):
 
 
 def flow_list(v):
-    """Optional list field. policy.py returns typed lists; absent means empty."""
+    """Return an optional list field; absent means empty."""
     return v or []
 
 
@@ -100,11 +80,9 @@ def flow_list(v):
 
 
 
-# ── profile resolution ─────────────────────────────────────────────────────────
+# profile resolution
 def resolve_tier(explicit=None):
-    """Which RAM profile is active: an explicit --profile wins, else the marker.
-
-    Delegates to policy, which fails closed: there is no default tier."""
+    """Return the active tier: --profile wins, else the marker; no default."""
     if explicit:
         return explicit
     return _pc.resolve_active_tier()
@@ -118,7 +96,7 @@ def profile_path(tier=None, explicit=None):
     return p
 
 
-# ── config loading ────────────────────────────────────────────────────────────
+# config loading
 def load_models_yaml(path):
     """Read a profile through the one policy reader."""
     data = _pc.load_profile_file(Path(path))
@@ -128,12 +106,10 @@ def load_models_yaml(path):
             continue          # top-level scalars such as disk_gb
         models[section] = dict(fields)
     models.pop("disk_gb", None)
-    # policy owns which sections are NOT capabilities. A retired section such as
-    # `[embeddings]` or `[compaction]` stays in profiles already installed in the
-    # user's config root, and must be inert there rather than fail generation.
+    # Retired sections (e.g. `[embeddings]`) linger in old profiles: inert.
     for section in _pc.NON_ROLE_SECTIONS:
         models.pop(section, None)
-    # policy.ROLES is the one capability order; every surface lists models in it.
+    # policy.ROLES is the one capability order for every surface.
     models = {role: models[role] for role in _pc.ROLES if role in models
               and _pc.resolve_role(Path(path).stem, role, _data=data)["enabled"]}
     for role, info in models.items():
@@ -142,18 +118,17 @@ def load_models_yaml(path):
 
 
 def load_clients_yaml():
-    """Client policy, from the one policy owner."""
+    """Return client policy from the one policy owner."""
     return _pc.load_client_policy()
 
 
 def backend_of(info):
-    """The Ollama backend tag actually served. `active` is required by the
-    profile schema, so there is no fallback chain to guess through."""
+    """Return the Ollama tag served; `active` is required, so no fallback."""
     return info.get("active") or ""
 
 
 def norm_keep_alive(v):
-    """forever/persistent -> -1; else pass through (durations like 2h/60m, or -1)."""
+    """Map forever/persistent → -1; pass durations (2h, 60m) or -1 through."""
     if v in (None, ""):
         return None
     s = str(v).strip()
@@ -161,30 +136,23 @@ def norm_keep_alive(v):
 
 
 def _geom(info):
-    """Derived geometry for a role, from the ONE implementation in policy.
-
-    generation never re-derives num_ctx, num_predict or admission, and injects
-    no default: a role missing context_input is an error, not a guess.
-    """
+    """Return role geometry from policy; missing context_input is an error."""
     return _pc.geometry(info.get("context_input"), info.get("max_output"))
 
 
 def ctx_of(info):
-    """Total physical window (Ollama num_ctx). Derived, never configured."""
+    """Return the total window (Ollama num_ctx); derived, never configured."""
     return _geom(info)["num_ctx"]
 
 
-# ── LiteLLM model_list ─────────────────────────────────────────────────────────
+# LiteLLM model_list
 
 def gen_role_block(role, info):
     num_ctx = ctx_of(info)
     backend = backend_of(info)
     ka = norm_keep_alive(info.get("keep_alive"))
 
-    # Every remaining capability is conversational, so the provider is
-    # `ollama_chat`. The `ollama` branch that used to live here existed only to
-    # emit an embedding route (`mode: embedding`) for a capability nothing
-    # called; it went with the capability. No profile declares `provider`.
+    # Every capability is conversational; no profile declares `provider`.
     provider = "ollama_chat"
 
     reasoning = bool(info.get("reasoning"))
@@ -193,9 +161,7 @@ def gen_role_block(role, info):
     _g        = _geom(info)
     max_out   = _g["max_output"]
     desc      = info.get("role", "")
-    # No invented ceiling. A chat role without max_output has no knowable output
-    # reserve, so admission is uncomputable and a guess would advertise a window
-    # the backend does not honour.
+    # No max_output → admission uncomputable; a guess advertises a false window.
     if max_out is None:
         raise SystemExit(f"invalid geometry: {role} declares no max_output")
 
@@ -212,26 +178,19 @@ def gen_role_block(role, info):
         if info.get(key) not in (None, ""):
             params.append(f"      {key}: {info[key]}")
     if info.get("presence_penalty") is not None:
-        # LiteLLM 1.106.0 omits this native Ollama option from its supported
-        # OpenAI list. Its documented allowlist forwards it without a shim.
+        # LiteLLM 1.106.0 omits this option; its documented allowlist passes it.
         params.append('      allowed_openai_params: ["presence_penalty"]')
     if info.get("stop"):
         params.append(f"      stop: {json.dumps(info['stop'])}")
-    # num_predict is the only ceiling the backend honours: [REAL] a per-request
-    # max_tokens of 512 against an alias declaring 32768 returned 4,199 tokens
-    # (LiteLLM 1.93.0, ollama_chat). Re-verified on 1.98.0: max_tokens 512
-    # returned 2,510 tokens and stopped on end_turn, so the request-level
-    # ceiling still does not bind and this parameter is still the only one.
+    # num_predict is the only ceiling the backend honours; per-request
+    # max_tokens does not bind (LiteLLM 1.93.0 and 1.98.0, ollama_chat).
     if _g["num_predict"] is not None:
         params.append(f"      num_predict: {_g['num_predict']}")
     if ka is not None:
         params.append(f"      keep_alive: {ka}")
     if not reasoning:
-        # Suppress reasoning ONLY for models that cannot do it. Claude Code sends
-        # `thinking` on every request and a non-thinking backend 400s on it, but
-        # emitting think:false for a reasoning-capable model throws away its
-        # biggest capability. The `reasoning` flag in profiles/<tier>.toml drives
-        # this per capability.
+        # think:false only for non-reasoning models: they 400 on Claude Code's
+        # `thinking`; reasoning ones would lose their main capability.
         params.append('      additional_drop_params: ["thinking", "reasoning_effort"]')
         params.append("      think: false")
     else:
@@ -245,16 +204,13 @@ def gen_role_block(role, info):
         f"      supports_system_messages: true",
         f"      supports_native_streaming: true",
         f"      supports_reasoning: {'true' if reasoning else 'false'}",
-        # Local models are billed nothing, and declaring it keeps LiteLLM's
-        # "not in built-in cost map" warning out of every boot log. Cost
-        # accounting only; no effect on routing or inference.
+        # Zero cost silences LiteLLM's "not in cost map" boot warning.
         f"      input_cost_per_token: 0",
         f"      output_cost_per_token: 0",
         f"      cache_creation_input_token_cost: 0",
         f"      cache_read_input_token_cost: 0",
     ]
-    # Admission is context_input by construction (policy.geometry). Deriving it
-    # a second time here is what let advertised and enforced windows disagree.
+    # Admission is policy.geometry's; re-deriving it lets windows disagree.
     mi += [
         f"      max_input_tokens: {_g['max_input_tokens']}",
         f"      max_output_tokens: {max_out}",
@@ -270,19 +226,17 @@ def gen_model_list(models):
 
 
 def resolve(cap, models):
-    """A client target as the enabled capability it names, through policy's one rule."""
+    """Resolve a client target to the enabled capability it names."""
     return _pc.resolve_capability(cap, models)
 
 
 def gen_alias_block(models, clients):
-    """model_group_alias entries from clients.toml: the external client-compat names (claude-*/gpt-*)
-    that Claude Code and the OpenAI SDK hard-code, each pointing at its `ailocal-<cap>` model group.
-    No `local/*` namespace — the single canonical `ailocal-<cap>` model_list entry is the only name.
-    Compat names inherit the target group's persona/settings.
+    """Return model_group_alias lines mapping client-compat names to groups.
 
-    The deprecated block serves the role names 0.16 retired (policy.RETIRED_ROLES)
-    and, on a tier without `fast`, `ailocal-fast`, for one release: a client still
-    configured against 0.15 keeps routing instead of 404ing."""
+    claude-*/gpt-* names that clients hard-code point at `ailocal-<cap>`. The
+    deprecated block keeps 0.16's retired names (and `ailocal-fast` on tiers
+    w/o it) routing for one release instead of 404ing.
+    """
     lines = [AL_BEGIN, "  model_group_alias:"]
     for name, cap in clients.get("compat", {}).items():
         lines.append(f"    {name}: {mn(resolve(cap, models))}")
@@ -296,11 +250,7 @@ def gen_alias_block(models, clients):
 
 
 def splice(text, begin, end, generated, label):
-    """Replace a marked region. A missing marker is fatal.
-
-    Skipping produced a config.yaml with no model_list at all — a template whose
-    markers have drifted must stop generation, not silently emit an empty stack.
-    """
+    """Replace a marked region; a missing marker is fatal, never empty."""
     pat = re.compile(re.escape(begin) + r".*?" + re.escape(end) + r"\n?", re.DOTALL)
     if not pat.search(text):
         sys.exit(f"  \u2717 markers not found for {label}; the template has drifted "
@@ -309,9 +259,7 @@ def splice(text, begin, end, generated, label):
 
 
 def regen_litellm(models, clients):
-    # ALWAYS from the template. config.yaml is a build artifact: reading it back
-    # would let a hand-edit to the generated file survive, which is the drift the
-    # template exists to prevent.
+    # Always from the template: reading config.yaml back keeps hand-edits.
     text = LITELLM_TEMPLATE.read_text()
     text = splice(text, ML_BEGIN, ML_END, gen_model_list(models), "model_list")
     text = splice(text, AL_BEGIN, AL_END, gen_alias_block(models, clients),
@@ -320,7 +268,7 @@ def regen_litellm(models, clients):
     return True
 
 
-# ── capabilities.generated.json (for `ailocal status`) ─────────────────────────
+# capabilities.generated.json (for `ailocal status`)
 def write_caps_json(models):
     caps = []
     for name, info in models.items():
@@ -338,9 +286,7 @@ def write_caps_json(models):
             "weaknesses": flow_list(info.get("weaknesses")),
             "guidance": info.get("guidance", {}),
         })
-    # JSON cannot carry comments, so ownership travels in a "//" key -- every
-    # other generated artifact states its owner and how to regenerate it, and a
-    # timestamp alone does not tell a reader not to hand-edit this.
+    # JSON has no comments, so ownership travels in a "//" key.
     stage(CAPS_JSON, json.dumps(
         {"//": ["Generated by ailocal. Do not edit.",
                 "Source: profiles/<active tier>.toml"],
@@ -350,8 +296,7 @@ def write_caps_json(models):
 
 
 def _home_relative(path: Path) -> str:
-    """`~/...` under the home directory, so the contract is not machine-specific
-    for the default roots; an overridden root is published as written."""
+    """Return `path` as `~/...` under home; an overridden root stays as is."""
     try:
         return "~/" + str(path.relative_to(Path.home()))
     except ValueError:
@@ -359,28 +304,12 @@ def _home_relative(path: Path) -> str:
 
 
 def write_integration_contract(models):
-    """The ONLY surface an external consumer reads to learn about this runtime.
+    """Write the one surface an external consumer reads about this runtime.
 
-    FACTS ONLY — roots, endpoint, canonical capability names, and what is
-    measurably true about routes through the proxy. No policy and no prose: a
-    consumer must never have to parse ailocal's Markdown to discover a fact.
-
-    `schema_version` is load-bearing (the consumer fails closed on a version it
-    does not understand); bump it on any change to shape or field semantics.
-    No timestamp, so idempotence stays hash-checkable.
-
-    Schema 2 adds `audit`: where `ailocal audit` keeps its record and the
-    command that refreshes it. The consumer merges the record into its own
-    machine-wide audit; it prints the command for a human and never runs it.
-
-    Schema 3 adds `instructions`: the largest instruction file each client root
-    should carry, in bytes. A composer writing into these roots fits it; ailocal
-    does not depend on one existing and checks the file whoever wrote it.
-
-    The guide hook's payload is not subtracted: doing so (#50) left 1,333 B for
-    Claude, below Cadence's compact policy, so the root carried no policy (#56).
-    `ailocal check` warns when the file and the hook together exceed the budget;
-    #47 measures the budget itself.
+    Facts only, no policy or prose. Consumers fail closed on an unknown
+    `schema_version`: bump it on any shape or semantics change. No timestamp,
+    so idempotence is hash-checkable. The instruction budget does not subtract
+    the guide hook (#50 left too little, #56); `ailocal check` warns instead.
     """
     budgets = _pc.instruction_budgets(tier=_pc.resolve_active_tier())
     contract = {
@@ -398,8 +327,7 @@ def write_integration_contract(models):
             "command": "ailocal audit",
         },
         "client_roots": {
-            # Where the launchers point CLAUDE_CONFIG_DIR / CODEX_HOME. Written
-            # as ~-relative so the contract is not machine-specific.
+            # CLAUDE_CONFIG_DIR / CODEX_HOME, ~-relative.
             "claude": "~/.config/ailocal/claude",
             "codex": "~/.config/ailocal/codex",
         },
@@ -407,29 +335,20 @@ def write_integration_contract(models):
             "inference_endpoint": BASE_URL,
             "canonical_capabilities": [mn(c) for c in models],
         },
-        # Measured compatibility of routes that pass THROUGH the proxy. These are
-        # the facts that make Cadence describe a tool as usable or not; getting
-        # them wrong makes it advertise a broken tool as a first choice.
-        # THESE DESCRIBE DEPLOYED STATE, NOT AN INVESTIGATION. A consumer reads
-        # them to decide whether a tool is usable, so a stale value here makes
-        # it apply the wrong policy.
+        # Measured deployed state of routes through the proxy; a stale value
+        # makes Cadence advertise a broken tool.
         "compatibility": {
             "claude_native_lsp": {
                 "configured": True,
-                # The gateway names native `LSP` explicitly (registry group
-                # `native_lsp`, in the `always` floor) rather than relying on
-                # fail-open, so the schema survives every task class.
+                # Gateway names `LSP` in the `always` floor, not via fail-open.
                 "schema_preserved": True,
-                # `execution` is a FIXED vocabulary on the consumer side:
-                # working | failing | blocked | blocked_namespace_dispatch.
-                # Any other string degrades to "configured but not verified".
+                # Fixed vocabulary: working | failing | blocked |
+                # blocked_namespace_dispatch; else "configured, not verified".
                 "execution": "working",
                 "verified_by": "tests/clients.py",
                 "scope": "python",
             },
-            # ailocal provisions no Codex LSP bridge. Current research/grepai
-            # dispatch evidence does not establish an LSP server's capability;
-            # external registrations remain their registrar's responsibility.
+            # No Codex LSP bridge; external registrations are their registrar's.
             "codex_mcp_lsp": {
                 "configured": False,
                 "schema_preserved": False,
@@ -443,7 +362,7 @@ def write_integration_contract(models):
     return True
 
 
-# ── Codex model_catalog.json ───────────────────────────────────────────────────
+# Codex model_catalog.json
 CATALOG_PREAMBLE = (
     "Ground every claim in the actual code: open the files, search before claiming something "
     "does not exist, and read a value before quoting it — the repository is the source of truth, "
@@ -468,14 +387,10 @@ CATALOG_TOOLING = (
     "and what was checked, or report the blocking error; a tool result alone is not a final reply."
 )
 def regen_catalog(models):
-    """Codex model catalog, one entry per capability in policy.ROLES order.
+    """Stage the Codex model catalog, one entry per capability in ROLES order.
 
-    The window is ADMISSION (context_input), the number LiteLLM enforces, and
-    nothing else is configured: [REAL] Codex 0.163.0 source resolves its
-    auto-compact limit to 90% of context_window when auto_compact_token_limit
-    is unset, and effective_context_window_percent defaults to 95, so the
-    client compacts below admission on its own. A profile-owned trigger was a
-    second number that could disagree with the window it was derived from.
+    Window = admission (context_input); Codex 0.163.0 compacts at 90% of it on
+    its own, so no separate trigger is configured.
     """
     entries = []
     for index, (name, info) in enumerate(models.items()):
@@ -526,10 +441,10 @@ def regen_catalog(models):
 
 
 def regen_vscode(models):
-    """Refresh only an already configured ailocal native provider/instruction block.
+    """Refresh an already configured ailocal provider/instruction block only.
 
-    Returns None when the editor's file is unusable: it is the user's, so it is
-    preserved and reported, and never blocks the inference stack from starting."""
+    Returns None for an unusable editor file: preserved, reported, non-blocking.
+    """
     from ailocal import clients
     user = clients._vscode_user_dir()
     if user is None:
@@ -549,7 +464,7 @@ def regen_vscode(models):
     instructions = clients.copilot_instructions_path()
     text = instructions.read_text() if instructions.is_file() else ""
     if clients.copilot_instructions_owned(text):
-        # Whole, so an upgrade refreshes the head as well as the guidance (#108).
+        # Whole, so an upgrade refreshes the head too (#108).
         stage(instructions, clients.copilot_instructions_text(models))
     elif clients.COPILOT_GUIDE_START in text:
         # An edited head is the operator's: only the generated block changes.
@@ -558,10 +473,7 @@ def regen_vscode(models):
     return True
 
 
-# ── configure.zsh: the claude-local built-in-slot env block ───────────────────
-# These decide which backend Claude Code's built-in tiers resolve to (and any
-# subagent whose frontmatter names one). Generated from clients.toml, because a
-# hand-maintained copy drifts from the profile it claims to describe.
+# configure.zsh: claude-local built-in-slot env block, from clients.toml.
 SLOT_ENV = {
     "opus":   "ANTHROPIC_DEFAULT_OPUS_MODEL",
     "sonnet": "ANTHROPIC_DEFAULT_SONNET_MODEL",
@@ -595,16 +507,10 @@ def regen_configure_zsh(models, clients):
 
 
 def claude_picker_rows(models):
-    """`modelPicker` rows: every enabled capability, in policy.ROLES order.
+    """Return `modelPicker` rows: every enabled capability, in ROLES order.
 
-    Generated with `replaceBuiltInOptions: true`, which [REAL] per
-    code.claude.com/docs/en/settings-reference#modelpicker (v2.1.242+) shows
-    only these rows, Default, and the model the session is already using. That
-    hides the built-in lineup and gateway discovery, which listed the slotted
-    capabilities under built-in names and [REAL] 2026-10-26, Claude Code
-    2.1.310, `ailocal-cyber` twice around row 20. The ANTHROPIC_DEFAULT_*_MODEL
-    slots in configure.zsh still route background work and subagents.
-    Label and description are the ones Codex shows for the same capability.
+    `replaceBuiltInOptions: true` hides the built-in and gateway-discovered
+    rows (code.claude.com/docs/en/settings-reference#modelpicker, 2.1.242+).
     """
     return [{"model": mn(name), "label": mn(name),
              "description": _pc.capability_description(info, info.get("guidance", {}))}
@@ -612,17 +518,10 @@ def claude_picker_rows(models):
 
 
 def regen_claude_settings(models, clients):
-    """settings.json is CO-OWNED: Claude Code writes to it too.
+    """Stage settings.json, co-owned with Claude Code: on-disk keys win.
 
-    `claude plugin enable` adds `enabledPlugins` to this exact file, so a
-    generator that rewrites it from the template alone silently disables the
-    Python LSP baseline on every `ailocal start`. The shipped template supplies
-    the defaults, anything already on disk wins over the template, and only the
-    keys ailocal actually owns — `model`, `//`, `modelPicker`, and the
-    geometry env vars — are then overwritten. `model` is reset
-    to the launch default on purpose: Claude Code saves the last selection
-    there, and [REAL] 2026-10-26 that selection was the undocumented
-    `claude-router-<hex>` spelling of a gateway model.
+    Only ailocal's keys are overwritten: `model` (reset: Claude saves the last
+    pick, possibly a `claude-router-<hex>` id), `//`, `modelPicker`, geometry.
     """
     if not CLAUDE_SETTINGS_TPL.exists():
         return False
@@ -634,16 +533,12 @@ def regen_claude_settings(models, clients):
             live = {}
         if isinstance(live, dict):
             merged = {**data, **live}
-            # `env` is a mapping both sides contribute to, so it merges rather
-            # than being replaced wholesale by whichever side is read last.
+            # Both sides add to `env`, so it merges rather than being replaced.
             if isinstance(data.get("env"), dict) or isinstance(live.get("env"), dict):
                 merged["env"] = {**(data.get("env") or {}), **(live.get("env") or {})}
             data = merged
-    # Always-on context a local session does not use (#62, measured 2026-11-04).
-    # Hosted ~/.claude/CLAUDE.md and rules/ load as ancestor project memory
-    # whenever cwd is under $HOME (13,335 B); absolute paths, so a repository's
-    # own .claude/CLAUDE.md still loads. A bare-name deny removes the tool from
-    # context. Values the user added are kept.
+    # Deny hosted ~/.claude memory that loads under $HOME (13,335 B, #62);
+    # absolute paths keep a repo's own .claude/CLAUDE.md. User values kept.
     hosted = Path.home() / ".claude"
     excludes = data.get("claudeMdExcludes") or []
     for path in (str(hosted / "CLAUDE.md"), str(hosted / "rules") + "/**"):
@@ -653,9 +548,8 @@ def regen_claude_settings(models, clients):
     data.setdefault("disableBundledSkills", True)
     perms = data.setdefault("permissions", {})
     deny = perms.setdefault("deny", [])
-    # grepai registers 14 tools; Cadence exposes six to codex-local and Copilot
-    # (enabled_tools / tools). Claude Code has no per-server filter, so the other
-    # eight are denied by name: 7.2 KB of the first request (#66).
+    # Claude Code has no per-server filter: deny the 8 grepai tools Cadence
+    # hides elsewhere (7.2 KB of the first request, #66).
     unused_grepai = tuple("mcp__grepai__grepai_" + t for t in (
         "refs_graph", "refs_readers", "refs_writers", "rpg_explore", "rpg_fetch",
         "rpg_search", "stats", "trace_graph"))
@@ -668,8 +562,7 @@ def regen_claude_settings(models, clients):
              for slot, cap in (clients.get("claude") or {}).get("slots", {}).items()}
     slot_txt = ", ".join(f"{k.title()}->{mn(v)}" for k, v in slots.items())
     data["model"] = mn(default)
-    # Model selection is client-owned. Native hooks deliver the corresponding
-    # profile facts on startup/resume and after /model, without a proxy injector.
+    # Model selection is client-owned; native hooks deliver the profile facts.
     hooks = data.setdefault("hooks", {})
     command = "ailocal profile guide --hook"
     for event in ("SessionStart", "PostModelSwitch"):
@@ -691,25 +584,8 @@ def regen_claude_settings(models, clients):
         "Launch with: claude-local",
     ]
     out_geom = _geom(models[default])
-    # Output ceiling, from the SAME max_output the geometry already hands
-    # LiteLLM as num_predict. Without it the two ends disagreed:
-    # [REAL] Claude Code 2.1.224 sends max_tokens 32000 by default (captured
-    # against a local endpoint that logs the request), while the launch-default
-    # role serves num_predict = max_output = 16384. Every answer long enough to
-    # reach the ceiling therefore came back stop_reason=max_tokens, which the
-    # client reads as a turn it should continue rather than the backend's
-    # limit — so it re-asked, and a single response spent ~27 minutes emitting
-    # 16384-token chunks before Claude Code's own 32000 accumulator aborted it
-    # with "response exceeded the 32000 output token maximum". The abort was the
-    # only thing that stopped it.
-    #
-    # Projecting max_output makes the client ask for exactly what the backend
-    # will produce, so the ceiling is reached once, deliberately, instead of
-    # being discovered by truncation. This does NOT make a verbose model concise:
-    # it makes an over-long answer fail in one generation instead of six.
-    #
-    # Derived, never configured — a second number here would drift from the
-    # profile it projects.
+    # Output ceiling = num_predict: else Claude asks for 32000, reads each
+    # max_tokens stop as "continue" and loops for minutes. Derived, not cfg.
     if not out_geom["max_output"]:
         raise SystemExit(
             f"invalid geometry: claude launch_default '{default}' declares no "
@@ -719,34 +595,17 @@ def regen_claude_settings(models, clients):
         f"Output ceiling: CLAUDE_CODE_MAX_OUTPUT_TOKENS = {out_geom['max_output']} "
         f"(= {default}.max_output, the same number LiteLLM gets as num_predict). "
         "Claude Code defaults to 32000, which the backend does not serve.")
-    # The window Claude Code ASSUMES for this model id. `ailocal-<cap>` does not
-    # start with `claude-`, carries no `[1m]`, and resolves to no Claude model,
-    # so per code.claude.com/docs/en/model-config this variable "applies
-    # directly and proactive compaction continues at the declared window".
-    # Without it Claude Code assumes 200000 for an unrecognised gateway id --
-    # [REAL] it says so at startup -- which is a window this stack never serves.
-    #
-    # ADMISSION, not the total window, and nothing else is configured: Claude
-    # Code compacts on its own against this number. [REAL] Claude Code 2.1.310
-    # (binary): the effective window is this value minus min(max output, 20000),
-    # and auto-compact fires 13000 tokens below that. Declaring context_input,
-    # the number LiteLLM enforces, puts the client's own trigger at least
-    # 13000 + min(max_output, 20000) tokens under admission on every tier, so a
-    # request is compacted before it can be rejected. Declaring the total window
-    # leaves 232 tokens of margin on the 262144-token tiers, where max_output
-    # (32768) exceeds the 20000 the client reserves.
+    # Window Claude assumes for a non-Claude id (else 200000; see
+    # code.claude.com/docs/en/model-config). Admission, not total: Claude
+    # compacts 13000 + min(max_output, 20000) below it, before rejection.
     data["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(out_geom["context_input"])
     data["//"].append(
         f"Assumed window: CLAUDE_CODE_MAX_CONTEXT_TOKENS = {out_geom['context_input']} "
         f"(= {default}.context_input, the admission LiteLLM enforces). Claude Code "
         "compacts against it on its own; it otherwise assumes 200000 for an "
         "unrecognised gateway model id.")
-    # KNOWN GAP, stated because it cannot be fixed here. Both variables above are
-    # process-wide, but the slots route to roles with DIFFERENT envelopes. They
-    # describe the launch default; every other slot is enforced only by LiteLLM's
-    # own max_input_tokens, and a background slot whose admission is smaller can
-    # be rejected before Claude Code thinks compaction is due. Listing the real
-    # numbers is the only thing this file can do about it.
+    # Known gap: both vars are process-wide (launch default); a smaller slot
+    # can be rejected by LiteLLM before Claude compacts.
     smaller = sorted(
         (mn(cap), g["max_input_tokens"])
         for cap, g in ((c, _geom(models[c])) for c in slots.values() if c in models)
@@ -756,20 +615,14 @@ def regen_claude_settings(models, clients):
             "Slots Claude Code cannot declare separately (process-wide vars "
             f"describe {mn(default)} only): "
             + ", ".join(f"{n} admits {v}" for n, v in smaller))
-    # The picker is owned and rewritten on every generation, so a retired
-    # capability never lingers as a row the gateway no longer serves.
+    # Rewritten each run so a retired capability never lingers as a row.
     data["modelPicker"] = {"options": claude_picker_rows(models),
                            "replaceBuiltInOptions": True}
     data["//"].append(
         "Picker (modelPicker, replaceBuiltInOptions): "
         + ", ".join(mn(k) for k in models) + ". Same labels and descriptions as Codex.")
-    # Retire keys ailocal used to write. `env` merges live-over-template so that
-    # Claude Code's own additions survive regeneration — which also means simply
-    # deleting a key from the template never reaches an existing install: it
-    # would sit in every settings.json already on disk forever. Removal has to be
-    # stated, not implied — on the console, never in the file: a note written
-    # only when the key was present makes the next generation differ, so the
-    # output would not be a fixed point and `--check` would report drift.
+    # Merged `env` never drops a template-removed key, so retire it explicitly;
+    # report on the console only, so the output stays a fixed point.
     for key, why in RETIRED_CLAUDE_ENV.items():
         if key in (data.get("env") or {}):
             data["env"].pop(key)
@@ -780,9 +633,8 @@ def regen_claude_settings(models, clients):
     return True
 
 
-# ── Codex config.toml + profiles ───────────────────────────────────────────────
-#: `[projects."<path>"]` and `[hooks.state."<key>"]` blocks, which CODEX
-#: writes into this file itself.
+# Codex config.toml + profiles
+#: Blocks Codex writes into config.toml itself.
 _CODEX_PROJECTS = re.compile(
     r'(?ms)^\[(?:projects|hooks\.state)\.".*?"\]\n(?:(?!^\[).*?\n)*')
 _CODEX_TUI_FLAG = re.compile(
@@ -794,36 +646,11 @@ _CODEX_MCP = re.compile(
 
 
 def _keep_codex_projects(text: str) -> str:
-    """Carry Codex's own trust records across regeneration.
+    """Return Codex-owned config.toml blocks to carry across regeneration.
 
-    config.toml is CO-OWNED, the same way claude/settings.json is. Codex appends
-
-        [projects."/path/to/repo"]
-        trust_level = "trusted"
-
-    when you approve a directory, and
-
-        [hooks.state."<config.toml>:session_start:0:0"]
-        trusted_hash = "sha256:..."
-
-    when you trust a hook. A generator that rebuilds this file from the
-    template alone deletes both — so every `ailocal start` silently un-trusts
-    every directory the user had approved, and re-arms "Hooks need review" for
-    the scratchpad hook. [REAL] directories: gate drift after one `codex exec`
-    run. [REAL] hooks: Codex 0.163.0 wrote the block above on "Trust all", and
-    regeneration removed it. The hash covers the hook definition, so a changed
-    hook is still re-reviewed by Codex itself.
-
-    Plus ONE flag Codex records the same way: `[tui]
-    screen_reader_detection_done`. [REAL] Codex 0.163.0 writes it on the first
-    interactive launch; dropping it reported the file as drifted after every
-    interactive session and made Codex detect again. Only that key is carried,
-    and only while the template has no `[tui]` table of its own.
-
-    MCP servers outside the template belong to their registrars (for example,
-    Cadence), including their nested env/tool tables, and so do the
-    `[marketplaces.*]` and `[plugins.*]` tables `codex plugin` writes. Preserve
-    them. Template-owned servers and model settings are always regenerated.
+    Kept: `[projects.*]` and `[hooks.state.*]` trust records (else every start
+    un-trusts them), `[tui] screen_reader_detection_done` while the template
+    has no `[tui]`, external MCP servers, `[marketplaces.*]`, `[plugins.*]`.
     """
     if not CODEX_CONFIG.exists():
         return text
@@ -831,11 +658,8 @@ def _keep_codex_projects(text: str) -> str:
         live = CODEX_CONFIG.read_text()
     except OSError:
         return text
-    # A block runs to the next table header, so it also takes whatever comment
-    # precedes that header: [REAL] "# ── Model Providers" rode along with the
-    # hook record. Trim each block to its own keys, and keep one block per
-    # header, so a file that already holds a table twice (invalid TOML) is
-    # repaired rather than carried forward.
+    # Trim each block to its keys (it would carry the next header's comment)
+    # and keep one per header, repairing a duplicated table.
     blocks, seen = [], set()
     owned_servers = tomllib.loads(text).get("mcp_servers", {})
     external_mcp = []
@@ -872,9 +696,7 @@ def regen_codex(models, clients):
                       "# Valid models: " + " | ".join(mn(k) for k in models.keys()), text, count=1)
         stage(CODEX_CONFIG, text)
         done = True
-        # Limits belong to each catalog entry. A global override would make a
-        # model selected through --model or the picker inherit the default's
-        # window.
+        # Limits are per catalog entry; a global one leaks the default's window.
         text = _keep_codex_projects(text)
         stage(CODEX_CONFIG, text)
     return done
@@ -882,7 +704,7 @@ def regen_codex(models, clients):
 
 
 def parse_profile_flag(argv):
-    """Pull `--profile <tier>` out of argv, returning (tier_or_None, remaining_argv)."""
+    """Pull `--profile <tier>` out of argv; return (tier or None, rest)."""
     tier, rest, i = None, [], 0
     while i < len(argv):
         if argv[i] == "--profile" and i + 1 < len(argv):
@@ -892,11 +714,9 @@ def parse_profile_flag(argv):
     return tier, rest
 
 
-# ── atomic generation ───────────────────────────────────────────────────────
-# Outputs are STAGED and only replaced once every generator has succeeded. A
-# partial generation is worse than no generation: LiteLLM would serve one
-# profile's aliases while the clients pointed at another's, and nothing would
-# report a problem. Nothing here is replaced if any step raises.
+# atomic generation
+# Outputs are staged and replaced only after every generator succeeds: a
+# partial run would split LiteLLM and clients across profiles silently.
 _STAGE: dict = {}
 _STAGED_TEXT: dict = {}
 
@@ -906,7 +726,7 @@ MARKER_TOML = ("# Generated by ailocal. Do not edit.\n"
 
 
 def stage(path, text):
-    """Record an output. Written only by flush_stage()."""
+    """Record an output for flush_stage() to write."""
     _STAGE[Path(path)] = text
     _STAGED_TEXT[Path(path)] = text
 
@@ -914,14 +734,9 @@ def stage(path, text):
 def flush_stage():
     """Write every staged output, then swap them in with rollback on failure.
 
-    THE GUARANTEE: per-file atomic, with rollback on partial failure. Not a
-    transaction -- os.replace() is atomic PER FILE -- but a failure part-way
-    through restores every destination already replaced, so the tree ends up
-    entirely old or entirely new. There is no commit marker to consult: LiteLLM
-    and the clients read their generated files directly, so a partial run leaves
-    mixed state that is servable (tests/clients.py proves it by
-    fault injection). Every temp file is written and validated before any
-    destination is touched."""
+    Per-file atomic (os.replace); a mid-way failure restores replaced files,
+    so the tree is all old or all new (tests/clients.py injects faults).
+    """
     tmp, backups, replaced = {}, {}, []
     try:
         for path, text in _STAGE.items():
@@ -929,8 +744,7 @@ def flush_stage():
             t = path.with_suffix(path.suffix + ".tmp-sync")
             t.write_text(text)
             tmp[path] = t
-        # Validate BEFORE any destination is touched: an artifact that cannot be
-        # parsed back must not replace a good one.
+        # Validate first: an unparseable artifact must not replace a good one.
         for path, t in tmp.items():
             if path.suffix == ".json":
                 try:
@@ -979,22 +793,9 @@ def _stable(t):
     return re.sub(r'"generated_at":\s*"[^"]*"', '"generated_at": ""', t)
 
 def _same(dest, text):
-    """Is the destination already this output?
+    """Return whether the destination already holds this output.
 
-    settings.json and config.toml are CO-OWNED (see regen_claude_settings):
-    Claude Code writes `theme`, `enabledPlugins` and friends into the same
-    file, and it serialises with its OWN key order — `env` first, the `//`
-    banner last. The merge then re-emits template order, so a byte compare
-    called that drift on every run after the co-owner touched the file, and
-    `ailocal start` "fixed" it only until Claude Code wrote again. For JSON,
-    key order carries no meaning, so compare the parsed documents and let
-    the co-owner order the file however it likes. Anything that is not JSON,
-    or does not parse, falls back to the textual compare unchanged.
-
-    TOML tables carry no order either. [REAL] `codex mcp add` inserts its
-    `[mcp_servers.<name>]` table mid-file, while regeneration appends a
-    preserved external table at the end, so a fresh `ailocal install --yes`
-    reported codex/config.toml as drifted though both parse to one document.
+    JSON and TOML compare parsed: co-owners reorder keys and tables; else text.
     """
     live = _stable(dest.read_text())
     staged = _stable(text)
@@ -1016,8 +817,7 @@ def main(argv=None):
     if check_only:
         args = args[1:]
 
-    # The TEMPLATE is the precondition. config.yaml is this script's output, so
-    # requiring it to pre-exist made a fresh clone unable to bootstrap.
+    # Require the template, not config.yaml (output), so a fresh clone works.
     if not LITELLM_TEMPLATE.exists():
         print(f"Error: {LITELLM_TEMPLATE} not found", file=sys.stderr); sys.exit(1)
 
@@ -1049,8 +849,7 @@ def main(argv=None):
     ok("integration-contract.json (for Cadence)") if write_integration_contract(models) else warn("contract skipped")
     ok("codex config + profiles") if regen_codex(models, clients) else warn("codex skipped")
     if check_only:
-        # generated_at is a timestamp: two identical generations differ by it,
-        # so it is normalised away rather than reported as drift every run.
+        # Normalise the generated_at timestamp, else every run is drift.
         def _label(d):
             for base in (_pc.state_root(), _pc.config_root(), _pc.data_root()):
                 try:
@@ -1061,8 +860,7 @@ def main(argv=None):
 
         drift = sorted(_label(d) for d, text in _STAGE.items()
                        if not d.exists() or not _same(d, text))
-        # --check writes nothing, so the staging tables must not survive into a
-        # later call in the same process.
+        # --check writes nothing: clear staging for later calls in-process.
         _STAGE.clear()
         _STAGED_TEXT.clear()
         if drift:

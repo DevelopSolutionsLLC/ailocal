@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""The session scratchpad hook (#78): one private directory per session, never under a
-base someone else claimed, and a session id cannot escape it. Runs the shipped hook."""
+"""Test the scratchpad hook (#78) by running it.
+
+One private dir per session, never under a foreign base, no id escape.
+"""
 from __future__ import annotations
 
 import json
