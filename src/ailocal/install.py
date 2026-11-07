@@ -828,8 +828,8 @@ def _activate_ollama(binary: str) -> None:
 
 def _port_owner() -> tuple[str, str]:
     """Return (pid on :11434, com.ailocal.ollama pid); either may be ""/"-"."""
-    holder = next((line.split()[1] for line in
-                   command_output("lsof", "-nP", "-iTCP:11434", "-sTCP:LISTEN").splitlines()[1:]), "")
+    from .checks.services import ollama_listener_pid
+    holder = ollama_listener_pid(timeout=None)
     agent = next((line.split()[0] for line in command_output("launchctl", "list").splitlines()
                   if line.endswith("\tcom.ailocal.ollama")), "")
     return holder, agent
