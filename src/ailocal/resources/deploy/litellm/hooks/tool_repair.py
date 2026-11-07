@@ -265,6 +265,21 @@ def complete_ui_metadata(name: object, args_text: str, declared_tools: list | No
     return json.dumps(patched)
 
 
+def _json_blob_calls(text: str, tool_index: dict[str, dict]) -> list[tuple[dict, str]]:
+    """Return (call, matched span) for each schema-valid JSON blob in `text`."""
+    found = []
+    for m in JSON_BLOB_RE.finditer(text):
+        try:
+            raw = json.loads(m.group(2))
+        except Exception:  # noqa: BLE001
+            continue
+        # Raw values: str() would turn arrays/bools/ints into their repr.
+        call = _validate(m.group(1), raw, tool_index)
+        if call:
+            found.append((call, m.group(0)))
+    return found
+
+
 def recover(content: str | None, declared_tools: list | None,
             ctx: dict[str, Any] | None = None) -> tuple[list[dict] | None, str | None]:
     """Return (tool_calls | None, leftover_text); pure.
@@ -292,16 +307,9 @@ def recover(content: str | None, declared_tools: list | None,
             spans.append(m.group(0))
 
     if not calls:  # second format: bare JSON blob
-        for m in JSON_BLOB_RE.finditer(scan):
-            try:
-                raw = json.loads(m.group(2))
-            except Exception:  # noqa: BLE001
-                continue
-            # Raw values: str() would turn arrays/bools/ints into their repr.
-            call = _validate(m.group(1), raw, tool_index)
-            if call:
-                calls.append(call)
-                spans.append(m.group(0))
+        for call, span in _json_blob_calls(scan, tool_index):
+            calls.append(call)
+            spans.append(span)
 
     if not calls:
         # Third format: the WHOLE reply is one fenced JSON call. Safe by
@@ -311,14 +319,7 @@ def recover(content: str | None, declared_tools: list | None,
             body = fences[0].strip("`")
             if body.lower().startswith("json"):
                 body = body[4:]
-            for m in JSON_BLOB_RE.finditer(body):
-                try:
-                    raw = json.loads(m.group(2))
-                except Exception:  # noqa: BLE001
-                    continue
-                call = _validate(m.group(1), raw, tool_index)
-                if call:
-                    calls.append(call)
+            calls = [call for call, _ in _json_blob_calls(body, tool_index)]
             if calls:
                 record("repaired", reason="sole_fenced_json",
                        tool=calls[0]["function"]["name"], **(ctx or {}))
@@ -696,14 +697,14 @@ class ToolRepair(CustomLogger):
         return (f"event: {event_type}\ndata: {json.dumps(payload)}\n\n").encode()
 
     @classmethod
-    def _native_tool_use_events(cls, ts: dict, args_text: str) -> list[bytes]:
-        """Re-emit one buffered tool_use block with `args_text` as input."""
-        idx = ts.get("index", 0)
+    def _tool_use_events(cls, idx: int, call_id: object, name: object,
+                         args_text: str) -> list[bytes]:
+        """Emit one tool_use block start→stop with `args_text` as its input."""
         return [
             cls._sse("content_block_start", {
                 "type": "content_block_start", "index": idx,
-                "content_block": {"type": "tool_use", "id": ts.get("id"),
-                                  "name": ts.get("name"), "input": {}}}),
+                "content_block": {"type": "tool_use", "id": call_id,
+                                  "name": name, "input": {}}}),
             cls._sse("content_block_delta", {
                 "type": "content_block_delta", "index": idx,
                 "delta": {"type": "input_json_delta", "partial_json": args_text}}),
@@ -760,7 +761,8 @@ class ToolRepair(CustomLogger):
                 if AILOCAL_DEBUG:
                     print(f"tool_repair: COMPLETED missing arg on {ts.get('name')}",
                           flush=True)
-            return cls._native_tool_use_events(ts, patched or ts["args"])
+            return cls._tool_use_events(ts.get("index", 0), ts.get("id"), ts.get("name"),
+                                        patched or ts["args"])
 
         return None
 
@@ -840,16 +842,7 @@ class ToolRepair(CustomLogger):
                 idx += 1
             for c in calls:
                 fn = c["function"]
-                out.append(cls._sse("content_block_start", {
-                    "type": "content_block_start", "index": idx,
-                    "content_block": {"type": "tool_use", "id": c["id"],
-                                      "name": fn["name"], "input": {}}}))
-                out.append(cls._sse("content_block_delta", {
-                    "type": "content_block_delta", "index": idx,
-                    "delta": {"type": "input_json_delta",
-                              "partial_json": fn["arguments"]}}))
-                out.append(cls._sse("content_block_stop",
-                                    {"type": "content_block_stop", "index": idx}))
+                out.extend(cls._tool_use_events(idx, c["id"], fn["name"], fn["arguments"]))
                 idx += 1
             state["saw_tool_use"] = True
             state["injected"] = True
@@ -1030,7 +1023,8 @@ class ToolRepair(CustomLogger):
                 ts["active"] = False
                 log.warning("tool_repair: stream ended inside a tool_use block — "
                             "flushing it unrepaired")
-                for out in self._native_tool_use_events(ts, ts.get("args") or ""):
+                for out in self._tool_use_events(ts.get("index", 0), ts.get("id"),
+                                                 ts.get("name"), ts.get("args") or ""):
                     yield out
 
             if suspect and not native_seen:
