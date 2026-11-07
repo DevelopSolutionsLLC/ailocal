@@ -295,7 +295,7 @@ def generated() -> None:
         check(P.resolve_role(tier, "primary", RESOURCES)["model"]
               in (b / "state/litellm/capabilities.json").read_text(),
               f"{tier}: capabilities.json reflects the resolved model")
-        budgets = P.instruction_budgets(b / "cfg")
+        budgets = P.instruction_budgets(b / "cfg", tier)
         check(contract.get("schema_version") == 3
               and contract.get("audit", {}).get("record", "").endswith("audit/local.json")
               and contract.get("audit", {}).get("command") == "ailocal audit"

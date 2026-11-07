@@ -211,6 +211,11 @@ class Guidance(unittest.TestCase):
                  (re.sub(r'(?m)^instruction_max_bytes = 4096\n', '', shipped), policy.instruction_budgets, budget)]
         cases += [(shipped.replace('instruction_max_bytes = 4096', f'instruction_max_bytes = {bad}', 1), policy.instruction_budgets, None)
                   for bad in ('0', '"4k"', 'true')]
+        # #47: a tier override applies to its tier only, and is validated like the default.
+        tiered = lambda tier: lambda: policy.instruction_budgets(tier=tier)
+        cases += [(shipped, tiered('128gb'), {'claude': 8192, 'codex': 4096}), (shipped, tiered('64gb'), budget)]
+        cases += [(shipped.replace('{ "128gb" = 8192 }', bad, 1), tiered('128gb'), None)
+                  for bad in ('{ "256gb" = 8192 }', '{ "128gb" = 0 }', '8192')]
         with patch.dict(os.environ, {'AILOCAL_CONFIG': str(tmp)}):
             for text, reader, expected in cases:
                 (tmp / 'profiles/clients.toml').write_text(text)
@@ -263,7 +268,8 @@ class Guidance(unittest.TestCase):
         (tmp / 'claude/CLAUDE.md').write_text('owner: cadence\n' + 'x' * 2985)
         with patch.object(policy, 'deployed_client_root', return_value=tmp), \
                 patch.dict(os.environ, {'AILOCAL_CONFIG': str(tmp)}), \
-                patch.object(C, '_scratchpad_hook_bytes', return_value=50):
+                patch.object(C, '_scratchpad_hook_bytes', return_value=50), \
+                patch.object(policy, 'resolve_active_tier', return_value='64gb'):
             budget = lambda: next(r for r in C.check_instruction_budget() if r.name == 'claude-instructions')
             with patch.object(C, '_guide_hook_bytes', return_value=(1000, 300)):
                 claude = budget()
@@ -282,7 +288,7 @@ class Guidance(unittest.TestCase):
         with patch.object(generation, 'stage') as stage, contextlib.redirect_stderr(io.StringIO()):
             generation.write_integration_contract({'fast': {}})
         published = {c: e['max_bytes'] for c, e in json.loads(stage.call_args.args[1])['instructions'].items()}
-        self.assertEqual(published, policy.instruction_budgets())
+        self.assertEqual(published, policy.instruction_budgets(tier=policy.resolve_active_tier()))
 
 
 class Contract(unittest.TestCase):

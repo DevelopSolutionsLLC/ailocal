@@ -39,6 +39,10 @@ delegate_max_mode = "edit"
   # `ailocal check` whoever wrote the file. Measured: a 17 KB policy file made the
   # local models re-read it or treat its directory as the working directory (#39).
 instruction_max_bytes = 4096
+  # The budget for one tier, replacing the value above there. [REAL] 2026-11-07,
+  # gemma4:26b-qat-mtp via claude-local: about 8.2 KB of file and hooks kept every
+  # fix and scope trial correct, the same as 4.6 KB (#47, ADR 017).
+instruction_max_bytes_by_tier = { "128gb" = 8192 }
 
 # Codex CLI
 [codex]
