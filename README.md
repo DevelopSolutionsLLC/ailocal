@@ -116,6 +116,7 @@ ailocal uses VS Code's built-in [Custom Endpoint provider](https://code.visualst
 | `ailocal check` | is everything configured and working, end to end |
 | `ailocal clients` | configure the supported clients you have installed |
 | `ailocal bind lan` / `local` / `status` | let the proxy listen on every interface, or on this machine only (the default); applies on the next `ailocal start` |
+| `ailocal docker check` / `apply` / `restore` | compare Docker Desktop's settings with ailocal's [recommendations](src/ailocal/resources/deploy/docker-desktop/settings.toml) (telemetry, updates, extensions, MCP Toolkit, localhost port binding); `apply` restarts Docker Desktop, records the originals, and `restore` or `ailocal teardown` puts them back. Memory and disk are never changed |
 | `ailocal update --json` | which pinned images have newer candidates |
 | `ailocal audit` | are the pinned versions still free of advisories; nonzero when one is affected or yanked |
 
@@ -162,6 +163,8 @@ Every backend follows one [model-format rule](docs/maintenance.md#model-format):
 To override the detected tier: `ailocal profile use 32gb`, then `ailocal start`. To change a model or its sampling, edit the file in `~/.config/ailocal/profiles/` and run `ailocal start`; your edits survive upgrades, and `ailocal install --upgrade-models` adopts new shipped models without discarding your budgets.
 
 ## What a local session gets
+
+**Sleep during active work.** `codex-local` holds Codex's own idle-sleep assertion for each running turn, as hosted Codex does; Claude Code holds its own while it works. The display can still sleep, and closing the lid still sleeps the Mac.
 
 **Web search.** `claude-local` searches the live web through ailocal's own SearXNG instance and answers with sources. Claude Code may show "0 searches" on a sourced answer; that counter tracks Anthropic-hosted search, which never runs here. A Brave Search key is optional and used only by the research server within a budget: set `BRAVE_API` in `~/.config/ailocal/.env.local`, then `ailocal clients claude`. Details and limits are in [the architecture](docs/architecture.md#local-research).
 

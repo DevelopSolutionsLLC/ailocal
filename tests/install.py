@@ -22,13 +22,22 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from harness import REPO, RESOURCES, Suite, run  # noqa: E402
-from ailocal import install as I, model_sources as M, policy as P  # noqa: E402
+from ailocal import docker_desktop as D, install as I, model_sources as M, policy as P  # noqa: E402
+
+# No test may reach this machine's Docker Desktop: a real restore restarts it.
+_NOWHERE = Path(tempfile.mkdtemp(prefix="ailocal-dd-"))
+D.STORE, D.BACKEND, D.RECEIPT = _NOWHERE / "store.json", _NOWHERE / "backend.sock", _NOWHERE / "receipt.json"
 
 S = Suite("INSTALL")
 check, po = S.check, patch.object
 OK = NS(returncode=0, stdout="", stderr="")
 quiet = lambda: contextlib.redirect_stdout(io.StringIO())  # noqa: E731
 body = lambda request: json.loads(request.data)  # noqa: E731
+
+
+def q(fn, *a, **k):
+    with quiet():
+        return fn(*a, **k)
 
 
 def raises(exc, fn, *a, **k):
@@ -511,12 +520,77 @@ def teardown():
         with po(runtime, "_confirm", return_value=True), po(runtime, "compose", return_value=NS(returncode=0)) as compose, \
                 po(runtime, "_docker") as docker, po(I, "remove_login_agents"), \
                 po(clients, "remove_client_writes", return_value=["removed x"]) as rm, \
+                po(D, "restore", return_value=0) as dd, \
                 po(I.policy, "deployed_client_root", return_value=root), quiet():
             result = runtime.cmd_teardown([])
+        check(dd.called, "teardown restores the Docker Desktop settings ailocal docker apply recorded (#105)")
         check(rm.called and rm.call_args.kwargs.get("dry", False) is False, "teardown removes the client writes outside ailocal's roots (#91)")
         check(result == 0 and compose.call_args.args == ("down", "--volumes", "--remove-orphans") and not docker.called
               and (codex / "review.config.toml").exists() and not hasattr(I, "retire_generated_clients"),
               "teardown leaves networks to Compose and keeps authored files; the v0.11 preset retirement is gone (#96)")
+
+
+def docker_settings():
+    S.section("ailocal docker check|apply|restore against a scratch settings file (#105)")
+    ledger = D.recommended()
+    check(len(ledger) == 8 and all(len(path) >= 2 and key for path, key, _, _ in ledger),
+          "the shipped ledger parses: eight settings, each with a backend path and a store key")
+    with tempfile.TemporaryDirectory() as box:
+        box = Path(box)
+        store, receipt = box / "settings-store.json", box / "LaunchAgents" / "restore.json"
+        original = {"AnalyticsEnabled": True, "ExtensionsEnabled": True, "PortBindingBehavior": "default-port-binding",
+                    "MemoryMiB": 8192}
+        for _, key, want, _ in ledger:
+            original.setdefault(key, want)
+        store.write_text(json.dumps(original))
+        accepts = {"ok": True}
+
+        def backend(timeout=5):  # what Docker would report: the store, unless it rejects a key
+            data = json.loads(store.read_text())
+            out = {}
+            for path, key, _, _ in ledger:
+                node = out
+                for part in path[:-1]:
+                    node = node.setdefault(part, {})
+                value = data.get(key)
+                if not accepts["ok"] and key == "PortBindingBehavior":
+                    value = "default-port-binding"
+                node[path[-1]] = {"value": value}
+            return out
+
+        restarts = []
+        with po(D, "STORE", store), po(D, "RECEIPT", receipt), po(D, "effective", backend), \
+                po(D, "_desktop", lambda action: restarts.append(action) or True), \
+                po(D, "_wait", lambda up, seconds=180: True):
+            before = store.read_text()
+            rc_check = q(D.main, ["check"])
+            check(rc_check == 1 and store.read_text() == before and not restarts and not receipt.exists(),
+                  "check reports drift, exits 1 and writes nothing")
+            declined = q(D.apply, False, lambda prompt: "n")
+            check(declined == 1 and store.read_text() == before and not restarts, "a declined apply changes nothing")
+            rc_apply = q(D.main, ["apply", "--yes"])
+            after = json.loads(store.read_text())
+            check(rc_apply == 0 and not D.drift(backend()) and after["MemoryMiB"] == 8192 and restarts == ["stop", "start"],
+                  "apply writes only the ledger's keys, keeps memory, restarts once and leaves no drift")
+            record = json.loads(receipt.read_text())
+            check(record["settings"] == {"AnalyticsEnabled": True, "ExtensionsEnabled": True,
+                                         "PortBindingBehavior": "default-port-binding"}
+                  and oct(receipt.stat().st_mode & 0o777) == "0o600",
+                  "the originals are recorded once, private to the user", record)
+            after["ExtensionsEnabled"] = True       # the operator changes one back by hand
+            store.write_text(json.dumps(after))
+            rc_restore = q(D.main, ["restore"])
+            final = json.loads(store.read_text())
+            check(rc_restore == 0 and final["AnalyticsEnabled"] is True and final["PortBindingBehavior"] == "default-port-binding"
+                  and final["ExtensionsEnabled"] is True and not receipt.exists(),
+                  "restore puts back the recorded originals and removes the receipt")
+            store.write_text(before)
+            accepts["ok"] = False
+            rejected = q(D.main, ["apply", "--yes"])
+            check(rejected == 1 and json.loads(store.read_text()) == json.loads(before) and not receipt.exists(),
+                  "a key Docker does not accept rolls the whole store back and leaves no receipt")
+    with po(D, "effective", lambda timeout=5: None):
+        check(q(D.main, ["check"]) == 1 and q(D.main, ["bogus"]) == 2, "Docker Desktop down fails check; an unknown action is a usage error")
 
 
 def provenance():
@@ -821,7 +895,7 @@ def idempotence():
 
 def main() -> int:
     for section in (model_sources, native_gguf, model_pulls, install_flow, launchd, activation, ollama_env,
-                    bind, teardown, provenance, model_upgrade, role_migration, parity, idempotence):
+                    bind, teardown, docker_settings, provenance, model_upgrade, role_migration, parity, idempotence):
         try:
             section()
         except Exception as exc:  # noqa: BLE001
