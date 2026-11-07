@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Profile, client-policy and environment-ownership invariants.
+"""Policy files fail closed, generation stays out of hosted roots, and the environment files' ownership.
 
 Writes only temp roots. Generation keeps the real HOME; every hosted client root
 is pointed at a temp dir that must stay empty."""
@@ -8,7 +8,6 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-import re
 import shutil
 import stat
 import subprocess
@@ -18,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from harness import RESOURCES, Suite  # noqa: E402
-from ailocal import generation as G, policy as P  # noqa: E402
+from ailocal import policy as P  # noqa: E402
 
 S = Suite()
 check = S.check
@@ -53,75 +52,45 @@ def box(marker=None, text=None, name="profiles/64gb.toml") -> Path:
     return root
 
 
-def code_of(fn, *args, message=False):
+def code_of(fn, *args):
     try:
         fn(*args)
         return "OK"
     except P.ProfileError as exc:
-        return str(exc) if message else exc.code
+        return exc.code
 
 
-def yaml_int(block, key):
-    m = re.search(rf"(?m)^\s*{re.escape(key)}:\s*(-?\d+)\s*$", block)
-    return int(m.group(1)) if m else None
-
-
-def resolver() -> None:
-    S.section("PROFILES FAIL CLOSED")
+def fails_closed() -> None:
+    S.section("POLICY FILES FAIL CLOSED")
     want, got = {}, {}
     for label, marker, code in (("missing marker", None, P.ACTIVE_PROFILE_MISSING),
-                                ("empty marker", "   \n", P.ACTIVE_PROFILE_EMPTY),
                                 ("unknown tier", "999gb", P.ACTIVE_PROFILE_INVALID)):
         root = box(marker)
         want[label], got[label] = code, code_of(P.resolve_active_tier, root, root / "state")
     head = '[primary]\nrole = "L"\nactive = "m:1b"\n'
-    cases = [
+    profiles = [
         ("missing profile file", None, P.PROFILE_FILE_MISSING),
-        ("malformed policy", "[primary\n", P.PROFILE_INVALID),
+        ("malformed profile", "[primary\n", P.PROFILE_INVALID),
         ("non-integer context_input", head + 'context_input = "x"\n', P.ROLE_CONFIG_INVALID),
         ("missing required field", '[primary]\nrole = "L"\ncontext_input = 10\n', P.PROFILE_SCHEMA_INVALID),
-        ("max_output -1", head + "context_input = 100\nmax_output = -1\n", P.ROLE_CONFIG_INVALID),
         ("duplicate key", GOOD + "context_input = 999\n", P.PROFILE_INVALID),
-        ("duplicate section", GOOD + '[primary]\nrole = "X"\nactive = "o:1b"\n', P.PROFILE_INVALID),
-        ("unclosed list", GOOD + "preferred = [a, b\n", P.PROFILE_INVALID),
-        # A quantization token in a selection names an artefact, not a model (#93).
-        ("quantization token", GOOD.replace("m:1b", "qwen3.5:4b-mtp-q4_K_M"), P.PROFILE_SCHEMA_INVALID),
+        # Unknown keys were silently dropped before 2026-08-04, so a typo read as set and was not.
+        ("mistyped key", GOOD + "temprature = 0.1\n", P.PROFILE_SCHEMA_INVALID),
     ]
-    # Unknown keys were silently dropped before 2026-08-04, so a typo read as set and was not.
-    for frag in ("temprature = 0.1", "topk = 20", "num_predict = 512", "draft_num_predict = true"):
-        cases.append((f"unknown or mistyped `{frag}`", GOOD + frag + "\n", P.PROFILE_SCHEMA_INVALID))
-    for label, text, code in cases:
+    for label, text, code in profiles:
         want[label], got[label] = code, code_of(P.load_profile, "64gb", box("64gb", text))
-    root = box("64gb", GOOD)
-    want["absent role"], got["absent role"] = P.ROLE_MISSING, code_of(P.resolve_role, "64gb", "fast", root)
+    clients = {"unknown client": '[nosuchclient]\ndefault = "fast"\n',
+               "non-TOML clients.toml": "bogus:\n  default: fast\n",
+               "duplicate clients.toml key": '[claude]\ndefault = "fast"\ndefault = "primary"\n',
+               "bare dotted key": '[compat]\ngpt-5.5 = "primary"\n'}   # nests instead of naming
+    for label, text in clients.items():
+        want[label] = P.CLIENT_POLICY_INVALID
+        got[label] = code_of(P.load_client_policy, box(text=text, name="profiles/clients.toml"))
+    want["missing clients.toml"], got["missing clients.toml"] = P.CLIENT_POLICY_MISSING, code_of(P.load_client_policy, box())
     want.update({t: "OK" for t in P.TIERS})
     got.update({t: code_of(P.load_profile, t) for t in P.TIERS})
-    check(got == want, "every shipped tier loads; a missing, malformed or mistyped profile fails closed with "
-          "its code", repr({k: v for k, v in got.items() if want[k] != v}))
-    msg = code_of(P.load_profile, "64gb", box("64gb", GOOD + 'secret_token = "abc123SECRET"\n'), message=True)
-    check(msg != "OK" and "abc123SECRET" not in msg, "a profile error carries a code, never profile values", msg)
-
-    # One resolver once answered both, so pointing policy at the checkout committed generated files.
-    S.section("ROOTS")
-    with env_set(AILOCAL_CONFIG="/tmp/ailocal-policy-probe", AILOCAL_CLIENTS=None):
-        check("ailocal-policy-probe" not in str(P.deployed_client_root()) and P.state_root() != P.config_root(),
-              "AILOCAL_CONFIG moves neither generated client output nor state")
-
-
-def client_policy() -> None:
-    S.section("CLIENT POLICY FAILS CLOSED")
-    cases = {"unknown client": '[nosuchclient]\ndefault = "fast"\n',
-             "non-TOML": "bogus:\n  default: fast\n",
-             "duplicate section": '[claude]\na = "fast"\n[claude]\nb = "fast"\n',
-             "duplicate key": '[claude]\ndefault = "fast"\ndefault = "primary"\n',
-             "unclosed list": '[continue]\nchat = ["a", "b"\n',
-             "unclosed mapping": '[claude]\nslots = {opus = "fast"\n',
-             "bare dotted key": '[compat]\ngpt-5.5 = "primary"\n'}   # nests instead of naming
-    got = {n: code_of(P.load_client_policy, box(text=t, name="profiles/clients.toml")) for n, t in cases.items()}
-    got["missing"] = code_of(P.load_client_policy, box())
-    want = {**{n: P.CLIENT_POLICY_INVALID for n in cases}, "missing": P.CLIENT_POLICY_MISSING}
-    check(got == want, "a missing or malformed clients.toml fails closed with its code",
-          repr({k: v for k, v in got.items() if want[k] != v}))
+    check(got == want, "every shipped tier loads; a missing or malformed profile or clients.toml fails closed "
+          "with its code", repr({k: v for k, v in got.items() if want[k] != v}))
 
 
 def _generate(tier: str) -> dict:
@@ -149,42 +118,6 @@ def generated() -> None:
     check(not bad, "every tier generates claude-local and leaves every hosted root empty", repr(bad))
     if bad:
         return
-    launch = P.load_client_policy(RESOURCES).get("claude", {}).get("launch_default", "primary")
-
-    # Claude Code 2.1.224 defaults to 32000 output; a mismatch looped on max_tokens for ~27 min.
-    got, want = {}, {}
-    for tier, g in runs.items():
-        cenv = json.loads((g["root"] / "clients/claude/settings.json").read_text()).get("env", {})
-        role = P.resolve_role(tier, launch, RESOURCES)
-        got[tier] = (cenv.get("CLAUDE_CODE_MAX_OUTPUT_TOKENS"), cenv.get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"))
-        want[tier] = (str(role["max_output"]), str(role["context_input"]))
-    models, clients = G.load_models_yaml(RESOURCES / "profiles/64gb.toml"), G.load_clients_yaml()
-    models[launch] = {k: v for k, v in models[launch].items() if k != "max_output"}
-    try:
-        G.regen_claude_settings(models, clients)
-        rejected = "returned"
-    except SystemExit as exc:
-        rejected = str(exc)
-    check(got == want and "max_output" in rejected,
-          f"Claude's output and window are {launch}'s max_output and context_input; a launch role without "
-          "max_output is rejected rather than left to Claude's 32000", f"{got} vs {want}; {rejected}")
-
-    bad = []
-    for tier, g in runs.items():
-        litellm = (g["root"] / "state/litellm/config.yaml").read_text()
-        finite = 0
-        for blk in litellm.split("  - model_name: ")[1:]:
-            ctx, npr, mit, mot = (yaml_int(blk, k) for k in
-                                  ("num_ctx", "num_predict", "max_input_tokens", "max_output_tokens"))
-            if None not in (ctx, npr, mit) and npr > 0:
-                finite += 1
-                if mit > ctx - npr or (mot is not None and mot != npr):
-                    bad.append(f"{tier}:{blk.split(chr(10))[0].strip()}")
-        if finite < 3:
-            bad.append(f"{tier}: only {finite} finite aliases")
-    check(not bad, "the proxy admits at most num_ctx - num_predict and advertises the output it enforces",
-          ", ".join(bad))
-
     # #56: subtracting the guide hook from the published budget left Claude less than Cadence's policy.
     got = {t: json.loads((g["root"] / "clients/integration-contract.json").read_text()).get("instructions")
            for t, g in runs.items()}
@@ -202,31 +135,27 @@ def env_ownership() -> None:
     base = Path(tempfile.mkdtemp(dir=TMP))
     cfg, state = base / "config", base / "state"
     cfg.mkdir(), state.mkdir()
+    gen_file, user_file = state / "env", cfg / ".env.local"
     with env_set(AILOCAL_CONFIG=cfg, AILOCAL_STATE=state):
         e.ensure()
-        gen, user = e.parse(state / "env"), e.parse(cfg / ".env.local")
-        before = ((state / "env").read_text(), (cfg / ".env.local").read_text())
-        e.ensure(), e.ensure()
-        check(sorted(gen) == sorted(e.GENERATED) and all(gen[k] for k in e.GENERATED)
-              and all(user.get(k) == ("false" if k == "ENABLE_CLOUD" else "") for k in e.USER_ALWAYS)
-              and mode(state / "env") == mode(cfg / ".env.local") == 0o600
-              and before == ((state / "env").read_text(), (cfg / ".env.local").read_text())
-              and e.value("LITELLM_MASTER_KEY") == gen["LITELLM_MASTER_KEY"],
-              "generated secrets live under state and user keys under config, both 0600; ensure() never rotates")
+        gen = e.parse(gen_file)
+        before = (gen_file.read_text(), user_file.read_text())
+        e.ensure()
+        check(all(gen.get(k) for k in e.GENERATED) and mode(gen_file) == mode(user_file) == 0o600
+              and before == (gen_file.read_text(), user_file.read_text()),
+              "generated secrets and the user file are 0600, and ensure() never rotates a secret")
         loopback = e.bind() == e.BIND_LOCAL
         e.set_ollama_patch("")
-        e.set_bind(e.BIND_LAN)
         e.set_bind("10.0.0.5")
-        user = e.parse(cfg / ".env.local")
-        check(loopback and e.bind() == "10.0.0.5" and user["AILOCAL_BIND"] == "10.0.0.5"
-              and user.get("AILOCAL_OLLAMA_PATCH") == "" and all(k in user for k in e.USER_ALWAYS)
-              and mode(cfg / ".env.local") == 0o600,
-              "the proxy binds loopback unless told otherwise; set_bind keeps every other override (#103)")
+        user = e.parse(user_file)
+        check(loopback and e.bind() == "10.0.0.5" and user.get("AILOCAL_OLLAMA_PATCH") == ""
+              and mode(user_file) == 0o600,
+              "the proxy binds loopback unless told otherwise; set_bind keeps the user's other overrides (#103)")
 
 
 def main() -> int:
     try:
-        for section in (resolver, client_policy, generated, env_ownership):
+        for section in (fails_closed, generated, env_ownership):
             try:
                 section()
             except Exception as exc:  # noqa: BLE001

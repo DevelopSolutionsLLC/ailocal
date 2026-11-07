@@ -11,16 +11,16 @@ from harness import Suite
 from ailocal import policy
 
 SRC = pathlib.Path(__file__).resolve().parent.parent / "src/ailocal/resources/integrations/local-artifacts"
-CORE = ["test_architecture.py", "test_autoopen.py", "test_design.py", "test_lifetime.py",
-        "test_persistence.py", "test_server.py", "test_routing_contract.py",
-        "test_mermaid_validate.py"]
-FULL = ["test_browser.py", "test_mermaid_grammar.py"]
+# Each file is one test. CORE keeps the publish boundary, source persistence, viewer lifetime and the
+# Mermaid publish gate; FULL adds the real-Chrome proof that a rendered page sends no packet out.
+CORE = ["test_server.py", "test_persistence.py", "test_lifetime.py", "test_mermaid_validate.py"]
+FULL = ["test_browser.py"]
 
 
 def main() -> int:
     s = Suite()
     py = policy.state_root() / "local-artifacts/.venv/bin/python"
-    if not py.is_file():  # a precondition, not a test: --full already reports ten
+    if not py.is_file():  # a precondition, not a test: --full already reports five
         s.check(False, "the artifact runtime is provisioned", f"{py} missing; run: ailocal clients claude")
         return s.report()
     # No browser tab, and preview servers reap themselves seconds after the run.

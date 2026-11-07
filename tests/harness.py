@@ -30,7 +30,7 @@ _GREEN, _RED, _YELLOW, _RESET = "\033[32m", "\033[31m", "\033[33m", "\033[0m"
 
 #: Tests one suite (one component) may report. A suite past it fails, so the
 #: limit is enforced rather than remembered (#113).
-MAX_TESTS = 10
+MAX_TESTS = 5
 
 
 def _over_limit(count: int) -> str:

@@ -53,7 +53,7 @@ ShellCheck is required and runs at `warning` severity; the gate fails without it
 These suites are deliberately OUT of the gate because they take minutes, not seconds:
 
 ```sh
-python3 tests/installed-runtime.py [--stack]   # proves the wheel needs no checkout
+python3 tests/installed-runtime.py           # proves the wheel needs no checkout
 python3 tests/measure_geometry.py [--quick]    # re-measures the numbers profiles cite
 python3 tests/measure_cache.py [--quick|--tail N]  # is the KV prefix cache being reused?
 ./tests/artifact-routing.sh [runs]             # does a real model CALL the artifact tool?
