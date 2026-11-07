@@ -74,9 +74,13 @@ openai_base_url = "http://localhost:4000/v1"
 # measured 2026-11-04 on 0.166.0; on slow local prefill each subagent also pays
 # a cold prompt. Re-enable per session with `codex --enable multi_agent` (#62).
 # https://learn.chatgpt.com/docs/config-file/config-basic#feature-flags
+# prevent_idle_sleep holds a system-sleep assertion for each active turn only, so a
+# long local turn is not cut off by idle sleep; display sleep is unaffected. It is
+# experimental and off by default ([REAL] `codex features list`, 0.167.0, 2026-11-07).
 [features]
 multi_agent = false
 goals = false
+prevent_idle_sleep = true
 
 # ── SessionStart hook — per-session scratchpad ──────────────────────────────
 # Creates a private /tmp/ailocal-scratchpad-<uid>/codex-<session_id>/ on session start and

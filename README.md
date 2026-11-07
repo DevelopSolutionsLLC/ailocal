@@ -163,6 +163,8 @@ To override the detected tier: `ailocal profile use 32gb`, then `ailocal start`.
 
 ## What a local session gets
 
+**Sleep during active work.** `codex-local` holds Codex's own idle-sleep assertion for each running turn, as hosted Codex does; Claude Code holds its own while it works. The display can still sleep, and closing the lid still sleeps the Mac.
+
 **Web search.** `claude-local` searches the live web through ailocal's own SearXNG instance and answers with sources. Claude Code may show "0 searches" on a sourced answer; that counter tracks Anthropic-hosted search, which never runs here. A Brave Search key is optional and used only by the research server within a budget: set `BRAVE_API` in `~/.config/ailocal/.env.local`, then `ailocal clients claude`. Details and limits are in [the architecture](docs/architecture.md#local-research).
 
 **Research MCP.** Requests that need documentation, discussion, projects or papers route to the bundled `search` tool. Results carry provider attribution and are indexed snippets, not page reads. See [ADR 014](docs/adr/014-local-research.md).

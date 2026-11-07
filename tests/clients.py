@@ -378,9 +378,9 @@ def drift() -> None:
           "claude-local excludes hosted memory and unused always-on tools (#62)")
     tpl = tomllib.loads((CLIENTS_RES / "codex/config.template.toml").read_text(encoding="utf-8"))
     wrapper = (CLIENTS_RES / "configure.template.zsh").read_text(encoding="utf-8")
-    check(tpl.get("web_search") == "disabled" and tpl["features"] == {"multi_agent": False, "goals": False}
+    check(tpl.get("web_search") == "disabled" and tpl["features"] == {"multi_agent": False, "goals": False, "prevent_idle_sleep": True}
           and "mcp_servers.agent.enabled_tools=[\"model_guide\"]" in wrapper,
-          "codex-local drops hosted web search, subagents, goals and delegate (#62)")
+          "codex-local drops hosted web search, subagents, goals and delegate (#62) and keeps active turns awake (#105)")
     reordered = json.dumps({**{k: v for k, v in doc.items() if k != "//"},
                             **{k: v for k, v in doc.items() if k == "//"}}, indent=2) + "\n"
     server = '[mcp_servers.docs]\nurl = "https://docs.invalid/mcp"\n'
