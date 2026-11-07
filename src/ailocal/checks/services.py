@@ -316,17 +316,24 @@ def check_models_present(required: list[str]) -> CheckResult:
 MANAGED_OLLAMA = pathlib.Path.home() / "Library/LaunchAgents/com.ailocal.ollama.plist"
 
 
+def ollama_listener_pid(timeout: float | None = INSPECT_TIMEOUT) -> str:
+    """Return the pid listening on :11434, or "" if none."""
+    from ailocal.primitives import command_output
+    pids = command_output("lsof", "-nP", "-tiTCP:11434", "-sTCP:LISTEN",
+                          timeout=timeout).split()
+    return pids[0] if pids else ""
+
+
 def _listener_executable() -> str:
     """Return the resolved executable of the process listening on :11434.
 
     lsof's txt entry is the mapped file: symlink target, or a deleted path.
     """
+    pid = ollama_listener_pid()
+    if not pid:
+        return ""
     try:
-        pid = subprocess.run(["lsof", "-nP", "-tiTCP:11434", "-sTCP:LISTEN"], capture_output=True,
-                             text=True, timeout=INSPECT_TIMEOUT).stdout.split()
-        if not pid:
-            return ""
-        out = subprocess.run(["lsof", "-p", pid[0], "-a", "-d", "txt", "-Fn"], capture_output=True,
+        out = subprocess.run(["lsof", "-p", pid, "-a", "-d", "txt", "-Fn"], capture_output=True,
                              text=True, timeout=INSPECT_TIMEOUT).stdout
     except (OSError, subprocess.SubprocessError):
         return ""

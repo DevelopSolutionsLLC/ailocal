@@ -8,20 +8,12 @@ from __future__ import annotations
 import os
 import pathlib
 import shutil
-import subprocess
 
 from . import PASS, WARN, CheckResult
 from ailocal import policy as P
+from ailocal.primitives import command_output
 from .services import INSPECT_TIMEOUT, ollama_loaded
 
-
-
-def _run(cmd: list[str], timeout: int = INSPECT_TIMEOUT) -> str:
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        return r.stdout.strip() if r.returncode == 0 else ""
-    except (OSError, subprocess.TimeoutExpired):
-        return ""
 
 
 def check_env_file() -> CheckResult:
@@ -57,12 +49,13 @@ def check_cli_tools() -> list[CheckResult]:
 
 def _models_dir() -> str:
     """Return the running daemon's OLLAMA_MODELS, else the launchctl value."""
-    pid = _run(["lsof", "-ti", ":11434"]).split("\n")[0]
+    pid = command_output("lsof", "-ti", ":11434",
+                         timeout=INSPECT_TIMEOUT).split("\n")[0]
     if pid:
-        for tok in _run(["ps", "eww", "-p", pid]).split():
+        for tok in command_output("ps", "eww", "-p", pid, timeout=INSPECT_TIMEOUT).split():
             if tok.startswith("OLLAMA_MODELS="):
                 return tok.split("=", 1)[1]
-    return _run(["launchctl", "getenv", "OLLAMA_MODELS"])
+    return command_output("launchctl", "getenv", "OLLAMA_MODELS", timeout=INSPECT_TIMEOUT)
 
 
 def check_model_store() -> list[CheckResult]:
@@ -82,12 +75,14 @@ def check_model_store() -> list[CheckResult]:
         out.append(CheckResult("model-store", WARN,
                                f"OLLAMA_MODELS={target} is not writable — pulls will fail"))
     else:
-        size = _run(["du", "-sh", target]).split("\t")[0] or "?"
+        size = command_output("du", "-sh", target,
+                              timeout=INSPECT_TIMEOUT).split("\t")[0] or "?"
         out.append(CheckResult("model-store", PASS, f"OLLAMA_MODELS={target} ({size})"))
 
     if (home_store.is_dir() and any(home_store.iterdir())
             and str(home_store) != target):
-        size = _run(["du", "-sh", str(home_store)]).split("\t")[0] or "?"
+        size = command_output("du", "-sh", str(home_store),
+                              timeout=INSPECT_TIMEOUT).split("\t")[0] or "?"
         out.append(CheckResult(
             "orphan-store", WARN,
             f"{home_store} holds {size} that Ollama cannot see",
@@ -107,8 +102,8 @@ def check_residency(model: str) -> CheckResult:
 
 def check_parallelism(context: int) -> CheckResult:
     """Report parallelism with context; KV cache is allocated per slot."""
-    npar = os.environ.get("OLLAMA_NUM_PARALLEL") or _run(
-        ["launchctl", "getenv", "OLLAMA_NUM_PARALLEL"]) or "default"
+    npar = os.environ.get("OLLAMA_NUM_PARALLEL") or command_output(
+        "launchctl", "getenv", "OLLAMA_NUM_PARALLEL", timeout=INSPECT_TIMEOUT) or "default"
     return CheckResult("parallelism", PASS,
                        f"OLLAMA_NUM_PARALLEL={npar}, primary context={context} "
                        f"(KV is allocated per slot)")

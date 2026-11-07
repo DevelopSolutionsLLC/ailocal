@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -21,6 +22,16 @@ class Unreachable(OSError):
 def sha256_file(path: Path) -> str:
     with Path(path).open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def command_output(*args: str | Path, timeout: float | None = None) -> str:
+    """Return a command's stripped stdout, or "" if it fails in any way."""
+    try:
+        r = subprocess.run([str(a) for a in args], capture_output=True, text=True,
+                           timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return r.stdout.strip() if r.returncode == 0 else ""
 
 
 def fetch(url: str, *, payload: dict | None = None, headers: dict | None = None,

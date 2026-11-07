@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from . import policy, runtime
+from .primitives import command_output
 from .report import bad, dim, ok, step, warn
 
 LA_DIR = Path.home() / "Library" / "LaunchAgents"
@@ -65,14 +66,6 @@ def _run(*args: str | Path, check: bool = False, capture: bool = False,
          **kw: Any) -> subprocess.CompletedProcess[str]:
     return subprocess.run([str(a) for a in args], check=check, text=True,
                           capture_output=capture, **kw)
-
-
-def _out(*args: str | Path) -> str:
-    try:
-        r = _run(*args, capture=True)
-    except (OSError, subprocess.SubprocessError):
-        return ""
-    return r.stdout.strip() if r.returncode == 0 else ""
 
 
 def _has(cmd: str) -> bool:
@@ -677,10 +670,10 @@ def _migrate_model_store() -> None:
     if entries and all((dst / entry.relative_to(src)).exists() for entry in entries):
         return  # no migration work: do not kill a healthy managed daemon
     step("Migrating existing models to the shared store")
-    if _out("pgrep", "-x", "ollama"):
+    if command_output("pgrep", "-x", "ollama"):
         # Stop the managed daemon only; ad-hoc `ollama serve` is the operator's.
         _bootout("com.ailocal.ollama")
-        if not _wait(lambda: not _out("pgrep", "-x", "ollama"), 12, 0.5):
+        if not _wait(lambda: not command_output("pgrep", "-x", "ollama"), 12, 0.5):
             raise RuntimeError("an unmanaged ollama process is running; stop it, then re-run "
                                "ailocal install so the model store can move")
     moved = kept = 0
@@ -707,7 +700,7 @@ def _prepare_model_store() -> None:
     if os.access(store, os.W_OK):
         _run("chmod", "g+rwxs", store, capture=True)
     else:
-        warn(f"{store} is not writable by {_out('id', '-un')} — models will not pull here.")
+        warn(f"{store} is not writable by {command_output('id', '-un')} — models will not pull here.")
 
 
 def remove_login_agents() -> None:
@@ -835,9 +828,9 @@ def _activate_ollama(binary: str) -> None:
 
 def _port_owner() -> tuple[str, str]:
     """Return (pid on :11434, com.ailocal.ollama pid); either may be ""/"-"."""
-    holder = next((line.split()[1] for line in
-                   _out("lsof", "-nP", "-iTCP:11434", "-sTCP:LISTEN").splitlines()[1:]), "")
-    agent = next((line.split()[0] for line in _out("launchctl", "list").splitlines()
+    from .checks.services import ollama_listener_pid
+    holder = ollama_listener_pid(timeout=None)
+    agent = next((line.split()[0] for line in command_output("launchctl", "list").splitlines()
                   if line.endswith("\tcom.ailocal.ollama")), "")
     return holder, agent
 
@@ -899,7 +892,7 @@ SERVICES_GB, HEADROOM_GB = 3, 5
 
 def _installed_models() -> dict:
     sizes = {}
-    for line in _out(policy.ollama_binary(), "list").splitlines()[1:]:
+    for line in command_output(policy.ollama_binary(), "list").splitlines()[1:]:
         parts = line.split()
         if len(parts) >= 4:
             try:
@@ -913,7 +906,7 @@ def _installed_models() -> dict:
 def pull_models() -> int:
     """Pull the active tier's enabled models, deduped, minus what is on disk."""
     binary = policy.ollama_binary()
-    if not _out(binary, "list"):
+    if not command_output(binary, "list"):
         raise SystemExit("  Ollama daemon is not responding.\n"
                          f"    launchctl kickstart -k gui/{os.getuid()}/com.ailocal.ollama")
 
@@ -982,7 +975,7 @@ def pull_models() -> int:
 # tier and .env
 
 def _memory_gb() -> int:
-    return int(_out("sysctl", "-n", "hw.memsize") or 0) // 1024 ** 3
+    return int(command_output("sysctl", "-n", "hw.memsize") or 0) // 1024 ** 3
 
 
 def tier_for_memory(gb: int) -> str | None:
@@ -1215,7 +1208,7 @@ def audit() -> list:
             note(f"{label} not installed")
         elif label.endswith(("-env", "-watch")):
             fine(f"{label} installed (on demand: not-running is correct)")
-        elif "state = running" in _out("launchctl", "print", f"gui/{os.getuid()}/{label}"):
+        elif "state = running" in command_output("launchctl", "print", f"gui/{os.getuid()}/{label}"):
             fine(f"{label} running")
         else:
             flag("STALE", f"{label} is installed but not running", plist,
@@ -1244,7 +1237,7 @@ def audit() -> list:
                       f"gui/{os.getuid()}/com.ailocal.ollama")
     elif holder and any(
             "(deleted)" in line and str(LOG_DIR) in line
-            for line in _out("lsof", "-p", holder).splitlines()):
+            for line in command_output("lsof", "-p", holder).splitlines()):
         flag("STALE", "server is writing to a deleted log file",
              LOG_DIR, f"launchctl kickstart -k gui/{os.getuid()}/com.ailocal.ollama")
     else:

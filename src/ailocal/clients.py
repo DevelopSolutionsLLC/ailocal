@@ -195,6 +195,17 @@ def backup(path: Path) -> bool:
 RETIRED_UNMANAGED = {"prompts": ("analyze-repo.md", "local-build.md")}
 
 
+def _remove_owned(target: Path) -> bool:
+    """Remove one manifest-listed entry; a symlink is someone else's, kept."""
+    if target.is_symlink() or not target.exists():
+        return False
+    if target.is_dir():
+        shutil.rmtree(target, ignore_errors=True)
+    else:
+        target.unlink(missing_ok=True)
+    return True
+
+
 def retire_managed_dir(dst: Path) -> None:
     """Remove a directory ailocal no longer ships.
 
@@ -208,14 +219,7 @@ def retire_managed_dir(dst: Path) -> None:
              else list(RETIRED_UNMANAGED.get(dst.name, ())))
     removed = manifest.is_file()
     for name in names:
-        target = dst / name
-        if target.is_symlink() or not target.exists():
-            continue                      # someone else's link
-        if target.is_dir():
-            shutil.rmtree(target, ignore_errors=True)
-        else:
-            target.unlink(missing_ok=True)
-        removed = True
+        removed = _remove_owned(dst / name) or removed
     manifest.unlink(missing_ok=True)
     try:
         dst.rmdir()                       # only when empty
@@ -230,16 +234,10 @@ def install_managed_dir(src: Path, dst: Path) -> None:
     dst.mkdir(parents=True, exist_ok=True)
     manifest = dst / MANIFEST_NAME
 
-    # Prune only our manifest names, never someone else's symlink.
     if manifest.is_file():
         for name in manifest.read_text().split():
-            target = dst / name
-            if (src / name).exists() or target.is_symlink():
-                continue
-            if target.is_dir():
-                shutil.rmtree(target, ignore_errors=True)
-            else:
-                target.unlink(missing_ok=True)
+            if not (src / name).exists():
+                _remove_owned(dst / name)
 
     shipped = sorted(p for p in src.iterdir())
     manifest.write_text("".join(f"{p.name}\n" for p in shipped))
