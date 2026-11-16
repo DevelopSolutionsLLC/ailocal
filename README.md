@@ -38,7 +38,7 @@ codex-local         # Codex CLI against your local models
 | `ailocal check` | verify the whole installation end to end |
 | `ailocal clients` | configure clients installed later; `--remove` reverses it |
 | `ailocal profile use <tier>` | override the detected tier, then `ailocal start` |
-| `ailocal bind lan` / `local` | expose the proxy on the network, or not (default `local`) |
+| `ailocal bind lan` / `local` | expose the proxy on the LAN over TLS only, or not (default `local`) |
 | `ailocal docker check` / `apply` / `restore` | compare or apply ailocal's Docker Desktop settings |
 | `ailocal update --json` / `ailocal audit` | newer pinned-image candidates / advisories against the pins |
 | `ailocal teardown` | remove ailocal, keeping models and profiles |

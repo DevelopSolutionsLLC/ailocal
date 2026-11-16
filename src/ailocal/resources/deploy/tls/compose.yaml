@@ -1,0 +1,63 @@
+# ── ailocal :: TLS sidecar (the only listener off loopback) ─────────────────
+#
+# The THIRD file of the ailocal project, merged by src/ailocal/runtime.py only
+# while `ailocal bind` names an off-loopback address; switching back to local
+# drops it and `up --remove-orphans` removes the container. The proxy itself
+# always publishes 127.0.0.1 (deploy/litellm/compose.yaml), so plain HTTP
+# carrying the master key never leaves this machine (decision 019).
+#
+# ghostunnel terminates TLS on the LAN address and forwards bytes, without
+# parsing HTTP, to litellm:4000 over the internal network. --unsafe-target is
+# ghostunnel's name for a non-localhost target; the target is the proxy's
+# Compose service, never a host. --disable-authentication drops ghostunnel's
+# default client-certificate requirement: clients authenticate to the proxy
+# with the master key, and the CA authenticates the server to them.
+
+services:
+
+  tls:
+    # ghostunnel v1.11.5 (2026-10-21, Go 1.27.3 security release), distroless
+    # variant: no shell, runs as uid 65532. Pinned by the index digest, read
+    # from Docker Hub 2026-11-16; Apache-2.0; no GitHub or OSV advisory against
+    # any release on 2026-11-16. `ailocal audit` maps it to
+    # ghostunnel/ghostunnel. The image has no HTTP client, so there is no
+    # container healthcheck: `ailocal start` and `ailocal check` probe the LAN
+    # address over TLS with the ailocal CA instead.
+    image: ghostunnel/ghostunnel:v1.11.5-distroless@sha256:a3199c5d87b90ebcaf83ac03ae4ae0c229e41118b6fc7ec5a7a4deb38ec6f0a4
+    container_name: ${AILOCAL_TLS_CONTAINER:-ailocal-tls}
+    restart: unless-stopped
+    # The key is 0600 in a 0700 directory; the sidecar runs as its owner, the
+    # host user (runtime.compose_env), never root.
+    user: "${AILOCAL_UID:?run via `ailocal`}:${AILOCAL_GID:?run via `ailocal`}"
+    mem_limit: 128m
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - ailocal_net
+    depends_on:
+      - litellm
+    command:
+      - server
+      - --listen=0.0.0.0:4443
+      - --target=litellm:4000
+      - --unsafe-target
+      - --cert=/tls/server.pem
+      - --key=/tls/server.key
+      - --disable-authentication
+      # ghostunnel's Landlock sandbox denies reading a Docker Desktop bind
+      # mount (4.99.0, linuxkit 7.0.14, 2026-11-16: "permission denied";
+      # a named volume loads). Read-only rootfs, no capabilities and a
+      # mount holding only the server pair remain (decision 019).
+      - --disable-landlock
+      # `ailocal start` reissues before expiry; this picks the new pair up.
+      - --timed-reload=1h
+      - --quiet=conns
+    volumes:
+      # Only the server pair. The CA key never enters a container.
+      - ${AILOCAL_STATE:?run via `ailocal`}/tls/server:/tls:ro
+    ports:
+      # The LAN address `ailocal bind` validated; never 0.0.0.0 or loopback.
+      - "${AILOCAL_BIND:?run via `ailocal bind`}:${AILOCAL_TLS_PORT:-4443}:4443"

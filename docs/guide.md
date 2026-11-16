@@ -94,12 +94,10 @@ The patched Ollama runtime is built only for `--ollama-patch` or a role that dec
 | | Default | Change with |
 |---|---|---|
 | Inference | Ollama via LiteLLM on `127.0.0.1:4000` | — |
-| Proxy binding | this machine only | `ailocal bind lan` / `local`, applied on the next `ailocal start` |
-| LiteLLM and SearXNG | pinned by digest; `ailocal check` reports versions | a deliberate upgrade |
+| Proxy reachability | this machine only, plain HTTP on `127.0.0.1:4000` | `ailocal bind lan` adds HTTPS on the LAN address; `ailocal bind local` removes it; applied on the next `ailocal start` |
+| LiteLLM, SearXNG and the TLS sidecar | pinned by digest; `ailocal check` reports versions | a deliberate upgrade |
 | Web search | ailocal's SearXNG, keyless | `BRAVE_API` adds budgeted Brave to research |
 | Hosted Claude/Codex settings | never written | native client configuration; documentation MCPs come from Cadence |
-
-`ailocal bind lan` opens only the proxy, with the master key as its only protection; `ailocal check` warns until `ailocal bind local`. Ollama and SearXNG never leave loopback.
 
 Every variable below is read by the `claude-local` wrapper for that process only; set it inline (`VAR=1 claude-local`) or export it. Nothing is written to disk and hosted `claude` is unaffected.
 
@@ -112,6 +110,17 @@ Every variable below is read by the `claude-local` wrapper for that process only
 | `AILOCAL_PROXY` | `http://127.0.0.1:4000` | URL | Full base URL override. |
 | `AILOCAL_STATE` | `~/.local/state/ailocal` | path | State root (env file, runtimes). |
 | `AILOCAL_PRIMARY_ALIAS_OVERRIDE`, `AILOCAL_FAST_ALIAS_OVERRIDE` | unset | a served LiteLLM alias | Points every slot routed to that role at the alias; the primary override also passes `--model`. Fails closed if LiteLLM does not serve it. |
+
+### Using the proxy from another machine
+
+`ailocal bind lan` makes the proxy reachable from your network over TLS only; local clients keep plain HTTP on `127.0.0.1:4000` and need no change. It picks the address of the default route (`ailocal bind 192.168.1.20` names one), which must be a private IPv4 address of this Mac, creates a local certificate authority on first use and issues a certificate for that address and `<LocalHostName>.local`. If it cannot, it refuses and changes nothing. `ailocal start` then runs a TLS sidecar on that address only, `https://<address>:4443` (`AILOCAL_TLS_PORT` changes the port), in front of the proxy. Ollama and SearXNG never leave loopback.
+
+On each client machine:
+
+1. Copy `~/.local/state/ailocal/tls/ca/ca.pem` (the public certificate; never copy a `.key` file) and trust it: on macOS `sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ca.pem`; for a Node client such as Claude Code, `NODE_EXTRA_CA_CERTS=/path/to/ca.pem` also works.
+2. Point the client at `https://<address>:4443` with the master key from `~/.local/state/ailocal/env`. Use `https://`: a client set to `http://` sends its request, key included, before the connection fails.
+
+The CA can sign only private-range addresses and `.local` names, so its key cannot impersonate a public site to a machine that trusts it. `ailocal start` renews the server certificate within 30 days of expiry under the same CA, so clients keep working. If the Mac's address changes, `ailocal start` refuses until `ailocal bind lan` reissues the certificate, again under the same CA. Deleting the state root creates a new CA that every client must trust again. `ailocal bind status` shows the URL, the running sidecar and any certificate problem; `ailocal check` fails if anything off loopback answers plain HTTP or the certificate does not verify. A bind made before 0.16 (`AILOCAL_BIND=0.0.0.0`) is refused by `ailocal start` until you run `ailocal bind lan` or `ailocal bind local`.
 
 ## Homebrew pinning
 
@@ -130,7 +139,7 @@ To upgrade ailocal: `pipx install --force` the new release tag, then `ailocal st
 
 ## Removing ailocal
 
-`ailocal teardown` removes the containers and volumes, the three login agents and their published `OLLAMA_*` environment, `~/Library/Logs/ailocal`, intact owned patched runtimes, generated presets, Docker Desktop settings it changed (restored), and every client entry it can prove it wrote outside its roots: the two `~/.zshrc` lines, the Copilot instruction file, the `research` and `agent` MCP entries, the VS Code provider group and recommended settings still at their shipped value. `ailocal clients --remove` reverses the client entries alone. Teardown keeps `~/.config/ailocal`, the client root and `/Users/Shared/ollama/models`; delete those by hand.
+`ailocal teardown` removes the containers and volumes, the three login agents and their published `OLLAMA_*` environment, `~/Library/Logs/ailocal`, intact owned patched runtimes, generated presets, Docker Desktop settings it changed (restored), and every client entry it can prove it wrote outside its roots: the two `~/.zshrc` lines, the Copilot instruction file, the `research` and `agent` MCP entries, the VS Code provider group and recommended settings still at their shipped value. `ailocal clients --remove` reverses the client entries alone. Teardown keeps `~/.config/ailocal`, the client root and `/Users/Shared/ollama/models`; delete those by hand. If you used `ailocal bind lan`, also delete `~/.local/state/ailocal/tls` and remove the ailocal CA from every machine that trusts it.
 
 ## Troubleshooting
 

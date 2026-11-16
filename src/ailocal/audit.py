@@ -51,6 +51,7 @@ _GH_ADVISORIES = ("https://api.github.com/repos/{repo}/security-advisories"
 IMAGE_SOURCES = {
     "ghcr.io/berriai/litellm": ("BerriAI/litellm", "litellm"),
     "searxng/searxng": ("searxng/searxng", None),
+    "ghostunnel/ghostunnel": ("ghostunnel/ghostunnel", None),
 }
 #: image → interpreter its running container is probed for. Declared: an image
 #: carries its own interpreter, which no host upgrade reaches (#125).

@@ -59,7 +59,7 @@ USAGE: dict[str, str] = {
     "start":    "usage: ailocal start [--no-wait]",
     "stop":     "usage: ailocal stop [--volumes]",
     "teardown": "usage: ailocal teardown [--images]",
-    "bind":     "usage: ailocal bind [lan|local|<ipv4>|status]",
+    "bind":     "usage: ailocal bind [lan|local|<private ipv4 of this machine>|status]",
     "docker":   "usage: ailocal docker [check|apply [--yes]|restore]",
     "clients":  "usage: ailocal clients [vscode|codex|claude|all ...] [--dry-run]",
     "mcp":      "usage: ailocal mcp research [--enable-answer]",
