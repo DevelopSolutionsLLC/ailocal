@@ -14,6 +14,8 @@ A registry 404 is an answer (how malware is withdrawn), not a failed lookup.
 Images map explicitly to a GitHub repository; unmapped ones are unverified.
 Running versions and digests are audited beside declared ones. Each run writes
 `state_root()/audit/local.json` for Cadence; a week-old record is unverified.
+The record also lists the interpreter each running image ships (`interpreters`),
+which Cadence audits; only a new image changes it.
 """
 from __future__ import annotations
 
@@ -30,7 +32,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
-SCHEMA_VERSION = 2   # 2: `modified` on advisories, `running` notes, `record`, `mode`
+SCHEMA_VERSION = 3   # 3: `interpreters`; 2: `modified`, `running` notes, `record`, `mode`
 
 CLEAN = "clean"
 AFFECTED = "affected"
@@ -50,6 +52,12 @@ IMAGE_SOURCES = {
     "ghcr.io/berriai/litellm": ("BerriAI/litellm", "litellm"),
     "searxng/searxng": ("searxng/searxng", None),
 }
+#: image → interpreter its running container is probed for. Declared: an image
+#: carries its own interpreter, which no host upgrade reaches (#125).
+IMAGE_INTERPRETERS = {
+    "ghcr.io/berriai/litellm": "CPython",
+    "searxng/searxng": "CPython",
+}
 OLLAMA_MODULE = "github.com/ollama/ollama"
 OLLAMA_REPO = "ollama/ollama"
 
@@ -59,6 +67,8 @@ COVERAGE_GAPS = [
     "the running Ollama daemon is identified by /api/version only; payload integrity is `ailocal check`'s",
     "Go modules of the patched Ollama build beyond [security_dependencies] are not resolved",
     "model weights, AI clients and MCP packages: no advisory source is queried",
+    "each running image's interpreter is recorded under `interpreters`, not audited here; "
+    "`cadence audit --local` audits it",
     "Go module retractions are not checked",
 ]
 
@@ -174,11 +184,26 @@ def _tag_version(tag: str) -> str:
 
 
 
+def interpreter(image: str, container: str, probe: Callable[[str], str]) -> dict:
+    """Return the record entry for the interpreter a running image ships."""
+    entry = {"image": image, "container": container,
+             "implementation": IMAGE_INTERPRETERS[image], "version": "",
+             "probe": f"docker exec {container} python3 --version" if container else "",
+             "notes": []}
+    if not container:
+        entry["notes"].append("not running")
+    elif not (version := probe(container)):
+        entry["notes"].append("`python3 --version` named no release version")
+    else:
+        entry["version"] = version
+    return entry
+
+
 def running() -> dict:
-    """Return daemon version (or None) and running name, digest per image."""
+    """Return the daemon version and each image's container and interpreter."""
     from .checks import services
     from .update import _split
-    out: dict = {"ollama": None, "images": {}}
+    out: dict = {"ollama": None, "images": {}, "interpreters": []}
     try:
         out["ollama"] = services.http_json(f"{services.OLLAMA}/api/version").get("version")
     except services.Unreachable:
@@ -189,6 +214,9 @@ def running() -> dict:
             out["images"][repo] = services._running_digest(repo)
         except Exception:   # no docker: nothing is running
             out["images"][repo] = ("", "")
+        if repo in IMAGE_INTERPRETERS:
+            out["interpreters"].append(
+                interpreter(repo, out["images"][repo][0], services.container_python))
     return out
 
 
@@ -365,8 +393,13 @@ def check(p: Pin, fetch: Callable[..., tuple[int, Any]] | None = None) -> Result
     return r
 
 
-def report(fetch: Callable[..., tuple[int, Any]] | None = None, pin_list: list[Pin] | None = None) -> dict:
-    results = [check(p, fetch) for p in (pins() if pin_list is None else pin_list)]
+def report(fetch: Callable[..., tuple[int, Any]] | None = None, pin_list: list[Pin] | None = None,
+           live: dict | None = None) -> dict:
+    """Audit the pins and record running interpreters; `live` is running()'s."""
+    if pin_list is None:
+        state = live = running() if live is None else live
+        pin_list = pins(lambda: state)
+    results = [check(p, fetch) for p in pin_list]
     worst = (YANKED if any(r.result == YANKED for r in results)
              else AFFECTED if any(r.result == AFFECTED for r in results)
              else UNVERIFIED if any(r.result == UNVERIFIED for r in results)
@@ -374,7 +407,8 @@ def report(fetch: Callable[..., tuple[int, Any]] | None = None, pin_list: list[P
     return {"schema_version": SCHEMA_VERSION, "project": "ailocal", "kind": "advisory-audit",
             "mode": "local", "status": worst,
             "queried_at": _now(), "coverage_gaps": COVERAGE_GAPS,
-            "results": [asdict(r) for r in results]}
+            "results": [asdict(r) for r in results],
+            "interpreters": list((live or {}).get("interpreters", []))}
 
 
 def record_path() -> Path:
@@ -418,6 +452,11 @@ def _print(doc: dict) -> None:
         for n in r["notes"]:
             print(f"        {n}")
         print(f"        sources: {', '.join(r['sources']) or 'none answered'}")
+    for i in doc.get("interpreters", []):
+        print(f"  · {i['implementation']} {i['version'] or '—'}   "
+              f"[{i['container'] or i['image']} image]")
+        for n in i["notes"]:
+            print(f"        {n}")
     print("\n  Not covered:")
     for g in doc["coverage_gaps"]:
         print(f"    - {g}")

@@ -3,13 +3,16 @@
 
 A fake fetcher stands in for OSV, the registries and GitHub.
 """
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from harness import Suite  # noqa: E402
-from ailocal import audit  # noqa: E402
+from ailocal import audit, update  # noqa: E402
+from ailocal.checks import services  # noqa: E402
 from ailocal import version_policy as vp  # noqa: E402
 
 S = Suite("AUDIT")
@@ -63,17 +66,47 @@ unread = {"OSV outage": audit.check(NET, fetcher(down=("osv.dev",))).result,
 check(set(unread.values()) == {audit.UNVERIFIED},
       "an advisory answer that could not be read whole is UNVERIFIED, never CLEAN", unread)
 r = audit.check(LITELLM, fetcher(osv={"litellm": [{"id": "MAL-2026-2144", "summary": "stealer", "affected": []}]}))
-check(r.result == audit.AFFECTED and r.advisories[0]["malicious"], "a malicious-package record is AFFECTED and flagged", r)
 hit = gh(ghsa(">= 1.100.0, < 1.107.1"))
-check(hit.result == audit.AFFECTED and hit.advisories[0]["fixed"] == ["1.107.1"]
+check(r.result == audit.AFFECTED and r.advisories[0]["malicious"]
+      and hit.result == audit.AFFECTED and hit.advisories[0]["fixed"] == ["1.107.1"]
       and {gh(ghsa(rng)).result for rng in (">= 1.104.0rc1, < 1.104.0rc2", "< 1.99.0")} == {audit.CLEAN},
-      "a publisher range is matched by version order: inside is AFFECTED with its fix, outside is CLEAN", hit)
+      "a malicious record is AFFECTED and flagged; a publisher range is matched by version order: "
+      "inside is AFFECTED with its fix, outside is CLEAN", (r, hit))
 codes = {"clean": audit.exit_code(audit.report(fetch=fetcher(), pin_list=[LITELLM, NET])),
          "only unverified": audit.exit_code(audit.report(fetch=fetcher(down=("osv.dev",)), pin_list=[NET])),
          "yank beside an outage": audit.exit_code(audit.report(
              fetch=fetcher(status={"pypi.org": 404}, down=("osv.dev",)), pin_list=[LITELLM, NET]))}
 check(codes == {"clean": 0, "only unverified": 2, "yank beside an outage": 1},
       "exit status: clean 0, unverified 2, and an observed yank outranks a later outage", codes)
+
+S.section("image interpreters (#125)")
+LITELLM_IMAGE = "ghcr.io/berriai/litellm"
+IMAGES = [f"{LITELLM_IMAGE}:v1.106.5@sha256:aa", "searxng/searxng:2026.10.17@sha256:bb"]
+ran: list[list[str]] = []
+
+
+def docker(cmd, timeout=0, env=None):
+    """Answer like Docker: containers run 3.13.17; only `pulled` is local."""
+    ran.append(cmd)
+    ok = cmd[1] == "exec" or "pulled" in cmd
+    return subprocess.CompletedProcess(cmd, 0 if ok else 1, "Python 3.13.17\n" if ok else "", "")
+
+
+with mock.patch.multiple(services, _run=docker, declared_images=lambda: IMAGES,
+                         http_json=mock.Mock(side_effect=services.Unreachable),
+                         _running_digest=lambda repo: ("ailocal-litellm", "sha256:aa")
+                         if repo == LITELLM_IMAGE else ("", "")):
+    doc = audit.report(fetch=fetcher(), pin_list=[], live=audit.running())
+    notes = (update.interpreter_notes(LITELLM_IMAGE, "", "unpulled")
+             + update.interpreter_notes(LITELLM_IMAGE, "", "pulled"))
+got = [(i["container"], i["version"], i["notes"]) for i in doc["interpreters"]]
+check(doc["schema_version"] == 3
+      and got == [("ailocal-litellm", "3.13.17", []), ("", "", ["not running"])]
+      and "not pulled" in notes[0] and notes[1] == "candidate ships CPython 3.13.17"
+      and not any(c[1] == "run" and "unpulled" in c for c in ran)
+      and any(c[1] == "run" and c[2:6] == ["--rm", "--pull", "never", "--network"] for c in ran),
+      "the record names each running image's CPython; an update candidate's is read only "
+      "from an image already pulled, never by pulling it", (got, notes, ran))
 
 S.section("release selection")
 NOW = datetime(2026, 11, 7, 12, tzinfo=timezone.utc)

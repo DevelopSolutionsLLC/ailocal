@@ -104,6 +104,30 @@ def _split(ref: str) -> tuple[str, str, str]:
     return repo, tag, digest
 
 
+def interpreter_notes(repo: str, name: str, candidate: str) -> list[str]:
+    """Name the interpreter the running and the candidate image ship.
+
+    A promotion is the only thing that changes it (#125); an image that is
+    not pulled stays unread rather than pulled.
+    """
+    from . import audit
+    from .checks import services as sv
+    impl = audit.IMAGE_INTERPRETERS.get(repo)
+    if not impl:
+        return []
+    out = []
+    if name:
+        got = sv.container_python(name)
+        out.append(f"running image ships {impl} {got}" if got
+                   else f"running image: `python3 --version` named no release in {name}")
+    if candidate:
+        got = sv.image_python(candidate)
+        out.append(f"candidate {candidate} is not pulled; `docker pull` it to read its {impl}"
+                   if got is None else f"candidate ships {impl} {got}" if got
+                   else f"candidate {candidate}: `python3 --version` named no release")
+    return out
+
+
 def _images(mode: str) -> list[Component]:
     from .checks import services as sv
     from .checks import CheckStatus
@@ -131,10 +155,11 @@ def _images(mode: str) -> list[Component]:
         repo, tag, digest = _split(ref)
         c = Component(name=repo.rpartition("/")[2] or repo, declared=tag or digest[:19],
                       update_method="compose", requires_local_validation=True)
+        container = ""
         if mode == LOCAL:
-            _name, running = sv._running_digest(repo)
+            container, running = sv._running_digest(repo)
             c.installed = (running[:19] if running
-                           else "not running" if not _name else "no repo digest")
+                           else "not running" if not container else "no repo digest")
         r = by_repo.get(repo)
         if r is None:
             c.state = DEGRADED
@@ -151,6 +176,9 @@ def _images(mode: str) -> list[Component]:
             c.notes.append(r.summary or "upstream discovery unavailable")
         if not tag:
             c.notes.append("declared by digest only; no proven version tag")
+        detail = (r.detail or "") if r is not None and c.state == AVAILABLE else ""
+        c.notes += interpreter_notes(repo, container, detail.removeprefix(sv.CANDIDATE)
+                                     if detail.startswith(sv.CANDIDATE) else "")
         out.append(c)
     return out
 

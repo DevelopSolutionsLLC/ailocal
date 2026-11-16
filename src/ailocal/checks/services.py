@@ -126,6 +126,28 @@ def container_file(path: str, name: str = CONTAINER) -> str | None:
     return r.stdout if r.returncode == 0 else None
 
 
+def _python_version(r: subprocess.CompletedProcess) -> str:
+    # A pre-release reads as "", never as the release it precedes.
+    m = re.fullmatch(r"Python (\d+\.\d+\.\d+)\+?", (r.stdout + r.stderr).strip())
+    return m.group(1) if r.returncode == 0 and m else ""
+
+
+def container_python(name: str = CONTAINER) -> str:
+    """Return `python3 --version` inside a running container, or ""."""
+    return _python_version(_run(["docker", "exec", name, "python3", "--version"]))
+
+
+def image_python(ref: str) -> str | None:
+    """Return a local image's `python3 --version`; None when it is not pulled.
+
+    Never pulls: a candidate image is fetched by the human reviewing it.
+    """
+    if _run(["docker", "image", "inspect", ref]).returncode != 0:
+        return None
+    return _python_version(_run(["docker", "run", "--rm", "--pull", "never", "--network", "none",
+                                 "--entrypoint", "python3", ref, "--version"], timeout=60))
+
+
 def check_litellm_version(name: str = CONTAINER) -> CheckResult:
     """Check the running LiteLLM is the validated one; unverifiable fails.
 
@@ -727,6 +749,10 @@ def check_provenance(images: list[str]) -> list[CheckResult]:
     return out
 
 
+#: Prefix of an available update's `detail`; the rest is a pullable reference.
+CANDIDATE = "candidate "
+
+
 def check_updates(images: list[str]) -> list[CheckResult]:
     """Discover upstream versions; never pull, never rewrite a pin.
 
@@ -785,6 +811,8 @@ def check_updates(images: list[str]) -> list[CheckResult]:
             out.append(CheckResult("update", WARN,
                                    f"{repo}: {newest} available for review"
                                    + (f" ({why})" if "litellm" in repo else ""),
+                                   detail=f"{CANDIDATE}{repo}@{remote}" if remote
+                                   else f"{CANDIDATE}{candidate}",
                                    remediation="edit the digest in "
                                                "deploy/*/compose.yaml, then "
                                                "ailocal start, then run the gate"))
