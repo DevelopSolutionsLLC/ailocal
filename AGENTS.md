@@ -42,7 +42,7 @@ python3 tests/gate.py          # the regression gate
 python3 tests/gate.py --full   # adds the client compatibility matrix; required before a release
 ```
 
-The gate runs one suite per area — `policy`, `clients`, `install`, `audit`, `ollama-patch`, `gateway`, `gateway-impl` (inside the proxy image), `guidance`, `research`, `artifacts`, `checks`, `measurement-contracts` — then the repository invariants. Each suite runs alone as `python3 tests/<name>.py`.
+The gate runs one suite per area — `policy`, `clients`, `install`, `audit`, `ollama-patch`, `gateway`, `gateway-impl` (inside the proxy image), `guidance`, `research`, `artifacts`, `checks`, `tls`, `measurement-contracts` — then the repository invariants. Each suite runs alone as `python3 tests/<name>.py`.
 
 To test against scratch roots, set `AILOCAL_CONFIG`, `AILOCAL_CLIENTS`, `AILOCAL_STATE`, `AILOCAL_RUNTIMES`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `AILOCAL_VSCODE_USER`. Never point `HOME` elsewhere: a real CLI then looks for a login keychain there and macOS shows a dialog.
 
@@ -111,7 +111,7 @@ Only `src/`, `tests/`, `docs/` and project metadata. No generated artifact is ev
 - ailocal installs no language server. It enables the official plugin for a server already on PATH, in its own root only.
 - Codex research MCP dispatch is measured on Codex 0.163.0 through the local proxy. Other MCP servers require their own evidence before registration.
 - Python is standard library only.
-- Ports bind `127.0.0.1`. Never commit secrets.
+- Ports bind `127.0.0.1`; the one exception is the TLS sidecar on the private address `ailocal bind` validated ([019](docs/decisions.md#019-off-loopback-the-proxy-is-reached-only-through-a-tls-sidecar)). Plain HTTP never leaves loopback. Never commit secrets.
 
 ## Change discipline
 

@@ -6,6 +6,7 @@ SearXNG settings and the readiness signal.
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -133,6 +134,9 @@ def compose_argv(args: Iterable[object]) -> list[str]:
         argv += ["--env-file", str(f)]
     argv += ["-f", str(data / "deploy" / "litellm" / "compose.yaml"),
              "-f", str(data / "deploy" / "searxng" / "compose.yaml")]
+    # Off loopback only; on loopback `up --remove-orphans` removes the sidecar.
+    if environment.bind() != environment.BIND_LOCAL:
+        argv += ["-f", str(data / "deploy" / "tls" / "compose.yaml")]
     return argv + [str(a) for a in args]
 
 
@@ -142,6 +146,7 @@ def compose_env() -> dict:
     env["AILOCAL_STATE"] = str(policy.state_root())
     env["AILOCAL_SEARXNG_SETTINGS"] = str(searxng_settings())
     env["AILOCAL_PROXY"] = proxy_url()
+    env["AILOCAL_UID"], env["AILOCAL_GID"] = str(os.getuid()), str(os.getgid())
     return env
 
 
@@ -367,6 +372,7 @@ def _preflight() -> None:
 
 def cmd_start(argv: list[str]) -> int:
     no_wait = "--no-wait" in argv
+    lan, issued = _require_tls()
     _preflight()
 
     # Derived config: editing a profile and starting is the whole loop.
@@ -390,6 +396,8 @@ def cmd_start(argv: list[str]) -> int:
         ok("containers recreated (routing/persona/hook changes are now live)")
     stamp.parent.mkdir(parents=True, exist_ok=True)
     stamp.write_text(current)
+    if issued:
+        compose("up", "-d", "--force-recreate", "tls")
 
     if no_wait:
         ok("Services launched (skipping health wait)")
@@ -398,9 +406,21 @@ def cmd_start(argv: list[str]) -> int:
         if not wait_ready(30, progress=True):
             warn("LiteLLM did not become ready after 90s")
             print("  Check logs: docker logs ailocal-litellm")
+        if lan:
+            from . import tls
+            from .primitives import wait_until
+            step(f"Waiting for the TLS sidecar on {tls.url(lan)}")
+            if wait_until(lambda: not tls.probe(lan), 10, 1):
+                ok("TLS verified against the ailocal CA")
+            else:
+                warn(f"the TLS sidecar did not answer: {tls.probe(lan)}")
+                print("  Check logs: docker logs ailocal-tls")
 
     step("ailocal is running")
     print(f"\n  LiteLLM API  →  {proxy_url()}\n")
+    if lan:
+        from . import tls
+        print(f"  LAN API      →  {tls.url(lan)}  (clients trust {tls.ca_cert()})\n")
     print("  Clients:  ailocal clients     (Claude Code, Codex, VS Code)")
     print("  Inspect:  ailocal status")
     return 0
@@ -424,49 +444,97 @@ def cmd_stop(argv: list[str]) -> int:
     return 0
 
 
-def cmd_bind(argv: list[str]) -> int:
-    """Set or show where the proxy listens: lan|local|<ipv4>|status.
+def _require_tls() -> tuple[str, list[str]]:
+    """Return (LAN address, what was issued); ("", []) on loopback.
 
-    Only the proxy authenticates, so only it moves; Ollama and SearXNG stay on
-    loopback. Written to .env.local; applied by the next `ailocal start`.
+    Off loopback the proxy is reachable only through the TLS sidecar, so a
+    bind whose certificate cannot be issued and verified refuses to start.
     """
-    from . import environment
+    from . import environment, tls
+    address = environment.bind()
+    if address == environment.BIND_LOCAL:
+        return "", []
+    refused = ("TLS_BIND_REFUSED: AILOCAL_BIND={} cannot be served over TLS: {}; "
+               "run `ailocal bind lan` (or `ailocal bind local`)")
+    if why := tls.address_error(address):
+        raise _fail(refused.format(address, why))
+    try:
+        issued = tls.ensure(address)
+    except RuntimeError as e:
+        raise _fail(refused.format(address, e)) from None
+    if problems := tls.problems(address):
+        raise _fail(refused.format(address, "; ".join(problems)))
+    for line in issued:
+        ok(line)
+    return address, issued
+
+
+def cmd_bind(argv: list[str]) -> int:
+    """Set or show where the proxy is reachable: lan|local|<ipv4>|status.
+
+    The proxy always listens on loopback. Off loopback a TLS sidecar listens on
+    the named LAN address with a certificate from ailocal's CA; a bind whose
+    certificate cannot be issued and verified is refused and nothing is
+    written. Ollama and SearXNG never leave loopback. Written to .env.local;
+    applied by the next `ailocal start`.
+    """
+    from . import environment, tls
     want = argv[0] if argv else "status"
-    litellm = _container("AILOCAL_LITELLM_CONTAINER", "ailocal-litellm")
-    labels = {environment.BIND_LOCAL: "local (127.0.0.1, this machine only)",
-              environment.BIND_LAN: "lan (0.0.0.0, every interface)"}
     if want == "status":
         configured = environment.bind()
-        running = _docker("port", litellm, "4000").strip().splitlines()
-        print(f"  configured: {labels.get(configured, configured)}")
-        print(f"  running:    {', '.join(running) if running else 'proxy not running'}")
+        sidecar = _container("AILOCAL_TLS_CONTAINER", "ailocal-tls")
+        running = _docker("port", sidecar, "4443").strip().splitlines()
+        if configured == environment.BIND_LOCAL:
+            print("  configured: local (127.0.0.1, this machine only)")
+            if running:
+                warn(f"the TLS sidecar still listens on {', '.join(running)}; run ailocal start")
+            return 0
+        print(f"  configured: {tls.url(configured)} (TLS sidecar; the proxy stays on 127.0.0.1)")
+        print(f"  running:    {', '.join(running) if running else 'TLS sidecar not running'}")
+        for problem in [tls.address_error(configured), *tls.problems(configured)]:
+            if problem:
+                bad(problem)
         if running and not any(_bind_matches(configured, line) for line in running):
-            warn("the running proxy does not match the configured address; run ailocal start")
-        if configured != environment.BIND_LOCAL:
-            warn("off-host, the master key is the only protection; `ailocal bind local` closes it")
+            warn("the running sidecar does not match the configured address; run ailocal start")
+        print(f"  clients trust: {tls.ca_cert()}")
         return 0
-    if want not in ("lan", "local"):
-        import ipaddress
+    if want == "local":
+        environment.set_bind(environment.BIND_LOCAL)
+        ok(f"proxy reachable from this machine only, set in {environment.user_file()}")
+        dim("applies on the next ailocal start, which removes the TLS sidecar")
+        return 0
+    if want != "lan":
         try:
             ipaddress.IPv4Address(want)
         except ValueError:
-            print("usage: ailocal bind [lan|local|<ipv4 address of this machine>|status]", file=sys.stderr)
+            print("usage: ailocal bind [lan|local|<private ipv4 of this machine>|status]",
+                  file=sys.stderr)
             return 2
-    address = {"lan": environment.BIND_LAN, "local": environment.BIND_LOCAL}.get(want, want)
+    try:
+        address = tls.lan_address() if want == "lan" else want
+        if why := tls.address_error(address):
+            raise RuntimeError(why)
+        issued = tls.ensure(address)
+        if problems := tls.problems(address):
+            raise RuntimeError("; ".join(problems))
+    except RuntimeError as e:
+        bad(f"TLS_BIND_REFUSED: {e}; the bind is unchanged ({environment.bind()})")
+        return 1
     environment.set_bind(address)
-    ok(f"proxy bind set to {labels.get(address, address)} in {environment.user_file()}")
-    if address != environment.BIND_LOCAL:
-        warn("off-host, the master key is the only protection; Ollama and SearXNG stay on loopback")
-    dim("applies on the next ailocal start")
+    for line in issued:
+        ok(line)
+    ok(f"LAN clients reach the proxy at {tls.url(address)}; set in {environment.user_file()}")
+    print(f"  Trust {tls.ca_cert()} on each client machine (public; never copy a .key):")
+    print("    macOS:  sudo security add-trusted-cert -d -r trustRoot "
+          "-k /Library/Keychains/System.keychain ca.pem")
+    print("    Node:   NODE_EXTRA_CA_CERTS=/path/to/ca.pem")
+    dim("applies on the next ailocal start; Ollama and SearXNG stay on loopback")
     return 0
 
 
 def _bind_matches(configured: str, mapping: str) -> bool:
     """Return whether a `docker port` line realises the configured address."""
-    host = mapping.rsplit(":", 1)[0]
-    if configured == "0.0.0.0":
-        return host in ("0.0.0.0", "[::]")
-    return host == configured
+    return mapping.rsplit(":", 1)[0] == configured
 
 
 def cmd_teardown(argv: list[str]) -> int:

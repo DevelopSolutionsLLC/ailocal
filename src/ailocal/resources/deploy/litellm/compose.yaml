@@ -10,6 +10,8 @@ name: ${COMPOSE_PROJECT_NAME:-ailocal}
 #     -f deploy/litellm/compose.yaml \
 #     -f deploy/searxng/compose.yaml  ...
 #
+# plus deploy/tls/compose.yaml while `ailocal bind` names a LAN address.
+#
 # Because --project-directory is the repo root, every relative path below is
 # resolved from the repo root (NOT from this file's directory), and Compose
 # auto-loads the root .env. Do not "fix" these paths to be relative to deploy/.
@@ -117,12 +119,13 @@ services:
       # must not accumulate inside the checkout.
       - ${AILOCAL_STATE:-./data}/captures:/app/captures
     ports:
-      # Loopback unless `ailocal bind lan` set AILOCAL_BIND (the proxy holds
-      # the master key, the one protection off-host). Host port is overridable
+      # Loopback, always: every request carries the master key in clear HTTP.
+      # `ailocal bind lan` adds the TLS sidecar (deploy/tls/compose.yaml) on
+      # the LAN address instead of moving this. Host port is overridable
       # so an isolated integration stack can run without contending with a
-      # production instance. The CONTAINER port is fixed: the healthcheck and
-      # the internal service URL both assume 4000.
-      - "${AILOCAL_BIND:-127.0.0.1}:${AILOCAL_LITELLM_PORT:-4000}:4000"
+      # production instance. The CONTAINER port is fixed: the healthcheck,
+      # the sidecar's target and the internal service URL all assume 4000.
+      - "127.0.0.1:${AILOCAL_LITELLM_PORT:-4000}:4000"
     healthcheck:
       # /health/liveliness = proxy process is up. It does NOT require Ollama to
       # be reachable (that is checked by `ailocal check`). curl is not in the LiteLLM
@@ -133,6 +136,6 @@ services:
       retries: 5
       start_period: 60s
 
-# The proxy is the only service that can leave loopback (`ailocal bind`): it
-# holds the master key. SearXNG is reached over the internal network, not a
-# published port, and Ollama binds loopback on the host.
+# Nothing in this file leaves loopback. Off-host clients reach the proxy only
+# through the TLS sidecar (`ailocal bind`). SearXNG is reached over the
+# internal network, not a published port, and Ollama binds loopback on the host.

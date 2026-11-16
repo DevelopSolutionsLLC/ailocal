@@ -14,7 +14,7 @@ import subprocess
 import urllib.request
 
 from .. import policy, runtime
-from . import BLOCKED, FAIL, PASS, WARN, CheckResult
+from . import BLOCKED, FAIL, PASS, SKIP, WARN, CheckResult
 
 # Callers may adjust a timeout but never drop it: unbounded → a hung check.
 CONNECT_TIMEOUT = 5      # reachability and metadata
@@ -24,6 +24,9 @@ GENERATE_TIMEOUT = 120   # one bounded model response
 PROXY = os.environ.get("AILOCAL_PROXY", "http://127.0.0.1:4000")
 OLLAMA = policy.ollama_url()
 CONTAINER = os.environ.get("AILOCAL_LITELLM_CONTAINER", "ailocal-litellm")
+TLS_CONTAINER = os.environ.get("AILOCAL_TLS_CONTAINER", "ailocal-tls")
+#: deploy/tls/compose.yaml's image; runs only while bound off loopback.
+TLS_REPO = "ghostunnel/ghostunnel"
 
 
 class Unreachable(Exception):
@@ -651,12 +654,16 @@ def _running_digest(repo: str) -> tuple[str, str]:
 
 def check_no_drift(images: list[str]) -> list[CheckResult]:
     """Check the running digest is the declared one; they diverge silently."""
+    from ailocal import environment
     out = []
     for image in images:
         if "@sha256:" not in image:
             continue
         ref, want = image.split("@", 1)
         repo = ref.split(":", 1)[0]
+        if repo == TLS_REPO and environment.bind() == environment.BIND_LOCAL:
+            out.append(CheckResult("drift", SKIP, f"{repo}: TLS sidecar not used on loopback"))
+            continue
         name, got = _running_digest(repo)
         if not name:
             out.append(CheckResult("drift", BLOCKED, f"{repo}: not running"))
@@ -674,51 +681,79 @@ def check_no_drift(images: list[str]) -> list[CheckResult]:
     return out
 
 
-def _running_containers() -> list[str]:
+def _running_containers(orphans: bool = False) -> list[str]:
     """List this install's containers; Compose resolves overrides."""
     from ailocal import runtime
-    return _run(runtime.compose_argv(["ps", "-q", "--status", "running", "--orphans=false"]),
+    return _run(runtime.compose_argv(["ps", "-q", "--status", "running",
+                                      f"--orphans={str(orphans).lower()}"]),
                 env=runtime.compose_env()).stdout.split()
 
 
 def check_loopback() -> list[CheckResult]:
-    """Check this install's published ports stay on loopback.
+    """Check only the TLS sidecar leaves loopback, serving verified TLS.
 
-    The proxy may leave it via `ailocal bind` (warned each run); else FAIL.
+    An off-loopback listener answering cleartext HTTP fails: every request
+    carries the master key. Orphans count, such as a sidecar left behind by
+    `ailocal bind local` before the next start.
     """
-    from ailocal import environment
+    from ailocal import environment, tls
     from ailocal.runtime import _bind_matches
     bind = environment.bind()
-    out = []
-    for cid in _running_containers():
+    out, sidecar = [], False
+    for cid in _running_containers(orphans=True):
         name = _run(["docker", "inspect", cid,
                      "--format", "{{.Name}}"]).stdout.strip().lstrip("/")
         ports = _run(["docker", "port", cid]).stdout.strip()
-        if not ports:
-            out.append(CheckResult("reachability", PASS,
-                                   f"{name} publishes no ports"))
-            continue
         mappings = [line.split()[-1] for line in ports.splitlines()]
         exposed = [m for m in mappings if not m.startswith(("127.0.0.1:", "[::1]:"))]
-        if name == CONTAINER and bind != environment.BIND_LOCAL:
-            if exposed and all(_bind_matches(bind, m) for m in exposed):
-                out.append(CheckResult("reachability", WARN,
-                                       f"{name} reachable off-host on {bind} by `ailocal bind`; "
-                                       "the master key is the only protection",
-                                       remediation="ailocal bind local && ailocal start"))
-            elif not exposed:
-                out.append(CheckResult("reachability", WARN,
-                                       f"{name} still binds loopback; `ailocal bind` set {bind}",
-                                       remediation="ailocal start"))
-            else:
-                out.append(CheckResult("reachability", FAIL,
-                                       f"{name} bound to {' '.join(exposed)}, not the configured {bind}"))
+        if not exposed:
+            out.append(CheckResult("reachability", PASS, f"{name} publishes no ports off loopback"))
             continue
-        out.append(CheckResult("reachability", PASS, f"{name} bound to loopback only")
-                   if not exposed else
-                   CheckResult("reachability", FAIL,
-                               f"{name} reachable off-host: {' '.join(exposed)}"))
+        plain = [m for m in exposed if tls.serves_plain_http(*_dial(m))]
+        if plain:
+            out.append(CheckResult("reachability", FAIL,
+                                   f"{name} serves plain HTTP off loopback on {' '.join(plain)}; "
+                                   "the master key would cross the network in clear text",
+                                   remediation="ailocal bind local && ailocal start"))
+        elif name != TLS_CONTAINER or bind == environment.BIND_LOCAL \
+                or not all(_bind_matches(bind, m) for m in exposed):
+            out.append(CheckResult("reachability", FAIL,
+                                   f"{name} reachable off-host on {' '.join(exposed)}, "
+                                   f"not the TLS sidecar on the configured {bind}",
+                                   remediation="ailocal start"))
+        elif why := tls.probe(bind, _dial(exposed[0])[1], connect=_dial(exposed[0])[0]):
+            out.append(CheckResult("reachability", FAIL,
+                                   f"{name} on {exposed[0]} does not serve TLS the ailocal CA verifies",
+                                   detail=why, remediation="ailocal bind lan && ailocal start"))
+        else:
+            sidecar = True
+            out.append(CheckResult("reachability", PASS,
+                                   f"{name} serves only TLS on {exposed[0]}, verified by the ailocal CA"))
+    if bind != environment.BIND_LOCAL and not sidecar \
+            and not any(r.status is FAIL for r in out):
+        out.append(CheckResult("reachability", WARN,
+                               f"`ailocal bind` set {bind} but no verified TLS sidecar serves it",
+                               remediation="ailocal start"))
     return out
+
+
+def _dial(mapping: str) -> tuple[str, int]:
+    """Return (host, port) to connect to for a `docker port` mapping."""
+    host, port = mapping.rsplit(":", 1)
+    return ("127.0.0.1" if host in ("0.0.0.0", "[::]") else host.strip("[]")), int(port)
+
+
+def check_tls() -> list[CheckResult]:
+    """Check the TLS material for an off-loopback bind; nothing on loopback."""
+    from ailocal import environment, tls
+    bind = environment.bind()
+    if bind == environment.BIND_LOCAL:
+        return []
+    problems = [p for p in [tls.address_error(bind), *tls.problems(bind)] if p]
+    return [CheckResult("tls", FAIL, f"TLS for {bind}: {p}",
+                        remediation="ailocal bind lan && ailocal start") for p in problems] \
+        or [CheckResult("tls", PASS, f"TLS certificate for {bind} verifies against the ailocal CA; "
+                                     "keys are 0600")]
 
 
 def check_provenance(images: list[str]) -> list[CheckResult]:
@@ -764,17 +799,18 @@ def check_updates(images: list[str]) -> list[CheckResult]:
         ref, cur = (image.split("@", 1) + [""])[:2]
         repo = ref.split(":", 1)[0]
         why = ""
-        if repo == "ghcr.io/berriai/litellm":
+        if repo in _RELEASED:
             # Newest release, any age; version_policy.py decides (#106).
             from .. import audit, update, version_policy as vp
+            github, suffix, pypi = _RELEASED[repo]
             try:
-                listing = http_json("https://api.github.com/repos/BerriAI/"
-                                    "litellm/releases?per_page=100", timeout=20)
+                listing = http_json(f"https://api.github.com/repos/{github}"
+                                    "/releases?per_page=100", timeout=20)
             except Unreachable:
                 listing = []
-            pinned = _litellm_pinned_version()
-            fixed, unread = update.advisory_fixes(audit.Pin(repo, "image", pinned, "deploy/litellm/compose.yaml",
-                                                             github="BerriAI/litellm", pypi="litellm")) \
+            pinned = _pinned_version(repo, ref)
+            fixed, unread = update.advisory_fixes(audit.Pin(repo, "image", pinned, "deploy/*/compose.yaml",
+                                                             github=github, pypi=pypi)) \
                 if pinned and listing else ([], "")
             chosen, why = vp.candidate(vp.from_github(listing), fixed)
             if listing and not chosen:
@@ -782,7 +818,7 @@ def check_updates(images: list[str]) -> list[CheckResult]:
                                        + (f"; {unread}" if unread else "")))
                 continue
             newest = f"v{chosen}" if chosen else ""
-            candidate = f"{repo}:{newest}"
+            candidate = f"{repo}:{newest}{suffix}"
         elif repo == "searxng/searxng":
             # Rolling `latest`, no semver: hence the digest pin.
             newest, candidate = "latest", "searxng/searxng:latest"
@@ -796,7 +832,7 @@ def check_updates(images: list[str]) -> list[CheckResult]:
             continue
         remote = _run(["docker", "buildx", "imagetools", "inspect", candidate,
                        "--format", "{{.Manifest.Digest}}"], timeout=60).stdout.strip()
-        pinned_version = _litellm_pinned_version() if "litellm" in repo else ""
+        pinned_version = _pinned_version(repo, ref) if repo in _RELEASED else ""
         if pinned_version and newest.lstrip("v")[:1].isdigit():
             newer = sorted([pinned_version, newest.lstrip("v")],
                            key=lambda v: [int(x) for x in v.split(".") if x.isdigit()])
@@ -810,13 +846,26 @@ def check_updates(images: list[str]) -> list[CheckResult]:
         else:
             out.append(CheckResult("update", WARN,
                                    f"{repo}: {newest} available for review"
-                                   + (f" ({why})" if "litellm" in repo else ""),
+                                   + (f" ({why})" if repo in _RELEASED else ""),
                                    detail=f"{CANDIDATE}{repo}@{remote}" if remote
                                    else f"{CANDIDATE}{candidate}",
                                    remediation="edit the digest in "
                                                "deploy/*/compose.yaml, then "
                                                "ailocal start, then run the gate"))
     return out
+
+
+#: Images released on GitHub: (repository, tag suffix, PyPI dist it ships).
+_RELEASED = {"ghcr.io/berriai/litellm": ("BerriAI/litellm", "", "litellm"),
+             TLS_REPO: ("ghostunnel/ghostunnel", "-distroless", "")}
+
+
+def _pinned_version(repo: str, ref: str) -> str:
+    """Return the declared release of a GitHub-released image, or ""."""
+    if repo == "ghcr.io/berriai/litellm":
+        return _litellm_pinned_version()
+    from ..audit import _tag_version
+    return _tag_version(ref.rpartition(":")[2])
 
 
 def _litellm_pinned_version() -> str:
@@ -832,8 +881,8 @@ def supply_chain_checks(check_update: bool = False) -> list[CheckResult]:
         return [CheckResult("docker", BLOCKED,
                             "docker not installed — cannot assess container posture")]
     images = declared_images()
-    results = check_pinned(images) + check_no_drift(images) + check_loopback() \
-        + check_provenance(images)
+    results = check_pinned(images) + check_no_drift(images) + check_tls() \
+        + check_loopback() + check_provenance(images)
     if check_update:
         results += check_updates(images)
     return results

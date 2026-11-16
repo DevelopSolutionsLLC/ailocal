@@ -30,7 +30,7 @@ Inference always goes through LiteLLM; there is no direct-Ollama path for an age
 ~/.config/ailocal/.env.local  yours                   provider keys, overrides — WINS
 ```
 
-Every consumer loads them in that order. No key is rotated. `AILOCAL_BIND` in `.env.local` is the proxy's host address (`ailocal bind lan|local|<ipv4>`; `127.0.0.1` when unset).
+Every consumer loads them in that order. No key is rotated. `AILOCAL_BIND` in `.env.local` is where the proxy is reachable (`ailocal bind lan|local|<ipv4>`; `127.0.0.1` when unset): any other value is the LAN address of the TLS sidecar, on `AILOCAL_TLS_PORT` (default 4443), while the proxy itself stays on loopback ([019](decisions.md#019-off-loopback-the-proxy-is-reached-only-through-a-tls-sidecar)).
 
 ## What an install writes
 
@@ -45,6 +45,7 @@ Nothing outside this list is created. Shipped `deploy/` and `clients/` trees are
 | `$AILOCAL_STATE/active-profile` | `install` | The selected tier; sole writer `select_tier()`. |
 | `$AILOCAL_STATE/litellm/`, `litellm-config.sha` | `generation`, `start` | Proxy config, bind-mounted read-only; restart fingerprint. |
 | `$AILOCAL_STATE/searxng/settings.yml` | `start` | Rendered from the shipped template; may carry the GitHub search token; 0600. |
+| `$AILOCAL_STATE/tls/ca/`, `tls/server/` | `bind`, `start` | Only off loopback: the local CA and the sidecar's server pair; keys 0600, directories 0700; only `server/` is mounted. |
 | `$AILOCAL_STATE/model-sources/imports.json` | `install` | Receipts binding each `name:tag` to its pinned source and the manifest Ollama created; a changed pin or manifest means re-import. |
 | `$AILOCAL_STATE/local-agent/` | agent MCP | Empty working directory for `text`/`research` delegations and session bindings (no transcripts), 0700. |
 | `$AILOCAL_STATE/local-research/` | research MCP | Bounded SQLite caches and the Brave ledger. |
@@ -65,6 +66,7 @@ Codex's `config.toml` is co-owned: regeneration preserves trust records, `[hooks
 | LiteLLM | `$AILOCAL_STATE/captures → /app/captures` | the only writable path |
 | SearXNG | rendered `settings.yml → /etc/searxng/settings.yml` | read-only |
 | SearXNG | `<package>/resources/deploy/searxng/limiter.toml` | read-only |
+| TLS sidecar (off loopback only) | `$AILOCAL_STATE/tls/server → /tls` | read-only: the server certificate and key, never the CA key |
 
 Generation completes before `docker compose up`; nothing regenerates a mounted asset while the stack runs. Callback modules are named by absolute path because LiteLLM resolves them relative to the config file. Profiles, client templates and the repository are not mounted. Ollama runs on the host at `OLLAMA_HOST`.
 
@@ -145,7 +147,7 @@ The threat model is a single developer workstation: it protects against accident
 
 | Boundary | Protection |
 |---|---|
-| Host ↔ network | Every port binds `127.0.0.1`. Only `ailocal bind lan` (or an address) opens the proxy, the one service that authenticates; `ailocal check` warns while it is open. Ollama and SearXNG never leave loopback. |
+| Host ↔ network | Every port binds `127.0.0.1`. Only `ailocal bind lan` (or a private address) adds a listener off loopback: the TLS sidecar in front of the proxy, the one service that authenticates, with a certificate from ailocal's name-constrained CA. A bind that cannot be served over verified TLS is refused, and `ailocal check` fails any off-loopback listener that answers plain HTTP ([019](decisions.md#019-off-loopback-the-proxy-is-reached-only-through-a-tls-sidecar)). Ollama and SearXNG never leave loopback. |
 | Client ↔ proxy | One shared key, `LITELLM_MASTER_KEY`; unauthenticated requests are rejected. |
 | Proxy ↔ SearXNG | Internal Compose network only. |
 | Proxy ↔ Ollama | Host loopback; Ollama has no authentication and must not be exposed. |
@@ -162,12 +164,13 @@ The threat model is a single developer workstation: it protects against accident
 | rendered SearXNG settings | `$AILOCAL_STATE/searxng/settings.yml` | 0600; the tracked template carries only the `__GITHUB_SEARCH_TOKEN__` placeholder, because SearXNG supports no `${VAR}` substitution |
 | `$AILOCAL_STATE`, `active-profile` | state root | 0700, 0600 |
 | `/tmp/ailocal-scratchpad-<uid>/` | scratchpad hook | 0700; a symlinked or foreign-owned base is refused for a fresh `mktemp` directory |
+| LAN CA and server keys | `$AILOCAL_STATE/tls/{ca,server}/*.key` | 0600 in 0700 directories, created 0600 before `openssl` writes them; never printed; `ailocal check` fails another mode |
 
 No secret appears in the generation manifest, generated artifacts, logs or captured evidence, which redacts key-shaped content. `ailocal check` reports a secret file readable by other users. A tracked file is authored source or a template, never a runtime artifact, so generation cannot dirty the tree.
 
 ### Supply chain
 
-- **Images** are pinned by digest in the [LiteLLM](../src/ailocal/resources/deploy/litellm/compose.yaml) and [SearXNG](../src/ailocal/resources/deploy/searxng/compose.yaml) Compose files (the only place the digests live). `ailocal check` verifies the running image is the declared one, loopback binding, and the publisher signature where one exists (needs `cosign`). Upgrading an image means a new digest, a rescan, the full gate and a served-alias geometry check; a tag bump without a digest change is not an upgrade.
+- **Images** are pinned by digest in the [LiteLLM](../src/ailocal/resources/deploy/litellm/compose.yaml), [SearXNG](../src/ailocal/resources/deploy/searxng/compose.yaml) and [TLS sidecar](../src/ailocal/resources/deploy/tls/compose.yaml) Compose files (the only place the digests live). `ailocal check` verifies the running image is the declared one, loopback binding, and the publisher signature where one exists (needs `cosign`). Upgrading an image means a new digest, a rescan, the full gate and a served-alias geometry check; a tag bump without a digest change is not an upgrade.
 - **`ailocal audit`** checks every pin, and the Ollama base actually running, against live advisories. It needs a network, so it is outside `ailocal check` and the gate. Images map to their publisher's GitHub repository explicitly; an unmapped image is unverified. Each run is recorded under the state root and published through the integration contract for `cadence audit --local`. The record (schema 3) also lists, under `interpreters`, the `python3 --version` of each running image declared in `IMAGE_INTERPRETERS`, which Cadence audits as CPython against that image: the LiteLLM image installs its own interpreter, so only promoting a new image changes it (#125). `ailocal update` names the running image's interpreter and a candidate's when that image is already pulled; it never pulls one to find out.
 - **Go reachability.** Run govulncheck in source mode on the pinned tree (`GOENV=off go run golang.org/x/vuln/cmd/govulncheck@<version> ./...`). Binary mode over-reports on Ollama's stripped binary: on 2026-11-05 it listed twelve advisories against stock 0.40.14, while source mode found GO-2026-6860, GO-2026-6866 (`x/net/html`) and GO-2026-5932 (`x/crypto/openpgp`) required but not imported (#83); on 2026-11-16 stock 0.40.15 gave the same three (#127). `ailocal audit` matches by module version and still reports GO-2026-5932; there is no disposition mechanism, so record the source-mode result in the issue and do not raise a pin to quiet an unreachable finding.
 - **Patched Ollama builds** drop every Go checksum-database exemption (`GONOSUMDB`, `GOPRIVATE`, `GOINSECURE`, `GOFLAGS`, …) and set `GOENV=off`; every Mach-O file copied into the payload must pass `codesign --verify --strict` against Ollama's team `3MU9H2V9Y9`.

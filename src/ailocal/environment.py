@@ -145,18 +145,17 @@ def ensure_user() -> dict[str, str]:
     return parse(path)
 
 
-#: Proxy listen address; Ollama and SearXNG never follow (no auth).
+#: Loopback: no TLS sidecar. Any other value is the sidecar's LAN address.
 BIND_LOCAL = "127.0.0.1"
-BIND_LAN = "0.0.0.0"
 
 
 def bind() -> str:
-    """Return the proxy bind address; the one reader of AILOCAL_BIND."""
+    """Return where the proxy is reachable; the one reader of AILOCAL_BIND."""
     return value("AILOCAL_BIND") or BIND_LOCAL
 
 
 def set_bind(address: str) -> None:
-    """Persist the proxy bind address; `ailocal start` applies it."""
+    """Persist the bind address; `ailocal start` applies it."""
     _set_user_value("AILOCAL_BIND", address)
 
 

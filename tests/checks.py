@@ -7,8 +7,11 @@ from __future__ import annotations
 
 import os
 import plistlib
+import socket
+import ssl
 import sys
 import tempfile
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -18,7 +21,8 @@ from harness import REPO, Suite, run  # noqa: E402
 
 from ailocal import environment  # noqa: E402
 from ailocal import policy as P  # noqa: E402
-from ailocal.checks import FAIL, PASS, WARN  # noqa: E402
+from ailocal import tls  # noqa: E402
+from ailocal.checks import FAIL, PASS  # noqa: E402
 from ailocal.checks import host as H  # noqa: E402
 from ailocal.checks import services as S  # noqa: E402
 
@@ -39,20 +43,62 @@ def services() -> None:
     check(verdicts == [(FAIL, "ailocal start")] * 2,
           "a detached config mount fails and points at `ailocal start`", repr(verdicts))
 
-    # #103: proxy leaves loopback only via `ailocal bind`, and then warns.
-    def ports(mapping):
+    # #126: only the TLS sidecar leaves loopback, and only serving verified TLS.
+    def listener(context: ssl.SSLContext | None) -> int:
+        srv = socket.create_server(("127.0.0.1", 0))
+        servers.append(srv)
+
+        def answer() -> None:
+            while True:
+                try:
+                    conn, _ = srv.accept()
+                except OSError:
+                    return
+                try:
+                    conn.settimeout(5)
+                    if context:
+                        conn = context.wrap_socket(conn, server_side=True)
+                        conn.recv(1)
+                    else:
+                        conn.recv(1024)
+                        conn.sendall(b"HTTP/1.0 200 OK\r\n\r\n")
+                except OSError:
+                    pass
+                finally:
+                    conn.close()
+        threading.Thread(target=answer, daemon=True).start()
+        return srv.getsockname()[1]
+
+    def docker(name, mapping):
         return lambda argv, **_kw: SimpleNamespace(returncode=0, stdout=(
-            mapping if argv[1] == "port" else "/" + S.CONTAINER if argv[-1] == "{{.Name}}" else "x"))
+            mapping if argv[1] == "port" else "/" + name if argv[-1] == "{{.Name}}" else "x"))
+    servers: list[socket.socket] = []
     outcomes = {}
-    for bind, mapping in (("0.0.0.0", "4000/tcp -> 0.0.0.0:4000\n4000/tcp -> [::]:4000"),
-                          ("0.0.0.0", "4000/tcp -> 127.0.0.1:4000"), ("127.0.0.1", "4000/tcp -> 0.0.0.0:4000"),
-                          ("10.0.0.5", "4000/tcp -> 0.0.0.0:4000")):
-        with patch.object(S, "_run", side_effect=ports(mapping)), patch.object(S, "_running_containers", lambda: ["x"]), \
-                patch.object(environment, "bind", lambda: bind):
-            outcomes[(bind, mapping.split()[-1])] = S.check_loopback()[0].status
-    check(outcomes == {("0.0.0.0", "[::]:4000"): WARN, ("0.0.0.0", "127.0.0.1:4000"): WARN,
-                       ("127.0.0.1", "0.0.0.0:4000"): FAIL, ("10.0.0.5", "0.0.0.0:4000"): FAIL},
-          "the proxy leaves loopback only on a configured bind, and then as a warning (#103)", repr(outcomes))
+    with tempfile.TemporaryDirectory() as state, patch.dict(os.environ, {"AILOCAL_STATE": state}):
+        tls.ensure("10.11.12.13")
+        served = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        served.load_cert_chain(tls.server_cert(), tls.server_key())
+        plain, verified = listener(None), listener(served)
+        cases = {"loopback proxy": ("127.0.0.1", S.CONTAINER, "4000/tcp -> 127.0.0.1:4000"),
+                 "proxy on every interface": ("127.0.0.1", S.CONTAINER, f"4000/tcp -> 0.0.0.0:{plain}"),
+                 "proxy off loopback while bound": ("10.11.12.13", S.CONTAINER, f"4000/tcp -> 0.0.0.0:{plain}"),
+                 "sidecar serving plain HTTP": ("10.11.12.13", S.TLS_CONTAINER, f"4443/tcp -> 10.11.12.13:{plain}"),
+                 "sidecar for another address": ("10.11.12.99", S.TLS_CONTAINER, f"4443/tcp -> 10.11.12.99:{verified}"),
+                 "sidecar serving verified TLS": ("10.11.12.13", S.TLS_CONTAINER, f"4443/tcp -> 10.11.12.13:{verified}")}
+        for label, (bind, name, mapping) in cases.items():
+            with patch.object(S, "_run", side_effect=docker(name, mapping)), \
+                    patch.object(S, "_running_containers", lambda **_kw: ["x"]), \
+                    patch.object(S, "_dial", lambda m: ("127.0.0.1", int(m.rsplit(":", 1)[1]))), \
+                    patch.object(environment, "bind", lambda b=bind: b):
+                first = S.check_loopback()[0]
+                outcomes[label] = (first.status, "plain HTTP" in first.summary)
+    for srv in servers:
+        srv.close()
+    plain_cases = ("proxy on every interface", "proxy off loopback while bound", "sidecar serving plain HTTP")
+    want = {label: (FAIL, label in plain_cases) for label in cases} \
+        | {"loopback proxy": (PASS, False), "sidecar serving verified TLS": (PASS, False)}
+    check(outcomes == want, "only the TLS sidecar leaves loopback, and `ailocal check` fails any off-loopback "
+          "listener that serves plain HTTP or TLS the ailocal CA does not verify (#126)", repr(outcomes))
 
 
 def managed_ollama() -> None:

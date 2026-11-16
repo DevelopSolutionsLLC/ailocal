@@ -94,6 +94,7 @@ def _suites(full: bool) -> list:
             ("research MCP: network boundary, Brave key and budget, citations", [py, "tests/research.py"]),
             ("bundled artifacts", [py, "tests/artifacts.py"] + (["--full"] if full else [])),
             ("checks, commands and documentation", [py, "tests/checks.py"]),
+            ("LAN TLS sidecar: certificates, bind refusal, compose, audit", [py, "tests/tls.py"]),
             ("measurement drivers (fixtures, no model)", [py, "tests/measurement-contracts.py"]),
         ]),
         ("INVARIANTS", [

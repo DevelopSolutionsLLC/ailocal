@@ -117,13 +117,16 @@ def activation():
 
 
 def loopback():
-    S.section("listening addresses (#103)")
-    # AILOCAL_BIND may move the proxy (it authenticates); nothing else follows.
-    check('"${AILOCAL_BIND:-127.0.0.1}:${AILOCAL_LITELLM_PORT:-4000}:4000"'
-          in (RESOURCES / "deploy/litellm/compose.yaml").read_text()
+    S.section("listening addresses (#103, #126)")
+    # Plain HTTP stays on loopback; only the TLS sidecar follows AILOCAL_BIND.
+    following = sorted(str(f.relative_to(RESOURCES)) for f in RESOURCES.glob("deploy/*/compose.yaml")
+                       if "${AILOCAL_BIND" in f.read_text())
+    check('"127.0.0.1:${AILOCAL_LITELLM_PORT:-4000}:4000"' in (RESOURCES / "deploy/litellm/compose.yaml").read_text()
           and "127.0.0.1:${AILOCAL_SEARXNG_PORT:-8080}:8080" in (RESOURCES / "deploy/searxng/compose.yaml").read_text()
-          and I.OLLAMA_ENV["OLLAMA_HOST"] == "127.0.0.1:11434",
-          "the proxy defaults to loopback and only it follows AILOCAL_BIND; SearXNG and Ollama stay on loopback")
+          and I.OLLAMA_ENV["OLLAMA_HOST"] == "127.0.0.1:11434"
+          and following == ["deploy/tls/compose.yaml"],
+          "the proxy, SearXNG and Ollama listen on loopback; only the TLS sidecar follows AILOCAL_BIND",
+          repr(following))
 
 
 def teardown():
