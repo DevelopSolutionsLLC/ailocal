@@ -77,7 +77,9 @@ def build_mcp(config: Config) -> Any:
         'coverage. Brave spending is governed by the operator\'s budget, so do not ask the user before '
         'searching. In the final answer, cite results as snippets rather than pages read, flag '
         'login_walled sources, name any provider failure or fallback the conclusion depends on, and '
-        'end with the last search\'s brave.summary value, verbatim, on its own line.'))
+        'end with the last search\'s brave.summary value, verbatim, on its own line. When a search '
+        'error or brave.summary carries a Brave sign-up step, relay it to the user with its URL, and '
+        'say plainly when ENGINES_FAILED means no provider answered.'))
     research = Research(config)
 
     async def invoke(method: Callable[..., Awaitable[dict[str, Any]]],

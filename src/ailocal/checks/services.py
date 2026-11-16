@@ -491,7 +491,10 @@ def check_brave_key_configured() -> CheckResult:
         return CheckResult("brave-key", WARN, "rendered SearXNG settings still define braveapi "
                            "(an uncounted Brave path)", remediation="ailocal start")
     if not runtime.env_value("BRAVE_API"):
-        return CheckResult("brave-key", PASS, "no Brave key; research uses keyless providers only")
+        return CheckResult("brave-key", PASS, "no Brave key; research uses keyless providers only",
+                           "optional fallback when keyless engines fail: sign up for a Brave Search API key at "
+                           "https://api-dashboard.search.brave.com/register and set BRAVE_API in "
+                           "~/.config/ailocal/.env.local")
     return CheckResult("brave-key", PASS, "Brave key configured for research only, behind its budget "
                        "ledger; default checks never query it")
 
@@ -511,11 +514,17 @@ def check_searxng_external() -> CheckResult:
               "'http://searxng:8080/search?q=test&format=json', timeout=20).read());"
               "res=d.get('results') or [];"
               "eng=sorted({e for r in res for e in (r.get('engines') or [r.get('engine')]) if e});"
-              "print(len(res));print(','.join(eng))"])
+              "down=['%s (%s)' % tuple(f[:2]) for f in d.get('unresponsive_engines') or [] if len(f) > 1];"
+              "print(len(res));print(','.join(eng));print(', '.join(down))"])
     if r.returncode != 0:
         return CheckResult("searxng-external", WARN, "federated search did not complete",
                            r.stderr.strip()[:200])
     lines = r.stdout.strip().splitlines()
+    if not lines or lines[0] == "0":
+        # Zero results from every engine is an outage, not a quiet day.
+        return CheckResult("searxng-external", WARN, "federated search returned no results",
+                           f"unresponsive: {lines[2] if len(lines) > 2 and lines[2] else 'none reported'}",
+                           "replace the failing engines in deploy/searxng/settings.yml")
     return CheckResult("searxng-external", PASS,
                        f"federated search returned {lines[0] if lines else 0} result(s) "
                        f"from {lines[1] if len(lines) > 1 else 'no engines'} "

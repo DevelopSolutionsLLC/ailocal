@@ -42,7 +42,7 @@ class Backend:
             q = args.get('q', [''])[0]
             domain = q.split('site:')[-1] if 'site:' in q else 'docs.example.org'
             if path == '/config':
-                data = {'engines': [{'name': e} for e in ('yahoo', 'yep', 'github', 'stackoverflow', 'hackernews',
+                data = {'engines': [{'name': e} for e in ('yahoo', 'mwmbl', 'github', 'stackoverflow', 'hackernews',
                                                           'meta.discourse', 'openalex', 'arxiv')]}
             elif path.startswith('/brave?'):
                 self.brave.append(headers)
@@ -53,6 +53,9 @@ class Backend:
                 engine = args['engines'][0].split(',')[0]
                 data = {'results': [{'url': f'https://{domain}/{engine}/page', 'title': 's',
                                      'content': 'Useful.', 'engines': [engine]}]}
+                if 'engines-down' in q:
+                    data = {'results': [], 'unresponsive_engines': [[e, 'HTTP error'] for e in
+                                                                    args['engines'][0].split(',')]}
             else:
                 self.prompt = json.loads(body)
                 data = {'choices': [{'message': {'content': self.answer}}], 'usage': {'prompt_tokens': 1, 'completion_tokens': 1}}
@@ -101,7 +104,7 @@ class Search(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaisesRegex(T.ResearchError, 'INVALID_CITATIONS'):
                     await self.r.answer(f'q{i}', DOCS)
 
-    async def test_the_brave_key_leaves_only_in_the_brave_request_header(self):
+    async def test_a_failed_search_names_each_cause_and_never_the_brave_key(self):
         result = await self.r.search('task groups', DOCS)
         self.assertEqual([h.get('X-Subscription-Token') for h in self.backend.brave], [BRAVE_KEY])
         self.assertNotIn(BRAVE_KEY, json.dumps(result))
@@ -111,6 +114,22 @@ class Search(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(BRAVE_KEY, str(error.exception))
         for ledger in (keyed, Path(self.tmp) / 'brave-ledger.sqlite3'):
             self.assertNotIn(BRAVE_KEY.encode(), ledger.read_bytes())
+        # No provider answered: the error names each one, not the query.
+        down = R.Research(R.Config(self.url, self.url + '/v1', 'fixture-model', 'fixture-secret', Path(self.tmp),
+                                   True, brave_key=BRAVE_KEY, brave_url='http://127.0.0.1:9'))
+        with self.assertRaisesRegex(T.ResearchError, r'^ENGINES_FAILED: .*yahoo: HTTP error.*mwmbl: HTTP error.*brave: '):
+            await down.search('engines-down outage')
+        with self.assertRaises(T.ResearchError) as error:
+            await down.search('engines-down outage', use_brave=False)
+        self.assertNotIn(BRAVE_KEY, str(error.exception))
+        self.assertIn('brave: not requested', str(error.exception))
+        down.cache.db and down.cache.db.close()
+        keyless = R.Research(R.Config(self.url, self.url + '/v1', 'fixture-model', 'fixture-secret', Path(self.tmp), True))
+        with self.assertRaisesRegex(T.ResearchError, r'brave: BRAVE_NOT_CONFIGURED.*search\.brave\.com/register.*BRAVE_API'):
+            await keyless.search('engines-down outage')
+        # A thin keyless result carries the sign-up URL in the relayed summary.
+        self.assertIn('/register', (await keyless.search('thin keyless result'))['brave']['summary'])
+        keyless.cache.db and keyless.cache.db.close()
 
     async def test_transport_never_connects_to_a_private_address(self):
         self.assertFalse(any(map(T.public_address, ('127.0.0.1', '10.0.0.1', '169.254.169.254', '::1', '::ffff:127.0.0.1',
