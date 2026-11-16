@@ -55,7 +55,7 @@ use_default_settings:
       - crossref
       # Keyless general web; both declare require_api_key: False upstream.
       - yahoo
-      - yep
+      - mwmbl
       - wiby
       # Code forges. github code takes a token; see its entry.
       - github code
@@ -156,15 +156,16 @@ engines:
   # The `general` category is what LiteLLM's web search queries -- it sends no
   # categories. Before issue #8 the registries above were ALSO general, so a
   # question like "how long to boil an egg" came back as npm packages. Now
-  # general is two keyless scrapers, so one provider's 429 does not mean zero
-  # web results and no general search spends a metered allowance.
+  # general is two keyless engines, so one provider's outage does not mean zero
+  # web results and no general search spends a metered allowance. #140: yep's
+  # endpoint was retired; mwmbl is a non-profit index with its own keyless API.
   - name: yahoo
     shortcut: yh
     categories: [general]
     timeout: 6.0
     disabled: false
-  - name: yep
-    shortcut: yep
+  - name: mwmbl
+    shortcut: mwm
     categories: [general]
     timeout: 6.0
     disabled: false

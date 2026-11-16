@@ -23,7 +23,7 @@ from transport import SECRET_PARAMETERS, ResearchError, allowed, hostname, reque
 # = site narrowing. Yep ignores site: (2026-10-18), so it narrows only explicit
 # sites; HN search is AND-only.
 PRESETS = {
-    'web': {'native': [], 'broad': ['yahoo', 'yep'], 'communities': []},
+    'web': {'native': [], 'broad': ['yahoo', 'mwmbl'], 'communities': []},
     'forums': {'native': ['hackernews'], 'broad': [],
                'communities': ['reddit.com', 'news.ycombinator.com', 'stackexchange.com', 'lobste.rs']},
     'code': {'native': ['github', 'github code', 'stackoverflow'], 'broad': [], 'communities': []},
@@ -42,6 +42,9 @@ STOPWORDS = set('a about all an and any are as at be by can do does for from how
                 'search find look online web forum forums opinion opinions discussion discussions people '
                 'say says think recent latest'.split())
 MAX_SEARX_REQUESTS = 12
+# The remedy a user can act on when keyless engines fail and Brave is absent.
+BRAVE_SETUP = ('sign up for a Brave Search API key at https://api-dashboard.search.brave.com/register, '
+               'set BRAVE_API in ~/.config/ailocal/.env.local, then start a new client session')
 MAX_BRAVE_PER_CALL = 2
 MAX_SOURCES = 12
 THIN_SOURCES = 5
@@ -325,11 +328,10 @@ class Research:
                 if not any(a[0] == [engine] for a in attempts):
                     attempts.append(([engine], query, None, 'original'))
         # One request per engine and site, so one failure never hides another;
-        # Yahoo first, so a truncating cap drops the weaker narrower.
-        for engine in ('yahoo', 'yep'):
-            if engine in names:
-                for site in sites or ([] if spec['broad'] or engine == 'yep' else spec['communities']):
-                    attempts.append(([engine], query, site, 'site'))
+        # Only Yahoo runs site: queries; mwmbl's site: support is unmeasured.
+        if 'yahoo' in names:
+            for site in sites or ([] if spec['broad'] else spec['communities']):
+                attempts.append((['yahoo'], query, site, 'site'))
         broad = [e for e in spec['broad'] if e in names]
         if broad and not sites:
             attempts.append((broad, query, None, 'original'))
@@ -344,9 +346,10 @@ class Research:
             return cached, True
         args = urlencode({'q': q, 'format': 'json', 'engines': ','.join(engines)})
         data = await self.json_request(self.config.search_url.rstrip('/') + '/search?' + args)
+        down = [f for f in data.get('unresponsive_engines', []) if isinstance(f, list) and f and f[0] in engines]
         value = {'results': [i for i in data.get('results', []) if isinstance(i, dict)][:30],
-                 'unresponsive': [f[0] for f in data.get('unresponsive_engines', [])
-                                  if isinstance(f, list) and f and f[0] in engines]}
+                 'unresponsive': [f[0] for f in down],
+                 'reasons': {f[0]: plain(str(f[1]))[:80] for f in down if len(f) > 1}}
         self.cache.put(key, value, 900)
         return value, False
 
@@ -415,10 +418,12 @@ class Research:
                     entry.update(status=str(error).split(':')[0], results=0)
                     failures.extend({'engine': e, 'status': entry['status']} for e in engines)
                     return 0
-            failures.extend({'engine': e, 'status': 'unresponsive'} for e in value['unresponsive'])
+            reasons = value.get('reasons', {})
+            failures.extend({'engine': e, 'status': reasons.get(e, 'unresponsive')} for e in value['unresponsive'])
             before = len(records)
             collect(index, engines, [site] if site else sites, value['results'], engines[0])
-            entry.update(status='ok', results=len(value['results']), new_sources=len(records) - before, cache_hit=hit)
+            entry.update(status='ok', results=len(value['results']), new_sources=len(records) - before, cache_hit=hit,
+                         answered=bool(set(engines) - set(value['unresponsive'])))
             return len(value['results'])
 
         async def run_brave(q: str, site: str | None, reason: str) -> None:
@@ -435,7 +440,8 @@ class Research:
             brave['cache_hits' if hit else 'used'] += 1
             before = len(records)
             collect(index, ['brave'], [site] if site else sites, items, 'brave')
-            entry.update(status='ok', results=len(items), new_sources=len(records) - before, cache_hit=hit)
+            entry.update(status='ok', results=len(items), new_sources=len(records) - before, cache_hit=hit,
+                         answered=True)
 
         stage_one = self.plan(query, sites, preset, names)
         early = use_brave is True and self.brave.configured
@@ -451,7 +457,7 @@ class Research:
 
         # Stage two, at most once: reformulate empty AND-only APIs, fill gaps.
         retry = [(e, keywords(q)) for (e, q, site, form), n in zip(stage_one, counts)
-                 if n == 0 and site is None and e[0] not in ('yahoo', 'yep') and keywords(q) not in ('', q)]
+                 if n == 0 and site is None and e[0] not in ('yahoo', 'mwmbl') and keywords(q) not in ('', q)]
         if retry:
             await asyncio.gather(*(run(e, k, None, 'keywords') for e, k in retry))
             fallbacks.append({'from': 'full query', 'to': 'keywords', 'reason': 'AND-only search API returned nothing',
@@ -469,9 +475,21 @@ class Research:
         sources = sorted(records.values(), key=lambda s: s.pop('_order'))[:MAX_SOURCES]
         for i, source in enumerate(sources):
             source['id'] = f'S{i+1}'
+        if not sources and not any(a.get('answered') for a in attempts):
+            # No provider answered: rewording cannot help, so name the fault.
+            causes = {f['engine']: f['status'] for f in failures}
+            causes['brave'] = brave['refusal'] or ('not requested' if use_brave is False else
+                                                   'BRAVE_NOT_CONFIGURED' if not self.brave.configured else
+                                                   'not attempted')
+            remedy = ('; for a dependable fallback, ' + BRAVE_SETUP) if not self.brave.configured else ''
+            raise ResearchError('ENGINES_FAILED: no search provider answered ('
+                                + '; '.join(f'{e}: {s}' for e, s in causes.items())
+                                + '); an infrastructure fault, not the query: run `ailocal check --external-search`'
+                                + remedy)
         if not sources:
             raise ResearchError('NO_EVIDENCE: no attributed results matched; reformulate with distinctive '
-                                'keywords, narrow with sites, or try another preset')
+                                'keywords, narrow with sites, or try another preset'
+                                + ('; for broader coverage, ' + BRAVE_SETUP if not self.brave.configured else ''))
         hosts = {}
         for source in sources:
             host = urlsplit(source['url']).hostname
@@ -486,10 +504,12 @@ class Research:
                   'unresponsive_engines': [dict(t) for t in {tuple(f.items()) for f in failures}],
                   'warnings': sorted(set(warnings)),
                   'cache_hit': bool(attempts) and all(a.get('cache_hit') for a in attempts),
-                  'retrieved_at': time.time(), 'brave': self.brave_report(brave)}
+                  'retrieved_at': time.time(), 'brave': self.brave_report(brave, coverage['thin'])}
         if coverage['thin']:
             result['next_steps'] = ['reformulate with 2-4 distinctive keywords',
                                     'narrow with sites for specific communities or documentation hosts']
+            if not self.brave.configured:
+                result['next_steps'].append('for broader coverage, ' + BRAVE_SETUP)
         if preset == 'code' or any(allowed(s, ['github.com']) for s in sites):
             result['github'] = {
                 'discovery': 'github (SearXNG repository search)' + ('' if 'github' in names else ': unavailable'),
@@ -500,9 +520,11 @@ class Research:
             result['warnings'].append(self.cache.warning)
         return result
 
-    def brave_report(self, brave: Mapping[str, Any]) -> dict[str, Any]:
+    def brave_report(self, brave: Mapping[str, Any], thin: bool = False) -> dict[str, Any]:
         if not self.brave.configured:
-            return {'summary': 'Brave: not configured; keyless providers only.'}
+            # The summary is relayed verbatim, so the remedy reaches the user.
+            return {'summary': 'Brave: not configured; keyless providers only.'
+                               + (f' Coverage was thin: to add Brave, {BRAVE_SETUP}.' if thin else '')}
         report = self.brave.ledger.status()
         line = summary(report, brave['used'], brave['refusal'])
         if not (brave['used'] or brave['cache_hits'] or brave['refusal']):
