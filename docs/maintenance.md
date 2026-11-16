@@ -89,7 +89,7 @@ Differences between working rows are within noise; a repository-level header did
 
 ## Patched Ollama
 
-`resources/deploy/ollama/patch.toml` (read only through `policy.py`) pins the exact 0.40.14 source and signed native tarball, the upstream Gemma SwitchGLU loader patch (#18631, unmerged), the mixed-precision router, MLX stop-string and Qwen history patches ([016](decisions.md#016-qwen-tool-loop-history-keeps-the-thinking-mode-signature)), and a `go.mod`/`go.sum` security patch. Builds:
+`resources/deploy/ollama/patch.toml` (read only through `policy.py`) pins the exact 0.40.15 source and signed native tarball, the upstream Gemma SwitchGLU loader patch (#18631, unmerged), the mixed-precision router, MLX stop-string and Qwen history patches ([016](decisions.md#016-qwen-tool-loop-history-keeps-the-thinking-mode-signature)), and a `go.mod`/`go.sum` security patch. Builds:
 
 - take native files from an intact owned receipt, else from the installed `ollama-binary` cask when its CLI hash equals `native_cli_sha256`, else from the downloaded tarball verified before extraction; every copied Mach-O must pass `codesign --verify --strict` for team `3MU9H2V9Y9`; the installed cask is never modified;
 - need Go, git, Xcode tools and codesign, run under a 20-minute limit, and require the SwitchGLU, mixed-precision, stop and Qwen history regressions to execute without skips before atomic promotion into `~/.local/share/ailocal/runtimes` (`AILOCAL_RUNTIMES`);
