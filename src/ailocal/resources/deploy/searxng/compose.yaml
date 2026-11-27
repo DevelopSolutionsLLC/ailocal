@@ -28,6 +28,7 @@ services:
     container_name: ${AILOCAL_SEARXNG_CONTAINER:-ailocal-searxng}
     restart: unless-stopped
     mem_limit: 512m
+    cpus: 1
     networks:
       - ailocal_net
     ports:
