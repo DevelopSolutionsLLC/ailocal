@@ -30,6 +30,7 @@ services:
     # host user (runtime.compose_env), never root.
     user: "${AILOCAL_UID:?run via `ailocal`}:${AILOCAL_GID:?run via `ailocal`}"
     mem_limit: 128m
+    cpus: 1
     read_only: true
     security_opt:
       - no-new-privileges:true
